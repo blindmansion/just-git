@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readCommit } from "../../src/lib/object-db";
 import { isRebaseInProgress, readRebaseState } from "../../src/lib/rebase";
-import { resolveHead, resolveRef, updateRef } from "../../src/lib/refs/refs.ts";
+import { deleteRef, resolveHead, resolveRef, updateRef } from "../../src/lib/refs/refs.ts";
 import { findRepo } from "../../src/lib/repo";
 import { EMPTY_REPO, TEST_ENV_NAMED as TEST_ENV, envAt } from "../fixtures";
 import { createTestBash, pathExists, readFile } from "../util";
@@ -715,6 +715,30 @@ describe("git rebase", () => {
 
 			const gitCtx = await findRepo(bash.fs, "/repo");
 			expect(await isRebaseInProgress(gitCtx!)).toBe(false);
+		});
+
+		test("--continue commits staged changes when REBASE_HEAD was cleared", async () => {
+			// Intervening `git am` setup deletes REBASE_HEAD but leaves
+			// rebase-merge/message + author-script; --continue must still
+			// finalize the pick (git's commit_staged_changes).
+			const bash = await setupConflict();
+			await bash.exec("git rebase main");
+
+			const gitCtx = await findRepo(bash.fs, "/repo");
+			expect(await resolveRef(gitCtx!, "REBASE_HEAD")).not.toBeNull();
+			await deleteRef(gitCtx!, "REBASE_HEAD");
+			expect(await resolveRef(gitCtx!, "REBASE_HEAD")).toBeNull();
+			expect(await bash.fs.exists("/repo/.git/rebase-merge/author-script")).toBe(true);
+			expect(await bash.fs.exists("/repo/.git/rebase-merge/message")).toBe(true);
+
+			await bash.fs.writeFile("/repo/file.txt", "resolved");
+			await bash.exec("git add file.txt");
+			const result = await bash.exec("git rebase --continue");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("feature change");
+			expect(result.stdout).not.toContain("Date:");
+			expect(await isRebaseInProgress(gitCtx!)).toBe(false);
+			expect(await readFile(bash.fs, "/repo/file.txt")).toBe("resolved");
 		});
 	});
 

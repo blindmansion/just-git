@@ -248,6 +248,12 @@ export function registerAmCommand(parent: Command, ext?: GitExtensions): void {
 			};
 			await writeAmState(gitCtx, state, messages);
 
+			// git's `am_setup` drops any leftover `REBASE_HEAD` (e.g. from a
+			// paused `rebase-merge/` session that still shares the worktree)
+			// immediately after creating the state dir — before the dirty-index
+			// check — so a dirty-index death leaves no stale rebase pseudo-ref.
+			await deleteRef(gitCtx, "REBASE_HEAD");
+
 			// git's `am_setup` records the pre-`am` HEAD in the `ORIG_HEAD` ref
 			// (not a state-dir file) and seeds `abort-safety` with it. `--abort`
 			// later reads `ORIG_HEAD`, so an intervening command that rewrites
@@ -286,6 +292,18 @@ async function indexMatchesHead(gitCtx: GitContext): Promise<boolean> {
 		? (await readCommit(gitCtx, headHash)).tree
 		: await buildTreeFromIndex(gitCtx, []);
 	return indexTree === headTree;
+}
+
+/**
+ * git's `am_next` bookkeeping: advance the `next` counter and drop any
+ * `REBASE_HEAD` left by a prior rebase (or by a threeway that briefly set it).
+ * Callers that also refresh `abort-safety` do so separately — matching git,
+ * which updates abort-safety inside `am_next` but our setup/commit paths already
+ * own that write.
+ */
+async function advanceAm(gitCtx: GitContext, next: number): Promise<void> {
+	await setAmNext(gitCtx, next);
+	await deleteRef(gitCtx, "REBASE_HEAD");
 }
 
 /**
@@ -585,7 +603,7 @@ async function runAmLoop(gitCtx: GitContext, env: Map<string, string>): Promise<
 			if (await indexMatchesHead(gitCtx)) {
 				if (!state.quiet) out.push("No changes -- Patch already applied.\n");
 				await refreshAbortSafety(gitCtx, await resolveHead(gitCtx));
-				await setAmNext(gitCtx, state.next + 1);
+				await advanceAm(gitCtx, state.next + 1);
 				continue;
 			}
 		}
@@ -598,7 +616,7 @@ async function runAmLoop(gitCtx: GitContext, env: Map<string, string>): Promise<
 		const commitErr = await writeAmCommit(gitCtx, env, mail.author, committerId, message);
 		if (commitErr) return commitErr;
 
-		await setAmNext(gitCtx, state.next + 1);
+		await advanceAm(gitCtx, state.next + 1);
 	}
 
 	return { stdout: out.join(""), stderr: "", exitCode: 0 };
@@ -770,7 +788,7 @@ async function handleContinue(
 
 	const commitErr = await writeAmCommit(gitCtx, env, meta.author, committerId, meta.message);
 	if (commitErr) return commitErr;
-	await setAmNext(gitCtx, state.next + 1);
+	await advanceAm(gitCtx, state.next + 1);
 
 	const rest = await runAmLoop(gitCtx, env);
 	return {
@@ -800,10 +818,10 @@ async function handleSkip(gitCtx: GitContext, env: Map<string, string>): Promise
 	}
 
 	// git's `am_next`: refresh abort-safety to the current HEAD and advance the
-	// counter. Then `am_run` unlinks any stale `dirtyindex` before re-entering
-	// the apply loop.
+	// counter (also clearing `REBASE_HEAD`). Then `am_run` unlinks any stale
+	// `dirtyindex` before re-entering the apply loop.
 	await refreshAbortSafety(gitCtx, await resolveHead(gitCtx));
-	await setAmNext(gitCtx, state.next + 1);
+	await advanceAm(gitCtx, state.next + 1);
 	return runAmLoop(gitCtx, env);
 }
 

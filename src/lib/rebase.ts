@@ -1,6 +1,7 @@
+import { computePatchId } from "./diff/patch-id.ts";
+import { parseAuthorScript } from "./am.ts";
 import { readObject } from "./object-db.ts";
 import { parseCommit } from "./objects/commit.ts";
-import { computePatchId } from "./diff/patch-id.ts";
 import { join } from "./path.ts";
 import type { Commit, GitContext, GitRepo, Identity, ObjectId } from "./types.ts";
 
@@ -153,6 +154,18 @@ export async function writeRebaseConflictMeta(
 		`GIT_AUTHOR_NAME='${author.name}'\nGIT_AUTHOR_EMAIL='${author.email}'\nGIT_AUTHOR_DATE='${dateStr}'\n`,
 	);
 	await gitCtx.fs.writeFile(join(dir, "stopped-sha"), `${commitHash}\n`);
+}
+
+/**
+ * Read `rebase-merge/author-script`, or null when absent/unparseable. Used by
+ * `--continue` when `REBASE_HEAD` was cleared (e.g. by an intervening `git am`)
+ * but staged changes still need committing — git's `run_git_commit` loads the
+ * author from this file via `read_env_script`.
+ */
+export async function readRebaseAuthorScript(gitCtx: GitContext): Promise<Identity | null> {
+	const path = join(rebaseMergeDir(gitCtx), "author-script");
+	if (!(await gitCtx.fs.exists(path))) return null;
+	return parseAuthorScript(await gitCtx.fs.readFile(path));
 }
 
 function parseTodoList(text: string): RebaseTodoEntry[] {

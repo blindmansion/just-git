@@ -26,6 +26,7 @@ import {
 	cleanupRebaseState,
 	type RebaseState,
 	type RebaseTodoEntry,
+	readRebaseAuthorScript,
 	readRebaseState,
 	selectRebaseCommits,
 	writeRebaseConflictMeta,
@@ -1190,141 +1191,145 @@ export async function handleContinue(
 		return { kind: "unmergedContinue" };
 	}
 
-	// Check if REBASE_HEAD still exists (user hasn't committed yet)
-	const rebaseHeadHash = await resolveRef(gitCtx, "REBASE_HEAD");
-
-	if (rebaseHeadHash) {
-		// If REBASE_HEAD exists, decide whether we need to create the current
-		// replayed commit now (index differs from HEAD) or only advance state.
-		// Note: the conflicting entry has already been moved from todo to done
-		// (state is advanced before pick), so don't check todo.length.
-		const headHash = await resolveHead(gitCtx);
-		if (!headHash) {
-			return { kind: "fatal", message: "Cannot read HEAD" };
-		}
-		const headCommit = await readCommit(gitCtx, headHash);
-		const stage0Entries = getStage0Entries(index);
-		const indexTree = await buildTreeFromIndex(gitCtx, stage0Entries);
-		const needsCommit = indexTree !== headCommit.tree;
-
-		// Check for staged changes without a pending conflict resolution.
-		// Mirrors git's sequencer.c: if there are uncommitted changes but
-		// no rebase-merge/message file (meaning no conflict was in
-		// progress — e.g. the pick was rescheduled due to untracked
-		// files), show the "staged changes" advisory error.
-		// Note: this checks rebase-merge/message, NOT .git/MERGE_MSG.
-		// MERGE_MSG is deleted by `git commit` during conflict resolution,
-		// but rebase-merge/message persists until --continue processes it.
-		const hasRebaseMsg = (await readStateFile(gitCtx, "rebase-merge/message")) !== null;
-		if (needsCommit && !hasRebaseMsg) {
-			return { kind: "stagedChangesContinue" };
-		}
-
-		if (needsCommit) {
-			// User resolved conflicts but didn't finalize replayed commit yet.
-			const originalCommit = await readCommit(gitCtx, rebaseHeadHash);
-
-			// When CHERRY_PICK_HEAD exists (from a standalone cherry-pick
-			// run mid-rebase), real git's sequencer uses its author info
-			// instead of REBASE_HEAD's, because the internal `git commit`
-			// sees CHERRY_PICK_HEAD and preserves that commit's author.
-			const cherryPickHead = await resolveRef(gitCtx, "CHERRY_PICK_HEAD");
-			const authorSource = cherryPickHead
-				? await readCommit(gitCtx, cherryPickHead)
-				: originalCommit;
-
-			// Prefer rebase-merge/message (the authoritative source for the
-			// replayed commit's message), then MERGE_MSG, then original.
-			// MERGE_MSG may contain a stale message from an unrelated
-			// command (e.g. `git merge` run mid-rebase), so it must NOT
-			// take priority over the rebase-specific message file.
-			let messageText: string | undefined;
-			messageText =
-				(await readStateFile(gitCtx, "rebase-merge/message")) ??
-				(await readStateFile(gitCtx, "MERGE_MSG")) ??
-				undefined;
-
-			if (messageText) {
-				messageText = stripCommentLines(messageText);
-			}
-			if (!messageText) {
-				messageText = originalCommit.message;
-			}
-
-			const committerResult = await resolveCommitter(gitCtx, env);
-			if (!committerResult.ok) return { kind: "fatal", message: committerResult.message };
-			const committer = committerResult.committer;
-
-			const message = ensureTrailingNewline(messageText);
-
-			// Include MERGE_HEAD as additional parent if a merge was
-			// started during the rebase (e.g. user ran `git merge`
-			// between conflict resolution and `rebase --continue`).
-			const parents: ObjectId[] = [headHash];
-			const mergeHeadHash = await resolveRef(gitCtx, "MERGE_HEAD");
-			if (mergeHeadHash) {
-				parents.push(mergeHeadHash);
-			}
-
-			const signerResult = await resolveSigner(gitCtx);
-			if (!signerResult.ok) return { kind: "signingFailed" };
-
-			const commitHash = await writeCommitAndAdvance(
-				gitCtx,
-				indexTree,
-				parents,
-				authorSource.author,
-				committer,
-				message,
-				signerResult.signer,
-			);
-
-			// Clean up merge state if present
-			if (mergeHeadHash) {
-				await deleteRef(gitCtx, "MERGE_HEAD");
-				await deleteStateFile(gitCtx, "MERGE_MODE");
-			}
-
-			const continueSubject = firstLine(message);
-			await logRef(
-				gitCtx,
-				env,
-				"HEAD",
-				headHash,
-				commitHash,
-				`rebase (continue): ${continueSubject}`,
-			);
-
-			// Gather the commit-summary data (matches git's print_commit_summary);
-			// the command layer renders it and prepends it to stdout.
-			const label = await headLabel(gitCtx);
-			const showDate =
-				authorSource.author.timestamp !== committer.timestamp ||
-				authorSource.author.timezone !== committer.timezone;
-			const shortHash = await uniqueAbbrev(gitCtx, commitHash);
-			const stats = await gatherCommitStats(gitCtx, headCommit.tree, indexTree);
-			finalizedCommit = {
-				oneLiner: { branchName: label, shortHash, message },
-				author: authorSource.author,
-				committer,
-				showDate,
-				stats,
-			};
-		}
-
-		const finishingFinalStep = state.todo.length === 0;
-
-		// Clean up step state. A `--continue` commits the resolved pick without
-		// resetting, so (unlike `--skip`/`--abort`) it leaves a lingering
-		// REVERT_HEAD in place — real git keeps that revert resumable across the
-		// rest of the rebase and after it finishes.
-		if (!finishingFinalStep) {
-			await deleteRef(gitCtx, "REBASE_HEAD");
-		}
-		await deleteRef(gitCtx, "CHERRY_PICK_HEAD");
-		await deleteStateFile(gitCtx, "MERGE_MSG");
-		await deleteStateFile(gitCtx, "rebase-merge/message");
+	// git's `commit_staged_changes` (sequencer.c): when the index differs from
+	// HEAD and `rebase-merge/message` exists, finalize the paused pick — even
+	// if `REBASE_HEAD` was cleared by an intervening command (e.g. `git am`
+	// setup). Author comes from REBASE_HEAD / CHERRY_PICK_HEAD when present,
+	// else from `rebase-merge/author-script` (git's `read_env_script`).
+	const headHash = await resolveHead(gitCtx);
+	if (!headHash) {
+		return { kind: "fatal", message: "Cannot read HEAD" };
 	}
+	const headCommit = await readCommit(gitCtx, headHash);
+	const stage0Entries = getStage0Entries(index);
+	const indexTree = await buildTreeFromIndex(gitCtx, stage0Entries);
+	const needsCommit = indexTree !== headCommit.tree;
+	const hasRebaseMsg = (await readStateFile(gitCtx, "rebase-merge/message")) !== null;
+
+	// Staged changes without a pending conflict resolution (e.g. pick
+	// rescheduled due to untracked files) → advisory error.
+	if (needsCommit && !hasRebaseMsg) {
+		return { kind: "stagedChangesContinue" };
+	}
+
+	if (needsCommit) {
+		const rebaseHeadHash = await resolveRef(gitCtx, "REBASE_HEAD");
+		const cherryPickHead = await resolveRef(gitCtx, "CHERRY_PICK_HEAD");
+
+		let author: Identity;
+		let originalMessage: string | undefined;
+		// git's `author_date_is_interesting`: Date is shown only when the author
+		// came from an `author_message` source (CHERRY_PICK_HEAD / `-C`). A
+		// normal rebase pick loads the author via `author-script` /
+		// `REBASE_HEAD` and does *not* print Date, even when author and
+		// committer clocks differ.
+		const showDate = !!cherryPickHead;
+		if (cherryPickHead) {
+			const src = await readCommit(gitCtx, cherryPickHead);
+			author = src.author;
+			originalMessage = src.message;
+		} else if (rebaseHeadHash) {
+			const src = await readCommit(gitCtx, rebaseHeadHash);
+			author = src.author;
+			originalMessage = src.message;
+		} else {
+			const fromScript = await readRebaseAuthorScript(gitCtx);
+			if (!fromScript) {
+				return { kind: "fatal", message: "could not commit staged changes." };
+			}
+			author = fromScript;
+		}
+
+		// Prefer rebase-merge/message (the authoritative source for the
+		// replayed commit's message), then MERGE_MSG, then original.
+		// MERGE_MSG may contain a stale message from an unrelated
+		// command (e.g. `git merge` run mid-rebase), so it must NOT
+		// take priority over the rebase-specific message file.
+		let messageText: string | undefined =
+			(await readStateFile(gitCtx, "rebase-merge/message")) ??
+			(await readStateFile(gitCtx, "MERGE_MSG")) ??
+			undefined;
+
+		if (messageText) {
+			messageText = stripCommentLines(messageText);
+		}
+		if (!messageText) {
+			messageText = originalMessage;
+		}
+		if (!messageText) {
+			return { kind: "fatal", message: "could not commit staged changes." };
+		}
+
+		const committerResult = await resolveCommitter(gitCtx, env);
+		if (!committerResult.ok) return { kind: "fatal", message: committerResult.message };
+		const committer = committerResult.committer;
+
+		const message = ensureTrailingNewline(messageText);
+
+		// Include MERGE_HEAD as additional parent if a merge was
+		// started during the rebase (e.g. user ran `git merge`
+		// between conflict resolution and `rebase --continue`).
+		const parents: ObjectId[] = [headHash];
+		const mergeHeadHash = await resolveRef(gitCtx, "MERGE_HEAD");
+		if (mergeHeadHash) {
+			parents.push(mergeHeadHash);
+		}
+
+		const signerResult = await resolveSigner(gitCtx);
+		if (!signerResult.ok) return { kind: "signingFailed" };
+
+		const commitHash = await writeCommitAndAdvance(
+			gitCtx,
+			indexTree,
+			parents,
+			author,
+			committer,
+			message,
+			signerResult.signer,
+		);
+
+		// Clean up merge state if present
+		if (mergeHeadHash) {
+			await deleteRef(gitCtx, "MERGE_HEAD");
+			await deleteStateFile(gitCtx, "MERGE_MODE");
+		}
+
+		const continueSubject = firstLine(message);
+		await logRef(
+			gitCtx,
+			env,
+			"HEAD",
+			headHash,
+			commitHash,
+			`rebase (continue): ${continueSubject}`,
+		);
+
+		// Gather the commit-summary data (matches git's print_commit_summary);
+		// the command layer renders it and prepends it to stdout.
+		const label = await headLabel(gitCtx);
+		const shortHash = await uniqueAbbrev(gitCtx, commitHash);
+		const stats = await gatherCommitStats(gitCtx, headCommit.tree, indexTree);
+		finalizedCommit = {
+			oneLiner: { branchName: label, shortHash, message },
+			author,
+			committer,
+			showDate,
+			stats,
+		};
+	}
+
+	// Clean up step state whenever we had a pending pick to finalize (or just
+	// to advance past a clean index). A `--continue` commits the resolved pick
+	// without resetting, so (unlike `--skip`/`--abort`) it leaves a lingering
+	// REVERT_HEAD in place — real git keeps that revert resumable across the
+	// rest of the rebase and after it finishes.
+	const finishingFinalStep = state.todo.length === 0;
+	if (!finishingFinalStep) {
+		await deleteRef(gitCtx, "REBASE_HEAD");
+	}
+	await deleteRef(gitCtx, "CHERRY_PICK_HEAD");
+	await deleteStateFile(gitCtx, "MERGE_MSG");
+	await deleteStateFile(gitCtx, "rebase-merge/message");
 
 	// State was already advanced when the pick was attempted (before
 	// conflict), so no need to advance again. Just continue.

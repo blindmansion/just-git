@@ -154,9 +154,10 @@ export interface AmStopMeta {
 
 /**
  * Parse an `author-script` (git's `read_author_script`): three single-quoted
- * `GIT_AUTHOR_*` assignments, with the date as `@<epoch> <tz>`.
+ * `GIT_AUTHOR_*` assignments, with the date as `@<epoch> <tz>`. Shared with
+ * rebase (`rebase-merge/author-script`) — same on-disk format.
  */
-function parseAuthorScript(script: string): Identity | null {
+export function parseAuthorScript(script: string): Identity | null {
 	const get = (key: string): string | null => {
 		const m = new RegExp(`^${key}='(.*)'$`, "m").exec(script);
 		return m ? (m[1] as string) : null;

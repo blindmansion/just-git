@@ -148,6 +148,43 @@ describe("git am", () => {
 			expect(result.exitCode).toBe(128);
 			expect(result.stderr).toContain("Resolve operation not in progress");
 		});
+
+		test("am_setup clears a leftover REBASE_HEAD on dirty-index death", async () => {
+			// Conflicted rebase leaves REBASE_HEAD + rebase-merge/; a subsequent
+			// dirty-index `am` must still drop REBASE_HEAD (git's am_setup), even
+			// though rebase-merge/ itself is left in place.
+			const bash = await seed();
+			await bash.exec("git checkout -b topic");
+			await bash.fs.writeFile("/repo/f.txt", "a\ntopic\nc\nd\ne\n");
+			await bash.exec("git add f.txt");
+			await bash.exec('git commit -m "topic"');
+			await bash.exec("git checkout main");
+			await bash.fs.writeFile("/repo/f.txt", "a\nmain\nc\nd\ne\n");
+			await bash.exec("git add f.txt");
+			await bash.exec('git commit -m "main"');
+			const rebase = await bash.exec("git rebase topic");
+			expect(rebase.exitCode).toBe(1);
+			expect(await bash.fs.exists("/repo/.git/REBASE_HEAD")).toBe(true);
+
+			const patch = [
+				"From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001",
+				"From: Test <test@test.com>",
+				"Date: Thu, 1 Jan 1970 00:00:00 +0000",
+				"Subject: [PATCH] noop",
+				"",
+				"---",
+				" f.txt | 0",
+				" 1 file changed, 0 insertions(+), 0 deletions(-)",
+				"",
+			].join("\n");
+			const result = await am(bash, patch);
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("Dirty index: cannot apply patches");
+			expect(await bash.fs.exists("/repo/.git/rebase-apply/applying")).toBe(true);
+			expect(await bash.fs.exists("/repo/.git/rebase-apply/dirtyindex")).toBe(true);
+			expect(await bash.fs.exists("/repo/.git/rebase-merge")).toBe(true);
+			expect(await bash.fs.exists("/repo/.git/REBASE_HEAD")).toBe(false);
+		});
 	});
 
 	describe("conflict stop", () => {
