@@ -1,5 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { isCommandError, requireGitContext } from "../lib/command-utils.ts";
+import { type GitConfig, readConfig } from "../lib/config.ts";
 import { collectAllRoots } from "../lib/gc-roots.ts";
 import { clearDetachPoint } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";
@@ -24,9 +25,16 @@ export function registerGcCommand(parent: Command, ext?: GitExtensions) {
 			// Step 1: Pack refs
 			await writePackedRefs(gitCtx);
 
-			// Step 2: Expire reflogs + collect all roots in a single pass
-			await clearDetachPoint(gitCtx);
-			const tips = await collectRootsAndExpireReflogs(gitCtx);
+			// Step 2: Expire reflogs + collect all roots in a single pass.
+			// Honor gc.reflogExpire: "never" disables expiry entirely, in which
+			// case the reflog (and thus the detached-HEAD "checkout: moving from"
+			// entry) is preserved, so the DETACH_POINT side-file must stay too.
+			const config = await readConfig(gitCtx);
+			const expireAge = parseReflogExpireAge(config);
+			if (expireAge !== null) {
+				await clearDetachPoint(gitCtx);
+			}
+			const tips = await collectRootsAndExpireReflogs(gitCtx, expireAge);
 
 			if (tips.length > 0) {
 				const window = args.aggressive ? 250 : 10;
@@ -55,15 +63,50 @@ export function registerGcCommand(parent: Command, ext?: GitExtensions) {
 
 // ── Combined reflog expiry + root collection ────────────────────────
 
-const REFLOG_EXPIRE_SECONDS = 90 * 24 * 60 * 60; // 90 days
+const DAY_SECONDS = 24 * 60 * 60;
+const DEFAULT_REFLOG_EXPIRE_SECONDS = 90 * DAY_SECONDS; // git default: 90 days
+
+/**
+ * Resolve the `gc.reflogExpire` age (in seconds) from config, or `null` when
+ * expiry is disabled ("never"). Mirrors git's default of 90 days when unset.
+ * Only a subset of git's approxidate grammar is recognized; unparseable values
+ * fall back to the default rather than throwing.
+ */
+function parseReflogExpireAge(config: GitConfig): number | null {
+	const raw = config.gc?.reflogexpire?.trim().toLowerCase();
+	if (!raw) return DEFAULT_REFLOG_EXPIRE_SECONDS;
+	if (raw === "never") return null;
+	if (raw === "now") return 0;
+
+	// Forms like "90.days.ago", "90 days", "2.weeks", "30.days".
+	const m = raw.match(/^(\d+)[.\s]*(second|minute|hour|day|week|month|year)s?/);
+	if (!m?.[1] || !m[2]) return DEFAULT_REFLOG_EXPIRE_SECONDS;
+	const n = parseInt(m[1], 10);
+	const unit: Record<string, number> = {
+		second: 1,
+		minute: 60,
+		hour: 60 * 60,
+		day: DAY_SECONDS,
+		week: 7 * DAY_SECONDS,
+		month: 30 * DAY_SECONDS,
+		year: 365 * DAY_SECONDS,
+	};
+	return n * (unit[m[2]] ?? DAY_SECONDS);
+}
 
 /**
  * Expire old reflog entries for the current worktree and the shared refs, then
  * collect the reachability roots across every worktree. Matches real git's
- * ordering (expire before the reachability walk).
+ * ordering (expire before the reachability walk). When `expireAge` is `null`
+ * (gc.reflogExpire=never), expiry is skipped entirely.
  */
-async function collectRootsAndExpireReflogs(gitCtx: GitContext): Promise<ObjectId[]> {
-	await expireReflogs(gitCtx);
+async function collectRootsAndExpireReflogs(
+	gitCtx: GitContext,
+	expireAge: number | null,
+): Promise<ObjectId[]> {
+	if (expireAge !== null) {
+		await expireReflogs(gitCtx, expireAge);
+	}
 	return collectAllRoots(gitCtx);
 }
 
@@ -74,8 +117,11 @@ async function collectRootsAndExpireReflogs(gitCtx: GitContext): Promise<ObjectI
  * main worktree's private logs (`logs/HEAD`, …), and each linked worktree keeps
  * its private logs under `worktrees/<id>/logs`. The stash reflog never expires.
  */
-export async function expireReflogs(gitCtx: GitContext): Promise<void> {
-	const cutoff = Math.floor(Date.now() / 1000) - REFLOG_EXPIRE_SECONDS;
+export async function expireReflogs(
+	gitCtx: GitContext,
+	expireAge: number = DEFAULT_REFLOG_EXPIRE_SECONDS,
+): Promise<void> {
+	const cutoff = Math.floor(Date.now() / 1000) - expireAge;
 
 	await expireLogsDir(
 		gitCtx,

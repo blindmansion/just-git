@@ -414,7 +414,21 @@ async function runRecordedWalk(
 	} else {
 		await recorder.git("init");
 		await recorder.flush();
+	}
 
+	// Disable reflog expiry so traces are deterministic and independent of the
+	// real wall clock. Commit dates are pinned to ~2001, so any wall-clock-
+	// relative `gc` reflog expiry (default 90d/30d) would wipe the entire reflog
+	// the moment a trace runs `git gc`, making real git lose the detached-HEAD
+	// "checkout: moving from" entry and fall back to "(no branch)". Pinning
+	// expiry to "never" keeps the reflog intact on both engines. Written into the
+	// repo config (a recorded step) so the replayed just-git repo honors it too.
+	await recorder.git("config gc.reflogExpire never");
+	await recorder.flush();
+	await recorder.git("config gc.reflogExpireUnreachable never");
+	await recorder.flush();
+
+	if (!cloneUrl) {
 		if (remoteBaseUrl) {
 			await recorder.git(`remote add origin ${remoteBaseUrl}/repo`);
 			await recorder.flush();
