@@ -77,8 +77,8 @@ describe("collectAllRoots across worktrees", () => {
 	});
 });
 
-describe("reflog expiry confinement", () => {
-	test("expiring from a linked worktree leaves a sibling's HEAD reflog untouched but trims its own", async () => {
+describe("reflog expiry is repo-wide", () => {
+	test("expiring from a linked worktree trims every worktree's HEAD reflog, like git reflog expire --all", async () => {
 		const fs = new MemoryFileSystem();
 		const siblingDir = `${COMMON}/worktrees/wt1`;
 		await fs.mkdir(siblingDir, { recursive: true });
@@ -86,7 +86,6 @@ describe("reflog expiry confinement", () => {
 		// The main worktree's HEAD reflog (commonDir/logs/HEAD) has an old entry.
 		const mainCtx = ctxFor(fs, COMMON);
 		await appendReflog(mainCtx, "HEAD", oldEntry("a".repeat(40)));
-		const mainBefore = await fs.readFile(`${COMMON}/logs/HEAD`);
 
 		// The linked worktree's own HEAD reflog also has an old entry.
 		const linkedCtx = ctxFor(fs, siblingDir);
@@ -94,9 +93,11 @@ describe("reflog expiry confinement", () => {
 
 		await expireReflogs(linkedCtx);
 
-		// The main worktree's reflog is the common dir's logs/HEAD — not rewritten.
-		expect(await fs.readFile(`${COMMON}/logs/HEAD`)).toBe(mainBefore);
-		// The linked worktree's own old entry is expired.
+		// Real git's `gc` runs `reflog expire --all`, expiring every worktree's
+		// reflog regardless of which worktree it was invoked from — including the
+		// main worktree's logs/HEAD in the common dir and each linked worktree's
+		// private logs/HEAD.
+		expect(await readReflogAt(fs, `${COMMON}/logs/HEAD`)).toEqual([]);
 		expect(await readReflogAt(fs, `${siblingDir}/logs/HEAD`)).toEqual([]);
 	});
 });
