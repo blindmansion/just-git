@@ -1,7 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { abbreviateHash, isCommandError, requireGitContext } from "../lib/command-utils.ts";
-import { join } from "../lib/path.ts";
-import { readReflog, ZERO_HASH } from "../lib/reflog.ts";
+import { readReflog, reflogPath, ZERO_HASH } from "../lib/reflog.ts";
 import { resolveRef } from "../lib/refs.ts";
 import type { GitContext } from "../lib/types.ts";
 import { a, type Command, o } from "../parse/index.ts";
@@ -85,7 +84,9 @@ export function registerReflogCommand(parent: Command, ext?: GitExtensions) {
 						exitCode: 128,
 					};
 				}
-				const reflogFile = join(gitCtx.gitDir, "logs", ref);
+				// Branch reflogs (refs/heads/*) live in the shared common dir;
+				// only per-worktree refs (HEAD, …) live in this worktree's gitDir.
+				const reflogFile = reflogPath(gitCtx, ref);
 				return {
 					stdout: "",
 					stderr: "",

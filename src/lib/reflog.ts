@@ -20,7 +20,7 @@ interface ReflogEntry {
 
 // ── Paths ───────────────────────────────────────────────────────────
 
-function reflogPath(ctx: GitContext, refName: string): string {
+export function reflogPath(ctx: GitContext, refName: string): string {
 	// logs/HEAD is per-worktree; logs/refs/* is shared across worktrees.
 	const base = isPerWorktreeRef(refName) ? ctx.gitDir : ctx.commonDir;
 	return join(base, "logs", refName);
