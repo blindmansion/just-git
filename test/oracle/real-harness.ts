@@ -3,7 +3,17 @@
  * Extracted from test/random/harness.ts — same isolation, no virtual side.
  */
 
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
+import {
+	mkdir,
+	mkdtemp,
+	readdir,
+	readFile,
+	realpath,
+	rm,
+	stat,
+	unlink,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -12,10 +22,12 @@ import {
 	type FileOpTarget,
 	generateAndApplyFileOps,
 	generateServerCommitFiles,
+	posixRelative,
 	resolveAllFiles,
 	resolveWorktreeRoot,
 } from "../random/file-gen";
 import {
+	adminDirFromGitlink,
 	DEFAULT_TEST_ENV,
 	type ExecResult,
 	type WalkHarness,
@@ -106,11 +118,18 @@ export class RealGitHarness implements WalkHarness {
 
 	/**
 	 * The git/admin dir holding a worktree's private HEAD + operation state.
-	 * Primary → `<repo>/.git`; a linked checkout → `<repo>/.git/worktrees/<id>`,
-	 * where `<id>` is the selector basename (the sibling-path convention).
+	 * Primary → `<repo>/.git`; a linked checkout's admin dir is read from its
+	 * `.git` gitlink (so it's correct under `worktree move` / same-basename
+	 * checkouts), falling back to the sibling-path convention if unreadable.
 	 */
-	private gitDirFor(cwd?: string): string {
+	private async gitDirFor(cwd?: string): Promise<string> {
 		if (!cwd) return join(this.repoDir, ".git");
+		try {
+			const admin = adminDirFromGitlink(await readFile(join(this.rootFor(cwd), ".git"), "utf-8"));
+			if (admin) return admin;
+		} catch {
+			// gitlink unreadable — fall back to the sibling-path convention.
+		}
 		return join(this.repoDir, ".git", "worktrees", worktreeIdFromCwd(cwd));
 	}
 
@@ -292,7 +311,7 @@ export class RealGitHarness implements WalkHarness {
 	}
 
 	async getCurrentBranch(cwd?: string): Promise<string | null> {
-		const headPath = join(this.gitDirFor(cwd), "HEAD");
+		const headPath = join(await this.gitDirFor(cwd), "HEAD");
 		try {
 			const content = (await readFile(headPath, "utf-8")).trim();
 			return content.startsWith("ref: refs/heads/")
@@ -304,19 +323,19 @@ export class RealGitHarness implements WalkHarness {
 	}
 
 	async isInMergeConflict(cwd?: string): Promise<boolean> {
-		return fileExists(join(this.gitDirFor(cwd), "MERGE_HEAD"));
+		return fileExists(join(await this.gitDirFor(cwd), "MERGE_HEAD"));
 	}
 
 	async isInCherryPickConflict(cwd?: string): Promise<boolean> {
-		return fileExists(join(this.gitDirFor(cwd), "CHERRY_PICK_HEAD"));
+		return fileExists(join(await this.gitDirFor(cwd), "CHERRY_PICK_HEAD"));
 	}
 
 	async isInRevertConflict(cwd?: string): Promise<boolean> {
-		return fileExists(join(this.gitDirFor(cwd), "REVERT_HEAD"));
+		return fileExists(join(await this.gitDirFor(cwd), "REVERT_HEAD"));
 	}
 
 	async isInRebaseConflict(cwd?: string): Promise<boolean> {
-		const gitDir = this.gitDirFor(cwd);
+		const gitDir = await this.gitDirFor(cwd);
 		return (
 			(await fileExists(join(gitDir, "rebase-merge"))) ||
 			(await fileExists(join(gitDir, "rebase-apply")))
@@ -348,6 +367,9 @@ export class RealGitHarness implements WalkHarness {
 		} catch {
 			return [];
 		}
+		// Real git writes realpath'd absolute paths into each `gitdir`; anchor the
+		// relative selector on the realpath'd repo dir so it normalizes cleanly.
+		const realRepo = await realpath(this.repoDir).catch(() => this.repoDir);
 		const infos: WorktreeInfo[] = [];
 		for (const id of ids) {
 			const adminDir = join(worktreesDir, id);
@@ -361,7 +383,14 @@ export class RealGitHarness implements WalkHarness {
 				// HEAD missing — treat as detached/unknown.
 			}
 			const locked = await fileExists(join(adminDir, "locked"));
-			infos.push({ id, branch, locked });
+			let path = `../${id}`;
+			try {
+				const gitlink = (await readFile(join(adminDir, "gitdir"), "utf-8")).trim();
+				if (gitlink) path = posixRelative(realRepo, dirname(gitlink));
+			} catch {
+				// gitdir missing — fall back to the sibling-path convention.
+			}
+			infos.push({ id, path, branch, locked });
 		}
 		return infos;
 	}

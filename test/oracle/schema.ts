@@ -22,8 +22,12 @@ import { Database } from "bun:sqlite";
  *   3 — per-step execution context: `steps.cwd` records the worktree a command
  *       and its file ops ran inside (NULL = the primary worktree). Additive and
  *       nullable, but bumped to keep the one-version-per-shape-change rule.
+ *   4 — per-worktree `path` is now the anchor-relative normalized checkout path
+ *       (was an absolute, side-specific path) and is the *comparison key* for
+ *       linked worktrees, replacing the admin-dir id (Tier 3). The field's
+ *       meaning changed and it is now compared, so the snapshot shape changed.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /** Read `PRAGMA user_version`. Pre-versioning DBs report 0. */
 function readUserVersion(db: Database): number {

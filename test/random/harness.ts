@@ -5,6 +5,7 @@ import {
 	type FileGenConfig,
 	type FileOpTarget,
 	generateAndApplyFileOps,
+	posixRelative,
 	resolveAllFiles,
 	resolveWorktreeRoot,
 } from "./file-gen";
@@ -18,15 +19,18 @@ export interface ExecResult {
 }
 
 /**
- * A linked worktree as seen from the main repo, derived from the admin dir
- * under `.git/worktrees/<id>`. `id` is the admin-dir basename (path-agnostic,
- * so real-git temp paths and the in-memory VFS agree). The sibling path is
- * always reconstructable as `../<id>` because the walk creates worktrees at
- * `../wt-<rand>` and git names the admin dir after the path basename.
+ * A linked worktree as seen from the main repo. `id` is the admin-dir basename
+ * (the stable identity, used as the sticky-targeting key); `path` is the
+ * checkout location as a repo-root-relative selector (e.g. `../wt-x`,
+ * `../sub/wt-x`), read from the admin dir's `gitdir` pointer so it survives
+ * `worktree move` and same-basename checkouts. Address a worktree (commands,
+ * file ops, action arguments) by `path`; resolve its admin state by `id`.
  */
 export interface WorktreeInfo {
 	/** Admin-dir id (basename under `.git/worktrees`), e.g. "wt-abc123". */
 	id: string;
+	/** Checkout path as a repo-root-relative selector, e.g. "../wt-abc123". */
+	path: string;
 	/** Short branch name checked out here, or null when detached. */
 	branch: string | null;
 	/** Whether the worktree is locked. */
@@ -130,11 +134,22 @@ export const DEFAULT_TEST_ENV: Record<string, string> = {
 };
 
 /**
- * The admin-dir id for a worktree-relative selector. By the sibling-path
- * convention (`../wt-x`) the id is just the final path segment.
+ * The admin-dir id for a worktree-relative selector, by the sibling-path
+ * convention (`../wt-x` → `wt-x`). Used only as a fallback for resolving a
+ * worktree's admin dir when its `.git` gitlink can't be read; the primary path
+ * reads the gitlink so it survives `worktree move` and same-basename checkouts.
  */
 export function worktreeIdFromCwd(cwd: string): string {
 	return cwd.slice(cwd.lastIndexOf("/") + 1);
+}
+
+/**
+ * Parse a worktree `.git` gitlink file's content (`gitdir: <adminDir>`) into
+ * the admin dir path. Returns null when the content isn't a gitlink.
+ */
+export function adminDirFromGitlink(content: string): string | null {
+	const trimmed = content.trim();
+	return trimmed.startsWith("gitdir:") ? trimmed.slice("gitdir:".length).trim() : null;
 }
 
 // ── VirtualHarness ───────────────────────────────────────────────────
@@ -165,12 +180,32 @@ export class VirtualHarness implements WalkHarness {
 
 	/**
 	 * The git/admin dir holding a worktree's private HEAD + operation state.
-	 * Primary → `<root>/.git`; a linked checkout → `<root>/.git/worktrees/<id>`,
-	 * where `<id>` is the selector basename (the sibling-path convention).
+	 * Primary → `<root>/.git`; a linked checkout's admin dir is read from its
+	 * `.git` gitlink (so it's correct under `worktree move` / same-basename
+	 * checkouts), falling back to the sibling-path convention if unreadable.
 	 */
-	private gitDirFor(cwd?: string): string {
+	private async gitDirFor(cwd?: string): Promise<string> {
 		if (!cwd) return `${this.vfsRoot}/.git`;
+		const gitlinkPath = `${this.rootFor(cwd)}/.git`;
+		if (await this.bash.fs.exists(gitlinkPath)) {
+			const admin = adminDirFromGitlink(await this.bash.fs.readFile(gitlinkPath));
+			if (admin) return admin;
+		}
 		return `${this.vfsRoot}/.git/worktrees/${worktreeIdFromCwd(cwd)}`;
+	}
+
+	/**
+	 * A worktree's checkout path as a repo-root-relative selector, read from its
+	 * admin dir's `gitdir` pointer. Falls back to the `../<id>` convention when
+	 * the pointer is missing.
+	 */
+	private async worktreePath(adminDir: string, id: string): Promise<string> {
+		const gitdirFile = `${adminDir}/gitdir`;
+		if (await this.bash.fs.exists(gitdirFile)) {
+			const gitlink = (await this.bash.fs.readFile(gitdirFile)).trim();
+			if (gitlink) return posixRelative(this.vfsRoot, gitlink.slice(0, gitlink.lastIndexOf("/")));
+		}
+		return `../${id}`;
 	}
 
 	async git(
@@ -339,30 +374,30 @@ export class VirtualHarness implements WalkHarness {
 	}
 
 	async getCurrentBranch(cwd?: string): Promise<string | null> {
-		const headPath = `${this.gitDirFor(cwd)}/HEAD`;
+		const headPath = `${await this.gitDirFor(cwd)}/HEAD`;
 		if (!(await this.bash.fs.exists(headPath))) return null;
 		const content = (await this.bash.fs.readFile(headPath)).trim();
 		return content.startsWith("ref: refs/heads/") ? content.slice("ref: refs/heads/".length) : null;
 	}
 
 	async isInMergeConflict(cwd?: string): Promise<boolean> {
-		return this.bash.fs.exists(`${this.gitDirFor(cwd)}/MERGE_HEAD`);
+		return this.bash.fs.exists(`${await this.gitDirFor(cwd)}/MERGE_HEAD`);
 	}
 
 	async isInCherryPickConflict(cwd?: string): Promise<boolean> {
-		return this.bash.fs.exists(`${this.gitDirFor(cwd)}/CHERRY_PICK_HEAD`);
+		return this.bash.fs.exists(`${await this.gitDirFor(cwd)}/CHERRY_PICK_HEAD`);
 	}
 
 	async isInRevertConflict(cwd?: string): Promise<boolean> {
-		return this.bash.fs.exists(`${this.gitDirFor(cwd)}/REVERT_HEAD`);
+		return this.bash.fs.exists(`${await this.gitDirFor(cwd)}/REVERT_HEAD`);
 	}
 
 	async isInRebaseConflict(cwd?: string): Promise<boolean> {
-		return this.bash.fs.exists(`${this.gitDirFor(cwd)}/rebase-merge`);
+		return this.bash.fs.exists(`${await this.gitDirFor(cwd)}/rebase-merge`);
 	}
 
 	async hasCommits(cwd?: string): Promise<boolean> {
-		const headPath = `${this.gitDirFor(cwd)}/HEAD`;
+		const headPath = `${await this.gitDirFor(cwd)}/HEAD`;
 		if (!(await this.bash.fs.exists(headPath))) return false;
 		const content = (await this.bash.fs.readFile(headPath)).trim();
 		if (content.startsWith("ref: ")) {
@@ -416,7 +451,7 @@ export class VirtualHarness implements WalkHarness {
 				}
 			}
 			const locked = await this.bash.fs.exists(`${adminDir}/locked`);
-			infos.push({ id, branch, locked });
+			infos.push({ id, path: await this.worktreePath(adminDir, id), branch, locked });
 		}
 		return infos;
 	}

@@ -7,10 +7,11 @@ import {
 import type { Action } from "../types";
 
 /**
- * Worktree paths are siblings of the repo (`../wt-<id>`) so the basename — and
- * thus the admin-dir id captured in the oracle snapshot — is identical between
- * the real-git temp dir and the in-memory VFS. The id is path-agnostic; the
- * sibling checkout itself lives outside the hashed worktree on both sides.
+ * Worktree checkouts live outside the repo (anchor-relative siblings of it), so
+ * the checkout itself is outside the hashed worktree on both the real-git temp
+ * dir and the in-memory VFS. Worktrees are compared by their normalized path
+ * (not admin-dir id), so management actions address a worktree by its reported
+ * `path` selector — correct even for moved or same-basename checkouts.
  */
 const worktreeAddDetached: Action = {
 	name: "worktreeAddDetached",
@@ -42,6 +43,47 @@ const worktreeAddNewBranch: Action = {
 	},
 };
 
+/**
+ * Add a worktree at a *nested* (multi-segment) relative path. The admin id is
+ * still the unique basename `wt-<id>`, but the normalized comparison key is
+ * `n<rand>/wt-<id>` — exercising path keying with a multi-segment path.
+ */
+const worktreeAddNested: Action = {
+	name: "worktreeAddNested",
+	category: "worktree",
+	createsWorktree: true,
+	canRun: (state) => state.hasCommits,
+	precondition: (state) => !inConflict(state),
+	weight: () => 1,
+	async execute(harness, rng) {
+		const id = rng.alphanumeric(6);
+		const cmd = `worktree add --detach ../n${rng.alphanumeric(4)}/wt-${id} HEAD`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+/**
+ * Add a worktree whose path basename (`shared`) is constant, so repeated picks
+ * collide and git appends a counter to the admin id (`shared`, `shared1`, …;
+ * `deriveWorktreeId`). The parent segment is random, so the normalized path key
+ * stays distinct — proving path keying separates same-basename checkouts that
+ * the old id-equality convention couldn't represent.
+ */
+const worktreeAddSameBasename: Action = {
+	name: "worktreeAddSameBasename",
+	category: "worktree",
+	createsWorktree: true,
+	canRun: (state) => state.hasCommits,
+	precondition: (state) => !inConflict(state),
+	weight: () => 1,
+	async execute(harness, rng) {
+		const cmd = `worktree add --detach ../sb${rng.alphanumeric(4)}/shared HEAD`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
 const worktreeRemove: Action = {
 	name: "worktreeRemove",
 	category: "worktree",
@@ -50,7 +92,7 @@ const worktreeRemove: Action = {
 	weight: () => 1,
 	async execute(harness, rng, state) {
 		const wt = state.worktrees[rng.int(0, state.worktrees.length - 1)]!;
-		const cmd = `worktree remove ../${wt.id}`;
+		const cmd = `worktree remove ${wt.path}`;
 		const result = await harness.git(cmd);
 		return { description: `git ${cmd}`, result };
 	},
@@ -143,7 +185,7 @@ const worktreeAddExistingPath: Action = {
 	weight: () => 1,
 	async execute(harness, rng, state) {
 		const wt = state.worktrees[rng.int(0, state.worktrees.length - 1)]!;
-		const cmd = `worktree add ../${wt.id}`;
+		const cmd = `worktree add ${wt.path}`;
 		const result = await harness.git(cmd);
 		return { description: `git ${cmd}`, result };
 	},
@@ -191,8 +233,8 @@ const worktreeRemoveLocked: Action = {
 		const candidates = state.worktrees.filter((w) => !w.locked);
 		const pool = candidates.length > 0 ? candidates : state.worktrees;
 		const wt = pool[rng.int(0, pool.length - 1)]!;
-		await harness.git(`worktree lock ../${wt.id}`);
-		const cmd = `worktree remove ../${wt.id}`;
+		await harness.git(`worktree lock ${wt.path}`);
+		const cmd = `worktree remove ${wt.path}`;
 		const result = await harness.git(cmd);
 		return { description: `git ${cmd}`, result };
 	},
@@ -207,7 +249,7 @@ const worktreeRemoveForce: Action = {
 	async execute(harness, rng, state) {
 		const wt = state.worktrees[rng.int(0, state.worktrees.length - 1)]!;
 		// `-f -f` overrides both the dirty-tree and locked-tree guards.
-		const cmd = `worktree remove -f -f ../${wt.id}`;
+		const cmd = `worktree remove -f -f ${wt.path}`;
 		const result = await harness.git(cmd);
 		return { description: `git ${cmd}`, result };
 	},
@@ -224,6 +266,8 @@ const worktreeRemoveForce: Action = {
 export const WORKTREE_ACTIONS: readonly Action[] = [
 	worktreeAddDetached,
 	worktreeAddNewBranch,
+	worktreeAddNested,
+	worktreeAddSameBasename,
 	worktreeRemove,
 	worktreePrune,
 	switchClaimedBranch,

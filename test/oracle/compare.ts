@@ -19,8 +19,10 @@
  * linked worktree. Refs and the stash are shared (common-dir) state, compared
  * once. The main worktree's divergence fields keep their legacy unprefixed
  * names (`head_ref`, `work_tree`, `index:…`, …) so the post-mortem and
- * severity machinery that keys on them keeps working; linked worktrees use a
- * `worktree:<id>:` prefix so the debug CLIs can point at a specific checkout.
+ * severity machinery that keys on them keeps working; linked worktrees are
+ * matched by their normalized `path` (not admin-dir id, so `worktree move` and
+ * same-basename checkouts compare correctly) and use a `worktree:<path>:`
+ * prefix so the debug CLIs can point at a specific checkout.
  */
 
 // ── State shapes ─────────────────────────────────────────────────
@@ -301,20 +303,32 @@ export function compare(oracle: OracleState, impl: ImplState): Divergence[] {
 		}
 	}
 
-	// Worktrees — main first (unprefixed fields), then linked (prefixed)
-	const oracleWt = new Map(oracle.worktrees.map((w) => [w.id, w]));
-	const implWt = new Map(impl.worktrees.map((w) => [w.id, w]));
-	for (const [id, ow] of oracleWt) {
-		const iw = implWt.get(id);
+	// Main worktree — keyed by the stable "main" id, unprefixed legacy fields
+	// (work_tree, head_ref, …). Always singular, so it never needs a path key.
+	if (mainOracle && mainImpl) {
+		compareWorktree(mainOracle, mainImpl, "", push);
+	} else if (mainOracle) {
+		push("worktree:main", mainOracle.headRef ?? mainOracle.headSha, "<missing>", "error");
+	} else if (mainImpl) {
+		push("worktree:main", "<missing>", mainImpl.headRef ?? mainImpl.headSha, "error");
+	}
+
+	// Linked worktrees — keyed by normalized path (not admin id), so `worktree
+	// move` (path changes, id stable) and same-basename worktrees compare
+	// correctly. Fields are prefixed `worktree:<path>:`.
+	const oracleWt = new Map(oracle.worktrees.filter((w) => w.id !== "main").map((w) => [w.path, w]));
+	const implWt = new Map(impl.worktrees.filter((w) => w.id !== "main").map((w) => [w.path, w]));
+	for (const [path, ow] of oracleWt) {
+		const iw = implWt.get(path);
 		if (iw === undefined) {
-			push(`worktree:${id}`, ow.headRef ?? ow.headSha, "<missing>", "error");
+			push(`worktree:${path}`, ow.headRef ?? ow.headSha, "<missing>", "error");
 			continue;
 		}
-		compareWorktree(ow, iw, id === "main" ? "" : `worktree:${id}:`, push);
+		compareWorktree(ow, iw, `worktree:${path}:`, push);
 	}
-	for (const [id, iw] of implWt) {
-		if (!oracleWt.has(id)) {
-			push(`worktree:${id}`, "<missing>", iw.headRef ?? iw.headSha, "error");
+	for (const [path, iw] of implWt) {
+		if (!oracleWt.has(path)) {
+			push(`worktree:${path}`, "<missing>", iw.headRef ?? iw.headSha, "error");
 		}
 	}
 

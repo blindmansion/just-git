@@ -169,11 +169,16 @@ export class WorktreeTargeter {
 			this.sticky = null;
 			return null;
 		}
-		// Continue an active sticky run if its worktree still exists.
+		// Continue an active sticky run if its worktree still exists. Sticky is
+		// keyed by the stable admin id, but addressed by the worktree's *current*
+		// path (which `worktree move` can change).
 		const active = this.sticky;
-		if (active && active.remaining > 0 && worktrees.some((w) => w.id === active.id)) {
-			active.remaining -= 1;
-			return new WorktreeView(harness, `../${active.id}`);
+		if (active && active.remaining > 0) {
+			const held = worktrees.find((w) => w.id === active.id);
+			if (held) {
+				active.remaining -= 1;
+				return new WorktreeView(harness, held.path);
+			}
 		}
 		// Otherwise decide afresh whether to enter a worktree this step.
 		this.sticky = null;
@@ -182,7 +187,7 @@ export class WorktreeTargeter {
 		const [lo, hi] = this.stickiness;
 		const run = hi > 1 ? this.rng.int(lo, hi) : 1;
 		this.sticky = { id: wt.id, remaining: run - 1 };
-		return new WorktreeView(harness, `../${wt.id}`);
+		return new WorktreeView(harness, wt.path);
 	}
 }
 

@@ -84,14 +84,18 @@ const VALUE_FLAGS = new Set([
 const CLI_VFS_ROOT = "/repo";
 
 /**
- * Resolve a worktree id (default "main" = primary) to the checkout dir on each
- * replayed side. Linked worktrees are `../<id>` siblings on both the real temp
- * tree and the VFS (matching the recording convention), so the same selector
- * resolves both. For "main" the dirs are the replay roots themselves.
+ * Resolve a worktree key (default "main" = primary) to the checkout dir on each
+ * replayed side. Linked worktrees are keyed by their normalized anchor-relative
+ * path (e.g. `wt-x`, `sub/wt-x`) — exactly what the `worktree:<path>:` divergence
+ * fields name. The checkout sits at `../<path>` relative to the repo root on
+ * both the real temp tree and the VFS. For "main" the dirs are the replay roots.
  */
-function resolveWorktreeDirs(repoDir: string, id: string): { realDir: string; vfsDir: string } {
-	if (id === "main") return { realDir: repoDir, vfsDir: CLI_VFS_ROOT };
-	const selector = `../${id}`;
+function resolveWorktreeDirs(
+	repoDir: string,
+	worktreePath: string,
+): { realDir: string; vfsDir: string } {
+	if (worktreePath === "main") return { realDir: repoDir, vfsDir: CLI_VFS_ROOT };
+	const selector = `../${worktreePath}`;
 	return {
 		realDir: resolveWorktreeRoot(repoDir, selector),
 		vfsDir: resolveWorktreeRoot(CLI_VFS_ROOT, selector),
@@ -615,10 +619,11 @@ Examples:
 		workTreeHash: implMain?.workTreeHash ?? "",
 	});
 
-	// Note any linked worktrees so the divergence field prefixes make sense.
+	// Note any linked worktrees so the `worktree:<path>:` divergence field
+	// prefixes make sense (the path is the key; the admin id is shown alongside).
 	const linked = snap.worktrees.filter((w) => w.id !== "main");
 	if (linked.length > 0) {
-		console.log(`\nLinked worktrees: ${linked.map((w) => w.id).join(", ")}`);
+		console.log(`\nLinked worktrees: ${linked.map((w) => `${w.path} (id ${w.id})`).join(", ")}`);
 	}
 
 	// ── State divergences ────────────────────────────────────────
@@ -750,10 +755,10 @@ async function cmdDiffWorktree(args: string[]): Promise<void> {
 	const worktreeId = getOpt("--worktree") ?? "main";
 
 	if (!dbName || !traceArg || !stepArg) {
-		console.log(`Usage: bun oracle diff-worktree <name> <trace> <step> [--limit N] [--worktree id]
+		console.log(`Usage: bun oracle diff-worktree <name> <trace> <step> [--limit N] [--worktree path]
 
 Compare oracle(real git) and impl virtual worktree files at a step.
-Use --worktree <id> to diff a linked worktree's checkout (default: main).
+Use --worktree <path> to diff a linked worktree's checkout (default: main).
 
 Examples:
   diff-worktree basic 5 42
@@ -804,10 +809,10 @@ async function cmdDiffFile(args: string[]): Promise<void> {
 	const worktreeId = getOpt("--worktree") ?? "main";
 
 	if (!dbName || !traceArg || !stepArg || !path) {
-		console.log(`Usage: bun oracle diff-file <name> <trace> <step> <path> [--worktree id]
+		console.log(`Usage: bun oracle diff-file <name> <trace> <step> <path> [--worktree path]
 
 Show first line-level mismatch for a specific file path.
-Use --worktree <id> to resolve the path in a linked worktree (default: main).
+Use --worktree <path> to resolve the path in a linked worktree (default: main).
 
 Examples:
   diff-file basic 5 42 src/app.ts
@@ -870,10 +875,10 @@ async function cmdConflictBlobs(args: string[]): Promise<void> {
 	const worktreeId = getOpt("--worktree") ?? "main";
 
 	if (!dbName || !traceArg || !stepArg || !path) {
-		console.log(`Usage: bun oracle conflict-blobs <name> <trace> <step> <path> [--full] [--worktree id]
+		console.log(`Usage: bun oracle conflict-blobs <name> <trace> <step> <path> [--full] [--worktree path]
 
 Print stage 1/2/3 index blob info for a conflicted path in oracle and impl.
-Use --worktree <id> to read a linked worktree's private index (default: main).
+Use --worktree <path> to read a linked worktree's private index (default: main).
 
 Examples:
   conflict-blobs cherry-pick 149 281 initial.txt
@@ -1999,11 +2004,11 @@ Commands:
   inspect <name> <trace> <step>     Examine a step with oracle + impl diff
   trace-context <name> <trace> <step> [--before N]
                                     Show prior commands around a step
-  diff-worktree <name> <trace> <step> [--limit N] [--worktree id]
+  diff-worktree <name> <trace> <step> [--limit N] [--worktree path]
                                     Diff oracle vs impl worktree paths
-  diff-file <name> <trace> <step> <path> [--worktree id]
+  diff-file <name> <trace> <step> <path> [--worktree path]
                                     Show first mismatch for one file
-  conflict-blobs <name> <trace> <step> <path> [--full] [--worktree id]
+  conflict-blobs <name> <trace> <step> <path> [--full] [--worktree path]
                                     Show stage 1/2/3 blob details
   rebuild <name> <trace> <step>     Materialize a real git repo at a step
   planner-inspect <name> <trace> <step>

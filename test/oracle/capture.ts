@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { normalizeWorktreePath } from "../random/file-gen";
 import { GitCommandError, RealGit } from "../real-git";
 import { normalizeRebaseField } from "./compare";
 
@@ -324,15 +325,18 @@ async function captureStashHashes(
  * The full observable state of a single worktree: its private HEAD, index,
  * checkout contents, operation state, and lock/prunable/existence status.
  *
- * The main worktree is `id: "main"`; linked worktrees are keyed by their
- * admin-dir id (the directory name under `.git/worktrees`). That id is
- * path-agnostic, so a real-git temp checkout and the in-memory VFS produce
- * comparable keys. (Tier 3 will switch the comparison key to a normalized
- * path and retire the id convention.)
+ * The main worktree is `id: "main"` / `path: "."`; linked worktrees are
+ * compared by their normalized `path` (relative to the anchor — the parent of
+ * the main worktree), so the same checkout matches across the real-git temp
+ * tree and the in-memory VFS regardless of admin-dir id. `id` is retained for
+ * debug output but is no longer the comparison key (Tier 3).
  */
 export interface WorktreeSnapshot {
 	id: string;
-	/** Checkout path; "." for the main worktree. Not compared in Tier 1. */
+	/**
+	 * Anchor-relative normalized checkout path; "." for the main worktree. This
+	 * is the comparison key for linked worktrees (see {@link normalizeWorktreePath}).
+	 */
 	path: string;
 	/** e.g. "ref: refs/heads/main", or null when detached. */
 	headRef: string | null;
@@ -415,6 +419,12 @@ async function captureWorktrees(
 		return worktrees;
 	}
 
+	// Real git writes a realpath'd absolute path into each worktree's `gitdir`
+	// (e.g. `/private/var/...` while `repoDir` is `/var/...` on macOS). Anchor
+	// the path normalization on the realpath'd repo dir so the resulting
+	// relative key (`wt-x`, `sub/wt-x`) matches the symlink-free VFS side.
+	const anchorRepoDir = await realpath(repoDir).catch(() => repoDir);
+
 	for (const id of ids.sort()) {
 		const adminDir = `${worktreesDir}/${id}`;
 		const headContent = (await safeReadFile(`${adminDir}/HEAD`))?.trim();
@@ -425,6 +435,7 @@ async function captureWorktrees(
 		const gitlinkRaw = await safeReadFile(`${adminDir}/gitdir`);
 		const gitlink = gitlinkRaw?.trim() || null;
 		const wtPath = gitlink ? dirname(gitlink) : "";
+		const normalizedPath = wtPath ? normalizeWorktreePath(anchorRepoDir, wtPath) : "";
 
 		let prunable: string | null = null;
 		if (!gitlink) prunable = "gitdir file does not exist";
@@ -441,7 +452,7 @@ async function captureWorktrees(
 
 		worktrees.push({
 			id,
-			path: wtPath,
+			path: normalizedPath,
 			headRef,
 			headSha,
 			index,

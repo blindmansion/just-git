@@ -21,6 +21,7 @@ import {
 	type FileOpTarget,
 	generateAndApplyFileOps,
 	generateServerCommitFiles,
+	normalizeWorktreePath,
 	resolveAllFiles,
 	resolveWorktreeRoot,
 } from "../random/file-gen";
@@ -356,13 +357,14 @@ async function captureVirtualWorktrees(
 			refStore: new FileSystemRefStore(fs, info.adminDir, ctx.commonDir),
 		};
 		const wtPath = info.path || "";
+		const normalizedPath = wtPath ? normalizeWorktreePath(VFS_ROOT, wtPath) : "";
 		const [index, operation] = await Promise.all([
 			captureVirtualIndex(wtCtx),
 			captureVirtualOperation(fs, info.adminDir),
 		]);
 		result.push({
 			id,
-			path: wtPath,
+			path: normalizedPath,
 			headRef: info.branch ? `ref: ${info.branch}` : null,
 			headSha: info.head,
 			index,
