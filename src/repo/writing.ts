@@ -4,7 +4,13 @@ import { serializeCommit } from "../lib/objects/commit.ts";
 import { serializeTag } from "../lib/objects/tag.ts";
 import { parseTree, serializeTree } from "../lib/objects/tree.ts";
 import { resolveRef as _resolveRef } from "../lib/refs.ts";
-import type { GitRepo, Identity, ObjectType, TreeEntry } from "../lib/types.ts";
+import {
+	type Signer,
+	resolveSdkSigning,
+	signCommitPayload,
+	signTagPayload,
+} from "../lib/signing.ts";
+import type { Commit, GitRepo, Identity, ObjectType, Tag, TreeEntry } from "../lib/types.ts";
 
 // ── Identity helpers ────────────────────────────────────────────────
 
@@ -66,6 +72,15 @@ export interface CreateCommitOptions {
 	 * pointing to the branch — matching `git init` + `git commit`.
 	 */
 	branch?: string;
+	/**
+	 * Signing policy (three-state). `undefined` defers to the mechanism: a
+	 * per-call `signer` implies signing. `true` forces signing (resolving
+	 * `signer ?? ctx.signer`, throwing if neither is set). `false` forces
+	 * the commit unsigned.
+	 */
+	sign?: boolean;
+	/** Per-call signer override. Falls back to the repo's ambient `signer`. */
+	signer?: Signer;
 }
 
 /**
@@ -79,14 +94,17 @@ export interface CreateCommitOptions {
 export async function createCommit(repo: GitRepo, options: CreateCommitOptions): Promise<string> {
 	const author = toIdentity(options.author);
 	const committer = options.committer ? toIdentity(options.committer) : author;
-	const content = serializeCommit({
+	const commit: Commit = {
 		type: "commit",
 		tree: options.tree,
 		parents: options.parents,
 		author,
 		committer,
 		message: options.message,
-	});
+	};
+	const signer = resolveSdkSigning(repo, options);
+	commit.gpgsig = await signCommitPayload(commit, signer);
+	const content = serializeCommit(commit);
 	const hash = await writeObject(repo, "commit", content);
 
 	if (options.branch) {
@@ -109,6 +127,13 @@ export interface CreateAnnotatedTagOptions {
 	message: string;
 	/** Type of the target object. Defaults to `"commit"`. */
 	targetType?: ObjectType;
+	/**
+	 * Signing policy (three-state), as in {@link CreateCommitOptions.sign}.
+	 * A signed tag appends the armored block after the message body.
+	 */
+	sign?: boolean;
+	/** Per-call signer override. Falls back to the repo's ambient `signer`. */
+	signer?: Signer;
 }
 
 /**
@@ -129,14 +154,17 @@ export async function createAnnotatedTag(
 	options: CreateAnnotatedTagOptions,
 ): Promise<string> {
 	const tagger = toIdentity(options.tagger);
-	const content = serializeTag({
+	const tag: Tag = {
 		type: "tag",
 		object: options.target,
 		objectType: options.targetType ?? "commit",
 		name: options.name,
 		tagger,
 		message: options.message,
-	});
+	};
+	const signer = resolveSdkSigning(repo, options);
+	tag.gpgsig = await signTagPayload(tag, signer);
+	const content = serializeTag(tag);
 	const hash = await writeObject(repo, "tag", content);
 	await repo.refStore.writeRef(`refs/tags/${options.name}`, { type: "direct", hash });
 	return hash;
@@ -164,6 +192,10 @@ export interface BuildCommitOptions {
 	 * with only the specified files.
 	 */
 	branch?: string;
+	/** Signing policy (three-state), as in {@link CreateCommitOptions.sign}. */
+	sign?: boolean;
+	/** Per-call signer override. Falls back to the repo's ambient `signer`. */
+	signer?: Signer;
 }
 
 /** Result of {@link buildCommit}. */
@@ -231,14 +263,17 @@ export async function buildCommit(
 	const committer = options.committer ? toIdentity(options.committer) : author;
 	const parents = parentHash ? [parentHash] : [];
 
-	const content = serializeCommit({
+	const commit: Commit = {
 		type: "commit",
 		tree: treeHash,
 		parents,
 		author,
 		committer,
 		message: options.message,
-	});
+	};
+	const signer = resolveSdkSigning(repo, options);
+	commit.gpgsig = await signCommitPayload(commit, signer);
+	const content = serializeCommit(commit);
 	const hash = await writeObject(repo, "commit", content);
 
 	return { hash, parentHash };
@@ -260,6 +295,10 @@ export interface CommitOptions {
 	committer?: CommitIdentity;
 	/** Branch to commit to. Parent is auto-resolved from the current branch tip. */
 	branch: string;
+	/** Signing policy (three-state), as in {@link CreateCommitOptions.sign}. */
+	sign?: boolean;
+	/** Per-call signer override. Falls back to the repo's ambient `signer`. */
+	signer?: Signer;
 }
 
 /**

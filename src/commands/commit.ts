@@ -11,6 +11,7 @@ import {
 	requireCommitter,
 	requireGitContext,
 	requireWorkTree,
+	resolveCommandSigner,
 	stripCommentLines,
 } from "../lib/command-utils.ts";
 import { formatCommitSummary } from "../lib/commit-summary.ts";
@@ -23,6 +24,7 @@ import {
 } from "../lib/index.ts";
 import { hashObject, readCommit, writeObject } from "../lib/object-db.ts";
 import { serializeCommit } from "../lib/objects/commit.ts";
+import { commitSigningPayload } from "../lib/signing.ts";
 import {
 	clearCherryPickState,
 	clearMergeState,
@@ -62,6 +64,8 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 			amend: f().describe("Amend the previous commit"),
 			noEdit: f().describe("Use the previous commit message without editing"),
 			all: f().alias("a").describe("Auto-stage modified and deleted tracked files"),
+			gpgSign: f().alias("S").describe("GPG-sign the commit"),
+			noGpgSign: f().describe("Do not GPG-sign the commit"),
 		},
 		handler: async (args, ctx) => {
 			const messages = args.message as string[];
@@ -360,15 +364,22 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 				}
 			}
 
+			// Resolve signing policy: -S / --no-gpg-sign override commit.gpgsign.
+			const cliSign = args.gpgSign ? true : args.noGpgSign ? false : undefined;
+			const signer = await resolveCommandSigner(gitCtx, ext, cliSign, "commit.gpgsign");
+			if (isCommandError(signer)) return signer;
+
 			// Build and write the commit object
-			const commitContent = serializeCommit({
-				type: "commit",
+			const commitObject = {
+				type: "commit" as const,
 				tree: treeHash,
 				parents,
 				author,
 				committer,
 				message,
-			});
+			};
+			const gpgsig = signer ? await signer(commitSigningPayload(commitObject)) : undefined;
+			const commitContent = serializeCommit({ ...commitObject, gpgsig });
 			const commitHash = await writeObject(gitCtx, "commit", commitContent);
 
 			// Persist the index now that the commit succeeded.

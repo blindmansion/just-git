@@ -1802,7 +1802,9 @@ async function computeRecursiveMergeBase(
 		// Build virtual tree from merge result, resolving conflicts
 		virtualTree = await resolveVirtualBaseConflicts(ctx, result, callDepth);
 
-		// Create virtual commit with parents=[prev, next]
+		// Create virtual commit with parents=[prev, next].
+		// Internal-only (the synthetic merge base); intentionally never
+		// signed — do not wire a context-default signer in here.
 		const virtualCommitContent = serializeCommit({
 			type: "commit",
 			tree: virtualTree,

@@ -616,6 +616,24 @@ export async function unsetConfigValue(ctx: GitContext, dottedKey: string): Prom
 	return true;
 }
 
+/**
+ * Normalize a config value to a boolean using git's truthiness rules.
+ *
+ * `true`/`yes`/`on`/`1` and a bare valueless key (stored as `""`) are
+ * `true`; `false`/`no`/`off`/`0` are `false`. Anything else (and
+ * `undefined`) returns `undefined`, leaving the caller to decide — e.g.
+ * fall back to a per-call flag or a hard-coded default. Lets
+ * `commit.gpgsign=false` and `--no-gpg-sign` share one code path instead
+ * of ad-hoc `=== "true"` checks.
+ */
+export function configBool(value: string | undefined): boolean | undefined {
+	if (value === undefined) return undefined;
+	const s = value.trim().toLowerCase();
+	if (s === "true" || s === "yes" || s === "on" || s === "1" || s === "") return true;
+	if (s === "false" || s === "no" || s === "off" || s === "0") return false;
+	return undefined;
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 /**

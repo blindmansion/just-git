@@ -394,6 +394,8 @@ Options:
   --amend                 Amend the previous commit
   --no-edit               Use the previous commit message without editing
   -a, --all               Auto-stage modified and deleted tracked files
+  -S, --gpg-sign          GPG-sign the commit
+  --no-gpg-sign           Do not GPG-sign the commit
 ```
 
 ## git config
@@ -647,6 +649,8 @@ Options:
   --squash                Apply merge result to worktree/index without creating a merge commit
   --edit                  Edit the merge message (no-op, accepted for compatibility)
   -m, --message <string>  Merge commit message
+  --verify-signatures     Verify the tip commit of the side branch is signed
+  --no-verify-signatures  Do not verify the side branch signature
 ```
 
 ## git mv
@@ -679,12 +683,14 @@ Arguments:
   branch  Remote branch
 
 Options:
-  -r, --rebase      Rebase instead of merge
-  --no-rebase       Merge instead of rebase
-  --ff-only         Only fast-forward
-  --no-ff           Create a merge commit even for fast-forwards
-  --depth <number>  Limit fetching to the specified number of commits
-  --unshallow       Convert a shallow repository to a complete one
+  -r, --rebase            Rebase instead of merge
+  --no-rebase             Merge instead of rebase
+  --ff-only               Only fast-forward
+  --no-ff                 Create a merge commit even for fast-forwards
+  --depth <number>        Limit fetching to the specified number of commits
+  --unshallow             Convert a shallow repository to a complete one
+  --verify-signatures     Verify the tip commit being merged is signed
+  --no-verify-signatures  Do not verify the merged commit's signature
 ```
 
 ## git push
@@ -1149,6 +1155,8 @@ Arguments:
 
 Options:
   -a, --annotate          Make an annotated tag object
+  -s, --sign              Make a GPG-signed, annotated tag
+  --no-sign               Override tag.gpgSign and do not sign the tag
   -m, --message <string>  Tag message
   -d, --delete            Delete a tag
   -f, --force             Replace an existing tag

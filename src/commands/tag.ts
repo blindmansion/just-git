@@ -8,9 +8,12 @@ import {
 	requireCommitter,
 	requireGitContext,
 	requireRevision,
+	resolveCommandSigner,
 } from "../lib/command-utils.ts";
+import { configBool, getConfigValue } from "../lib/config.ts";
 import { readCommit, readObject, readTag, writeObject } from "../lib/object-db.ts";
 import { serializeTag } from "../lib/objects/tag.ts";
+import { tagSigningPayload } from "../lib/signing.ts";
 import {
 	deleteRef,
 	isValidTagName,
@@ -32,6 +35,8 @@ export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 		],
 		options: {
 			annotate: f().alias("a").describe("Make an annotated tag object"),
+			sign: f().alias("s").describe("Make a GPG-signed, annotated tag"),
+			noSign: f().describe("Override tag.gpgSign and do not sign the tag"),
 			message: o.string().alias("m").describe("Tag message"),
 			delete: f().alias("d").describe("Delete a tag"),
 			force: f().alias("f").describe("Replace an existing tag"),
@@ -101,7 +106,7 @@ export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 					return fatal(`tag '${args.name}' already exists`);
 				}
 
-				const isAnnotated = args.annotate || args.message;
+				const isAnnotated = args.annotate || args.message || args.sign;
 
 				let newRefHash: string;
 				if (isAnnotated) {
@@ -114,14 +119,29 @@ export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 
 					const message = ensureTrailingNewline(args.message);
 
-					const tagContent = serializeTag({
-						type: "tag",
+					// Resolve signing: -s / --no-sign override config. tag.gpgSign
+					// (the config gate inside resolveCommandSigner) signs every
+					// annotated tag. tag.forceSignAnnotated signs only *implicitly*
+					// annotated tags (-m / -F without -a) — an explicit --annotate
+					// takes precedence over it, matching git's documented behavior.
+					let signPolicy = args.sign ? true : args.noSign ? false : undefined;
+					if (signPolicy === undefined && !args.annotate) {
+						const force = configBool(await getConfigValue(gitCtx, "tag.forcesignannotated"));
+						if (force) signPolicy = true;
+					}
+					const signer = await resolveCommandSigner(gitCtx, ext, signPolicy, "tag.gpgsign");
+					if (isCommandError(signer)) return signer;
+
+					const tagObject = {
+						type: "tag" as const,
 						object: targetHash,
-						objectType: "commit",
+						objectType: "commit" as const,
 						name: args.name,
 						tagger,
 						message,
-					});
+					};
+					const gpgsig = signer ? await signer(tagSigningPayload(tagObject)) : undefined;
+					const tagContent = serializeTag({ ...tagObject, gpgsig });
 					const tagHash = await writeObject(gitCtx, "tag", tagContent);
 					await updateRef(gitCtx, refName, tagHash);
 					newRefHash = tagHash;

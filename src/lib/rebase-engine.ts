@@ -12,6 +12,7 @@ import {
 	getSequencerDirtyState,
 	isCommandError,
 	requireCommitter,
+	resolveCommandSigner,
 	sequencerDirtyWorktreeError,
 	stripCommentLines,
 	writeCommitAndAdvance,
@@ -27,6 +28,7 @@ import {
 } from "./index.ts";
 import { type MergeDriver, mergeOrtNonRecursive } from "./merge-ort.ts";
 import { readCommit } from "./object-db.ts";
+import type { Signer } from "./signing.ts";
 import {
 	clearAllOperationState,
 	clearDetachPoint,
@@ -502,7 +504,9 @@ export async function performRebase(
 	await updateRef(gitCtx, "ORIG_HEAD", origHead);
 
 	// ── Run the pick loop ────────────────────────────────────
-	const pickResult = await runPickLoop(gitCtx, env, ext?.mergeDriver);
+	const signer = await resolveCommandSigner(gitCtx, ext, undefined, "commit.gpgsign");
+	if (isCommandError(signer)) return signer;
+	const pickResult = await runPickLoop(gitCtx, env, ext?.mergeDriver, signer);
 	if (skipStderr) {
 		pickResult.stderr = skipStderr + pickResult.stderr;
 	}
@@ -515,6 +519,7 @@ async function runPickLoop(
 	gitCtx: GitContext,
 	env: Map<string, string>,
 	mergeDriver?: MergeDriver,
+	signer?: Signer,
 ): Promise<CommandResult> {
 	const stderrLines: string[] = [];
 	const stdoutLines: string[] = [];
@@ -533,7 +538,7 @@ async function runPickLoop(
 		// records attempted picks, not just successful ones).
 		await advanceRebaseState(gitCtx);
 
-		const result = await pickOneCommit(gitCtx, entry, env, mergeDriver);
+		const result = await pickOneCommit(gitCtx, entry, env, mergeDriver, signer);
 
 		if (result.conflict) {
 			if (result.rescheduleCurrent) {
@@ -584,6 +589,7 @@ async function pickOneCommit(
 	entry: RebaseTodoEntry,
 	env: Map<string, string>,
 	mergeDriver?: MergeDriver,
+	signer?: Signer,
 ): Promise<PickResult> {
 	const theirsHash = entry.hash;
 	const theirsCommit = await readCommit(gitCtx, theirsHash);
@@ -806,6 +812,7 @@ async function pickOneCommit(
 		theirsCommit.author,
 		committerResult,
 		theirsCommit.message,
+		signer,
 	);
 
 	await logRef(gitCtx, env, "HEAD", headHash, pickCommitHash, `rebase (pick): ${entry.subject}`);
@@ -1060,6 +1067,14 @@ export async function handleContinue(
 				parents.push(mergeHeadHash);
 			}
 
+			const continueSigner = await resolveCommandSigner(
+				gitCtx,
+				undefined,
+				undefined,
+				"commit.gpgsign",
+			);
+			if (isCommandError(continueSigner)) return continueSigner;
+
 			const commitHash = await writeCommitAndAdvance(
 				gitCtx,
 				indexTree,
@@ -1067,6 +1082,7 @@ export async function handleContinue(
 				authorSource.author,
 				committer,
 				message,
+				continueSigner,
 			);
 
 			// Clean up merge state if present

@@ -3,6 +3,7 @@ import {
 	readBlobContent,
 	readCommit as _readCommit,
 	readObject,
+	readTag as _readTag,
 } from "../lib/object-db.ts";
 import { parseTree } from "../lib/objects/tree.ts";
 import {
@@ -12,6 +13,13 @@ import {
 	tagNameFromRef,
 } from "../lib/refs.ts";
 import { resolveRevisionRepo } from "../lib/rev-parse.ts";
+import {
+	type Verifier,
+	type VerificationResult,
+	commitSigningPayload,
+	getRepoVerifier,
+	tagSigningPayload,
+} from "../lib/signing.ts";
 import { flattenTree as _flattenTree } from "../lib/tree-ops.ts";
 import { compilePattern, grepContent, type GrepMatch } from "../lib/grep.ts";
 import type { Commit, GitRepo, RefEntry, TreeEntry } from "../lib/types.ts";
@@ -127,6 +135,59 @@ export async function readTree(repo: GitRepo, treeHash: string): Promise<TreeEnt
 		throw new Error(`Expected tree object, got ${raw.type}`);
 	}
 	return parseTree(raw.content).entries;
+}
+
+// ── Signature verification ──────────────────────────────────────────
+
+export type { VerificationResult };
+
+/**
+ * Verify a commit's signature.
+ *
+ * Resolves `ref` (a hash or revision expression) to a commit, reconstructs
+ * the exact signed bytes via {@link commitSigningPayload}, and delegates to
+ * a {@link Verifier}. The verifier is the explicit argument when given,
+ * otherwise the ambient one on the repo (set via `createGit({ signing })`).
+ *
+ * Returns `null` when the commit carries no signature. Throws when a
+ * signature is present but no verifier is available.
+ */
+export async function verifyCommit(
+	repo: GitRepo,
+	ref: string,
+	verifier?: Verifier,
+): Promise<VerificationResult | null> {
+	const hash = (await resolveRevisionRepo(repo, ref)) ?? ref;
+	const commit = await _readCommit(repo, hash);
+	if (commit.gpgsig === undefined) return null;
+	const v = verifier ?? getRepoVerifier(repo);
+	if (!v) throw new Error("no signature verifier configured");
+	return v(commitSigningPayload(commit), commit.gpgsig);
+}
+
+/**
+ * Verify an annotated tag's signature.
+ *
+ * Resolves `ref` (a tag name, hash, or revision expression) to a tag
+ * object, reconstructs the signed bytes via {@link tagSigningPayload}, and
+ * delegates to a {@link Verifier}. Returns `null` for lightweight tags or
+ * unsigned annotated tags. Throws when a signature is present but no
+ * verifier is available.
+ */
+export async function verifyTag(
+	repo: GitRepo,
+	ref: string,
+	verifier?: Verifier,
+): Promise<VerificationResult | null> {
+	const hash =
+		(await resolveRevisionRepo(repo, ref)) ?? (await _resolveRef(repo, `refs/tags/${ref}`)) ?? ref;
+	const raw = await readObject(repo, hash);
+	if (raw.type !== "tag") return null; // lightweight tag → no signature
+	const tag = await _readTag(repo, hash);
+	if (tag.gpgsig === undefined) return null;
+	const v = verifier ?? getRepoVerifier(repo);
+	if (!v) throw new Error("no signature verifier configured");
+	return v(tagSigningPayload(tag), tag.gpgsig);
 }
 
 /**

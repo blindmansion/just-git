@@ -15,6 +15,7 @@ import {
 	requireGitContext,
 	requireHead,
 	requireNoConflicts,
+	resolveCommandSigner,
 	stripCommentLines,
 	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
@@ -333,6 +334,9 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 			const committer = await requireCommitter(gitCtx, ctx.env);
 			if (isCommandError(committer)) return committer;
 
+			const cpSigner = await resolveCommandSigner(gitCtx, ext, undefined, "commit.gpgsign");
+			if (isCommandError(cpSigner)) return cpSigner;
+
 			const commitHash = await writeCommitAndAdvance(
 				gitCtx,
 				treeHash,
@@ -340,6 +344,7 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 				theirsCommit.author,
 				committer,
 				cherryPickMessage,
+				cpSigner,
 			);
 
 			await clearCherryPickState(gitCtx);
@@ -513,6 +518,9 @@ async function handleContinue(
 
 	const message = ensureTrailingNewline(messageText);
 
+	const continueSigner = await resolveCommandSigner(gitCtx, undefined, undefined, "commit.gpgsign");
+	if (isCommandError(continueSigner)) return continueSigner;
+
 	const commitHash = await writeCommitAndAdvance(
 		gitCtx,
 		treeHash,
@@ -520,6 +528,7 @@ async function handleContinue(
 		originalCommit.author,
 		committer,
 		message,
+		continueSigner,
 	);
 
 	await clearCherryPickState(gitCtx);

@@ -14,6 +14,8 @@ import {
 	requireGitContext,
 	requireHead,
 	requireNoConflicts,
+	requireVerifiedCommit,
+	resolveCommandSigner,
 	stripCommentLines,
 	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
@@ -53,6 +55,8 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 			squash: f().describe("Apply merge result to worktree/index without creating a merge commit"),
 			edit: f().describe("Edit the merge message (no-op, accepted for compatibility)"),
 			message: o.string().alias("m").describe("Merge commit message"),
+			verifySignatures: f().describe("Verify the tip commit of the side branch is signed"),
+			noVerifySignatures: f().describe("Do not verify the side branch signature"),
 		},
 		transformArgs: (tokens) => tokens.filter((t) => t !== "--ff"),
 		handler: async (args, ctx) => {
@@ -111,6 +115,17 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 				return err(`merge: ${branch} - not something we can merge\n`);
 			}
 			const theirsHash = await peelToCommit(gitCtx, resolvedHash);
+
+			// --verify-signatures: the side branch tip must carry a valid signature.
+			const cliVerify = args.verifySignatures ? true : args.noVerifySignatures ? false : undefined;
+			const verifyErr = await requireVerifiedCommit(
+				gitCtx,
+				ext,
+				theirsHash,
+				cliVerify,
+				"merge.verifysignatures",
+			);
+			if (verifyErr) return verifyErr;
 
 			// Resolve effective FF mode: CLI flags override merge.ff config
 			let noFf = !!args.noFf;
@@ -344,6 +359,9 @@ async function handleThreeWayMerge(
 	});
 	if (isRejection(mcRej)) return { stdout: "", stderr: mcRej.message ?? "", exitCode: 1 };
 
+	const signer = await resolveCommandSigner(gitCtx, ext, undefined, "commit.gpgsign");
+	if (isCommandError(signer)) return signer;
+
 	const commitHash = await writeCommitAndAdvance(
 		gitCtx,
 		treeHash,
@@ -351,6 +369,7 @@ async function handleThreeWayMerge(
 		author,
 		committer,
 		mergeMsg,
+		signer,
 	);
 
 	const refName = head?.type === "symbolic" ? head.target : "HEAD";
@@ -574,6 +593,9 @@ async function handleContinue(
 	if (isRejection(mcRejContinue))
 		return { stdout: "", stderr: mcRejContinue.message ?? "", exitCode: 1 };
 
+	const signer = await resolveCommandSigner(gitCtx, ext, undefined, "commit.gpgsign");
+	if (isCommandError(signer)) return signer;
+
 	const commitHash = await writeCommitAndAdvance(
 		gitCtx,
 		treeHash,
@@ -581,6 +603,7 @@ async function handleContinue(
 		author,
 		committer,
 		message,
+		signer,
 	);
 	await clearMergeState(gitCtx);
 

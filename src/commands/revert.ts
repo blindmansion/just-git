@@ -16,6 +16,7 @@ import {
 	requireGitContext,
 	requireHead,
 	requireNoConflicts,
+	resolveCommandSigner,
 	stripCommentLines,
 	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
@@ -37,6 +38,7 @@ import {
 import { logRef } from "../lib/reflog.ts";
 import { branchNameFromRef, readHead, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
 import { generateLongFormStatus } from "../lib/status-format.ts";
+import type { Signer } from "../lib/signing.ts";
 import { buildTreeFromIndex, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, Identity, ObjectId } from "../lib/types.ts";
 import { applyWorktreeOps, mergeAbort } from "../lib/unpack-trees.ts";
@@ -281,6 +283,9 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 			const committer = await requireCommitter(gitCtx, ctx.env);
 			if (isCommandError(committer)) return committer;
 
+			const revertSigner = await resolveCommandSigner(gitCtx, ext, undefined, "commit.gpgsign");
+			if (isCommandError(revertSigner)) return revertSigner;
+
 			const commitOutput = await finalizeRevertCommit({
 				gitCtx,
 				env: ctx.env,
@@ -289,6 +294,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				treeHash,
 				author,
 				committer,
+				signer: revertSigner,
 				commitMessage,
 				displayMessage: revertMessage,
 				reflogMessage: `revert: ${firstLine(revertMessage)}`,
@@ -438,6 +444,9 @@ async function handleContinue(
 
 	const message = ensureTrailingNewline(messageText);
 
+	const continueSigner = await resolveCommandSigner(gitCtx, undefined, undefined, "commit.gpgsign");
+	if (isCommandError(continueSigner)) return continueSigner;
+
 	const commitOutput = await finalizeRevertCommit({
 		gitCtx,
 		env,
@@ -446,6 +455,7 @@ async function handleContinue(
 		treeHash,
 		author,
 		committer,
+		signer: continueSigner,
 		commitMessage: message,
 		displayMessage: messageText,
 		reflogMessage: `commit: ${firstLine(message)}`,
@@ -528,6 +538,7 @@ async function finalizeRevertCommit(options: {
 	commitMessage: string;
 	displayMessage: string;
 	reflogMessage: string;
+	signer?: Signer;
 }): Promise<{ commitHash: ObjectId; stdout: string }> {
 	const {
 		gitCtx,
@@ -540,6 +551,7 @@ async function finalizeRevertCommit(options: {
 		commitMessage,
 		displayMessage,
 		reflogMessage,
+		signer,
 	} = options;
 
 	const commitHash = await writeCommitAndAdvance(
@@ -549,6 +561,7 @@ async function finalizeRevertCommit(options: {
 		author,
 		committer,
 		commitMessage,
+		signer,
 	);
 
 	await clearRevertState(gitCtx);

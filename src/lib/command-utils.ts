@@ -1,5 +1,6 @@
 import type { FileSystem } from "../fs.ts";
 import type { GitExtensions } from "../git.ts";
+import { configBool, getConfigValue } from "./config.ts";
 import { getAuthor, getCommitter } from "./identity.ts";
 import { hasConflicts, readIndex, writeIndex } from "./index.ts";
 import { peelToCommit, readCommit, writeObject } from "./object-db.ts";
@@ -9,6 +10,7 @@ import { logRef } from "./reflog.ts";
 import { advanceBranchRef, readHead, resolveHead, resolveRef } from "./refs.ts";
 import { findRepo } from "./repo.ts";
 import { resolveRevision } from "./rev-parse.ts";
+import { type Signer, commitSigningPayload } from "./signing.ts";
 import { flattenTreeToMap } from "./tree-ops.ts";
 import type { Commit, GitContext, GitRepo, Identity, Index, ObjectId } from "./types.ts";
 import { applyWorktreeOps, mergeAbort } from "./unpack-trees.ts";
@@ -342,6 +344,11 @@ export async function handleOperationAbort(
 /**
  * Serialize a commit, write it to the object store, and advance the branch ref.
  * Returns the new commit hash.
+ *
+ * Shared chokepoint behind merge / rebase / cherry-pick / revert / pull. When
+ * `sign` is provided, the commit is signed (the `gpgsig` header is filled from
+ * {@link commitSigningPayload}); resolve it once per command via
+ * {@link resolveCommandSigner}.
  */
 export async function writeCommitAndAdvance(
 	ctx: GitRepo,
@@ -350,18 +357,85 @@ export async function writeCommitAndAdvance(
 	author: Identity,
 	committer: Identity,
 	message: string,
+	sign?: Signer,
 ): Promise<ObjectId> {
-	const content = serializeCommit({
+	const commit: Commit = {
 		type: "commit",
 		tree,
 		parents,
 		author,
 		committer,
 		message,
-	});
+	};
+	if (sign) commit.gpgsig = await sign(commitSigningPayload(commit));
+	const content = serializeCommit(commit);
 	const hash = await writeObject(ctx, "commit", content);
 	await advanceBranchRef(ctx, hash);
 	return hash;
+}
+
+/**
+ * Resolve whether a write command should sign, and with what.
+ *
+ * Layers CLI flag over config over default (mirroring how `merge.ff` /
+ * `pull.rebase` resolve): `cliSign ?? configBool(<configKey>) ?? false`.
+ * When signing is required, resolves the operator-injected signer
+ * (`ext.signer`); if none is configured, returns a {@link CommandResult}
+ * error (`gpg failed to sign the data`) rather than silently emitting an
+ * unsigned object — matching git, and keeping a locked `commit.gpgsign=true`
+ * sandbox honest.
+ *
+ * Returns:
+ * - `undefined` — do not sign.
+ * - a {@link Signer} — sign with it.
+ * - a {@link CommandResult} — error (use {@link isCommandError} to detect).
+ */
+export async function resolveCommandSigner(
+	gitCtx: GitContext,
+	ext: GitExtensions | undefined,
+	cliSign: boolean | undefined,
+	configKey = "commit.gpgsign",
+): Promise<Signer | CommandResult | undefined> {
+	const shouldSign = cliSign ?? configBool(await getConfigValue(gitCtx, configKey)) ?? false;
+	if (!shouldSign) return undefined;
+	const signer = ext?.signer ?? gitCtx.signer;
+	if (!signer) return err("error: gpg failed to sign the data\n", 128);
+	return signer;
+}
+
+/**
+ * Enforce `--verify-signatures` for a commit being integrated (merge / pull).
+ *
+ * Resolves `cliVerify ?? configBool(<configKey>) ?? false`. When verification
+ * is on, reads the commit, reconstructs the signed bytes, and runs the
+ * operator-injected verifier. Returns a {@link CommandResult} error (so the
+ * caller aborts) when verification is required but cannot pass — no verifier
+ * configured, no signature present, or a bad/expired/revoked/uncheckable
+ * verdict. A `good` or `unknown` (valid but untrusted) verdict passes,
+ * mirroring git's acceptance set. Returns `null` when nothing blocks.
+ */
+export async function requireVerifiedCommit(
+	gitCtx: GitContext,
+	ext: GitExtensions | undefined,
+	commitHash: ObjectId,
+	cliVerify: boolean | undefined,
+	configKey: string,
+): Promise<CommandResult | null> {
+	const verify = cliVerify ?? configBool(await getConfigValue(gitCtx, configKey)) ?? false;
+	if (!verify) return null;
+	const verifier = ext?.verifier ?? gitCtx.verifier;
+	if (!verifier) return fatal("no signature verifier configured");
+	const commit = await readCommit(gitCtx, commitHash);
+	// git identifies the commit by its abbreviated (7-char) hash in these messages.
+	const short = abbreviateHash(commitHash);
+	if (commit.gpgsig === undefined) {
+		return fatal(`Commit ${short} does not have a GPG signature.`);
+	}
+	const result = await verifier(commitSigningPayload(commit), commit.gpgsig);
+	if (result.status !== "good" && result.status !== "unknown") {
+		return fatal(`Commit ${short} has a ${result.status} GPG signature.`);
+	}
+	return null;
 }
 
 /**

@@ -176,6 +176,8 @@ export async function saveStash(
 	const headFirstLine = firstLine(headCommit.message);
 
 	// ── 1. Create index commit (I) ─────────────────────────────────
+	// Stash commits (index/untracked/stash) are internal bookkeeping and are
+	// intentionally never signed — do not wire a context-default signer here.
 	const indexCommitMessage = `index on ${branchName}: ${headShort} ${headFirstLine}\n`;
 	const indexCommitContent = serializeCommit({
 		type: "commit",

@@ -13,6 +13,7 @@ import {
 } from "./hooks.ts";
 import type { MergeDriver } from "./lib/merge-ort.ts";
 import { findRepo as findRepoOnFs } from "./lib/repo.ts";
+import type { Signer, Verifier } from "./lib/signing.ts";
 import type { CredentialCache } from "./lib/transport/remote.ts";
 import type { GitContext, ObjectStore, RefStore, RemoteResolver } from "./lib/types.ts";
 
@@ -162,6 +163,21 @@ export interface GitOptions {
 	 * or `null` to fall back to the default diff3 algorithm.
 	 */
 	mergeDriver?: MergeDriver;
+	/**
+	 * Pluggable commit/tag signing and verification. Both halves are
+	 * independent and optional:
+	 *
+	 * - `signer` (write side) turns a canonical payload into an armored
+	 *   signature block. Often needs subprocess/agent authority.
+	 * - `verifier` (read side) turns a payload + signature into a trust
+	 *   verdict. Frequently pure-TS and sandbox-safe, so it can be supplied
+	 *   even when signing is not.
+	 *
+	 * Whether signing/verification actually happens is gated by git config
+	 * (`commit.gpgsign`, `tag.gpgsign`, `merge.verifysignatures`, ...) and
+	 * per-command flags — the same policy/mechanism split git uses.
+	 */
+	signing?: { signer?: Signer; verifier?: Verifier };
 }
 
 /**
@@ -192,6 +208,10 @@ export interface GitExtensions {
 	onProgress?: ProgressCallback;
 	/** Custom merge driver for content conflicts. */
 	mergeDriver?: MergeDriver;
+	/** Commit/tag signer (write side). */
+	signer?: Signer;
+	/** Commit/tag signature verifier (read side). */
+	verifier?: Verifier;
 }
 
 /** Simplified context for {@link Git.exec}. */
@@ -290,6 +310,8 @@ export class Git {
 			credentialCache: new Map(),
 			onProgress: options?.onProgress,
 			mergeDriver: options?.mergeDriver,
+			signer: options?.signing?.signer,
+			verifier: options?.signing?.verifier,
 			...(options?.objectStore ? { objectStore: options.objectStore } : {}),
 			...(options?.refStore ? { refStore: options.refStore } : {}),
 			...gitDirExt,

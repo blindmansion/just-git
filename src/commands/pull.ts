@@ -11,6 +11,8 @@ import {
 	requireCommitter,
 	requireGitContext,
 	requireHead,
+	requireVerifiedCommit,
+	resolveCommandSigner,
 	sequencerDirtyWorktreeError,
 	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
@@ -78,6 +80,8 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			noFf: f().describe("Create a merge commit even for fast-forwards"),
 			depth: o.number().describe("Limit fetching to the specified number of commits"),
 			unshallow: f().describe("Convert a shallow repository to a complete one"),
+			verifySignatures: f().describe("Verify the tip commit being merged is signed"),
+			noVerifySignatures: f().describe("Do not verify the merged commit's signature"),
 		},
 		handler: async (args, ctx) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
@@ -314,6 +318,17 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 
 			// ── Integration phase ────────────────────────────────────
 			const theirsHash = fetchHeadHash;
+
+			// --verify-signatures: the fetched tip must carry a valid signature.
+			const cliVerify = args.verifySignatures ? true : args.noVerifySignatures ? false : undefined;
+			const verifyErr = await requireVerifiedCommit(
+				gitCtx,
+				ext,
+				theirsHash,
+				cliVerify,
+				"pull.verifysignatures",
+			);
+			if (verifyErr) return verifyErr;
 
 			// Real git's merge deletes MERGE_MSG at the start of cmd_merge(),
 			// before any outcome check. This matters when a revert/cherry-pick
@@ -571,6 +586,8 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			if (isRejection(preMergeCommitRej)) {
 				return { stdout: "", stderr: preMergeCommitRej.message ?? "", exitCode: 1 };
 			}
+			const pullSigner = await resolveCommandSigner(gitCtx, ext, undefined, "commit.gpgsign");
+			if (isCommandError(pullSigner)) return pullSigner;
 			const commitHash = await writeCommitAndAdvance(
 				gitCtx,
 				treeHash,
@@ -578,6 +595,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				author,
 				committer,
 				mergeMsg,
+				pullSigner,
 			);
 
 			await ext?.hooks?.postMerge?.({

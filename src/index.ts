@@ -61,5 +61,7 @@ export type {
 } from "./lib/types.ts";
 export type { MergeDriver, MergeDriverResult } from "./lib/merge-ort.ts";
 export type { PackObject } from "./lib/pack/packfile.ts";
+export { commitSigningPayload, tagSigningPayload } from "./lib/signing.ts";
+export type { Signer, Verifier, VerificationResult } from "./lib/signing.ts";
 export type { HttpAuth } from "./lib/transport/transport.ts";
 export { findRepo } from "./lib/repo.ts";

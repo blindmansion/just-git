@@ -15,11 +15,22 @@ export {
 	resolveRef,
 	revParse,
 	tagNameFromRef,
+	verifyCommit,
+	verifyTag,
 	type GrepFileMatch,
 	type GrepMatch,
 	type GrepOptions,
 	type HeadInfo,
+	type VerificationResult,
 } from "./reading.ts";
+
+// Signing & verification (the byte-for-byte sign/verify contract)
+export {
+	commitSigningPayload,
+	tagSigningPayload,
+	type Signer,
+	type Verifier,
+} from "../lib/signing.ts";
 
 // Diffing and history
 export {

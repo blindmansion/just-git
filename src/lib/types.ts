@@ -9,6 +9,7 @@ import type {
 	ProgressCallback,
 } from "../hooks.ts";
 import type { PackObject } from "./pack/packfile.ts";
+import type { Signer, Verifier } from "./signing.ts";
 import type { CredentialCache } from "./transport/remote.ts";
 
 // ── Object identifiers ──────────────────────────────────────────────
@@ -58,6 +59,16 @@ export interface Commit {
 	author: Identity;
 	committer: Identity;
 	message: string;
+	/**
+	 * Armored signature block (e.g. `-----BEGIN PGP SIGNATURE-----`),
+	 * stored verbatim with continuation-line indentation already stripped.
+	 * Present only for signed commits. Serialized as the `gpgsig` header
+	 * (after `committer`, before the blank line) with continuation lines
+	 * re-indented by one space. The bytes that get signed/verified are
+	 * produced by `commitSigningPayload` (the commit text with this header
+	 * removed).
+	 */
+	gpgsig?: string;
 }
 
 export interface Tag {
@@ -70,6 +81,14 @@ export interface Tag {
 	name: string;
 	tagger: Identity;
 	message: string;
+	/**
+	 * Armored signature block for a signed annotated tag. Unlike a commit's
+	 * `gpgsig` header, a tag signature is appended verbatim after the message
+	 * body (this is how real git stores it). The signed/verified bytes are
+	 * produced by `tagSigningPayload` (the tag text without this trailing
+	 * block). Present only for signed tags.
+	 */
+	gpgsig?: string;
 }
 
 // ── File modes ──────────────────────────────────────────────────────
@@ -266,6 +285,17 @@ export interface GitContext extends GitRepo {
 	credentialCache?: CredentialCache;
 	/** Callback for server progress messages (sideband band-2). */
 	onProgress?: ProgressCallback;
+	/**
+	 * Operator-provided commit/tag signer (write side). Ambient default for
+	 * SDK writers and the fallback the command layer signs with when policy
+	 * (`commit.gpgsign` / `tag.gpgsign` / `-S`) requires a signature.
+	 */
+	signer?: Signer;
+	/**
+	 * Operator-provided signature verifier (read side). Used by
+	 * `verifyCommit` / `verifyTag` and the `--verify-signatures` paths.
+	 */
+	verifier?: Verifier;
 }
 
 // ── Diff result types ───────────────────────────────────────────────
