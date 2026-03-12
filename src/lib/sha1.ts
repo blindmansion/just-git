@@ -35,11 +35,10 @@ function detectHasher(): HasherFactory {
 	}
 
 	// Node.js / Deno (Deno supports node:crypto via its Node compat layer).
-	// Variable indirection defeats static analysis in bundlers that would
-	// otherwise try to resolve/polyfill the import for browser targets.
+	// String construction hides the specifier from bundlers that would
+	// otherwise try to resolve/polyfill it for browser targets.
 	try {
-		const id = "node:crypto";
-		const nodeCrypto = require(id);
+		const nodeCrypto = require(["node", "crypto"].join(":"));
 		if (typeof nodeCrypto.createHash === "function") {
 			return () => {
 				const h = nodeCrypto.createHash("sha1");

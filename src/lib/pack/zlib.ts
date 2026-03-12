@@ -9,12 +9,13 @@ interface ZlibProvider {
 }
 
 function detect(): ZlibProvider {
-	// node:zlib works on Bun, Node, and Deno (Node compat layer).
-	// Variable indirection defeats static analysis in bundlers that would
-	// otherwise try to resolve/polyfill the import for browser targets.
+	// Prefer synchronous node:zlib when available (Bun, Node, Deno).
+	// String construction hides the specifier from bundlers that would
+	// otherwise try to resolve/polyfill it for browser targets — Bun's
+	// bundler in particular sees through variable indirection and
+	// `__require` wrappers.
 	try {
-		const id = "node:zlib";
-		const zlib = require(id);
+		const zlib = require(["node", "zlib"].join(":"));
 		if (typeof zlib.deflateSync === "function" && typeof zlib.inflateSync === "function") {
 			return {
 				deflate: (data) => Promise.resolve(new Uint8Array(zlib.deflateSync(data))),
