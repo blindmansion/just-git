@@ -1,0 +1,53 @@
+{
+	"name": "just-git",
+	"version": "0.1.0",
+	"description": "Git implementation for virtual bash environments. Pure TypeScript, zero dependencies.",
+	"keywords": [
+		"agent",
+		"git",
+		"just-bash",
+		"sandbox",
+		"vfs",
+		"virtual"
+	],
+	"homepage": "https://github.com/blindmansion/just-git",
+	"license": "MIT",
+	"author": "blindmansion",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/blindmansion/just-git.git"
+	},
+	"files": [
+		"dist"
+	],
+	"type": "module",
+	"sideEffects": false,
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsup",
+		"size": "tsup && bun -e \"const{gzipSync}=require('zlib'),{readFileSync}=require('fs'),b=readFileSync('dist/index.js'),g=gzipSync(b);console.log('dist/index.js  '+((b.length/1024).toFixed(1))+' kB');console.log('gzipped        '+((g.length/1024).toFixed(1))+' kB')\"",
+		"prepublishOnly": "bun run build",
+		"check": "bunx tsc --noEmit && oxfmt && oxlint --fix",
+		"oracle": "bun test/oracle/cli.ts",
+		"knip": "knip",
+		"knip:prod": "knip --config knip-production.json",
+		"gen-docs": "bun run scripts/gen-lib-reference.ts > FILE_REFERENCE.md && bun run scripts/gen-cli-help.ts > CLI.md"
+	},
+	"devDependencies": {
+		"@types/bun": "latest",
+		"@types/node": "^25.4.0",
+		"just-bash": "^2.9.7",
+		"knip": "^5.86.0",
+		"oxfmt": "^0.38.0",
+		"oxlint": "^1.53.0",
+		"tsup": "^8.5.1",
+		"typescript": "^5.9.3"
+	}
+}

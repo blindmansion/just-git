@@ -1,0 +1,146 @@
+import { describe, expect, test } from "bun:test";
+import { TEST_ENV as ENV } from "../fixtures";
+import { createTestBash, pathExists, readFile, setupClonePair } from "../util";
+
+describe("git pull", () => {
+	test("fast-forward pull updates working tree", async () => {
+		const bash = await setupClonePair();
+
+		// Add a commit on the remote
+		await bash.exec("cd /remote && echo 'v2' > README.md && git add . && git commit -m 'update'");
+
+		const result = await bash.exec("git pull", { cwd: "/local" });
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("Fast-forward");
+
+		// Working tree should be updated
+		expect(await readFile(bash.fs, "/local/README.md")).toBe("v2\n");
+	});
+
+	test("pull fetches and updates tracking refs", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+
+		await bash.exec("git pull", { cwd: "/local" });
+
+		// Remote tracking ref should be updated
+		const remoteMainBefore = await readFile(bash.fs, "/remote/.git/refs/heads/main");
+		const trackingRef = await readFile(bash.fs, "/local/.git/refs/remotes/origin/main");
+		expect(trackingRef?.trim()).toBe(remoteMainBefore?.trim());
+	});
+
+	test("already up-to-date pull", async () => {
+		const bash = await setupClonePair();
+
+		const result = await bash.exec("git pull", { cwd: "/local" });
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("Already up to date");
+	});
+
+	test("three-way merge pull", async () => {
+		const bash = await setupClonePair();
+
+		// Make different changes on remote and local
+		await bash.exec(
+			"cd /remote && echo 'remote change' > remote.txt && git add . && git commit -m 'remote commit'",
+		);
+		await bash.exec(
+			"cd /local && echo 'local change' > local.txt && git add . && git commit -m 'local commit'",
+		);
+
+		const result = await bash.exec("git pull", { cwd: "/local" });
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("Merge made by");
+
+		// Both files should exist
+		expect(await readFile(bash.fs, "/local/remote.txt")).toBe("remote change\n");
+		expect(await readFile(bash.fs, "/local/local.txt")).toBe("local change\n");
+	});
+
+	test("pull with conflict", async () => {
+		const bash = await setupClonePair();
+
+		// Make conflicting changes
+		await bash.exec(
+			"cd /remote && echo 'remote version' > README.md && git add . && git commit -m 'remote change'",
+		);
+		await bash.exec(
+			"cd /local && echo 'local version' > README.md && git add . && git commit -m 'local change'",
+		);
+
+		const result = await bash.exec("git pull", { cwd: "/local" });
+		expect(result.exitCode).toBe(1);
+		expect(result.stdout).toContain("CONFLICT");
+		expect(result.stdout).toContain("Automatic merge failed");
+
+		// MERGE_HEAD should exist
+		expect(await pathExists(bash.fs, "/local/.git/MERGE_HEAD")).toBe(true);
+	});
+
+	test("--ff-only fails on diverged branches", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /remote && echo remote > remote.txt && git add . && git commit -m remote");
+		await bash.exec("cd /local && echo local > local.txt && git add . && git commit -m local");
+
+		const result = await bash.exec("git pull --ff-only", {
+			cwd: "/local",
+		});
+		expect(result.exitCode).toBe(128);
+		expect(result.stderr).toContain("Not possible to fast-forward");
+	});
+
+	test("--ff-only succeeds on fast-forward", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+
+		const result = await bash.exec("git pull --ff-only", {
+			cwd: "/local",
+		});
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("Fast-forward");
+	});
+
+	test("pull uses tracking branch config", async () => {
+		const bash = await setupClonePair();
+
+		// Clone already sets up tracking config for main
+		await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+
+		// Should work without specifying remote/branch
+		const result = await bash.exec("git pull", { cwd: "/local" });
+		expect(result.exitCode).toBe(0);
+	});
+
+	test("pull preserves commit history", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m second");
+		await bash.exec("cd /remote && echo v3 > README.md && git add . && git commit -m third");
+
+		await bash.exec("git pull", { cwd: "/local" });
+
+		const log = await bash.exec("git log --oneline", { cwd: "/local" });
+		expect(log.stdout.trim().split("\n").length).toBe(3);
+	});
+
+	test("fails when not a repo", async () => {
+		const bash = createTestBash({ env: ENV, cwd: "/tmp" });
+		await bash.exec("mkdir -p /tmp");
+		const result = await bash.exec("git pull", { cwd: "/tmp" });
+		expect(result.exitCode).toBe(128);
+	});
+
+	test("writes FETCH_HEAD", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+
+		await bash.exec("git pull", { cwd: "/local" });
+
+		const fetchHead = await readFile(bash.fs, "/local/.git/FETCH_HEAD");
+		expect(fetchHead).toBeDefined();
+	});
+});

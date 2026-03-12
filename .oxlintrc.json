@@ -1,0 +1,9 @@
+{
+	"$schema": "./node_modules/oxlint/configuration_schema.json",
+	"rules": {
+		"unicorn/no-new-array": "off",
+		"unicorn/no-useless-spread": "off",
+		"no-control-regex": "off",
+		"@typescript-eslint/no-this-alias": "off"
+	}
+}
