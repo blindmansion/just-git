@@ -22,8 +22,8 @@ type IdentityRole = keyof typeof ROLE_ENV;
  * Precedence:
  *   1. Locked identity override (operator-level, if set)
  *   2. GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL env vars
- *   3. Unlocked identity override (fallback)
- *   4. user.name / user.email in .git/config
+ *   3. user.name / user.email in .git/config
+ *   4. Unlocked identity override (fallback)
  */
 export function getAuthor(ctx: GitContext, env: Map<string, string>): Promise<Identity> {
 	return resolveIdentity(ctx, env, "author");
@@ -35,8 +35,8 @@ export function getAuthor(ctx: GitContext, env: Map<string, string>): Promise<Id
  * Precedence:
  *   1. Locked identity override (operator-level, if set)
  *   2. GIT_COMMITTER_NAME / GIT_COMMITTER_EMAIL env vars
- *   3. Unlocked identity override (fallback)
- *   4. user.name / user.email in .git/config
+ *   3. user.name / user.email in .git/config
+ *   4. Unlocked identity override (fallback)
  */
 export function getCommitter(ctx: GitContext, env: Map<string, string>): Promise<Identity> {
 	return resolveIdentity(ctx, env, "committer");
@@ -59,8 +59,8 @@ async function resolveIdentity(
 		};
 	}
 
-	const name = env.get(keys.name) ?? override?.name ?? (await getConfigValue(ctx, "user.name"));
-	const email = env.get(keys.email) ?? override?.email ?? (await getConfigValue(ctx, "user.email"));
+	const name = env.get(keys.name) ?? (await getConfigValue(ctx, "user.name")) ?? override?.name;
+	const email = env.get(keys.email) ?? (await getConfigValue(ctx, "user.email")) ?? override?.email;
 
 	if (!name || !email) {
 		throw new Error(

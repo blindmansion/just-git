@@ -96,6 +96,7 @@ export async function initRepository(
 				repositoryformatversion: "0",
 				filemode: "true",
 				bare: bare ? "true" : "false",
+				...(bare ? {} : { logallrefupdates: "true" }),
 			},
 		};
 		await fs.writeFile(join(gitDir, "config"), serializeConfig(config));
