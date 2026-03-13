@@ -268,8 +268,6 @@ By type:
 By pattern:
   rename-detection-ambiguity  (53 total: 53 known)
     sets: kitchen5: 20, kitchen3: 11, ...
-  diff3-ambiguity  (39 total: 39 known)
-    sets: kitchen5: 33, ...
   ...
 
 FAIL details:
@@ -305,7 +303,6 @@ When a trace fails, the test runner invokes `post-mortem.ts` to classify the div
 | ---------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `rename-detection-ambiguity` | Hybrid                    | Can be output-only or stateful depending on branch (stateful branches include index/worktree divergence from rename pairing). |
 | `rebase-planner-match`       | Output-only (current use) | Planner commits match, but output formatting/diagnostics differ.                                                              |
-| `diff3-ambiguity`            | Stateful                  | Conflict-marker/worktree-level differences from different LCS alignment choices.                                              |
 
 **Output-only patterns handled by `checker.ts`** (tolerated, don't block traces):
 

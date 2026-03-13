@@ -23,11 +23,7 @@ import { OracleStore } from "./store.ts";
 
 // ── Types ────────────────────────────────────────────────────────
 
-type PostMortemPattern =
-	| "rebase-planner-match"
-	| "rename-detection-ambiguity"
-	| "diff3-ambiguity"
-	| "unknown";
+type PostMortemPattern = "rebase-planner-match" | "rename-detection-ambiguity" | "unknown";
 
 interface PostMortemResult {
 	/** Classification of the divergence. "unknown" = genuine bug or unrecognized. */
@@ -441,13 +437,6 @@ async function analyzeRebaseTodoDivergence(
 
 		const implState = await readRebaseState(gitCtx);
 		if (!implState) {
-			if (oracleTodo.length > 0) {
-				return {
-					pattern: "diff3-ambiguity",
-					explanation:
-						"rebase completed in impl but oracle still has conflicts — merge resolution difference",
-				};
-			}
 			return {
 				pattern: "unknown",
 				explanation: "no rebase state found in virtual impl",
@@ -457,30 +446,6 @@ async function analyzeRebaseTodoDivergence(
 
 		// Compare
 		if (JSON.stringify(oracleTodo) === JSON.stringify(implTodo)) {
-			// Todo lists match — check for diff3-ambiguity patterns
-			if (divergences) {
-				const stateErrors = divergences.filter(
-					(d) => d.severity === "error" && !isOutputField(d.field),
-				);
-
-				if (stateErrors.length > 0 && stateErrors.every((d) => d.field === "work_tree")) {
-					return {
-						pattern: "diff3-ambiguity",
-						explanation:
-							"rebase todo matches but worktree content differs — diff3 LCS tie-breaking produces different conflict marker alignment",
-					};
-				}
-
-				const opDiv = stateErrors.find((d) => d.field === "active_operation");
-				if (opDiv && opDiv.expected === "rebase" && opDiv.actual === null) {
-					return {
-						pattern: "diff3-ambiguity",
-						explanation:
-							"rebase todo matches but impl completed rebase — merge resolution difference (our diff3 resolves cleanly where git conflicts)",
-					};
-				}
-			}
-
 			// For stateful rebase divergences, check oracle stdout for rename hints.
 			if (divergences) {
 				const stateErrors = divergences.filter(
@@ -536,16 +501,11 @@ async function analyzeRebaseTodoDivergence(
 // ── Merge analysis ───────────────────────────────────────────────
 
 /**
- * Analyze merge divergences to detect known limitation patterns:
- *
- * 1. Rename detection ambiguity: When multiple files share the same
- *    content hash, Git's hashmap iteration order determines which
- *    pairing is selected. Our rename detection may pick a different
- *    pairing, leading to different merge results.
- *
- * 2. diff3 LCS tie-breaking: When the only state divergence is
- *    work_tree, the merge produced the same conflict structure but
- *    different content within conflict regions.
+ * Analyze merge divergences to detect rename detection ambiguity:
+ * when multiple files share the same content hash, Git's hashmap
+ * iteration order determines which pairing is selected. Our rename
+ * detection may pick a different pairing, leading to different
+ * merge results.
  */
 async function analyzeMergeDivergence(
 	dbPath: string,
@@ -600,20 +560,6 @@ async function analyzeMergeDivergence(
 			return {
 				pattern: "rename-detection-ambiguity",
 				explanation: "index blob sha differs — cascading merge-ort difference",
-			};
-		}
-	}
-
-	// diff3 LCS tie-breaking ambiguity: worktree-only divergence.
-	if (divergences) {
-		const sErrors = divergences.filter(
-			(d) => d.severity === "error" && !OUTPUT_FIELDS.has(d.field),
-		);
-		if (sErrors.length > 0 && sErrors.every((d) => d.field === "work_tree")) {
-			return {
-				pattern: "diff3-ambiguity",
-				explanation:
-					"worktree content differs but merge structure matches — diff3 LCS tie-breaking produces different alignment for repeated content lines",
 			};
 		}
 	}
