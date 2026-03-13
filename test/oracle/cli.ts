@@ -7,6 +7,7 @@
  *   test       Replay traces against our implementation and compare
  *   inspect    Examine a specific step — shows oracle + impl diff
  *   rebuild    Materialize a real git repo at a specific step
+ *   summary    Aggregate WARN/KNOWN/FAIL counts across all test result logs
  *
  * Examples:
  *   bun oracle generate basic --seeds 1-20 --steps 300
@@ -17,7 +18,7 @@
  */
 
 import { Database } from "bun:sqlite";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -1495,6 +1496,166 @@ async function cmdClean(_args: string[]): Promise<void> {
 	console.log("\nDone.");
 }
 
+// ── summary ──────────────────────────────────────────────────────
+
+interface SummaryEntry {
+	set: string;
+	trace: number;
+	type: "WARN" | "KNOWN" | "FAIL";
+	command: string;
+	detail: string;
+	pattern: string | null;
+}
+
+function cmdSummary(_args: string[]): void {
+	const entries: SummaryEntry[] = [];
+	let dirs: string[];
+	try {
+		dirs = readdirSync(DATA_DIR, { withFileTypes: true })
+			.filter((d) => d.isDirectory())
+			.map((d) => d.name)
+			.sort();
+	} catch {
+		console.log(`No data directory found at ${DATA_DIR}`);
+		process.exit(1);
+	}
+
+	for (const dir of dirs) {
+		const logPath = join(DATA_DIR, dir, "test-results.log");
+		let content: string;
+		try {
+			content = readFileSync(logPath, "utf-8");
+		} catch {
+			continue;
+		}
+
+		const lines = content.split("\n");
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i];
+			const m = line.match(/^\s+(WARN|KNOWN|FAIL)\s+trace\s+(\d+)\s+(.+)$/);
+			if (!m) continue;
+			const type = m[1] as SummaryEntry["type"];
+			const trace = parseInt(m[2], 10);
+			const command = m[3].trim();
+
+			const detailLine = (lines[i + 1] ?? "").trim();
+			const colonIdx = detailLine.indexOf(":");
+			const pattern = colonIdx > 0 ? detailLine.slice(0, colonIdx).trim() : null;
+
+			entries.push({ set: dir, trace, type, command, detail: detailLine, pattern });
+		}
+	}
+
+	if (entries.length === 0) {
+		console.log("No WARN/KNOWN/FAIL entries found in any test-results.log files.");
+		return;
+	}
+
+	const byType = new Map<string, SummaryEntry[]>();
+	const byPattern = new Map<string, SummaryEntry[]>();
+	for (const e of entries) {
+		let arr = byType.get(e.type);
+		if (!arr) {
+			arr = [];
+			byType.set(e.type, arr);
+		}
+		arr.push(e);
+
+		const key = e.pattern ?? e.detail;
+		let parr = byPattern.get(key);
+		if (!parr) {
+			parr = [];
+			byPattern.set(key, parr);
+		}
+		parr.push(e);
+	}
+
+	const setNames = [...new Set(entries.map((e) => e.set))].sort();
+
+	console.log("\n══ Oracle Test Results — Aggregate Summary ══\n");
+
+	// Per-set table
+	const setTable = setNames.map((name) => {
+		const se = entries.filter((e) => e.set === name);
+		return {
+			set: name,
+			warn: se.filter((e) => e.type === "WARN").length,
+			known: se.filter((e) => e.type === "KNOWN").length,
+			fail: se.filter((e) => e.type === "FAIL").length,
+		};
+	});
+
+	const maxName = Math.max(...setTable.map((r) => r.set.length), 3);
+	console.log("Per-set overview:");
+	console.log(`  ${"Set".padEnd(maxName)}  WARN  KNOWN  FAIL  Total`);
+	console.log(`  ${"─".repeat(maxName)}  ────  ─────  ────  ─────`);
+	for (const r of setTable) {
+		const total = r.warn + r.known + r.fail;
+		console.log(
+			`  ${r.set.padEnd(maxName)}  ${String(r.warn).padStart(4)}  ${String(r.known).padStart(5)}  ${String(r.fail).padStart(4)}  ${String(total).padStart(5)}`,
+		);
+	}
+	const totals = setTable.reduce(
+		(acc, r) => ({ warn: acc.warn + r.warn, known: acc.known + r.known, fail: acc.fail + r.fail }),
+		{ warn: 0, known: 0, fail: 0 },
+	);
+	console.log(`  ${"─".repeat(maxName)}  ────  ─────  ────  ─────`);
+	console.log(
+		`  ${"TOTAL".padEnd(maxName)}  ${String(totals.warn).padStart(4)}  ${String(totals.known).padStart(5)}  ${String(totals.fail).padStart(4)}  ${String(totals.warn + totals.known + totals.fail).padStart(5)}`,
+	);
+
+	// By type
+	console.log("\nBy type:");
+	for (const type of ["FAIL", "WARN", "KNOWN"] as const) {
+		console.log(`  ${type}: ${(byType.get(type) ?? []).length}`);
+	}
+
+	// By pattern
+	console.log("\nBy pattern:");
+	const sortedPatterns = [...byPattern.entries()].sort((a, b) => b[1].length - a[1].length);
+	for (const [pattern, group] of sortedPatterns) {
+		const types = {
+			WARN: group.filter((e) => e.type === "WARN").length,
+			KNOWN: group.filter((e) => e.type === "KNOWN").length,
+			FAIL: group.filter((e) => e.type === "FAIL").length,
+		};
+		const parts: string[] = [];
+		if (types.KNOWN) parts.push(`${types.KNOWN} known`);
+		if (types.WARN) parts.push(`${types.WARN} warn`);
+		if (types.FAIL) parts.push(`${types.FAIL} fail`);
+
+		console.log(`  ${pattern}  (${group.length} total: ${parts.join(", ")})`);
+		const perSet = new Map<string, number>();
+		for (const e of group) perSet.set(e.set, (perSet.get(e.set) ?? 0) + 1);
+		const setParts = [...perSet.entries()]
+			.sort((a, b) => b[1] - a[1])
+			.map(([s, n]) => `${s}: ${n}`);
+		console.log(`    sets: ${setParts.join(", ")}`);
+	}
+
+	// FAIL details
+	const fails = byType.get("FAIL") ?? [];
+	if (fails.length > 0) {
+		console.log("\nFAIL details:");
+		for (const f of fails) {
+			console.log(`  [${f.set}] trace ${f.trace}  ${f.command}`);
+			console.log(`    ${f.detail}`);
+		}
+	}
+
+	// WARN details
+	const warns = byType.get("WARN") ?? [];
+	if (warns.length > 0) {
+		console.log("\nWARN details:");
+		for (const w of warns) {
+			console.log(`  [${w.set}] trace ${w.trace}  ${w.command}`);
+			console.log(`    ${w.detail}`);
+		}
+	}
+
+	console.log("");
+}
+
 // ── Main dispatch ────────────────────────────────────────────────
 
 const USAGE = `Usage: bun oracle <command> [args]
@@ -1516,6 +1677,7 @@ Commands:
   rebuild <name> <trace> <step>     Materialize a real git repo at a step
   planner-inspect <name> <trace> <step>
                                     Compare planner output vs real git rev-list
+  summary                           Aggregate WARN/KNOWN/FAIL counts across all sets
   clean                             Remove leftover temp directories
 
 The first argument after the subcommand is always the database name.
@@ -1561,6 +1723,9 @@ if (import.meta.main) {
 			break;
 		case "planner-inspect":
 			await cmdPlannerInspect(rest);
+			break;
+		case "summary":
+			cmdSummary(rest);
 			break;
 		case "clean":
 			await cmdClean(rest);

@@ -238,6 +238,45 @@ bun oracle planner-inspect <name> <trace> <step>
 bun oracle planner-inspect rebase-heavy 5 42
 ```
 
+### `summary` — aggregate test results
+
+Scans all `test-results.log` files in `data/*/` and prints a summary of WARN, KNOWN, and FAIL counts by set and by pattern.
+
+```
+bun oracle summary
+```
+
+Example output:
+
+```
+══ Oracle Test Results — Aggregate Summary ══
+
+Per-set overview:
+  Set              WARN  KNOWN  FAIL  Total
+  ───────────────  ────  ─────  ────  ─────
+  clone-core          1      3     0      4
+  core                0      1     0      1
+  kitchen             0      5     0      5
+  ...
+  TOTAL               7     93     2    102
+
+By type:
+  FAIL: 2
+  WARN: 7
+  KNOWN: 93
+
+By pattern:
+  rename-detection-ambiguity  (53 total: 53 known)
+    sets: kitchen5: 20, kitchen3: 11, ...
+  diff3-ambiguity  (39 total: 39 known)
+    sets: kitchen5: 33, ...
+  ...
+
+FAIL details:
+  [kitchen3] trace 73  step 384/385  git repack
+    stdout: expected="" actual="Nothing new to pack.\n"
+```
+
 ### `clean` — remove leftover temp directories
 
 Removes stale oracle temp directories (`oracle-git-*`, `oracle-home-*`, `replay-git-*`, `replay-home-*`) from the system temp directory.
