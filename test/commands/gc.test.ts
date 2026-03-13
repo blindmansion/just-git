@@ -109,6 +109,21 @@ describe("git gc", () => {
 		expect(await pathExists(bash.fs, "/repo/.git/refs/tags/v1.0")).toBe(false);
 	});
 
+	test("preserves refs/ directory structure after packing (real git compat)", async () => {
+		const bash = createTestBash({ files: BASIC_REPO });
+		await bash.exec("git init");
+		await bash.exec("git add .");
+		await bash.exec('git commit -m "initial"', { env: TEST_ENV });
+		await bash.exec("git branch feature");
+		await bash.exec("git tag v1.0");
+
+		await bash.exec("git gc");
+
+		expect(await pathExists(bash.fs, "/repo/.git/refs")).toBe(true);
+		expect(await pathExists(bash.fs, "/repo/.git/refs/heads")).toBe(true);
+		expect(await pathExists(bash.fs, "/repo/.git/refs/tags")).toBe(true);
+	});
+
 	test("refs still work after packing", async () => {
 		const bash = createTestBash({ files: BASIC_REPO });
 		await bash.exec("git init");

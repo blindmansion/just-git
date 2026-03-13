@@ -249,6 +249,12 @@ export async function writePackedRefs(ctx: GitContext): Promise<void> {
 	}
 
 	await cleanEmptyRefDirs(ctx, join(ctx.gitDir, "refs"));
+
+	// Real git expects refs/, refs/heads/, and refs/tags/ to always exist.
+	const refsDir = join(ctx.gitDir, "refs");
+	await ctx.fs.mkdir(refsDir, { recursive: true });
+	await ctx.fs.mkdir(join(refsDir, "heads"), { recursive: true });
+	await ctx.fs.mkdir(join(refsDir, "tags"), { recursive: true });
 }
 
 /** Recursively remove empty directories under a ref directory tree. */
