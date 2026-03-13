@@ -3,7 +3,7 @@
 [![CI](https://github.com/blindmansion/just-git/actions/workflows/ci.yml/badge.svg)](https://github.com/blindmansion/just-git/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/just-git)](https://www.npmjs.com/package/just-git)
 
-Git implementation for virtual bash environments (particularly [just-bash](https://github.com/vercel-labs/just-bash)). Pure TypeScript, zero dependencies. Works in Node, Bun, Deno, and the browser. ~97 kB gzipped.
+Git implementation for virtual bash environments (particularly [just-bash](https://github.com/vercel-labs/just-bash)). Pure TypeScript, zero dependencies. Works in Node, Bun, Deno, and the browser. ~98 kB gzipped.
 
 ## Install
 

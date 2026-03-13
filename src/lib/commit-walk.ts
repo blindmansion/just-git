@@ -10,17 +10,28 @@ interface CommitEntry {
 	commit: Commit;
 }
 
-// ── Max-heap by committer timestamp ─────────────────────────────────
+// ── Max-heap by committer timestamp (FIFO for ties) ─────────────────
+//
+// Git's revision walker uses commit_list_insert_by_date — a sorted
+// linked list that maintains FIFO insertion order for equal timestamps.
+// A plain binary heap is unstable, so we add an epoch counter as a
+// secondary key: lower epoch (inserted earlier) = higher priority.
+
+interface HeapNode {
+	entry: CommitEntry;
+	epoch: number;
+}
 
 export class CommitHeap {
-	private heap: CommitEntry[] = [];
+	private heap: HeapNode[] = [];
+	private nextEpoch = 0;
 
 	get size(): number {
 		return this.heap.length;
 	}
 
 	push(entry: CommitEntry): void {
-		this.heap.push(entry);
+		this.heap.push({ entry, epoch: this.nextEpoch++ });
 		this.siftUp(this.heap.length - 1);
 	}
 
@@ -33,14 +44,21 @@ export class CommitHeap {
 			heap[0] = last;
 			this.siftDown(0);
 		}
-		return top;
+		return top.entry;
+	}
+
+	/** Is a higher-priority than b? (newer timestamp, or FIFO for ties) */
+	private higher(a: HeapNode, b: HeapNode): boolean {
+		const ta = a.entry.commit.committer.timestamp;
+		const tb = b.entry.commit.committer.timestamp;
+		return ta > tb || (ta === tb && a.epoch < b.epoch);
 	}
 
 	private siftUp(i: number): void {
 		const { heap } = this;
 		while (i > 0) {
 			const parent = (i - 1) >> 1;
-			if (heap[parent]!.commit.committer.timestamp >= heap[i]!.commit.committer.timestamp) break;
+			if (!this.higher(heap[i]!, heap[parent]!)) break;
 			[heap[parent], heap[i]] = [heap[i]!, heap[parent]!];
 			i = parent;
 		}
@@ -50,16 +68,14 @@ export class CommitHeap {
 		const { heap } = this;
 		const n = heap.length;
 		while (true) {
-			let largest = i;
+			let best = i;
 			const l = 2 * i + 1;
 			const r = 2 * i + 2;
-			if (l < n && heap[l]!.commit.committer.timestamp > heap[largest]!.commit.committer.timestamp)
-				largest = l;
-			if (r < n && heap[r]!.commit.committer.timestamp > heap[largest]!.commit.committer.timestamp)
-				largest = r;
-			if (largest === i) break;
-			[heap[i], heap[largest]] = [heap[largest]!, heap[i]!];
-			i = largest;
+			if (l < n && this.higher(heap[l]!, heap[best]!)) best = l;
+			if (r < n && this.higher(heap[r]!, heap[best]!)) best = r;
+			if (best === i) break;
+			[heap[i], heap[best]] = [heap[best]!, heap[i]!];
+			i = best;
 		}
 	}
 }

@@ -641,9 +641,7 @@ export class BatchChecker {
 		const resetRe = / reset: moving to [0-9a-f]{40}$/;
 		const splitNonEmpty = (s: string) => s.split("\n").filter(Boolean);
 		const filterAndNorm = (lines: string[]) =>
-			lines
-				.filter((l) => !resetRe.test(l))
-				.map((l) => l.replace(/HEAD@\{\d+\}/, "HEAD@{N}"));
+			lines.filter((l) => !resetRe.test(l)).map((l) => l.replace(/HEAD@\{\d+\}/, "HEAD@{N}"));
 
 		const eRaw = splitNonEmpty(expected);
 		const aRaw = splitNonEmpty(actual);
@@ -662,9 +660,7 @@ export class BatchChecker {
 		// the longer one (the missing tail was pushed out by `-n` truncation).
 		// Only tolerate as many missing tail entries as extra reset lines could
 		// have pushed out of the `-n` window.
-		const extraResets = Math.abs(
-			(eRaw.length - eFiltered.length) - (aRaw.length - aFiltered.length),
-		);
+		const extraResets = Math.abs(eRaw.length - eFiltered.length - (aRaw.length - aFiltered.length));
 		const tailDiff = Math.abs(eFiltered.length - aFiltered.length);
 		if (tailDiff > extraResets) return false;
 		const shorter = eFiltered.length < aFiltered.length ? eFiltered : aFiltered;
