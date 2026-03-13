@@ -8,7 +8,7 @@ import { createSandbox, jg, justBash, realGit, removeSandbox, writeToSandbox } f
  */
 async function setupConflictRepo() {
 	const sandbox = createSandbox();
-	await $`git init`.cwd(sandbox).quiet();
+	await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 	writeToSandbox(sandbox, "conflict.txt", "base\n");
 	writeToSandbox(sandbox, "clean.txt", "untouched\n");
 	await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
@@ -33,7 +33,7 @@ async function setupConflictRepo() {
  */
 async function setupRebaseConflictRepo() {
 	const sandbox = createSandbox();
-	await $`git init`.cwd(sandbox).quiet();
+	await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 	writeToSandbox(sandbox, "f.txt", "base\n");
 	await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
 	await $`git -c user.name="R" -c user.email="r@t" commit -m "base"`.cwd(sandbox).quiet();
@@ -438,7 +438,7 @@ describe("mid-operation: real git starts revert → just-git finishes", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git init`.cwd(sandbox).quiet();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 		writeToSandbox(sandbox, "f.txt", "original\n");
 		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
 		await $`git -c user.name="R" -c user.email="r@t" commit -m "original"`.cwd(sandbox).quiet();
@@ -451,7 +451,6 @@ describe("mid-operation: real git starts revert → just-git finishes", () => {
 		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
 		await $`git -c user.name="R" -c user.email="r@t" commit -m "change B"`.cwd(sandbox).quiet();
 
-		// Reverting "change A" will conflict with "change B"
 		const changeA = (await $`git rev-parse HEAD~1`.cwd(sandbox).quiet()).stdout.toString().trim();
 		const r = await $`git -c user.name="R" -c user.email="r@t" revert ${changeA}`
 			.cwd(sandbox)
@@ -489,7 +488,7 @@ describe("mid-operation: just-git starts revert → real git finishes", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git init`.cwd(sandbox).quiet();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 		writeToSandbox(sandbox, "f.txt", "original\n");
 		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
 		await $`git -c user.name="R" -c user.email="r@t" commit -m "original"`.cwd(sandbox).quiet();

@@ -12,6 +12,7 @@ export function createSandbox(): string {
 
 /** Remove a sandbox directory. */
 export function removeSandbox(path: string): void {
+	if (!path) return;
 	rmSync(path, { recursive: true, force: true });
 }
 

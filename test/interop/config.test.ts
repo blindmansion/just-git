@@ -6,7 +6,7 @@ describe("interop: config cross-reading", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git init`.cwd(sandbox).quiet();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 	});
 	afterAll(() => removeSandbox(sandbox));
 
@@ -65,7 +65,7 @@ describe("interop: config file format preservation", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git init`.cwd(sandbox).quiet();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 	});
 	afterAll(() => removeSandbox(sandbox));
 
@@ -124,7 +124,7 @@ describe("interop: config unset", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git init`.cwd(sandbox).quiet();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 		await realGit(sandbox, "config set test.key1 value1");
 		await realGit(sandbox, "config set test.key2 value2");
 	});
@@ -174,7 +174,7 @@ describe("interop: subsection config (remotes, branches)", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git init`.cwd(sandbox).quiet();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 		writeToSandbox(sandbox, "x.txt", "x\n");
 		await $`git -c user.name=R -c user.email=r@t add .`.cwd(sandbox).quiet();
 		await $`git -c user.name=R -c user.email=r@t commit -m "init"`.cwd(sandbox).quiet();
@@ -224,7 +224,7 @@ describe("interop: edge-case config values", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git init`.cwd(sandbox).quiet();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 	});
 	afterAll(() => removeSandbox(sandbox));
 

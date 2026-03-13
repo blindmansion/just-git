@@ -97,7 +97,7 @@ describe("interop: real git creates → just-git reads", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git init`.cwd(sandbox).quiet();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 		await $`git -c user.name="Real Git" -c user.email="real@test.com" commit --allow-empty -m "empty init"`
 			.cwd(sandbox)
 			.quiet();
@@ -153,7 +153,7 @@ describe("interop: mixed interleaved operations", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git init`.cwd(sandbox).quiet();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 		writeToSandbox(sandbox, "shared.txt", "line 1\n");
 		await $`git -c user.name="Real Git" -c user.email="real@test.com" add .`.cwd(sandbox).quiet();
 		await $`git -c user.name="Real Git" -c user.email="real@test.com" commit -m "real: line 1"`

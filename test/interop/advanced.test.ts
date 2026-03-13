@@ -10,7 +10,7 @@ describe("interop: real git gc → just-git reads", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git init`.cwd(sandbox).quiet();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 		for (let i = 0; i < 10; i++) {
 			writeFileSync(join(sandbox, "file.txt"), `version ${i}\n`);
 			await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
@@ -102,7 +102,7 @@ describe("interop: reflog", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git init`.cwd(sandbox).quiet();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 		writeToSandbox(sandbox, "f.txt", "a\n");
 		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
 		await $`git -c user.name="R" -c user.email="r@t" commit -m "real commit 1"`
@@ -141,7 +141,7 @@ describe("interop: index format compatibility", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git init`.cwd(sandbox).quiet();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 		await $`bash -c 'echo a > a.txt && echo b > b.txt && echo c > c.txt'`.cwd(sandbox).quiet();
 		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
 	});
@@ -190,7 +190,7 @@ describe("interop: binary files", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git init`.cwd(sandbox).quiet();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 		const binaryData = new Uint8Array(1024);
 		for (let i = 0; i < binaryData.length; i++) binaryData[i] = i % 256;
 		writeFileSync(join(sandbox, "binary.bin"), binaryData);
@@ -228,7 +228,7 @@ describe("interop: cross-tool merge conflict", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git init`.cwd(sandbox).quiet();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 		writeToSandbox(sandbox, "conflict.txt", "base\n");
 		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
 		await $`git -c user.name="R" -c user.email="r@t" commit -m "base"`.cwd(sandbox).quiet();
@@ -273,7 +273,7 @@ describe("interop: rebase", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git init`.cwd(sandbox).quiet();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 		writeToSandbox(sandbox, "f.txt", "base\n");
 		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
 		await $`git -c user.name="R" -c user.email="r@t" commit -m "base"`.cwd(sandbox).quiet();
@@ -319,7 +319,7 @@ describe("interop: cherry-pick", () => {
 	test("just-git cherry-picks from real git branch, fsck passes", async () => {
 		const sandbox = createSandbox();
 		try {
-			await $`git init`.cwd(sandbox).quiet();
+			await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 			writeToSandbox(sandbox, "f.txt", "base\n");
 			await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
 			await $`git -c user.name="R" -c user.email="r@t" commit -m "base"`.cwd(sandbox).quiet();
@@ -350,7 +350,7 @@ describe("interop: stash — both directions", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git init`.cwd(sandbox).quiet();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 		writeToSandbox(sandbox, "f.txt", "base\n");
 		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
 		await $`git -c user.name="R" -c user.email="r@t" commit -m "base"`.cwd(sandbox).quiet();
@@ -397,7 +397,7 @@ describe("interop: .gitignore", () => {
 	test("just-git respects .gitignore from real repo", async () => {
 		const sandbox = createSandbox();
 		try {
-			await $`git init`.cwd(sandbox).quiet();
+			await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 			writeToSandbox(sandbox, ".gitignore", "node_modules/\n");
 			writeToSandbox(sandbox, "node_modules/pkg.js", "pkg\n");
 			writeToSandbox(sandbox, "app.js", "app\n");
@@ -426,7 +426,7 @@ describe("interop: detached HEAD", () => {
 	let v1Hash: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git init`.cwd(sandbox).quiet();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 		writeToSandbox(sandbox, "f.txt", "v1\n");
 		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
 		await $`git -c user.name="R" -c user.email="r@t" commit -m "v1"`.cwd(sandbox).quiet();
@@ -459,7 +459,7 @@ describe("interop: many files / deep paths", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git init`.cwd(sandbox).quiet();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 		for (let i = 0; i < 50; i++) {
 			const dir = `src/pkg${Math.floor(i / 10)}`;
 			await $`mkdir -p ${dir}`.cwd(sandbox).quiet();
@@ -497,7 +497,7 @@ describe("interop: reset", () => {
 	test("reset --soft HEAD~1, both tools agree on staged state", async () => {
 		const sandbox = createSandbox();
 		try {
-			await $`git init`.cwd(sandbox).quiet();
+			await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 			writeToSandbox(sandbox, "a.txt", "a\n");
 			await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
 			await $`git -c user.name="R" -c user.email="r@t" commit -m "commit a"`.cwd(sandbox).quiet();
@@ -522,7 +522,7 @@ describe("interop: reset", () => {
 	test("reset --hard HEAD~1, real git validates", async () => {
 		const sandbox = createSandbox();
 		try {
-			await $`git init`.cwd(sandbox).quiet();
+			await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
 			writeToSandbox(sandbox, "a.txt", "a\n");
 			await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
 			await $`git -c user.name="R" -c user.email="r@t" commit -m "commit a"`.cwd(sandbox).quiet();

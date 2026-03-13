@@ -37,11 +37,11 @@ await bash.exec("git log --oneline");
 
 `createGit(options?)` accepts:
 
-| Option        | Description                                                                                                                     |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `identity`    | Author/committer override. With `locked: true`, always wins over env vars and git config. Without `locked`, acts as a fallback. |
-| `credentials` | `(url) => HttpAuth \| null` callback for Smart HTTP transport auth.                                                             |
-| `disabled`    | `GitCommandName[]` of subcommands to block (e.g. `["push", "rebase"]`).                                                         |
+| Option        | Description                                                                                                                                                         |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `identity`    | Author/committer override. With `locked: true`, always wins over env vars and git config. Without `locked`, acts as a fallback.                                     |
+| `credentials` | `(url) => HttpAuth \| null` callback for Smart HTTP transport auth.                                                                                                 |
+| `disabled`    | `GitCommandName[]` of subcommands to block (e.g. `["push", "rebase"]`).                                                                                             |
 | `network`     | `{ allowed?: string[], fetch?: FetchFunction }` to restrict HTTP access and/or provide a custom `fetch` implementation. Set to `false` to block all network access. |
 
 ```ts
