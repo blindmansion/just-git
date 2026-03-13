@@ -1,5 +1,8 @@
 # just-git
 
+[![CI](https://github.com/blindmansion/just-git/actions/workflows/ci.yml/badge.svg)](https://github.com/blindmansion/just-git/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/just-git)](https://www.npmjs.com/package/just-git)
+
 Git implementation for virtual bash environments (particularly [just-bash](https://github.com/vercel-labs/just-bash)). Pure TypeScript, zero dependencies. Works in Node, Bun, Deno, and the browser. ~97 kB gzipped.
 
 ## Install
@@ -39,14 +42,14 @@ await bash.exec("git log --oneline");
 | `identity`    | Author/committer override. With `locked: true`, always wins over env vars and git config. Without `locked`, acts as a fallback. |
 | `credentials` | `(url) => HttpAuth \| null` callback for Smart HTTP transport auth.                                                             |
 | `disabled`    | `GitCommandName[]` of subcommands to block (e.g. `["push", "rebase"]`).                                                         |
-| `network`     | `{ allowed?: string[] }` to restrict HTTP access by hostname or URL prefix. Set to `false` to block all network access.         |
+| `network`     | `{ allowed?: string[], fetch?: FetchFunction }` to restrict HTTP access and/or provide a custom `fetch` implementation. Set to `false` to block all network access. |
 
 ```ts
 const git = createGit({
   identity: { name: "Agent Bot", email: "bot@company.com", locked: true },
   credentials: async (url) => ({ type: "bearer", token: "ghp_..." }),
   disabled: ["rebase"],
-  network: { allowed: ["github.com"] },
+  network: { allowed: ["github.com"], fetch: customFetch },
 });
 ```
 
