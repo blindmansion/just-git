@@ -15,12 +15,12 @@ import { Bash } from "just-bash";
 import { createGit } from "just-git";
 
 const git = createGit({
-	identity: { name: "Alice", email: "alice@example.com" },
+  identity: { name: "Alice", email: "alice@example.com" },
 });
 
 const bash = new Bash({
-	cwd: "/repo",
-	customCommands: [git],
+  cwd: "/repo",
+  customCommands: [git],
 });
 
 await bash.exec("git init");
@@ -43,10 +43,10 @@ await bash.exec("git log --oneline");
 
 ```ts
 const git = createGit({
-	identity: { name: "Agent Bot", email: "bot@company.com", locked: true },
-	credentials: async (url) => ({ type: "bearer", token: "ghp_..." }),
-	disabled: ["rebase"],
-	network: { allowed: ["github.com"] },
+  identity: { name: "Agent Bot", email: "bot@company.com", locked: true },
+  credentials: async (url) => ({ type: "bearer", token: "ghp_..." }),
+  disabled: ["rebase"],
+  network: { allowed: ["github.com"] },
 });
 ```
 
@@ -59,31 +59,31 @@ The `CommandEvent` provides the execution context: `{ command, rawArgs, fs, cwd,
 ```ts
 // Audit log — record every command the agent runs
 git.use(async (event, next) => {
-	const result = await next();
-	auditLog.push({ command: `git ${event.command}`, exitCode: result.exitCode });
-	return result;
+  const result = await next();
+  auditLog.push({ command: `git ${event.command}`, exitCode: result.exitCode });
+  return result;
 });
 
 // Gate pushes on human approval
 git.use(async (event, next) => {
-	if (event.command === "push" && !(await getHumanApproval(event.rawArgs))) {
-		return { stdout: "", stderr: "Push blocked — awaiting approval.\n", exitCode: 1 };
-	}
-	return next();
+  if (event.command === "push" && !(await getHumanApproval(event.rawArgs))) {
+    return { stdout: "", stderr: "Push blocked — awaiting approval.\n", exitCode: 1 };
+  }
+  return next();
 });
 
 // Block commits that add large files (uses event.fs to read the worktree)
 git.use(async (event, next) => {
-	if (event.command === "add") {
-		for (const path of event.rawArgs.filter((a) => !a.startsWith("-"))) {
-			const resolved = path.startsWith("/") ? path : `${event.cwd}/${path}`;
-			const stat = await event.fs.stat(resolved).catch(() => null);
-			if (stat && stat.size > 5_000_000) {
-				return { stdout: "", stderr: `Blocked: ${path} exceeds 5 MB\n`, exitCode: 1 };
-			}
-		}
-	}
-	return next();
+  if (event.command === "add") {
+    for (const path of event.rawArgs.filter((a) => !a.startsWith("-"))) {
+      const resolved = path.startsWith("/") ? path : `${event.cwd}/${path}`;
+      const stat = await event.fs.stat(resolved).catch(() => null);
+      if (stat && stat.size > 5_000_000) {
+        return { stdout: "", stderr: `Blocked: ${path} exceeds 5 MB\n`, exitCode: 1 };
+      }
+    }
+  }
+  return next();
 });
 ```
 
@@ -100,17 +100,17 @@ Pre-hooks can abort the operation by returning `{ abort: true, message? }`.
 ```ts
 // Block secrets from being committed
 git.on("pre-commit", (event) => {
-	const forbidden = event.index.entries.filter((e) => /\.(env|pem|key)$/.test(e.path));
-	if (forbidden.length) {
-		return { abort: true, message: `Blocked: ${forbidden.map((e) => e.path).join(", ")}` };
-	}
+  const forbidden = event.index.entries.filter((e) => /\.(env|pem|key)$/.test(e.path));
+  if (forbidden.length) {
+    return { abort: true, message: `Blocked: ${forbidden.map((e) => e.path).join(", ")}` };
+  }
 });
 
 // Enforce conventional commit messages
 git.on("commit-msg", (event) => {
-	if (!/^(feat|fix|docs|refactor|test|chore)(\(.+\))?:/.test(event.message)) {
-		return { abort: true, message: "Commit message must follow conventional commits format" };
-	}
+  if (!/^(feat|fix|docs|refactor|test|chore)(\(.+\))?:/.test(event.message)) {
+    return { abort: true, message: "Commit message must follow conventional commits format" };
+  }
 });
 ```
 
@@ -140,11 +140,11 @@ Post-hooks are observational -- return value is ignored. Handlers are awaited in
 ```ts
 // Feed agent activity to your UI or orchestration layer
 git.on("post-commit", (event) => {
-	onAgentCommit({ hash: event.hash, branch: event.branch, message: event.message });
+  onAgentCommit({ hash: event.hash, branch: event.branch, message: event.message });
 });
 
 git.on("post-push", (event) => {
-	onAgentPush({ remote: event.remote, refs: event.refs });
+  onAgentPush({ remote: event.remote, refs: event.refs });
 });
 ```
 

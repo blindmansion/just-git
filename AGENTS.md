@@ -16,19 +16,19 @@ Git implementation running inside the just-bash virtual shell. All commands oper
 
 ```ts
 const git = createGit({
-	identity: { name: "Agent", email: "agent@sandbox.dev", locked: true },
-	disabled: ["push", "rebase", "remote", "clone", "fetch", "pull"],
-	credentials: async (url) => ({ type: "bearer", token: "..." }),
+  identity: { name: "Agent", email: "agent@sandbox.dev", locked: true },
+  disabled: ["push", "rebase", "remote", "clone", "fetch", "pull"],
+  credentials: async (url) => ({ type: "bearer", token: "..." }),
 });
 
 git.on("pre-commit", (event) => {
-	/* inspect index, abort if needed */
+  /* inspect index, abort if needed */
 });
 git.on("post-commit", (event) => {
-	/* audit log */
+  /* audit log */
 });
 git.use(async (event, next) => {
-	/* timing, allowlists, transforms */
+  /* timing, allowlists, transforms */
 });
 
 const bash = new Bash({ cwd: "/repo", customCommands: [git] });
@@ -107,9 +107,9 @@ Threaded through all `lib/` functions:
 
 ```ts
 interface GitContext {
-	fs: IFileSystem;
-	gitDir: string; // absolute path to .git
-	workTree: string | null; // null for bare repos
+  fs: IFileSystem;
+  gitDir: string; // absolute path to .git
+  workTree: string | null; // null for bare repos
 }
 ```
 
@@ -304,14 +304,14 @@ For commands needing identity, set env vars:
 
 ```ts
 await quickExec('git commit -m "test"', {
-	env: {
-		GIT_AUTHOR_NAME: "Test",
-		GIT_AUTHOR_EMAIL: "test@test.com",
-		GIT_COMMITTER_NAME: "Test",
-		GIT_COMMITTER_EMAIL: "test@test.com",
-		GIT_AUTHOR_DATE: "1000000000",
-		GIT_COMMITTER_DATE: "1000000000",
-	},
+  env: {
+    GIT_AUTHOR_NAME: "Test",
+    GIT_AUTHOR_EMAIL: "test@test.com",
+    GIT_COMMITTER_NAME: "Test",
+    GIT_COMMITTER_EMAIL: "test@test.com",
+    GIT_AUTHOR_DATE: "1000000000",
+    GIT_COMMITTER_DATE: "1000000000",
+  },
 });
 ```
 

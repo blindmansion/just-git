@@ -2,3 +2,7 @@
 indent_style = tab
 insert_final_newline = true
 end_of_line = lf
+
+[*.md]
+indent_style = space
+indent_size = 2
