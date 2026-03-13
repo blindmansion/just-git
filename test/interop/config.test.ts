@@ -1,13 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { $ } from "bun";
-import {
-	createSandbox,
-	jg,
-	justBash,
-	realGit,
-	removeSandbox,
-	writeToSandbox,
-} from "./util";
+import { createSandbox, jg, justBash, realGit, removeSandbox, writeToSandbox } from "./util";
 
 describe("interop: config cross-reading", () => {
 	let sandbox: string;

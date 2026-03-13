@@ -1,13 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { $ } from "bun";
-import {
-	createSandbox,
-	jg,
-	justBash,
-	realGit,
-	removeSandbox,
-	writeToSandbox,
-} from "./util";
+import { createSandbox, jg, justBash, realGit, removeSandbox, writeToSandbox } from "./util";
 
 /**
  * Sets up a repo with a base commit and two divergent branches that will
@@ -24,16 +17,12 @@ async function setupConflictRepo() {
 	await $`git checkout -b theirs`.cwd(sandbox).quiet();
 	writeToSandbox(sandbox, "conflict.txt", "theirs side\n");
 	await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-	await $`git -c user.name="R" -c user.email="r@t" commit -m "theirs change"`
-		.cwd(sandbox)
-		.quiet();
+	await $`git -c user.name="R" -c user.email="r@t" commit -m "theirs change"`.cwd(sandbox).quiet();
 
 	await $`git checkout main`.cwd(sandbox).quiet();
 	writeToSandbox(sandbox, "conflict.txt", "ours side\n");
 	await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-	await $`git -c user.name="R" -c user.email="r@t" commit -m "ours change"`
-		.cwd(sandbox)
-		.quiet();
+	await $`git -c user.name="R" -c user.email="r@t" commit -m "ours change"`.cwd(sandbox).quiet();
 
 	return sandbox;
 }
@@ -52,16 +41,12 @@ async function setupRebaseConflictRepo() {
 	await $`git checkout -b topic`.cwd(sandbox).quiet();
 	writeToSandbox(sandbox, "f.txt", "topic change\n");
 	await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-	await $`git -c user.name="R" -c user.email="r@t" commit -m "topic edit"`
-		.cwd(sandbox)
-		.quiet();
+	await $`git -c user.name="R" -c user.email="r@t" commit -m "topic edit"`.cwd(sandbox).quiet();
 
 	await $`git checkout main`.cwd(sandbox).quiet();
 	writeToSandbox(sandbox, "f.txt", "main change\n");
 	await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-	await $`git -c user.name="R" -c user.email="r@t" commit -m "main advance"`
-		.cwd(sandbox)
-		.quiet();
+	await $`git -c user.name="R" -c user.email="r@t" commit -m "main advance"`.cwd(sandbox).quiet();
 	await $`git checkout topic`.cwd(sandbox).quiet();
 
 	return sandbox;
@@ -73,11 +58,10 @@ describe("mid-operation: real git starts merge → just-git finishes", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = await setupConflictRepo();
-		const r =
-			await $`git -c user.name="R" -c user.email="r@t" merge theirs`
-				.cwd(sandbox)
-				.nothrow()
-				.quiet();
+		const r = await $`git -c user.name="R" -c user.email="r@t" merge theirs`
+			.cwd(sandbox)
+			.nothrow()
+			.quiet();
 		expect(r.exitCode).not.toBe(0);
 	});
 	afterAll(() => removeSandbox(sandbox));
@@ -128,11 +112,10 @@ describe("mid-operation: just-git starts merge → real git finishes", () => {
 	test("real git resolves and continues the merge", async () => {
 		writeToSandbox(sandbox, "conflict.txt", "resolved by real git\n");
 		await $`git -c user.name="R" -c user.email="r@t" add conflict.txt`.cwd(sandbox).quiet();
-		const r =
-			await $`git -c user.name="R" -c user.email="r@t" merge --continue`
-				.cwd(sandbox)
-				.nothrow()
-				.quiet();
+		const r = await $`GIT_EDITOR=true git -c user.name="R" -c user.email="r@t" merge --continue`
+			.cwd(sandbox)
+			.nothrow()
+			.quiet();
 		expect(r.exitCode).toBe(0);
 	});
 
@@ -150,10 +133,7 @@ describe("mid-operation: real git starts merge → just-git aborts", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = await setupConflictRepo();
-		await $`git -c user.name="R" -c user.email="r@t" merge theirs`
-			.cwd(sandbox)
-			.nothrow()
-			.quiet();
+		await $`git -c user.name="R" -c user.email="r@t" merge theirs`.cwd(sandbox).nothrow().quiet();
 	});
 	afterAll(() => removeSandbox(sandbox));
 
@@ -182,11 +162,10 @@ describe("mid-operation: just-git starts merge → real git aborts", () => {
 	afterAll(() => removeSandbox(sandbox));
 
 	test("real git aborts the merge started by just-git", async () => {
-		const r =
-			await $`git -c user.name="R" -c user.email="r@t" merge --abort`
-				.cwd(sandbox)
-				.nothrow()
-				.quiet();
+		const r = await $`git -c user.name="R" -c user.email="r@t" merge --abort`
+			.cwd(sandbox)
+			.nothrow()
+			.quiet();
 		expect(r.exitCode).toBe(0);
 	});
 
@@ -203,11 +182,10 @@ describe("mid-operation: real git starts rebase → just-git finishes", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = await setupRebaseConflictRepo();
-		const r =
-			await $`git -c user.name="R" -c user.email="r@t" rebase main`
-				.cwd(sandbox)
-				.nothrow()
-				.quiet();
+		const r = await $`git -c user.name="R" -c user.email="r@t" rebase main`
+			.cwd(sandbox)
+			.nothrow()
+			.quiet();
 		expect(r.exitCode).not.toBe(0);
 	});
 	afterAll(() => removeSandbox(sandbox));
@@ -255,11 +233,10 @@ describe("mid-operation: just-git starts rebase → real git finishes", () => {
 	test("real git resolves and continues the rebase", async () => {
 		writeToSandbox(sandbox, "f.txt", "resolved by real git\n");
 		await $`git -c user.name="R" -c user.email="r@t" add f.txt`.cwd(sandbox).quiet();
-		const r =
-			await $`git -c user.name="R" -c user.email="r@t" rebase --continue`
-				.cwd(sandbox)
-				.nothrow()
-				.quiet();
+		const r = await $`GIT_EDITOR=true git -c user.name="R" -c user.email="r@t" rebase --continue`
+			.cwd(sandbox)
+			.nothrow()
+			.quiet();
 		expect(r.exitCode).toBe(0);
 	});
 
@@ -277,10 +254,7 @@ describe("mid-operation: real git starts rebase → just-git aborts", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = await setupRebaseConflictRepo();
-		await $`git -c user.name="R" -c user.email="r@t" rebase main`
-			.cwd(sandbox)
-			.nothrow()
-			.quiet();
+		await $`git -c user.name="R" -c user.email="r@t" rebase main`.cwd(sandbox).nothrow().quiet();
 	});
 	afterAll(() => removeSandbox(sandbox));
 
@@ -309,11 +283,10 @@ describe("mid-operation: just-git starts rebase → real git aborts", () => {
 	afterAll(() => removeSandbox(sandbox));
 
 	test("real git aborts the rebase started by just-git", async () => {
-		const r =
-			await $`git -c user.name="R" -c user.email="r@t" rebase --abort`
-				.cwd(sandbox)
-				.nothrow()
-				.quiet();
+		const r = await $`git -c user.name="R" -c user.email="r@t" rebase --abort`
+			.cwd(sandbox)
+			.nothrow()
+			.quiet();
 		expect(r.exitCode).toBe(0);
 	});
 
@@ -332,11 +305,10 @@ describe("mid-operation: real git starts cherry-pick → just-git finishes", () 
 	beforeAll(async () => {
 		sandbox = await setupConflictRepo();
 		cherryHash = (await $`git rev-parse theirs`.cwd(sandbox).quiet()).stdout.toString().trim();
-		const r =
-			await $`git -c user.name="R" -c user.email="r@t" cherry-pick ${cherryHash}`
-				.cwd(sandbox)
-				.nothrow()
-				.quiet();
+		const r = await $`git -c user.name="R" -c user.email="r@t" cherry-pick ${cherryHash}`
+			.cwd(sandbox)
+			.nothrow()
+			.quiet();
 		expect(r.exitCode).not.toBe(0);
 	});
 	afterAll(() => removeSandbox(sandbox));
@@ -387,7 +359,7 @@ describe("mid-operation: just-git starts cherry-pick → real git finishes", () 
 		writeToSandbox(sandbox, "conflict.txt", "resolved by real git\n");
 		await $`git -c user.name="R" -c user.email="r@t" add conflict.txt`.cwd(sandbox).quiet();
 		const r =
-			await $`git -c user.name="R" -c user.email="r@t" cherry-pick --continue`
+			await $`GIT_EDITOR=true git -c user.name="R" -c user.email="r@t" cherry-pick --continue`
 				.cwd(sandbox)
 				.nothrow()
 				.quiet();
@@ -446,11 +418,10 @@ describe("mid-operation: just-git starts cherry-pick → real git aborts", () =>
 	afterAll(() => removeSandbox(sandbox));
 
 	test("real git aborts the cherry-pick started by just-git", async () => {
-		const r =
-			await $`git -c user.name="R" -c user.email="r@t" cherry-pick --abort`
-				.cwd(sandbox)
-				.nothrow()
-				.quiet();
+		const r = await $`git -c user.name="R" -c user.email="r@t" cherry-pick --abort`
+			.cwd(sandbox)
+			.nothrow()
+			.quiet();
 		expect(r.exitCode).toBe(0);
 	});
 
@@ -481,14 +452,11 @@ describe("mid-operation: real git starts revert → just-git finishes", () => {
 		await $`git -c user.name="R" -c user.email="r@t" commit -m "change B"`.cwd(sandbox).quiet();
 
 		// Reverting "change A" will conflict with "change B"
-		const changeA = (await $`git rev-parse HEAD~1`.cwd(sandbox).quiet()).stdout
-			.toString()
-			.trim();
-		const r =
-			await $`git -c user.name="R" -c user.email="r@t" revert ${changeA}`
-				.cwd(sandbox)
-				.nothrow()
-				.quiet();
+		const changeA = (await $`git rev-parse HEAD~1`.cwd(sandbox).quiet()).stdout.toString().trim();
+		const r = await $`git -c user.name="R" -c user.email="r@t" revert ${changeA}`
+			.cwd(sandbox)
+			.nothrow()
+			.quiet();
 		expect(r.exitCode).not.toBe(0);
 	});
 	afterAll(() => removeSandbox(sandbox));
@@ -550,11 +518,10 @@ describe("mid-operation: just-git starts revert → real git finishes", () => {
 	test("real git resolves and continues the revert", async () => {
 		writeToSandbox(sandbox, "f.txt", "resolved by real git\n");
 		await $`git -c user.name="R" -c user.email="r@t" add f.txt`.cwd(sandbox).quiet();
-		const r =
-			await $`git -c user.name="R" -c user.email="r@t" revert --continue`
-				.cwd(sandbox)
-				.nothrow()
-				.quiet();
+		const r = await $`GIT_EDITOR=true git -c user.name="R" -c user.email="r@t" revert --continue`
+			.cwd(sandbox)
+			.nothrow()
+			.quiet();
 		expect(r.exitCode).toBe(0);
 	});
 

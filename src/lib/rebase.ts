@@ -1,7 +1,7 @@
 import { readObject } from "./object-db.ts";
 import { parseCommit } from "./objects/commit.ts";
 import { join } from "./path.ts";
-import type { Commit, GitContext, ObjectId } from "./types.ts";
+import type { Commit, GitContext, Identity, ObjectId } from "./types.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -57,7 +57,10 @@ export async function readRebaseState(gitCtx: GitContext): Promise<RebaseState |
 	const onto = await gitCtx.fs.readFile(join(dir, "onto"));
 	const msgnum = Number.parseInt(await gitCtx.fs.readFile(join(dir, "msgnum")), 10);
 	const end = Number.parseInt(await gitCtx.fs.readFile(join(dir, "end")), 10);
-	const todo = parseTodoList(await gitCtx.fs.readFile(join(dir, "todo")));
+	const todoFile = (await gitCtx.fs.exists(join(dir, "git-rebase-todo")))
+		? join(dir, "git-rebase-todo")
+		: join(dir, "todo");
+	const todo = parseTodoList(await gitCtx.fs.readFile(todoFile));
 	const doneText = (await gitCtx.fs.exists(join(dir, "done")))
 		? await gitCtx.fs.readFile(join(dir, "done"))
 		: "";
@@ -81,13 +84,14 @@ export async function writeRebaseState(gitCtx: GitContext, state: RebaseState): 
 	const dir = rebaseMergeDir(gitCtx);
 	await gitCtx.fs.mkdir(dir, { recursive: true });
 
-	await gitCtx.fs.writeFile(join(dir, "head-name"), state.headName);
-	await gitCtx.fs.writeFile(join(dir, "orig-head"), state.origHead);
-	await gitCtx.fs.writeFile(join(dir, "onto"), state.onto);
-	await gitCtx.fs.writeFile(join(dir, "msgnum"), String(state.msgnum));
-	await gitCtx.fs.writeFile(join(dir, "end"), String(state.end));
-	await gitCtx.fs.writeFile(join(dir, "todo"), formatTodoList(state.todo));
+	await gitCtx.fs.writeFile(join(dir, "head-name"), `${state.headName}\n`);
+	await gitCtx.fs.writeFile(join(dir, "orig-head"), `${state.origHead}\n`);
+	await gitCtx.fs.writeFile(join(dir, "onto"), `${state.onto}\n`);
+	await gitCtx.fs.writeFile(join(dir, "msgnum"), `${String(state.msgnum)}\n`);
+	await gitCtx.fs.writeFile(join(dir, "end"), `${String(state.end)}\n`);
+	await gitCtx.fs.writeFile(join(dir, "git-rebase-todo"), formatTodoList(state.todo));
 	await gitCtx.fs.writeFile(join(dir, "done"), formatTodoList(state.done));
+	await gitCtx.fs.writeFile(join(dir, "interactive"), "");
 }
 
 /**
@@ -103,8 +107,8 @@ export async function advanceRebaseState(gitCtx: GitContext): Promise<void> {
 	if (applied) state.done.push(applied);
 	state.msgnum = state.done.length;
 
-	await gitCtx.fs.writeFile(join(dir, "msgnum"), String(state.msgnum));
-	await gitCtx.fs.writeFile(join(dir, "todo"), formatTodoList(state.todo));
+	await gitCtx.fs.writeFile(join(dir, "msgnum"), `${String(state.msgnum)}\n`);
+	await gitCtx.fs.writeFile(join(dir, "git-rebase-todo"), formatTodoList(state.todo));
 	await gitCtx.fs.writeFile(join(dir, "done"), formatTodoList(state.done));
 }
 
@@ -118,15 +122,35 @@ export async function cleanupRebaseState(gitCtx: GitContext): Promise<void> {
 	}
 }
 
+/**
+ * Write per-step metadata that real git expects during a conflicted rebase:
+ * `author-script`, `stopped-sha`. These are needed for cross-tool handoff.
+ */
+export async function writeRebaseConflictMeta(
+	gitCtx: GitContext,
+	commitHash: ObjectId,
+	author: Identity,
+): Promise<void> {
+	const dir = rebaseMergeDir(gitCtx);
+	const dateStr = `@${author.timestamp} ${author.timezone}`;
+
+	await gitCtx.fs.writeFile(
+		join(dir, "author-script"),
+		`GIT_AUTHOR_NAME='${author.name}'\nGIT_AUTHOR_EMAIL='${author.email}'\nGIT_AUTHOR_DATE='${dateStr}'\n`,
+	);
+	await gitCtx.fs.writeFile(join(dir, "stopped-sha"), `${commitHash}\n`);
+}
+
 function parseTodoList(text: string): RebaseTodoEntry[] {
 	const entries: RebaseTodoEntry[] = [];
 	for (const line of text.split("\n")) {
 		const trimmed = line.trim();
-		if (!trimmed) continue;
-		// Format: "pick <hash> <subject>"
+		if (!trimmed || trimmed.startsWith("#")) continue;
 		const match = trimmed.match(/^pick\s+([0-9a-f]+)\s+(.*)/);
 		if (match?.[1] && match[2]) {
-			entries.push({ hash: match[1], subject: match[2] });
+			// Real git uses "pick <hash> # <subject>" — strip the "# " prefix
+			const subject = match[2].startsWith("# ") ? match[2].slice(2) : match[2];
+			entries.push({ hash: match[1], subject });
 		}
 	}
 	return entries;
@@ -134,7 +158,7 @@ function parseTodoList(text: string): RebaseTodoEntry[] {
 
 function formatTodoList(entries: RebaseTodoEntry[]): string {
 	if (entries.length === 0) return "";
-	return `${entries.map((e) => `pick ${e.hash} ${e.subject}`).join("\n")}\n`;
+	return `${entries.map((e) => `pick ${e.hash} # ${e.subject}`).join("\n")}\n`;
 }
 
 // ── Planner ─────────────────────────────────────────────────────────

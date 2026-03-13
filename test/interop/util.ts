@@ -34,11 +34,10 @@ export async function jg(bash: Bash, cmd: string) {
  * Identity is always provided via -c flags to avoid depending on global config.
  */
 export async function realGit(sandbox: string, cmd: string) {
-	const r =
-		await $`git -c user.name="Real Git" -c user.email="real@test.com" ${{ raw: cmd }}`
-			.cwd(sandbox)
-			.nothrow()
-			.quiet();
+	const r = await $`git -c user.name="Real Git" -c user.email="real@test.com" ${{ raw: cmd }}`
+		.cwd(sandbox)
+		.nothrow()
+		.quiet();
 	return {
 		stdout: r.stdout.toString(),
 		stderr: r.stderr.toString(),
@@ -53,4 +52,3 @@ export function writeToSandbox(sandbox: string, relPath: string, content: string
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(full, content);
 }
-

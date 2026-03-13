@@ -2,14 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { $ } from "bun";
-import {
-	createSandbox,
-	jg,
-	justBash,
-	realGit,
-	removeSandbox,
-	writeToSandbox,
-} from "./util";
+import { createSandbox, jg, justBash, realGit, removeSandbox, writeToSandbox } from "./util";
 
 // ── Packfiles ───────────────────────────────────────────────────────
 
@@ -149,9 +142,7 @@ describe("interop: index format compatibility", () => {
 	beforeAll(async () => {
 		sandbox = createSandbox();
 		await $`git init`.cwd(sandbox).quiet();
-		await $`bash -c 'echo a > a.txt && echo b > b.txt && echo c > c.txt'`
-			.cwd(sandbox)
-			.quiet();
+		await $`bash -c 'echo a > a.txt && echo b > b.txt && echo c > c.txt'`.cwd(sandbox).quiet();
 		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
 	});
 	afterAll(() => removeSandbox(sandbox));
@@ -252,9 +243,7 @@ describe("interop: cross-tool merge conflict", () => {
 		await $`git checkout main`.cwd(sandbox).quiet();
 		writeToSandbox(sandbox, "conflict.txt", "from main\n");
 		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" commit -m "main change"`
-			.cwd(sandbox)
-			.quiet();
+		await $`git -c user.name="R" -c user.email="r@t" commit -m "main change"`.cwd(sandbox).quiet();
 	});
 	afterAll(() => removeSandbox(sandbox));
 
@@ -298,9 +287,7 @@ describe("interop: rebase", () => {
 		await $`git checkout main`.cwd(sandbox).quiet();
 		await $`bash -c 'echo "main2" >> f.txt'`.cwd(sandbox).quiet();
 		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" commit -m "main advance"`
-			.cwd(sandbox)
-			.quiet();
+		await $`git -c user.name="R" -c user.email="r@t" commit -m "main advance"`.cwd(sandbox).quiet();
 		await $`git checkout topic`.cwd(sandbox).quiet();
 	});
 	afterAll(() => removeSandbox(sandbox));
@@ -339,9 +326,7 @@ describe("interop: cherry-pick", () => {
 			await $`git checkout -b pick-src`.cwd(sandbox).quiet();
 			writeToSandbox(sandbox, "cherry.txt", "cherry\n");
 			await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-			await $`git -c user.name="R" -c user.email="r@t" commit -m "the cherry"`
-				.cwd(sandbox)
-				.quiet();
+			await $`git -c user.name="R" -c user.email="r@t" commit -m "the cherry"`.cwd(sandbox).quiet();
 			const cherryHash = (await $`git rev-parse HEAD`.cwd(sandbox).quiet()).stdout
 				.toString()
 				.trim();
@@ -515,14 +500,10 @@ describe("interop: reset", () => {
 			await $`git init`.cwd(sandbox).quiet();
 			writeToSandbox(sandbox, "a.txt", "a\n");
 			await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-			await $`git -c user.name="R" -c user.email="r@t" commit -m "commit a"`
-				.cwd(sandbox)
-				.quiet();
+			await $`git -c user.name="R" -c user.email="r@t" commit -m "commit a"`.cwd(sandbox).quiet();
 			writeToSandbox(sandbox, "b.txt", "b\n");
 			await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-			await $`git -c user.name="R" -c user.email="r@t" commit -m "commit b"`
-				.cwd(sandbox)
-				.quiet();
+			await $`git -c user.name="R" -c user.email="r@t" commit -m "commit b"`.cwd(sandbox).quiet();
 
 			const b = justBash(sandbox);
 			const r = await jg(b, "git reset --soft HEAD~1");
@@ -544,14 +525,10 @@ describe("interop: reset", () => {
 			await $`git init`.cwd(sandbox).quiet();
 			writeToSandbox(sandbox, "a.txt", "a\n");
 			await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-			await $`git -c user.name="R" -c user.email="r@t" commit -m "commit a"`
-				.cwd(sandbox)
-				.quiet();
+			await $`git -c user.name="R" -c user.email="r@t" commit -m "commit a"`.cwd(sandbox).quiet();
 			writeToSandbox(sandbox, "b.txt", "b\n");
 			await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-			await $`git -c user.name="R" -c user.email="r@t" commit -m "commit b"`
-				.cwd(sandbox)
-				.quiet();
+			await $`git -c user.name="R" -c user.email="r@t" commit -m "commit b"`.cwd(sandbox).quiet();
 
 			const b = justBash(sandbox);
 			const r = await jg(b, "git reset --hard HEAD~1");

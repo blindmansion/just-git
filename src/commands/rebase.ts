@@ -42,6 +42,7 @@ import {
 	type RebaseState,
 	type RebaseTodoEntry,
 	readRebaseState,
+	writeRebaseConflictMeta,
 	writeRebaseState,
 } from "../lib/rebase.ts";
 import { logRef } from "../lib/reflog.ts";
@@ -727,6 +728,7 @@ async function pickOneCommit(
 		const blockedPaths = await checkUntrackedConflictsForPick(gitCtx, currentIndex, writeTargets);
 		if (blockedPaths) {
 			await updateRef(gitCtx, "REBASE_HEAD", theirsHash);
+			await writeRebaseConflictMeta(gitCtx, theirsHash, theirsCommit.author);
 			return {
 				conflict: true,
 				stdout: "",
@@ -817,6 +819,7 @@ async function pickOneCommit(
 	const blockedPaths = await checkUntrackedConflictsForPick(gitCtx, currentIndex, writeTargets);
 	if (blockedPaths) {
 		await updateRef(gitCtx, "REBASE_HEAD", theirsHash);
+		await writeRebaseConflictMeta(gitCtx, theirsHash, theirsCommit.author);
 		return {
 			conflict: true,
 			stdout: "",
@@ -843,6 +846,7 @@ async function pickOneCommit(
 	// Handle conflicts
 	if (mergeResult.conflicts.length > 0) {
 		await updateRef(gitCtx, "REBASE_HEAD", theirsHash);
+		await writeRebaseConflictMeta(gitCtx, theirsHash, theirsCommit.author);
 
 		// Write MERGE_MSG with the original commit message
 		await writeStateFile(gitCtx, "MERGE_MSG", theirsCommit.message);

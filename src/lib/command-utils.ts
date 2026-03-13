@@ -236,7 +236,7 @@ export async function handleOperationAbort(
 	const opHead = await resolveRef(gitCtx, opts.operationRef);
 	if (!opHead) return opts.noOpError;
 
-	const origHead = await resolveRef(gitCtx, "ORIG_HEAD");
+	const origHead = (await resolveRef(gitCtx, "ORIG_HEAD")) ?? (await resolveHead(gitCtx));
 	if (!origHead) {
 		return fatal(`There is no ${opts.operationName} to abort (ORIG_HEAD missing).`);
 	}
