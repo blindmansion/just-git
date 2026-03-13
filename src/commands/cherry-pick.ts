@@ -35,7 +35,7 @@ import { branchNameFromRef, readHead, resolveHead, resolveRef, updateRef } from 
 import { generateLongFormStatus } from "../lib/status-format.ts";
 import { buildTreeFromIndex, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext } from "../lib/types.ts";
-import { applyWorktreeOps, resetHard } from "../lib/unpack-trees.ts";
+import { applyWorktreeOps, mergeAbort } from "../lib/unpack-trees.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 
 export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) {
@@ -394,7 +394,7 @@ async function handleSkip(
 
 	const headCommit = await readCommit(gitCtx, headHash);
 	const currentIndex = await readIndex(gitCtx);
-	const result = await resetHard(gitCtx, headCommit.tree, currentIndex);
+	const result = await mergeAbort(gitCtx, headCommit.tree, currentIndex, headHash);
 	if (!result.success) {
 		return result.errorOutput as {
 			stdout: string;
