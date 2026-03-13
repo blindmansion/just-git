@@ -28,18 +28,20 @@ Runs the random walker against real git, capturing a full snapshot of repository
 bun oracle generate [name] --seeds <spec> [options]
 ```
 
-| Option              | Default      | Description                    |
-| ------------------- | ------------ | ------------------------------ |
-| `--seeds <spec>`    | _(required)_ | `"1-20"` or `"1,2,42"`         |
-| `--steps <n>`       | 300          | Walker steps per seed          |
-| `--preset <name>`   | `default`    | Action set (see presets below) |
-| `--description <s>` | auto         | Metadata tag for traces        |
+| Option              | Default      | Description                                                         |
+| ------------------- | ------------ | ------------------------------------------------------------------- |
+| `--seeds <spec>`    | _(required)_ | `"1-20"` or `"1,2,42"`                                              |
+| `--steps <n>`       | 300          | Walker steps per seed                                               |
+| `--preset <name>`   | `default`    | Action set (see presets below)                                      |
+| `--chaos <rate>`    | preset       | Probability (0-1) of bypassing soft preconditions; overrides preset |
+| `--clone-url <url>` | —            | Clone from this URL instead of `git init` (requires network)        |
+| `--description <s>` | auto         | Metadata tag for traces                                             |
 
 If no name is given, defaults to the preset name.
 
-**Presets:** `default`, `basic`, `rebase-heavy`, `merge-heavy`, `cherry-pick-heavy`, `no-rename-show`, `no-show`, `wide-files`, `chaos`, `chaos-heavy`
+**Presets:** `default`, `basic`, `core`, `rebase-heavy`, `merge-heavy`, `cherry-pick-heavy`, `no-rename-show`, `no-show`, `wide-files`, `chaos`, `chaos-heavy`, `clone-cannoli`, `clone-core`, `fuzz-light`, `fuzz-heavy`, `chaos-fuzz`, `gitignore`, `kitchen`, `stress`
 
-Each preset adjusts which random actions are enabled and their weight multipliers. `basic` excludes rebase. The `-heavy` variants boost the weight of their respective operations. `no-rename-show` excludes `mvFile` and `showHead` actions. `no-show` excludes only `showHead` (allows renames via `mvFile`). `chaos` / `chaos-heavy` set a `chaosRate` to bypass soft preconditions on a percentage of steps.
+Each preset adjusts which random actions are enabled and their weight multipliers. The `-heavy` variants boost the weight of their respective operations. `core` focuses on ~45 daily-use actions with light chaos (5%) and fuzz (3%). `no-rename-show` excludes `mvFile` and `showHead` actions. `no-show` excludes only `showHead` (allows renames via `mvFile`). `chaos` / `chaos-heavy` set a `chaosRate` to bypass soft preconditions on a percentage of steps. `fuzz-*` presets inject wrong values (non-existent branches, files, commits) to exercise error handling. `clone-cannoli` / `clone-core` clone from a remote repo instead of `git init` (requires network). `kitchen` combines chaos, light fuzz, and gitignore generation. `stress` builds very large repos for performance profiling (best with `--steps 2000` or more).
 
 ```bash
 # Uses preset name as db name → data/rebase-heavy/traces.sqlite
@@ -59,7 +61,7 @@ Replays oracle traces against the virtual implementation, comparing both state a
 - **Output**: exit code, stdout, stderr (per-command skip lists in `checker.ts` bypass stdout/stderr for commands with known unimplemented output)
 
 ```
-bun oracle test [name] [trace] [-v] [--stop-at N]
+bun oracle test [name] [trace] [-v] [--stop-at N] [--seeds <spec>] [--no-post-mortem]
 ```
 
 Without a trace number, runs **all** traces in the DB. Default output is one line per trace:
@@ -195,6 +197,55 @@ bun oracle rebuild basic 5 42
 
 Clean up the temp directory when done.
 
+### `profile` — command execution timing
+
+Replays traces and measures per-command execution time.
+
+```
+bun oracle profile [name] [trace] [--csv] [--top N]
+```
+
+```bash
+bun oracle profile basic          # all traces
+bun oracle profile basic 5        # single trace
+bun oracle profile basic --top 20 --csv
+```
+
+### `size` — repo size over time
+
+Replays traces and measures repo size growth at regular intervals.
+
+```
+bun oracle size [name] [trace] [--every N] [--csv]
+```
+
+Shows worktree files/bytes, index entries, conflict entries, and object store stats.
+
+```bash
+bun oracle size basic 5 --every 100
+bun oracle size basic --csv
+```
+
+### `planner-inspect` — rebase planner comparison
+
+Compares the rebase planner output against real git `rev-list` at the state before a given step. The specified step should be a rebase command.
+
+```
+bun oracle planner-inspect <name> <trace> <step>
+```
+
+```bash
+bun oracle planner-inspect rebase-heavy 5 42
+```
+
+### `clean` — remove leftover temp directories
+
+Removes stale oracle temp directories (`oracle-git-*`, `oracle-home-*`, `replay-git-*`, `replay-home-*`) from the system temp directory.
+
+```
+bun oracle clean
+```
+
 ## Debugging workflow
 
 1. **Run the suite** — `test basic` to get a summary.
@@ -227,15 +278,23 @@ When a trace fails, the test runner invokes `post-mortem.ts` to classify the div
 
 **Output-only patterns handled by `checker.ts`** (tolerated, don't block traces):
 
-| Pattern                              | Description                                                                              |
-| ------------------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Combined diff formatting             | `git show` merge commit headers match, `diff --cc` sections differ.                      |
-| Diff hunk alignment                  | `git diff` same files/headers, different hunk boundaries (tie-breaking).                 |
-| Rebase status todo drift             | `git status` during rebase differs only in todo lines/hashes; normalized before compare. |
-| Merge-family diagnostic drift        | `git merge`/`cherry-pick`/`stash apply                                                   | pop` diagnostics differ in ordering/detail but have same normalized conflict/result shape. |
-| Rebase continuation diagnostic drift | `git rebase --continue                                                                   | --skip` conflict diagnostics differ in detail/order but map to the same outcome bucket.    |
-| Clean directory-only output drift    | `git clean` file lines match; only directory lines differ (often empty-dir noise).       |
-| Checkout orphan count                | `git checkout` both warn about orphaned commits, count differs.                          |
+| Pattern                              | Description                                                                                                                                     |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Combined diff formatting             | `git show` merge commit headers match, `diff --cc` sections differ.                                                                             |
+| Diff hunk alignment                  | `git diff` same files/headers, different hunk boundaries (tie-breaking).                                                                        |
+| Commit stat drift                    | `git commit`/`cherry-pick`/`revert`/`merge`/`rebase` same commit, different diffstat counts.                                                    |
+| Rebase status todo drift             | `git status` during rebase differs only in todo lines/hashes; normalized before compare.                                                        |
+| Merge-family diagnostic drift        | `git merge`/`cherry-pick`/`stash apply`/`pop` diagnostics differ in ordering/detail but have same normalized conflict/result shape.             |
+| Rebase continuation diagnostic drift | `git rebase --continue`/`--skip` conflict diagnostics differ in detail/order but map to the same outcome bucket.                                |
+| Rename collision output drift        | Merge/rebase rename-collision lines only.                                                                                                       |
+| Clean directory-only output drift    | `git clean` file lines match; only directory lines differ (often empty-dir noise).                                                              |
+| Checkout orphan count                | `git checkout`/`git switch` both warn about orphaned commits, count differs.                                                                    |
+| Branch rebase/detached description   | `git branch` detached HEAD description differs after gc.                                                                                        |
+| Reflog reset entry drift             | `git reflog` differs only by cherry-pick `--skip` "reset: moving to" entries affected by gc reflog expiry.                                      |
+| Log range timestamp walk             | `git log` with `..` range: non-monotonic timestamps cause git's walker to terminate early; our impl does full reachability walk (more correct). |
+| Shell syntax error format            | Shell error format differs between real and virtual shell.                                                                                      |
+| Worktree path stderr                 | Stderr messages embed different worktree paths (real temp dir vs virtual FS root).                                                              |
+| Rebase progress stderr               | `git rebase` progress denominator differs.                                                                                                      |
 
 Matcher policy: never bypass state divergence; only normalize equivalent output.
 
@@ -253,7 +312,7 @@ This works because:
 
 The result is dramatically smaller trace databases and the ability to test with larger repos without storage cost.
 
-**Individual `FILE_WRITE`/`FILE_DELETE` commands** are still used for conflict resolution writes (`resolveAndCommit`, `rebaseContinue` actions) where files are written as part of a compound action interleaved with git commands.
+Conflict resolution uses `FILE_RESOLVE:<seed>` batches, which deterministically resolve all conflicted files from the seed and current worktree state. **Individual `FILE_WRITE`/`FILE_DELETE` commands** are a legacy format retained for backward compatibility.
 
 ### Trace generation pipeline
 
@@ -268,7 +327,8 @@ Each trace is a sequence of **steps**. A step is either:
 
 - A **git command** (`git commit -m "msg"`, `git checkout -b feature`, etc.)
 - A **file op batch** (`FILE_BATCH:<seed>`) — regenerated deterministically at replay time
-- An **individual file op** (`FILE_WRITE:{...}`, `FILE_DELETE:{...}`) — for conflict resolution writes
+- A **conflict resolution batch** (`FILE_RESOLVE:<seed>`) — regenerated deterministically, resolves all conflicted files
+- An **individual file op** (`FILE_WRITE:{...}`, `FILE_DELETE:{...}`) — legacy format for individual writes
 
 After each step, a **snapshot** of the real git repo is captured and stored.
 
@@ -303,11 +363,11 @@ At every step, both **state** and **output** are checked:
 
 **Output fields:**
 
-| Field       | Description                                                                                                                                                                                                  |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `exit_code` | Process exit code                                                                                                                                                                                            |
-| `stdout`    | Standard output (per-command skip lists in `checker.ts`; conditional skips for `git init` path, `git reset --mixed` stat-cache, `git merge` exit≥2 strategy failure, `git diff` combined-diff)               |
-| `stderr`    | Standard error (skipped for `git rebase`; merge-precondition file list mismatches tolerated via `mergeOverwriteStderrMatches()` when both sides have "would be overwritten by merge" with identical framing) |
+| Field       | Description                                                                                                                                                      |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `exit_code` | Process exit code                                                                                                                                                |
+| `stdout`    | Standard output (`git merge` exit≥2 skipped unconditionally; conditional matchers handle cosmetic differences in init paths, diff hunks, status, diagnostics)    |
+| `stderr`    | Standard error (`git repack` and `git gc` skipped unconditionally; conditional matchers handle merge-precondition file lists, worktree paths, progress counters) |
 
 ### Deterministic timestamps
 
@@ -323,52 +383,60 @@ Generation creates real git repos in temp directories. These are cleaned up via 
 
 ## File reference
 
-| File              | Purpose                                                                                                                                                                          |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cli.ts`          | Unified CLI entry point                                                                                                                                                          |
-| `generate.ts`     | Trace generation engine, presets, `RecordingHarness`                                                                                                                             |
-| `impl-harness.ts` | Replay engine, virtual state capture, `replayAndCheck()`                                                                                                                         |
-| `runner.ts`       | `replayTo()` — rebuild a real git repo at any step                                                                                                                               |
-| `capture.ts`      | Snapshot capture from real git repos                                                                                                                                             |
-| `checker.ts`      | `BatchChecker` — loads oracle data, checks state + output per step. Contains per-command stdout/stderr skip lists and conditional matchers (e.g., `mergeOverwriteStderrMatches`) |
-| `compare.ts`      | State comparison: `compare()`, `matches()`, divergence types                                                                                                                     |
-| `post-mortem.ts`  | Classifies divergences as known patterns vs genuine bugs. Runs planner comparisons for rebase, rename detection analysis for merge/cherry-pick                                   |
-| `fileops.ts`      | File operation serialization (`FILE_BATCH`, `FILE_WRITE`, `FILE_DELETE`)                                                                                                         |
-| `real-harness.ts` | `RealGitHarness` — `WalkHarness` backed by real git                                                                                                                              |
-| `store.ts`        | `OracleStore` — SQLite read/write for traces and steps                                                                                                                           |
-| `schema.ts`       | Database schema initialization                                                                                                                                                   |
-| `index.ts`        | Barrel exports                                                                                                                                                                   |
-| `data/<name>/`    | Generated databases, one directory per DB name (gitignored)                                                                                                                      |
+| File                 | Purpose                                                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `cli.ts`             | Unified CLI entry point                                                                                                         |
+| `generate.ts`        | Trace generation engine, presets, `RecordingHarness`                                                                            |
+| `impl-harness.ts`    | Replay engine, virtual state capture, `replayAndCheck()`                                                                        |
+| `runner.ts`          | `replayTo()` — rebuild a real git repo at any step                                                                              |
+| `capture.ts`         | Snapshot capture from real git repos                                                                                            |
+| `checker.ts`         | `BatchChecker` — loads oracle data, checks state + output per step. Per-command skip lists and conditional matchers             |
+| `compare.ts`         | State comparison: `compare()`, `matches()`, divergence types                                                                    |
+| `post-mortem.ts`     | Classifies divergences as known patterns vs genuine bugs. Planner comparisons for rebase, rename analysis for merge/cherry-pick |
+| `fileops.ts`         | File operation serialization (`FILE_BATCH`, `FILE_RESOLVE`, `FILE_WRITE`, `FILE_DELETE`)                                        |
+| `real-harness.ts`    | `RealGitHarness` — `WalkHarness` backed by real git                                                                             |
+| `store.ts`           | `OracleStore` — SQLite read/write for traces and steps                                                                          |
+| `schema.ts`          | Database schema initialization                                                                                                  |
+| `snapshot-delta.ts`  | Delta-compressed snapshots: `diffSnapshot()`, `applyDelta()`, `SnapshotDelta`                                                   |
+| `planner-inspect.ts` | Standalone rebase planner comparison against real git `rev-list`                                                                |
+| `data/<name>/`       | Generated databases, one directory per DB name (gitignored)                                                                     |
 
 ### Shared modules (`test/random/`)
 
-| File          | Purpose                                                                        |
-| ------------- | ------------------------------------------------------------------------------ |
-| `file-gen.ts` | Shared batch generation: `generateAndApplyFileOps()`, `FileOpTarget` interface |
-| `actions.ts`  | Action definitions for the random walker (including `fileOps` batch action)    |
-| `harness.ts`  | `WalkHarness` interface, `VirtualHarness`                                      |
-| `walker.ts`   | Walk engine: `runWalk()`, `queryState()`, `pickAction()`                       |
-| `rng.ts`      | `SeededRNG` — deterministic xorshift128+ PRNG                                  |
+| File          | Purpose                                                                                         |
+| ------------- | ----------------------------------------------------------------------------------------------- |
+| `actions/`    | Action definitions split by category (`index.ts` re-exports `ALL_ACTIONS`, per-category arrays) |
+| `file-gen.ts` | Shared batch generation: `generateAndApplyFileOps()`, `FileGenConfig`, gitignore support        |
+| `harness.ts`  | `WalkHarness` interface, `VirtualHarness`                                                       |
+| `types.ts`    | `Action` interface (with `category` and `fuzz`), `ActionCategory`, `FuzzConfig`                 |
+| `pickers.ts`  | Value-selection helpers (`pickOtherBranch`, `pickFile`, etc.) with optional fuzz injection      |
+| `walker.ts`   | Walk engine: `runWalk()`, `queryState()`, `pickAction()`                                        |
+| `rng.ts`      | `SeededRNG` — deterministic xorshift128+ PRNG                                                   |
+| `stats.ts`    | CLI: gather VFS statistics after a walk                                                         |
+| `bench.ts`    | CLI: benchmark virtual-only walk throughput                                                     |
 
 ## Database schema
 
 ```sql
 traces (
-  trace_id  INTEGER PRIMARY KEY,
-  seed      INTEGER NOT NULL,
+  trace_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+  seed        INTEGER NOT NULL,
   description TEXT,
-  created_at TEXT DEFAULT datetime('now')
+  config      TEXT,                   -- JSON TraceConfig (chaosRate, fileGen, fuzz, cloneUrl)
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 )
 
 steps (
-  step_id   INTEGER PRIMARY KEY,
-  trace_id  INTEGER REFERENCES traces(trace_id),
+  step_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+  trace_id  INTEGER NOT NULL REFERENCES traces(trace_id),
   seq       INTEGER NOT NULL,        -- 0-based position in trace
-  command   TEXT NOT NULL,            -- git command, FILE_BATCH:<seed>, or FILE_WRITE/DELETE
+  command   TEXT NOT NULL,            -- git command, FILE_BATCH/FILE_RESOLVE:<seed>, or FILE_WRITE/DELETE
   exit_code INTEGER NOT NULL,
   stdout    TEXT,
   stderr    TEXT,
-  snapshot  TEXT NOT NULL,            -- JSON GitSnapshot
+  snapshot  TEXT NOT NULL,            -- JSON SnapshotDelta (delta-compressed)
   UNIQUE(trace_id, seq)
 )
+
+CREATE INDEX idx_steps_trace ON steps(trace_id, seq);
 ```
