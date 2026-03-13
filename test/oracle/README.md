@@ -299,21 +299,13 @@ bun oracle clean
 
 When a trace fails, the test runner invokes `post-mortem.ts` to classify the divergence as either a **known acceptable difference** or a genuine bug. Known patterns are reported as `KNOWN` instead of `FAIL`, allowing the suite to distinguish real regressions from expected implementation differences.
 
-**Known divergence patterns (post-mortem; mostly stateful):**
+**Known divergence patterns (post-mortem):**
 
-| Pattern                           | Type                      | Description                                                                                                                   |
-| --------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `rename-detection-ambiguity`      | Hybrid                    | Can be output-only or stateful depending on branch (stateful branches include index/worktree divergence from rename pairing). |
-| `merge-precondition-rename-paths` | Output-only               | Merge rejected with different path list in overwrite-precondition stderr framing.                                             |
-| `merge-directory-rename`          | Stateful                  | Git detects whole-directory renames (e.g., `src/util/` → `lib/`); not implemented.                                            |
-| `merge-recursive-base-rename2to1` | Stateful                  | Stage-1 hash mismatch from rename/rename(2to1) in virtual merge-base computation.                                             |
-| `abort-untracked-conflict`        | Stateful                  | `merge --abort` / `rebase --abort` succeeds in impl but fails in Git due to untracked overwrite checks.                       |
-| `rebase-planner-match`            | Output-only (current use) | Planner commits match, but output formatting/diagnostics differ.                                                              |
-| `rebase-planner-extra-in-oracle`  | Stateful                  | Git includes commits already reachable from upstream.                                                                         |
-| `rebase-planner-extra-in-ours`    | Stateful                  | Impl planner includes commits Git does not.                                                                                   |
-| `rebase-planner-different`        | Stateful                  | Planner commit sets diverge in both directions.                                                                               |
-| `rebase-todo-diverged`            | Hybrid                    | Can be output-only (status text) or stateful (actual todo/state divergence).                                                  |
-| `diff3-ambiguity`                 | Stateful                  | Conflict-marker/worktree-level differences from different LCS alignment choices.                                              |
+| Pattern                      | Type                      | Description                                                                                                                   |
+| ---------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `rename-detection-ambiguity` | Hybrid                    | Can be output-only or stateful depending on branch (stateful branches include index/worktree divergence from rename pairing). |
+| `rebase-planner-match`       | Output-only (current use) | Planner commits match, but output formatting/diagnostics differ.                                                              |
+| `diff3-ambiguity`            | Stateful                  | Conflict-marker/worktree-level differences from different LCS alignment choices.                                              |
 
 **Output-only patterns handled by `checker.ts`** (tolerated, don't block traces):
 
