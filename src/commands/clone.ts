@@ -87,7 +87,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			await ctx.fs.mkdir(targetPath, { recursive: true });
 
 			// Initialize the new repository
-			const baseCtx = await initRepository(ctx.fs, targetPath, {
+			const { ctx: baseCtx } = await initRepository(ctx.fs, targetPath, {
 				bare: args.bare,
 			});
 			const newCtx: GitContext = ext

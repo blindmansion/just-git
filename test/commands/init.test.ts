@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { BASIC_REPO, EMPTY_REPO } from "../fixtures";
+import { BASIC_REPO, EMPTY_REPO, TEST_ENV } from "../fixtures";
 import { createTestBash, isDirectory, isFile, quickExec, readFile } from "../util";
 
 describe("git init", () => {
@@ -93,6 +93,92 @@ describe("git init", () => {
 			await bash.exec("git init --initial-branch trunk");
 			const head = await readFile(bash.fs, "/repo/.git/HEAD");
 			expect(head?.trim()).toBe("ref: refs/heads/trunk");
+		});
+	});
+
+	describe("reinit (existing .git)", () => {
+		test("prints 'Reinitialized' instead of 'Initialized empty'", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO });
+			await bash.exec("git init");
+			const r = await bash.exec("git init");
+			expect(r.exitCode).toBe(0);
+			expect(r.stdout).toContain("Reinitialized existing Git repository");
+			expect(r.stdout).not.toContain("Initialized empty");
+		});
+
+		test("preserves HEAD on plain reinit", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "first"');
+			const headBefore = await readFile(bash.fs, "/repo/.git/HEAD");
+
+			await bash.exec("git init");
+
+			const headAfter = await readFile(bash.fs, "/repo/.git/HEAD");
+			expect(headAfter).toBe(headBefore);
+		});
+
+		test("ignores --initial-branch on reinit and warns", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO });
+			await bash.exec("git init -b main");
+			const r = await bash.exec("git init -b other");
+			expect(r.exitCode).toBe(0);
+			expect(r.stderr).toContain("re-init: ignored --initial-branch=other");
+
+			const head = await readFile(bash.fs, "/repo/.git/HEAD");
+			expect(head?.trim()).toBe("ref: refs/heads/main");
+		});
+
+		test("preserves config (remotes, user settings) on reinit", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git remote add origin https://example.com/repo.git");
+			await bash.exec("git config user.name Custom");
+
+			await bash.exec("git init");
+
+			const r = await bash.exec("git config --list");
+			expect(r.stdout).toContain("remote.origin.url=https://example.com/repo.git");
+			expect(r.stdout).toContain("user.name=Custom");
+		});
+
+		test("preserves objects and refs on reinit", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "first"');
+			const logBefore = await bash.exec("git log --oneline");
+
+			await bash.exec("git init");
+
+			const logAfter = await bash.exec("git log --oneline");
+			expect(logAfter.stdout).toBe(logBefore.stdout);
+			expect(logAfter.exitCode).toBe(0);
+		});
+
+		test("preserves HEAD when reiniting with -b after commits exist", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init -b main");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "first"');
+
+			await bash.exec("git init -b other");
+
+			const head = await readFile(bash.fs, "/repo/.git/HEAD");
+			expect(head?.trim()).toBe("ref: refs/heads/main");
+
+			const log = await bash.exec("git log --oneline");
+			expect(log.exitCode).toBe(0);
+			expect(log.stdout).toContain("first");
+		});
+
+		test("reinit with directory argument on existing repo", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO });
+			await bash.exec("git init my-project");
+			const r = await bash.exec("git init my-project");
+			expect(r.exitCode).toBe(0);
+			expect(r.stdout).toContain("Reinitialized existing Git repository");
 		});
 	});
 

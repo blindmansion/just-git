@@ -15,20 +15,25 @@ export function registerInitCommand(parent: Command) {
 			const initialBranch = args.initialBranch;
 			const targetDir = args.directory ? resolve(ctx.cwd, args.directory) : ctx.cwd;
 
-			// Create the target directory if it doesn't exist
 			if (args.directory) {
 				await ctx.fs.mkdir(targetDir, { recursive: true });
 			}
 
-			const gitCtx = await initRepository(ctx.fs, targetDir, {
+			const { ctx: gitCtx, reinit } = await initRepository(ctx.fs, targetDir, {
 				bare: args.bare,
 				...(initialBranch ? { initialBranch } : {}),
 			});
 
+			let stderr = "";
+			if (reinit && initialBranch) {
+				stderr = `warning: re-init: ignored --initial-branch=${initialBranch}\n`;
+			}
+
 			const label = args.bare ? "bare " : "";
+			const verb = reinit ? "Reinitialized existing" : "Initialized empty";
 			return {
-				stdout: `Initialized empty ${label}Git repository in ${gitCtx.gitDir}/\n`,
-				stderr: "",
+				stdout: `${verb} ${label}Git repository in ${gitCtx.gitDir}/\n`,
+				stderr,
 				exitCode: 0,
 			};
 		},

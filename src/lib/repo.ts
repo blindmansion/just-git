@@ -46,6 +46,12 @@ interface InitOptions {
 	initialBranch?: string;
 }
 
+interface InitResult {
+	ctx: GitContext;
+	/** True when an existing repository was reinitialized. */
+	reinit: boolean;
+}
+
 /**
  * Initialize a new Git repository at the given path.
  *
@@ -60,38 +66,42 @@ interface InitOptions {
  *
  * For bare repos, the structure is created directly in `path`
  * instead of `path/.git`.
+ *
+ * On reinit (HEAD already exists), HEAD and config are preserved.
  */
 export async function initRepository(
 	fs: FileSystem,
 	path: string,
 	options: InitOptions = {},
-): Promise<GitContext> {
+): Promise<InitResult> {
 	const { bare = false, initialBranch = "main" } = options;
 
 	const gitDir = bare ? path : join(path, ".git");
 	const workTree = bare ? null : path;
+	const headPath = join(gitDir, "HEAD");
+	const reinit = await fs.exists(headPath);
 
-	// Create the directory structure
+	// Create the directory structure (idempotent with recursive: true)
 	await fs.mkdir(join(gitDir, "objects"), { recursive: true });
 	await fs.mkdir(join(gitDir, "refs", "heads"), { recursive: true });
 	await fs.mkdir(join(gitDir, "refs", "tags"), { recursive: true });
 
 	const ctx: GitContext = { fs, gitDir, workTree };
 
-	// Write HEAD as a symbolic ref to the initial branch
-	await createSymbolicRef(ctx, "HEAD", `refs/heads/${initialBranch}`);
+	if (!reinit) {
+		await createSymbolicRef(ctx, "HEAD", `refs/heads/${initialBranch}`);
 
-	// Write default config
-	const config: GitConfig = {
-		core: {
-			repositoryformatversion: "0",
-			filemode: "true",
-			bare: bare ? "true" : "false",
-		},
-	};
-	await fs.writeFile(join(gitDir, "config"), serializeConfig(config));
+		const config: GitConfig = {
+			core: {
+				repositoryformatversion: "0",
+				filemode: "true",
+				bare: bare ? "true" : "false",
+			},
+		};
+		await fs.writeFile(join(gitDir, "config"), serializeConfig(config));
+	}
 
-	return ctx;
+	return { ctx, reinit };
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
