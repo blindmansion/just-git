@@ -1509,6 +1509,7 @@ interface SummaryEntry {
 
 function cmdSummary(_args: string[]): void {
 	const entries: SummaryEntry[] = [];
+	const setStats = new Map<string, { traces: number; steps: number }>();
 	let dirs: string[];
 	try {
 		dirs = readdirSync(DATA_DIR, { withFileTypes: true })
@@ -1529,14 +1530,35 @@ function cmdSummary(_args: string[]): void {
 			continue;
 		}
 
+		let dirTraces = 0;
+		let dirSteps = 0;
+
 		const lines = content.split("\n");
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
+
+			const passMatch = line.match(/^\s+PASS\s+trace\s+\d+\s+(\d+)\s+steps/);
+			if (passMatch) {
+				dirTraces++;
+				dirSteps += parseInt(passMatch[1], 10);
+				continue;
+			}
+
 			const m = line.match(/^\s+(WARN|KNOWN|FAIL)\s+trace\s+(\d+)\s+(.+)$/);
 			if (!m) continue;
 			const type = m[1] as SummaryEntry["type"];
 			const trace = parseInt(m[2], 10);
 			const command = m[3].trim();
+
+			dirTraces++;
+
+			const stepsFullMatch = command.match(/^(\d+)\s+steps/);
+			const stepsPartialMatch = command.match(/^step\s+(\d+)\/(\d+)/);
+			if (stepsFullMatch) {
+				dirSteps += parseInt(stepsFullMatch[1], 10);
+			} else if (stepsPartialMatch) {
+				dirSteps += parseInt(stepsPartialMatch[1], 10);
+			}
 
 			const detailLine = (lines[i + 1] ?? "").trim();
 			const colonIdx = detailLine.indexOf(":");
@@ -1544,10 +1566,16 @@ function cmdSummary(_args: string[]): void {
 
 			entries.push({ set: dir, trace, type, command, detail: detailLine, pattern });
 		}
+
+		if (dirTraces > 0) {
+			setStats.set(dir, { traces: dirTraces, steps: dirSteps });
+		}
 	}
 
-	if (entries.length === 0) {
-		console.log("No WARN/KNOWN/FAIL entries found in any test-results.log files.");
+	const allSetNames = [...setStats.keys()].sort();
+
+	if (allSetNames.length === 0) {
+		console.log("No test-results.log files found.");
 		return;
 	}
 
@@ -1570,15 +1598,16 @@ function cmdSummary(_args: string[]): void {
 		parr.push(e);
 	}
 
-	const setNames = [...new Set(entries.map((e) => e.set))].sort();
-
 	console.log("\n══ Oracle Test Results — Aggregate Summary ══\n");
 
 	// Per-set table
-	const setTable = setNames.map((name) => {
+	const setTable = allSetNames.map((name) => {
 		const se = entries.filter((e) => e.set === name);
+		const stats = setStats.get(name) ?? { traces: 0, steps: 0 };
 		return {
 			set: name,
+			traces: stats.traces,
+			steps: stats.steps,
 			warn: se.filter((e) => e.type === "WARN").length,
 			known: se.filter((e) => e.type === "KNOWN").length,
 			fail: se.filter((e) => e.type === "FAIL").length,
@@ -1587,21 +1616,26 @@ function cmdSummary(_args: string[]): void {
 
 	const maxName = Math.max(...setTable.map((r) => r.set.length), 3);
 	console.log("Per-set overview:");
-	console.log(`  ${"Set".padEnd(maxName)}  WARN  KNOWN  FAIL  Total`);
-	console.log(`  ${"─".repeat(maxName)}  ────  ─────  ────  ─────`);
+	console.log(`  ${"Set".padEnd(maxName)}  Traces   Steps  WARN  KNOWN  FAIL`);
+	console.log(`  ${"─".repeat(maxName)}  ──────  ──────  ────  ─────  ────`);
 	for (const r of setTable) {
-		const total = r.warn + r.known + r.fail;
 		console.log(
-			`  ${r.set.padEnd(maxName)}  ${String(r.warn).padStart(4)}  ${String(r.known).padStart(5)}  ${String(r.fail).padStart(4)}  ${String(total).padStart(5)}`,
+			`  ${r.set.padEnd(maxName)}  ${String(r.traces).padStart(6)}  ${String(r.steps).padStart(6)}  ${String(r.warn).padStart(4)}  ${String(r.known).padStart(5)}  ${String(r.fail).padStart(4)}`,
 		);
 	}
 	const totals = setTable.reduce(
-		(acc, r) => ({ warn: acc.warn + r.warn, known: acc.known + r.known, fail: acc.fail + r.fail }),
-		{ warn: 0, known: 0, fail: 0 },
+		(acc, r) => ({
+			traces: acc.traces + r.traces,
+			steps: acc.steps + r.steps,
+			warn: acc.warn + r.warn,
+			known: acc.known + r.known,
+			fail: acc.fail + r.fail,
+		}),
+		{ traces: 0, steps: 0, warn: 0, known: 0, fail: 0 },
 	);
-	console.log(`  ${"─".repeat(maxName)}  ────  ─────  ────  ─────`);
+	console.log(`  ${"─".repeat(maxName)}  ──────  ──────  ────  ─────  ────`);
 	console.log(
-		`  ${"TOTAL".padEnd(maxName)}  ${String(totals.warn).padStart(4)}  ${String(totals.known).padStart(5)}  ${String(totals.fail).padStart(4)}  ${String(totals.warn + totals.known + totals.fail).padStart(5)}`,
+		`  ${"TOTAL".padEnd(maxName)}  ${String(totals.traces).padStart(6)}  ${String(totals.steps).padStart(6)}  ${String(totals.warn).padStart(4)}  ${String(totals.known).padStart(5)}  ${String(totals.fail).padStart(4)}`,
 	);
 
 	// By type
