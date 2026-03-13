@@ -15,7 +15,7 @@
 	"author": "blindmansion",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/blindmansion/just-git.git"
+		"url": "git+https://github.com/blindmansion/just-git.git"
 	},
 	"files": [
 		"dist"
