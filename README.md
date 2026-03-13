@@ -233,7 +233,7 @@ Fire-and-forget events emitted on every object/ref write. Handler errors are cau
 
 High fidelity to real git (2.53.0) state and output. Tested using real git as an [oracle](test/oracle/README.md) across hundreds of randomized command traces.
 
-This library is not yet interoperable with real git on the same filesystem (e.g. if you're using just-bash backed by a real filesystem where real git is also used to interact with repos). Interoperability happens at the network layer — clone, fetch, and push speak the Smart HTTP protocol and exchange standard packfiles. The internal `.git` directory layout is not guaranteed to be compatible with real git.
+When backed by a real filesystem (e.g. `just-bash` `ReadWriteFs`), interoperable with real git on the same repo, though less extensively tested than behavioral correctness.
 
 ## Disclaimer
 
