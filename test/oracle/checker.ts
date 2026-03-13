@@ -632,17 +632,44 @@ export class BatchChecker {
 	 * entries from cherry-pick --skip. With synthetic timestamps (year 2001),
 	 * git gc expires these entries in the oracle but our impl writes them
 	 * normally. Accept when filtering out these entries produces a match.
+	 *
+	 * When `-n` limits output, the extra reset entries in impl push older
+	 * entries out of the visible window, resulting in fewer non-reset lines
+	 * than the oracle. Handle this by accepting a prefix match after filtering.
 	 */
 	private static reflogResetEntryDiffers(expected: string, actual: string): boolean {
-		const normalize = (s: string) =>
-			s
-				.split("\n")
-				.filter((l) => !/ reset: moving to [0-9a-f]{40}$/.test(l))
-				.map((l) => l.replace(/HEAD@\{\d+\}/, "HEAD@{N}"))
-				.join("\n");
-		const ne = normalize(expected);
-		const na = normalize(actual);
-		return ne !== na ? false : ne !== expected || na !== actual;
+		const resetRe = / reset: moving to [0-9a-f]{40}$/;
+		const splitNonEmpty = (s: string) => s.split("\n").filter(Boolean);
+		const filterAndNorm = (lines: string[]) =>
+			lines
+				.filter((l) => !resetRe.test(l))
+				.map((l) => l.replace(/HEAD@\{\d+\}/, "HEAD@{N}"));
+
+		const eRaw = splitNonEmpty(expected);
+		const aRaw = splitNonEmpty(actual);
+		const eFiltered = filterAndNorm(eRaw);
+		const aFiltered = filterAndNorm(aRaw);
+
+		const eChanged = eFiltered.length !== eRaw.length;
+		const aChanged = aFiltered.length !== aRaw.length;
+		if (!eChanged && !aChanged) return false;
+
+		if (eFiltered.length === aFiltered.length) {
+			return eFiltered.every((l, i) => l === aFiltered[i]);
+		}
+
+		// Prefix match: the shorter filtered list should match the start of
+		// the longer one (the missing tail was pushed out by `-n` truncation).
+		// Only tolerate as many missing tail entries as extra reset lines could
+		// have pushed out of the `-n` window.
+		const extraResets = Math.abs(
+			(eRaw.length - eFiltered.length) - (aRaw.length - aFiltered.length),
+		);
+		const tailDiff = Math.abs(eFiltered.length - aFiltered.length);
+		if (tailDiff > extraResets) return false;
+		const shorter = eFiltered.length < aFiltered.length ? eFiltered : aFiltered;
+		const longer = eFiltered.length < aFiltered.length ? aFiltered : eFiltered;
+		return shorter.every((l, i) => l === longer[i]);
 	}
 
 	/**
