@@ -1,6 +1,7 @@
 import type { GitCommandName, GitExtensions } from "../git.ts";
 import { type Command, command } from "../parse/index.ts";
 import { registerAddCommand } from "./add.ts";
+import { registerBisectCommand } from "./bisect.ts";
 import { registerBlameCommand } from "./blame.ts";
 import { registerBranchCommand } from "./branch.ts";
 import { registerCheckoutCommand } from "./checkout.ts";
@@ -68,6 +69,7 @@ const COMMAND_REGISTRY: Record<GitCommandName, (git: Command, ext?: GitExtension
 	reflog: (g, e) => registerReflogCommand(g, e),
 	repack: (g, e) => registerRepackCommand(g, e),
 	gc: (g, e) => registerGcCommand(g, e),
+	bisect: (g, e) => registerBisectCommand(g, e),
 };
 
 export function createGitCommand(ext?: GitExtensions): Command {

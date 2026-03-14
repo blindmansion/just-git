@@ -69,7 +69,8 @@ export type GitCommandName =
 	| "restore"
 	| "reflog"
 	| "repack"
-	| "gc";
+	| "gc"
+	| "bisect";
 
 export interface GitOptions {
 	credentials?: CredentialProvider;

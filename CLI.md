@@ -44,6 +44,7 @@ Commands:
   reflog       Manage reflog information
   repack       Pack unpacked objects in a repository
   gc           Cleanup unnecessary files and optimize the local repository
+  bisect       Use binary search to find the commit that introduced a bug
 ```
 
 ## git add
@@ -62,6 +63,190 @@ Options:
   -f, --force    Allow adding otherwise ignored files
   -u, --update   Update tracked files
   -n, --dry-run  Don't actually add the file(s)
+```
+
+## git bisect
+
+```
+git bisect - Use binary search to find the commit that introduced a bug
+
+Usage:
+  git bisect <command> [subcommand] [rest...]
+
+Commands:
+  start      Start bisecting
+  bad        Mark a commit as bad/new
+  good       Mark a commit as good/old
+  new        Mark a commit as bad/new
+  old        Mark a commit as good/old
+  skip       Mark a commit as untestable
+  reset      Finish bisecting and return to original branch
+  log        Show the bisect log
+  replay     Replay a bisect log
+  run        Bisect by running a command
+  terms      Show the terms used for old and new commits
+  visualize  Show remaining suspects in git log
+  view       Show remaining suspects in git log
+
+Arguments:
+  subcommand  Subcommand or custom term
+  rest...     Additional arguments
+```
+
+### git bisect bad
+
+```
+git bisect bad - Mark a commit as bad/new
+
+Usage:
+  git bisect bad [rev]
+
+Arguments:
+  rev  Revision to mark
+```
+
+### git bisect good
+
+```
+git bisect good - Mark a commit as good/old
+
+Usage:
+  git bisect good [rev]
+
+Arguments:
+  rev  Revision to mark
+```
+
+### git bisect log
+
+```
+git bisect log - Show the bisect log
+
+Usage:
+  git bisect log
+```
+
+### git bisect new
+
+```
+git bisect new - Mark a commit as bad/new
+
+Usage:
+  git bisect new [rev]
+
+Arguments:
+  rev  Revision to mark
+```
+
+### git bisect old
+
+```
+git bisect old - Mark a commit as good/old
+
+Usage:
+  git bisect old [rev]
+
+Arguments:
+  rev  Revision to mark
+```
+
+### git bisect replay
+
+```
+git bisect replay - Replay a bisect log
+
+Usage:
+  git bisect replay <logfile>
+
+Arguments:
+  logfile  Path to bisect log file (required)
+```
+
+### git bisect reset
+
+```
+git bisect reset - Finish bisecting and return to original branch
+
+Usage:
+  git bisect reset [commit]
+
+Arguments:
+  commit  Branch or commit to checkout
+```
+
+### git bisect run
+
+```
+git bisect run - Bisect by running a command
+
+Usage:
+  git bisect run <cmd...>
+
+Arguments:
+  cmd...  Command and arguments to run (required)
+```
+
+### git bisect skip
+
+```
+git bisect skip - Mark a commit as untestable
+
+Usage:
+  git bisect skip [revs...]
+
+Arguments:
+  revs...  Revisions to skip
+```
+
+### git bisect start
+
+```
+git bisect start - Start bisecting
+
+Usage:
+  git bisect start [options] [revs...]
+
+Arguments:
+  revs...  Bad and good revisions
+
+Options:
+  --term-new <string>   Alternate term for new/bad
+  --term-bad <string>   Alternate term for new/bad
+  --term-old <string>   Alternate term for old/good
+  --term-good <string>  Alternate term for old/good
+  --no-checkout         Do not checkout the bisection commit
+  --first-parent        Follow only first parent on merges
+```
+
+### git bisect terms
+
+```
+git bisect terms - Show the terms used for old and new commits
+
+Usage:
+  git bisect terms [options]
+
+Options:
+  --term-good  Show the term for the old state
+  --term-bad   Show the term for the new state
+```
+
+### git bisect view
+
+```
+git bisect view - Show remaining suspects in git log
+
+Usage:
+  git bisect view
+```
+
+### git bisect visualize
+
+```
+git bisect visualize - Show remaining suspects in git log
+
+Usage:
+  git bisect visualize
 ```
 
 ## git blame

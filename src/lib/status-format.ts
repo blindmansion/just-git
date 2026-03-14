@@ -1,9 +1,10 @@
 import { abbreviateHash, comparePaths } from "./command-utils.ts";
+import { isBisectInProgress } from "./bisect.ts";
 import { countAheadBehind } from "./commit-walk.ts";
 import { type GitConfig, readConfig } from "./config.ts";
 import { getStage0Entries, hasConflicts, readIndex } from "./index.ts";
 import { readCommit } from "./object-db.ts";
-import { readDetachPoint } from "./operation-state.ts";
+import { readDetachPoint, readStateFile } from "./operation-state.ts";
 import { join as joinPath } from "./path.ts";
 import { isRebaseInProgress, readRebaseState } from "./rebase.ts";
 import { branchNameFromRef, readHead, resolveHead, resolveRef } from "./refs.ts";
@@ -255,6 +256,14 @@ async function formatLongStatus(
 			}
 			hasIntermediateState = true;
 		}
+	}
+
+	if (await isBisectInProgress(gitCtx)) {
+		const bisectStart = await readStateFile(gitCtx, "BISECT_START");
+		const ref = bisectStart?.trim() ?? "";
+		lines.push(`You are currently bisecting, started from branch '${ref}'.`);
+		lines.push('  (use "git bisect reset" to get back to the original branch)');
+		hasIntermediateState = true;
 	}
 
 	const showInitial = opts?.isInitial ?? !headHash;
