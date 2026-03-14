@@ -390,6 +390,7 @@ async function handleSquashMerge(
 		labels,
 		errorExitCode: isFF ? 1 : 2,
 		operationName: "merge",
+		skipStagedChangeCheck: isFF,
 	});
 
 	if (!applyResult.ok) {

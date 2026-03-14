@@ -396,10 +396,14 @@ async function handleSkip(
 	const currentIndex = await readIndex(gitCtx);
 	const result = await mergeAbort(gitCtx, headCommit.tree, currentIndex, headHash);
 	if (!result.success) {
-		return result.errorOutput as {
+		const out = result.errorOutput as {
 			stdout: string;
 			stderr: string;
 			exitCode: number;
+		};
+		return {
+			...out,
+			stderr: out.stderr + "error: failed to skip the commit\nfatal: cherry-pick failed\n",
 		};
 	}
 

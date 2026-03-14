@@ -8,6 +8,26 @@
  * This avoids the need to continue replaying past a divergence (where state
  * drift makes comparison meaningless) while still distinguishing real errors
  * from expected Git implementation differences.
+ *
+ * ## rename-detection-ambiguity
+ *
+ * The dominant known pattern. When merge-ort pairs deleted/added files for
+ * rename detection and multiple candidates share the same blob hash, the
+ * pairing is ambiguous. Real git's tiebreaking depends on hashmap iteration
+ * order (internal, unspecified); ours uses sorted arrays with basename-first
+ * matching. Both are valid but produce different pairings in edge cases.
+ *
+ * This is NOT fixable without replicating git's exact hashmap internals.
+ * The similarity scores match — it's purely about which equally-scored
+ * candidate gets picked first.
+ *
+ * Manifestations: direct merge-ort state/output differences on merge,
+ * cherry-pick, rebase; cascading index divergences on subsequent commands
+ * (switch --orphan, checkout, restore, etc.) that inherit the diverged
+ * index state. The generic fallback at the bottom of runPostMortem()
+ * catches cascading cases via index stage mismatch detection.
+ *
+ * See test/oracle/README.md "Rename detection ambiguity" for full details.
  */
 
 import { readFileSync } from "node:fs";

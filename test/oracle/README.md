@@ -304,6 +304,24 @@ When a trace fails, the test runner invokes `post-mortem.ts` to classify the div
 | `rename-detection-ambiguity` | Hybrid                    | Can be output-only or stateful depending on branch (stateful branches include index/worktree divergence from rename pairing). |
 | `rebase-planner-match`       | Output-only (current use) | Planner commits match, but output formatting/diagnostics differ.                                                              |
 
+### Rename detection ambiguity — why it exists and why it's not fixable
+
+When merge-ort detects renames (Phase 2 of the three-way merge), it pairs deleted files with added files based on content similarity. When multiple deleted files share the same blob hash, the pairing is ambiguous — any of them could be matched to the added file. Real git's tiebreaking depends on hashmap iteration order (the order entries happen to land in `diffcore_rename`'s internal hash table), which is non-deterministic from the algorithm's perspective. Our implementation uses sorted arrays and basename-first matching, which is equally valid but produces different pairings in some edge cases.
+
+This is **not fixable** without replicating git's exact hashmap implementation (bucket count, probe sequence, insertion order), which is internal and unspecified. The rename detection scores are identical — it's purely about which equally-scored candidate gets picked first.
+
+**How it manifests (from most to least common):**
+
+1. **merge --squash with state divergence** — Different rename pairings produce different merge-ort results (different conflict stages, different auto-resolutions). The index ends up with different entries. Most common trigger: `git mv` followed by `git merge --squash` where the merge target also modifies/deletes the renamed file.
+
+2. **merge --squash output-only** — Merge succeeds on both sides with identical state, but stdout/stderr differs (different diffstat, different "Auto-merging" / "CONFLICT" messages) because merge-ort traversed the rename graph differently.
+
+3. **cherry-pick / rebase execution** — A cherry-pick during rebase (or standalone) goes through merge-ort. Different rename pairing → different conflict stages or auto-resolutions. The rebase planner may match perfectly, but individual pick steps diverge.
+
+4. **Cascading to unrelated commands** — Once a merge/cherry-pick/rebase produces a different index state, every subsequent command operates on diverged state. This surfaces as divergences on `switch --orphan`, `checkout`, `restore`, `reflog`, etc. — commands that have nothing to do with rename detection themselves. The post-mortem's generic fallback catches these by detecting index stage mismatches.
+
+**The `no-rename-show` preset** avoids this entirely by excluding `mvFile` actions (no renames in the trace → no rename detection ambiguity). Use it when you want to test non-rename behavior without noise.
+
 **Output-only patterns handled by `checker.ts`** (tolerated, don't block traces):
 
 | Pattern                              | Description                                                                                                                                     |

@@ -234,7 +234,7 @@ Fire-and-forget events emitted on every object/ref write. Handler errors are cau
 
 ## Goals and testing
 
-High fidelity to real git (2.53.0) state and output. Tested using real git as an [oracle](test/oracle/README.md) across hundreds of randomized command traces.
+High fidelity to real git (2.53.0) state and output. Tested using real git as an [oracle](test/oracle/README.md) — hundreds of randomized traces totaling hundreds of thousands of git operations, each verified step-by-step against real git's state and output.
 
 When backed by a real filesystem (e.g. `just-bash` `ReadWriteFs`), interoperable with real git on the same repo, though less extensively tested than behavioral correctness.
 
