@@ -7,34 +7,66 @@ import type { GitContext } from "./types.ts";
 // ── Repository discovery ────────────────────────────────────────────
 
 /**
- * Walk up from `startPath` looking for a `.git` directory.
+ * Walk up from `startPath` looking for a git repository.
+ * Checks for both normal repos (`.git/` subdirectory) and bare repos
+ * (`HEAD` + `objects/` + `refs/` directly in the directory).
  * Returns a GitContext if found, null otherwise.
  */
 export async function findGitDir(fs: FileSystem, startPath: string): Promise<GitContext | null> {
 	let current = startPath;
 
 	while (true) {
+		// Check for normal repo (.git/ subdirectory)
 		const candidate = join(current, ".git");
-
 		if (await fs.exists(candidate)) {
 			const stat = await fs.stat(candidate);
 			if (stat.isDirectory) {
-				return {
-					fs,
-					gitDir: candidate,
-					workTree: current,
-				};
+				return { fs, gitDir: candidate, workTree: current };
 			}
+		}
+
+		// Check for bare repo (HEAD + objects/ + refs/ in directory itself)
+		if (await isBareGitDir(fs, current)) {
+			return { fs, gitDir: current, workTree: null };
 		}
 
 		// Move up one level
 		const parent = parentDir(current);
 		if (parent === current) {
-			// Reached filesystem root
 			return null;
 		}
 		current = parent;
 	}
+}
+
+/**
+ * Check whether a directory is a bare git repository.
+ * Matches real git's `is_git_directory()` heuristic:
+ * the directory must contain HEAD, objects/, and refs/.
+ */
+async function isBareGitDir(fs: FileSystem, path: string): Promise<boolean> {
+	const headPath = join(path, "HEAD");
+	if (!(await fs.exists(headPath))) return false;
+
+	try {
+		const headStat = await fs.stat(headPath);
+		if (!headStat.isFile) return false;
+	} catch {
+		return false;
+	}
+
+	for (const sub of ["objects", "refs"]) {
+		const subPath = join(path, sub);
+		if (!(await fs.exists(subPath))) return false;
+		try {
+			const stat = await fs.stat(subPath);
+			if (!stat.isDirectory) return false;
+		} catch {
+			return false;
+		}
+	}
+
+	return true;
 }
 
 // ── Repository initialization ───────────────────────────────────────
