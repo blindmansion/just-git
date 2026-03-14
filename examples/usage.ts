@@ -13,8 +13,6 @@ const ENV = {
 	GIT_AUTHOR_EMAIL: "test@test.com",
 	GIT_COMMITTER_NAME: "Test",
 	GIT_COMMITTER_EMAIL: "test@test.com",
-	GIT_AUTHOR_DATE: "1000000000",
-	GIT_COMMITTER_DATE: "1000000000",
 };
 
 function print(label: string, r: BashExecResult) {
@@ -105,7 +103,6 @@ console.log(`  With env vars:    ${fb1Author?.trim()}`);
 // Without env vars → fallback identity used
 const fallbackBash2 = new Bash({
 	cwd: "/fallback2",
-	env: { GIT_AUTHOR_DATE: "1000000000", GIT_COMMITTER_DATE: "1000000000" },
 	customCommands: [gitFallback],
 });
 await fallbackBash2.exec(

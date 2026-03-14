@@ -11,6 +11,7 @@ import {
 	type IdentityOverride,
 	type Middleware,
 	type NetworkPolicy,
+	type RemoteResolver,
 } from "./hooks.ts";
 
 /** Options for subcommand execution (mirrors just-bash's CommandExecOptions). */
@@ -78,6 +79,12 @@ export interface GitOptions {
 	disabled?: GitCommandName[];
 	/** Network policy. Set to `false` to block all HTTP access. */
 	network?: NetworkPolicy | false;
+	/**
+	 * Resolve a remote URL to a GitContext on a potentially different VFS.
+	 * Called before local filesystem lookup for non-HTTP remote URLs.
+	 * Return null to fall back to local filesystem resolution.
+	 */
+	resolveRemote?: RemoteResolver;
 }
 
 /**
@@ -90,6 +97,7 @@ export interface GitExtensions {
 	identityOverride?: IdentityOverride;
 	fetchFn?: FetchFunction;
 	networkPolicy?: NetworkPolicy | false;
+	resolveRemote?: RemoteResolver;
 }
 
 export class Git {
@@ -108,6 +116,7 @@ export class Git {
 			identityOverride: options?.identity,
 			fetchFn: typeof network === "object" ? network.fetch : undefined,
 			networkPolicy: network,
+			resolveRemote: options?.resolveRemote,
 		};
 		if (options?.disabled?.length) {
 			const blocked = new Set<string>(options.disabled);

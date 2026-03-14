@@ -5,6 +5,7 @@ import type {
 	HookEmitter,
 	IdentityOverride,
 	NetworkPolicy,
+	RemoteResolver,
 } from "../hooks.ts";
 import type { PackedObjectStore } from "./object-store.ts";
 
@@ -156,6 +157,8 @@ export interface GitContext {
 	fetchFn?: FetchFunction;
 	/** Network access policy. `false` blocks all HTTP access. */
 	networkPolicy?: NetworkPolicy | false;
+	/** Resolves remote URLs to GitContexts on potentially different VFS instances. */
+	resolveRemote?: RemoteResolver;
 	/** Cached object store instance. Lazily created by object-db. */
 	objectStore?: PackedObjectStore;
 }

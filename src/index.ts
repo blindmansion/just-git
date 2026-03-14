@@ -50,4 +50,7 @@ export type {
 	PreStashEvent,
 	RefDeleteEvent,
 	RefUpdateEvent,
+	RemoteResolver,
 } from "./hooks";
+export type { GitContext } from "./lib/types";
+export { findGitDir } from "./lib/repo";

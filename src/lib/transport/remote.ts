@@ -100,6 +100,9 @@ export async function createTransportForUrl(
 		const auth = await resolveAuthForUrl(ctx, url, env);
 		return new SmartHttpTransport(ctx, url, auth, ctx.fetchFn);
 	}
+	if (!remoteCtx && ctx.resolveRemote) {
+		remoteCtx = (await ctx.resolveRemote(url)) ?? undefined;
+	}
 	if (!remoteCtx) {
 		throw new Error(`'${url}' does not appear to be a git repository`);
 	}
@@ -128,7 +131,9 @@ export async function resolveRemoteTransport(
 		};
 	}
 
-	const remoteCtx = await findGitDir(ctx.fs, remote.url);
+	const remoteCtx =
+		(ctx.resolveRemote ? await ctx.resolveRemote(remote.url) : null) ??
+		(await findGitDir(ctx.fs, remote.url));
 	if (!remoteCtx) return null;
 
 	return {

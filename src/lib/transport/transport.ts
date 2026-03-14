@@ -77,6 +77,34 @@ export interface Transport {
 	headTarget?: string;
 }
 
+// ── Per-repo push mutex ──────────────────────────────────────────────
+
+class Mutex {
+	private queue: Promise<void> = Promise.resolve();
+
+	async acquire(): Promise<() => void> {
+		let release!: () => void;
+		const next = new Promise<void>((r) => {
+			release = r;
+		});
+		const prev = this.queue;
+		this.queue = next;
+		await prev;
+		return release;
+	}
+}
+
+const pushLocks = new WeakMap<object, Mutex>();
+
+function getPushLock(fs: object): Mutex {
+	let lock = pushLocks.get(fs);
+	if (!lock) {
+		lock = new Mutex();
+		pushLocks.set(fs, lock);
+	}
+	return lock;
+}
+
 // ── Local transport ──────────────────────────────────────────────────
 
 /**
@@ -140,7 +168,15 @@ export class LocalTransport implements Transport {
 	}
 
 	async push(updates: PushRefUpdate[]): Promise<PushResult> {
-		// Collect objects the remote needs (skip zero-hash deletes)
+		const release = await getPushLock(this.remote.fs).acquire();
+		try {
+			return await this.pushInner(updates);
+		} finally {
+			release();
+		}
+	}
+
+	private async pushInner(updates: PushRefUpdate[]): Promise<PushResult> {
 		const allWants: ObjectId[] = [];
 		const allHaves: ObjectId[] = [];
 
@@ -167,12 +203,10 @@ export class LocalTransport implements Transport {
 			}
 		}
 
-		// Update remote refs
 		const results: PushRefUpdate[] = [];
 		for (const update of updates) {
 			try {
 				if (update.newHash === ZERO_HASH) {
-					// Delete
 					await deleteRef(this.remote, update.name);
 					results.push({ ...update, ok: true });
 					continue;
@@ -180,7 +214,6 @@ export class LocalTransport implements Transport {
 
 				const currentHash = await resolveRef(this.remote, update.name);
 
-				// Non-force push: verify fast-forward via ancestry check
 				if (currentHash && !update.ok) {
 					const ff = await isAncestor(this.remote, currentHash, update.newHash);
 					if (!ff) {

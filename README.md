@@ -37,12 +37,13 @@ await bash.exec("git log --oneline");
 
 `createGit(options?)` accepts:
 
-| Option        | Description                                                                                                                                                         |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `identity`    | Author/committer override. With `locked: true`, always wins over env vars and git config. Without `locked`, acts as a fallback.                                     |
-| `credentials` | `(url) => HttpAuth \| null` callback for Smart HTTP transport auth.                                                                                                 |
-| `disabled`    | `GitCommandName[]` of subcommands to block (e.g. `["push", "rebase"]`).                                                                                             |
-| `network`     | `{ allowed?: string[], fetch?: FetchFunction }` to restrict HTTP access and/or provide a custom `fetch` implementation. Set to `false` to block all network access. |
+| Option          | Description                                                                                                                                                         |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `identity`      | Author/committer override. With `locked: true`, always wins over env vars and git config. Without `locked`, acts as a fallback.                                     |
+| `credentials`   | `(url) => HttpAuth \| null` callback for Smart HTTP transport auth.                                                                                                 |
+| `disabled`      | `GitCommandName[]` of subcommands to block (e.g. `["push", "rebase"]`).                                                                                             |
+| `network`       | `{ allowed?: string[], fetch?: FetchFunction }` to restrict HTTP access and/or provide a custom `fetch` implementation. Set to `false` to block all network access. |
+| `resolveRemote` | `(url) => GitContext \| null` callback for cross-VFS remote resolution. See [Multi-agent collaboration](#multi-agent-collaboration).                                |
 
 ```ts
 const git = createGit({
@@ -176,6 +177,52 @@ Fire-and-forget events emitted on every object/ref write. Handler errors are cau
 | `ref:update`   | `{ ref, oldHash, newHash }` |
 | `ref:delete`   | `{ ref, oldHash }`          |
 | `object:write` | `{ type, hash }`            |
+
+## Multi-agent collaboration
+
+Multiple agents can work on clones of the same repository in the same process, each with full VFS isolation. The `resolveRemote` option maps remote URLs to `GitContext` instances on other virtual filesystems, so clone/fetch/push/pull cross VFS boundaries without any network or shared filesystem.
+
+```ts
+import { Bash, InMemoryFs } from "just-bash";
+import { createGit, findGitDir } from "just-git";
+
+// Origin repo on its own filesystem
+const originFs = new InMemoryFs();
+const setupBash = new Bash({
+  fs: originFs,
+  cwd: "/repo",
+  customCommands: [
+    createGit({ identity: { name: "Setup", email: "setup@example.com", locked: true } }),
+  ],
+});
+await setupBash.exec("git init");
+await setupBash.exec("echo 'hello' > README.md");
+await setupBash.exec("git add . && git commit -m 'initial'");
+
+const originCtx = await findGitDir(originFs, "/repo");
+
+// Each agent gets its own filesystem + resolveRemote pointing to origin
+function createAgent(name: string, email: string) {
+  const agentFs = new InMemoryFs();
+  const git = createGit({
+    identity: { name, email, locked: true },
+    resolveRemote: (url) => (url === "/origin" ? originCtx : null),
+  });
+  return new Bash({ fs: agentFs, cwd: "/repo", customCommands: [git] });
+}
+
+const alice = createAgent("Alice", "alice@example.com");
+const bob = createAgent("Bob", "bob@example.com");
+
+await alice.exec("git clone /origin /repo", { cwd: "/" });
+await bob.exec("git clone /origin /repo", { cwd: "/" });
+
+// Alice and Bob work independently, push to origin, fetch each other's changes
+```
+
+Concurrent pushes to the same remote are automatically serialized — if two agents push simultaneously, one succeeds and the other gets a proper non-fast-forward rejection, just like real git.
+
+See [`examples/multi-agent.ts`](examples/multi-agent.ts) for a full working example with a coordinator agent that merges feature branches.
 
 ## Command coverage
 

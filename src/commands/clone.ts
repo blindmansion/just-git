@@ -77,7 +77,12 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			// For local paths, verify the source is a git repository
 			let sourceCtx: Awaited<ReturnType<typeof findGitDir>> = null;
 			if (!isHttp) {
-				sourceCtx = await findGitDir(ctx.fs, sourcePath);
+				if (ext?.resolveRemote) {
+					sourceCtx = await ext.resolveRemote(sourcePath);
+				}
+				if (!sourceCtx) {
+					sourceCtx = await findGitDir(ctx.fs, sourcePath);
+				}
 				if (!sourceCtx) {
 					return fatal(`repository '${repository}' does not exist`);
 				}
@@ -98,6 +103,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 						identityOverride: ext.identityOverride,
 						fetchFn: ext.fetchFn,
 						networkPolicy: ext.networkPolicy,
+						resolveRemote: ext.resolveRemote,
 					}
 				: baseCtx;
 

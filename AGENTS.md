@@ -39,6 +39,7 @@ const bash = new Bash({ cwd: "/repo", customCommands: [git] });
 - `disabled` — `GitCommandName[]` of subcommands to exclude from registration. Disabled commands return unknown-command errors.
 - `identity` — `IdentityOverride` with `name`, `email`, optional `locked`. When `locked: true`, overrides env vars (`GIT_AUTHOR_NAME`, etc.); when unlocked (default), acts as fallback when env vars and git config are absent.
 - `credentials` — `CredentialProvider` callback `(url) => HttpAuth | null`. Provides auth for Smart HTTP transport. Takes precedence over `GIT_HTTP_BEARER_TOKEN`/`GIT_HTTP_USER` env vars.
+- `resolveRemote` — `RemoteResolver` callback `(url) => GitContext | null`. Resolves non-HTTP remote URLs to a `GitContext`, enabling cross-VFS transport. Called before local filesystem lookup. Return null to fall back to `findGitDir` on the local VFS. Enables multi-agent setups where each agent has its own isolated filesystem but can clone/fetch/push between repos on different VFS instances via `LocalTransport`.
 
 **Hooks** (`git.on(event, handler)` → unsubscribe function):
 
@@ -87,7 +88,7 @@ Low-level events (fire-and-forget, no abort):
 
 Wraps every `git <subcommand>` invocation. Receives `(event, next)` where `event` is a `CommandEvent` containing the execution context: `{ command, rawArgs, fs, cwd, env, stdin, exec?, signal? }`. Call `next()` to proceed; return an `ExecResult` to short-circuit. Middlewares compose in registration order (first registered runs outermost).
 
-**`GitExtensions`** — internal bundle threaded into command handlers via closures. Contains `hooks?: HookEmitter`, `credentialProvider?`, `identityOverride?`, `fetchFn?`, `networkPolicy?`. Command handlers access these to emit events and resolve identity/credentials.
+**`GitExtensions`** — internal bundle threaded into command handlers via closures. Contains `hooks?: HookEmitter`, `credentialProvider?`, `identityOverride?`, `fetchFn?`, `networkPolicy?`, `resolveRemote?`. Command handlers access these to emit events, resolve identity/credentials, and resolve cross-VFS remotes.
 
 ### Commands
 
@@ -176,12 +177,13 @@ Re-exports `createGitCommand` (low-level), `createGit`, `Git`, `GitOptions`, `Gi
 - `Git.name` — always `"git"`, satisfies just-bash `Command` interface
 - `Git.execute(args, ctx)` — runs the git command with middleware wrapping; satisfies just-bash `Command` interface
 
-**Types:** `GitOptions`, `GitCommandName`, `GitExtensions`, `CommandContext`, `CommandExecOptions`.
+**Types:** `GitOptions`, `GitCommandName`, `GitExtensions`, `CommandContext`, `CommandExecOptions`, `RemoteResolver`.
 
 ### `src/hooks.ts` — Hooks, middleware, and event types
 
 - `HookEmitter` class — typed event emitter with `on(event, handler)` → unsubscribe, `emitPre(event, data)` → `AbortResult | null`, `emit(event, data)` (fire-and-forget)
 - `CredentialProvider` type — `(url: string) => HttpAuth | null | Promise<HttpAuth | null>`
+- `RemoteResolver` type — `(url: string) => GitContext | null | Promise<GitContext | null>`. Resolves remote URLs to GitContexts on potentially different VFS instances.
 - `IdentityOverride` interface — `{ name, email, locked? }`
 - `CommandEvent` interface — `{ command, rawArgs, fs, cwd, env, stdin, exec?, signal? }` for middleware.
 - `Middleware` type — `(event: CommandEvent, next: () => Promise<ExecResult>) => ExecResult | Promise<ExecResult>`
