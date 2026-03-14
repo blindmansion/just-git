@@ -542,6 +542,9 @@ async function handleRun(
 				stdout += "bisect found first bad commit\n";
 				return { stdout, stderr: "", exitCode: 0 };
 			}
+			if (advResult.exitCode !== 0) {
+				return { stdout, stderr: advResult.stderr, exitCode: advResult.exitCode };
+			}
 			continue;
 		}
 
@@ -678,6 +681,19 @@ async function bisectAutoNext(
 		const foundOutput = await formatFirstBadCommit(gitCtx, result.hash);
 		await appendBisectLog(gitCtx, `# first bad commit: [${result.hash}] ${result.subject}`);
 		return { stdout: foundOutput, stderr: "", exitCode: 0 };
+	}
+
+	if (result.onlySkippedLeft) {
+		let out =
+			"There are only 'skip'ped commits left to test.\nThe first bad commit could be any of:\n";
+		for (const sh of state.skipHashes) {
+			out += sh + "\n";
+		}
+		if (state.badHash) {
+			out += state.badHash + "\n";
+		}
+		out += "We cannot bisect more!\n";
+		return { stdout: out, stderr: "", exitCode: 2 };
 	}
 
 	if (state.noCheckout) {

@@ -28,6 +28,8 @@ interface BisectResult {
 	steps: number;
 	/** True when only one candidate remains — bisect is done. */
 	found: boolean;
+	/** True when all non-skipped candidates are exhausted (only skipped remain). */
+	onlySkippedLeft: boolean;
 }
 
 // ── State queries ───────────────────────────────────────────────────
@@ -161,6 +163,7 @@ export async function findBisectionCommit(
 			remaining: 0,
 			steps: 0,
 			found: true,
+			onlySkippedLeft: false,
 		};
 	}
 
@@ -207,7 +210,9 @@ export async function findBisectionCommit(
 	}
 
 	// If all non-skipped candidates were exhausted, try skipped ones
+	let onlySkippedLeft = false;
 	if (bestDistance === nr) {
+		onlySkippedLeft = true;
 		for (const c of candidates) {
 			const w = weights.get(c.hash) ?? 0;
 			const distance = Math.abs(2 * w - nr);
@@ -228,6 +233,7 @@ export async function findBisectionCommit(
 		remaining,
 		steps,
 		found: false,
+		onlySkippedLeft,
 	};
 }
 

@@ -3,7 +3,7 @@
 [![CI](https://github.com/blindmansion/just-git/actions/workflows/ci.yml/badge.svg)](https://github.com/blindmansion/just-git/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/just-git)](https://www.npmjs.com/package/just-git)
 
-Git implementation for virtual bash environments (particularly [just-bash](https://github.com/vercel-labs/just-bash)). Pure TypeScript, zero dependencies. Works in Node, Bun, Deno, and the browser. ~98 kB gzipped.
+Git implementation for virtual bash environments (particularly [just-bash](https://github.com/vercel-labs/just-bash)). Pure TypeScript, zero dependencies. Works in Node, Bun, Deno, and the browser. ~100 kB gzipped.
 
 ## Install
 
@@ -179,7 +179,7 @@ Fire-and-forget events emitted on every object/ref write. Handler errors are cau
 
 ## Command coverage
 
-33 commands implemented. See [CLI.md](CLI.md) for full usage details.
+34 commands implemented. See [CLI.md](CLI.md) for full usage details.
 
 | Command                           | Flags / options                                                                                                                                                                |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -210,6 +210,7 @@ Fire-and-forget events emitted on every object/ref write. Handler errors are cau
 | `fetch [<remote>] [<refspec>...]` | `--all`, `--tags`, `--prune`/`-p`                                                                                                                                              |
 | `push [<remote>] [<refspec>...]`  | `--force`/`-f`, `-u`/`--set-upstream`, `--all`, `--tags`, `--delete`/`-d`                                                                                                      |
 | `pull [<remote>] [<branch>]`      | `--ff-only`, `--no-ff`, `--rebase`/`-r`, `--no-rebase`                                                                                                                         |
+| `bisect`                          | `start`, `bad`/`good`/`new`/`old`, `skip`, `reset`, `log`, `replay`, `run`, `terms`, `visualize`/`view`, `--term-new`/`--term-old`, `--no-checkout`, `--first-parent`          |
 | `clean`                           | `-f`, `-n`/`--dry-run`, `-d`, `-x`, `-X`, `-e`/`--exclude`                                                                                                                     |
 | `reflog`                          | `show [<ref>]`, `exists`, `-n`/`--max-count`                                                                                                                                   |
 | `gc`                              | `--aggressive`                                                                                                                                                                 |

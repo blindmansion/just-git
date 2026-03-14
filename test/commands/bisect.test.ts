@@ -545,4 +545,256 @@ describe("git bisect", () => {
 			expect(result.exitCode).toBe(128);
 		});
 	});
+
+	describe("correctness", () => {
+		test("bisect run identifies the exact commit that introduced a file", async () => {
+			const bash = await setupLinearHistory();
+			const logResult = await bash.exec("git log --oneline");
+			const lines = logResult.stdout.trim().split("\n");
+			const firstHash = lines[lines.length - 1]!.split(" ")[0]!;
+
+			await bash.exec(`git bisect start HEAD ${firstHash}`);
+
+			await bash.fs.writeFile(
+				"/repo/test.sh",
+				"#!/bin/bash\nif [ -f /repo/file6.txt ]; then exit 1; else exit 0; fi\n",
+			);
+
+			const runResult = await bash.exec("git bisect run bash /repo/test.sh");
+			expect(runResult.exitCode).toBe(0);
+			expect(runResult.stdout).toContain("is the first bad commit");
+			expect(runResult.stdout).toContain("commit 6");
+		});
+
+		test("manual bisect finds the correct commit by checking worktree", async () => {
+			const bash = await setupLinearHistory();
+			const logResult = await bash.exec("git log --oneline");
+			const lines = logResult.stdout.trim().split("\n");
+			const firstHash = lines[lines.length - 1]!.split(" ")[0]!;
+
+			await bash.exec(`git bisect start HEAD ${firstHash}`);
+
+			let foundOutput = "";
+			for (let i = 0; i < 15; i++) {
+				const hasBugFile = await pathExists(bash.fs, "/repo/file6.txt");
+				const cmd = hasBugFile ? "git bisect bad" : "git bisect good";
+				const result = await bash.exec(cmd);
+				if (result.stdout.includes("is the first bad commit")) {
+					foundOutput = result.stdout;
+					break;
+				}
+			}
+
+			expect(foundOutput).toBeTruthy();
+			expect(foundOutput).toContain("commit 6");
+		});
+	});
+
+	describe("first-parent", () => {
+		test("--first-parent creates state file and converges on merge history", async () => {
+			const bash = createTestBash({
+				files: { "/repo/README.md": "# Hello" },
+				env: TEST_ENV,
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+
+			for (let i = 2; i <= 4; i++) {
+				await bash.fs.writeFile(`/repo/file${i}.txt`, `content ${i}`);
+				await bash.exec("git add .");
+				await bash.exec(`git commit -m "commit ${i}"`);
+			}
+
+			await bash.exec("git checkout -b feature");
+			for (let i = 1; i <= 3; i++) {
+				await bash.fs.writeFile(`/repo/feature${i}.txt`, `feature ${i}`);
+				await bash.exec("git add .");
+				await bash.exec(`git commit -m "feature ${i}"`);
+			}
+
+			await bash.exec("git checkout main");
+			await bash.exec("git merge feature --no-ff -m 'merge feature'");
+
+			for (let i = 5; i <= 7; i++) {
+				await bash.fs.writeFile(`/repo/file${i}.txt`, `content ${i}`);
+				await bash.exec("git add .");
+				await bash.exec(`git commit -m "commit ${i}"`);
+			}
+
+			const logResult = await bash.exec("git log --oneline");
+			const allLines = logResult.stdout.trim().split("\n");
+			const firstHash = allLines[allLines.length - 1]!.split(" ")[0]!;
+
+			const result = await bash.exec(`git bisect start --first-parent HEAD ${firstHash}`);
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("Bisecting:");
+			expect(await pathExists(bash.fs, "/repo/.git/BISECT_FIRST_PARENT")).toBe(true);
+
+			let found = false;
+			for (let i = 0; i < 20; i++) {
+				const r = await bash.exec("git bisect good");
+				if (r.stdout.includes("is the first bad commit")) {
+					found = true;
+					break;
+				}
+			}
+			expect(found).toBe(true);
+		});
+	});
+
+	describe("no-checkout full session", () => {
+		test("completes full bisect without ever moving HEAD", async () => {
+			const bash = await setupLinearHistory();
+			const logResult = await bash.exec("git log --oneline");
+			const lines = logResult.stdout.trim().split("\n");
+			const firstHash = lines[lines.length - 1]!.split(" ")[0]!;
+
+			const headBefore = await readFile(bash.fs, "/repo/.git/HEAD");
+
+			await bash.exec(`git bisect start --no-checkout HEAD ${firstHash}`);
+			expect(await readFile(bash.fs, "/repo/.git/HEAD")).toBe(headBefore);
+
+			const bisectHead = await readFile(bash.fs, "/repo/.git/BISECT_HEAD");
+			expect(bisectHead!.trim()).toMatch(/^[0-9a-f]{40}$/);
+
+			let found = false;
+			for (let i = 0; i < 15; i++) {
+				const result = await bash.exec("git bisect good");
+				expect(await readFile(bash.fs, "/repo/.git/HEAD")).toBe(headBefore);
+
+				if (result.stdout.includes("is the first bad commit")) {
+					found = true;
+					break;
+				}
+
+				const bh = await readFile(bash.fs, "/repo/.git/BISECT_HEAD");
+				expect(bh!.trim()).toMatch(/^[0-9a-f]{40}$/);
+			}
+			expect(found).toBe(true);
+		});
+	});
+
+	describe("reset to specific commit", () => {
+		test("reset <commit> detaches HEAD at that commit", async () => {
+			const bash = await setupLinearHistory();
+			const logResult = await bash.exec("git log --oneline");
+			const lines = logResult.stdout.trim().split("\n");
+			const firstHash = lines[lines.length - 1]!.split(" ")[0]!;
+			const commit3Abbrev = lines[lines.length - 3]!.split(" ")[0]!;
+
+			const revParseResult = await bash.exec(`git rev-parse ${commit3Abbrev}`);
+			const commit3Full = revParseResult.stdout.trim();
+
+			await bash.exec(`git bisect start HEAD ${firstHash}`);
+
+			const resetResult = await bash.exec(`git bisect reset ${commit3Abbrev}`);
+			expect(resetResult.exitCode).toBe(0);
+
+			const headContent = await readFile(bash.fs, "/repo/.git/HEAD");
+			expect(headContent!.trim()).toBe(commit3Full);
+
+			expect(await pathExists(bash.fs, "/repo/.git/BISECT_START")).toBe(false);
+		});
+	});
+
+	describe("run with skip (exit 125)", () => {
+		test("exit code 125 triggers skip and terminates when only skipped remain", async () => {
+			const bash = await setupLinearHistory();
+			const logResult = await bash.exec("git log --oneline");
+			const lines = logResult.stdout.trim().split("\n");
+			const firstHash = lines[lines.length - 1]!.split(" ")[0]!;
+
+			await bash.exec(`git bisect start HEAD ${firstHash}`);
+
+			// file6.txt → bad, file5.txt (without file6) → skip, else → good.
+			// Bisect narrows to [commit5, commit6], commit5 is skipped, so
+			// the algorithm should terminate with "cannot bisect more".
+			await bash.fs.writeFile(
+				"/repo/test.sh",
+				"#!/bin/bash\nif [ -f /repo/file6.txt ]; then exit 1; fi\nif [ -f /repo/file5.txt ]; then exit 125; fi\nexit 0\n",
+			);
+
+			const runResult = await bash.exec("git bisect run bash /repo/test.sh");
+			expect(runResult.exitCode).toBe(2);
+			expect(runResult.stdout).toContain("We cannot bisect more!");
+		});
+	});
+
+	describe("multiple good commits", () => {
+		test("start with multiple good revisions creates multiple refs", async () => {
+			const bash = await setupLinearHistory();
+			const logResult = await bash.exec("git log --oneline");
+			const lines = logResult.stdout.trim().split("\n");
+			const firstHash = lines[lines.length - 1]!.split(" ")[0]!;
+			const secondHash = lines[lines.length - 2]!.split(" ")[0]!;
+
+			const result = await bash.exec(`git bisect start HEAD ${firstHash} ${secondHash}`);
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("Bisecting:");
+
+			const bisectDir = await bash.fs.readdir("/repo/.git/refs/bisect");
+			const goodRefs = bisectDir.filter((f: string) => f.startsWith("good-"));
+			expect(goodRefs.length).toBe(2);
+		});
+	});
+
+	describe("skip with explicit revisions", () => {
+		test("skip accepts multiple explicit hashes", async () => {
+			const bash = await setupLinearHistory();
+			const logResult = await bash.exec("git log --oneline");
+			const lines = logResult.stdout.trim().split("\n");
+			const firstHash = lines[lines.length - 1]!.split(" ")[0]!;
+
+			await bash.exec(`git bisect start HEAD ${firstHash}`);
+
+			const hash1 = lines[lines.length - 4]!.split(" ")[0]!;
+			const hash2 = lines[lines.length - 5]!.split(" ")[0]!;
+
+			const skipResult = await bash.exec(`git bisect skip ${hash1} ${hash2}`);
+			expect(skipResult.exitCode).toBe(0);
+			expect(skipResult.stdout).toContain("Bisecting:");
+
+			const bisectDir = await bash.fs.readdir("/repo/.git/refs/bisect");
+			const skipRefs = bisectDir.filter((f: string) => f.startsWith("skip-"));
+			expect(skipRefs.length).toBe(2);
+		});
+	});
+
+	describe("detached HEAD start", () => {
+		test("start from detached HEAD and reset returns to detached state", async () => {
+			const bash = await setupLinearHistory();
+			const logResult = await bash.exec("git log --oneline");
+			const lines = logResult.stdout.trim().split("\n");
+			const firstHash = lines[lines.length - 1]!.split(" ")[0]!;
+			const commit5Abbrev = lines[lines.length - 5]!.split(" ")[0]!;
+
+			await bash.exec(`git checkout ${commit5Abbrev}`);
+
+			const fullHashResult = await bash.exec("git rev-parse HEAD");
+			const detachedHash = fullHashResult.stdout.trim();
+
+			await bash.exec(`git bisect start HEAD ${firstHash}`);
+			const startContent = await readFile(bash.fs, "/repo/.git/BISECT_START");
+			expect(startContent!.trim()).toBe(detachedHash);
+
+			const resetResult = await bash.exec("git bisect reset");
+			expect(resetResult.exitCode).toBe(0);
+
+			const headContent = await readFile(bash.fs, "/repo/.git/HEAD");
+			expect(headContent!.trim()).toBe(detachedHash);
+		});
+	});
+
+	describe("visualize edge cases", () => {
+		test("errors when only bad is set", async () => {
+			const bash = await setupLinearHistory();
+			await bash.exec("git bisect start");
+			await bash.exec("git bisect bad");
+
+			const result = await bash.exec("git bisect visualize");
+			expect(result.exitCode).toBe(1);
+			expect(result.stderr).toContain("need both bad and good");
+		});
+	});
 });
