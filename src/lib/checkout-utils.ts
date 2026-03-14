@@ -2,11 +2,11 @@ import type { GitExtensions } from "../git.ts";
 import { abbreviateHash, type CommandResult, err, fatal, firstLine } from "./command-utils.ts";
 import { findOrphanedCommits } from "./commit-walk.ts";
 import { readConfig } from "./config.ts";
-import { addEntry, defaultStat, findEntry, readIndex, writeIndex } from "./index.ts";
+import { addEntry, defaultStat, readIndex, writeIndex } from "./index.ts";
 import { hashObject, readCommit } from "./object-db.ts";
 import { clearAllOperationState, clearDetachPoint, writeDetachPoint } from "./operation-state.ts";
 import { join } from "./path.ts";
-import { containsWildcard, matchPathspecs, parsePathspec } from "./pathspec.ts";
+import { matchPathspecs, parsePathspec } from "./pathspec.ts";
 import { logRef, readReflog, ZERO_HASH } from "./reflog.ts";
 import { createSymbolicRef, readHead, resolveHead, resolveRef, updateRef } from "./refs.ts";
 import { formatLongTrackingInfo, getTrackingInfo } from "./status-format.ts";
@@ -112,37 +112,25 @@ export async function restoreFiles(
 	}
 
 	const index = await readIndex(gitCtx);
-	const hasGlobs = paths.some(containsWildcard);
+	const specs = paths.map((p) => parsePathspec(p, cwdPrefix));
+	const matched = index.entries.filter((e) => e.stage === 0 && matchPathspecs(specs, e.path));
 
-	if (hasGlobs) {
-		const specs = paths.map((p) => parsePathspec(p, cwdPrefix));
-		const matched = index.entries.filter((e) => e.stage === 0 && matchPathspecs(specs, e.path));
-		if (matched.length === 0) {
-			return err(`error: pathspec '${paths[0]}' did not match any file(s) known to git\n`);
+	if (matched.length === 0) {
+		const hasConflictMatch = index.entries.some(
+			(e) => e.stage > 0 && matchPathspecs(specs, e.path),
+		);
+		if (hasConflictMatch) {
+			return err(`error: path '${paths[0]}' is unmerged\n`);
 		}
-		for (const entry of matched) {
-			await checkoutEntry(gitCtx, {
-				path: entry.path,
-				hash: entry.hash,
-				mode: entry.mode,
-			});
-		}
-	} else {
-		for (const path of paths) {
-			const entry = findEntry(index, path);
-			if (!entry) {
-				const hasConflictEntry = index.entries.some((e) => e.path === path && e.stage > 0);
-				if (hasConflictEntry) {
-					return err(`error: path '${path}' is unmerged\n`);
-				}
-				return err(`error: pathspec '${path}' did not match any file(s) known to git\n`);
-			}
-			await checkoutEntry(gitCtx, {
-				path: entry.path,
-				hash: entry.hash,
-				mode: entry.mode,
-			});
-		}
+		return err(`error: pathspec '${paths[0]}' did not match any file(s) known to git\n`);
+	}
+
+	for (const entry of matched) {
+		await checkoutEntry(gitCtx, {
+			path: entry.path,
+			hash: entry.hash,
+			mode: entry.mode,
+		});
 	}
 
 	return { stdout: "", stderr: "", exitCode: 0 };
@@ -161,28 +149,17 @@ async function restoreFromTree(
 	const treeMap = await flattenTreeToMap(gitCtx, treeHash);
 
 	let index = await readIndex(gitCtx);
-	const hasGlobs = paths.some(containsWildcard);
-
+	const specs = paths.map((p) => parsePathspec(p, cwdPrefix));
 	const matchedPaths: string[] = [];
 
-	if (hasGlobs) {
-		const specs = paths.map((p) => parsePathspec(p, cwdPrefix));
-		for (const [path] of treeMap) {
-			if (matchPathspecs(specs, path)) {
-				matchedPaths.push(path);
-			}
-		}
-		if (matchedPaths.length === 0) {
-			return err(`error: pathspec '${paths[0]}' did not match any file(s) known to git\n`);
-		}
-	} else {
-		for (const path of paths) {
-			const treeEntry = treeMap.get(path);
-			if (!treeEntry) {
-				return err(`error: pathspec '${path}' did not match any file(s) known to git\n`);
-			}
+	for (const [path] of treeMap) {
+		if (matchPathspecs(specs, path)) {
 			matchedPaths.push(path);
 		}
+	}
+
+	if (matchedPaths.length === 0) {
+		return err(`error: pathspec '${paths[0]}' did not match any file(s) known to git\n`);
 	}
 
 	for (const path of matchedPaths) {
@@ -224,66 +201,36 @@ export async function restoreConflicted(
 
 	const deleteOnMissing = opts?.deleteOnMissing ?? false;
 	const index = await readIndex(gitCtx);
-	const hasGlobs = paths.some(containsWildcard);
+	const specs = paths.map((p) => parsePathspec(p, cwdPrefix));
 
-	if (hasGlobs) {
-		const specs = paths.map((p) => parsePathspec(p, cwdPrefix));
-		const seen = new Set<string>();
-		for (const e of index.entries) {
-			if (matchPathspecs(specs, e.path)) seen.add(e.path);
-		}
-		if (seen.size === 0) {
-			return err(`error: pathspec '${paths[0]}' did not match any file(s) known to git\n`);
-		}
-		for (const path of seen) {
-			const stageEntry = index.entries.find((e) => e.path === path && e.stage === stage);
-			const fallback = !stageEntry && index.entries.find((e) => e.path === path && e.stage === 0);
-			const entry = stageEntry || fallback;
-			if (entry) {
-				await checkoutEntry(gitCtx, {
-					path: entry.path,
-					hash: entry.hash,
-					mode: entry.mode,
-				});
-			} else if (deleteOnMissing) {
-				const fullPath = join(gitCtx.workTree as string, path);
-				if (await gitCtx.fs.exists(fullPath)) {
-					await gitCtx.fs.rm(fullPath);
-				}
+	const seen = new Set<string>();
+	for (const e of index.entries) {
+		if (matchPathspecs(specs, e.path)) seen.add(e.path);
+	}
+	if (seen.size === 0) {
+		return err(`error: pathspec '${paths[0]}' did not match any file(s) known to git\n`);
+	}
+
+	for (const path of seen) {
+		const stageEntry = index.entries.find((e) => e.path === path && e.stage === stage);
+		const fallback = !stageEntry && index.entries.find((e) => e.path === path && e.stage === 0);
+		const entry = stageEntry || fallback;
+		if (entry) {
+			await checkoutEntry(gitCtx, {
+				path: entry.path,
+				hash: entry.hash,
+				mode: entry.mode,
+			});
+		} else if (deleteOnMissing) {
+			const fullPath = join(gitCtx.workTree as string, path);
+			if (await gitCtx.fs.exists(fullPath)) {
+				await gitCtx.fs.rm(fullPath);
 			}
-		}
-	} else {
-		for (const path of paths) {
+		} else {
 			const hasConflict = index.entries.some((e) => e.path === path && e.stage > 0);
 			if (hasConflict) {
-				const entry = index.entries.find((e) => e.path === path && e.stage === stage);
-				if (!entry) {
-					if (deleteOnMissing) {
-						const fullPath = join(gitCtx.workTree as string, path);
-						if (await gitCtx.fs.exists(fullPath)) {
-							await gitCtx.fs.rm(fullPath);
-						}
-					} else {
-						const label = stage === 2 ? "our" : "their";
-						return err(`error: path '${path}' does not have ${label} version\n`);
-					}
-				} else {
-					await checkoutEntry(gitCtx, {
-						path: entry.path,
-						hash: entry.hash,
-						mode: entry.mode,
-					});
-				}
-			} else {
-				const entry = findEntry(index, path);
-				if (!entry) {
-					return err(`error: pathspec '${path}' did not match any file(s) known to git\n`);
-				}
-				await checkoutEntry(gitCtx, {
-					path: entry.path,
-					hash: entry.hash,
-					mode: entry.mode,
-				});
+				const label = stage === 2 ? "our" : "their";
+				return err(`error: path '${path}' does not have ${label} version\n`);
 			}
 		}
 	}

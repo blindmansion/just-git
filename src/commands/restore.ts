@@ -8,16 +8,9 @@ import {
 	requireCommit,
 	requireGitContext,
 } from "../lib/command-utils.ts";
-import {
-	addEntry,
-	defaultStat,
-	findEntry,
-	readIndex,
-	removeEntry,
-	writeIndex,
-} from "../lib/index.ts";
+import { addEntry, defaultStat, readIndex, removeEntry, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
-import { containsWildcard, matchPathspecs, parsePathspec } from "../lib/pathspec.ts";
+import { matchPathspecs, parsePathspec } from "../lib/pathspec.ts";
 import { resolveHead } from "../lib/refs.ts";
 import { flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
@@ -119,63 +112,39 @@ async function restoreStagedOnly(
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
 	const treeMap = await flattenTreeToMap(gitCtx, sourceTree);
 	let index = await readIndex(gitCtx);
-	const hasGlobs = paths.some(containsWildcard);
+	const specs = paths.map((p) => parsePathspec(p, cwdPrefix));
 
-	if (hasGlobs) {
-		const specs = paths.map((p) => parsePathspec(p, cwdPrefix));
-		const allPaths = new Set<string>();
-		for (const [p] of treeMap) allPaths.add(p);
-		for (const e of index.entries) allPaths.add(e.path);
+	const allPaths = new Set<string>();
+	for (const [p] of treeMap) allPaths.add(p);
+	for (const e of index.entries) allPaths.add(e.path);
 
-		let matched = false;
-		for (const path of allPaths) {
-			if (!matchPathspecs(specs, path)) continue;
-			matched = true;
-			const treeEntry = treeMap.get(path);
-			if (treeEntry) {
-				index = addEntry(index, {
-					path: treeEntry.path,
-					mode: parseInt(treeEntry.mode, 8),
-					hash: treeEntry.hash,
-					stage: 0,
-					stat: defaultStat(),
-				});
-			} else {
-				index = removeEntry(index, path);
-			}
-		}
-		if (!matched) {
-			return err(`error: pathspec '${paths[0]}' did not match any file(s) known to git\n`);
-		}
-	} else {
-		for (const path of paths) {
-			const treeEntry = treeMap.get(path);
+	let matched = false;
+	for (const path of allPaths) {
+		if (!matchPathspecs(specs, path)) continue;
+		matched = true;
+		const treeEntry = treeMap.get(path);
+		if (treeEntry) {
+			index = addEntry(index, {
+				path: treeEntry.path,
+				mode: parseInt(treeEntry.mode, 8),
+				hash: treeEntry.hash,
+				stage: 0,
+				stat: defaultStat(),
+			});
+		} else {
 			const hasConflict = index.entries.some((e) => e.path === path && e.stage > 0);
-			if (treeEntry) {
-				// addEntry with stage 0 replaces conflict entries too,
-				// effectively resolving conflicts by restoring from source.
-				index = addEntry(index, {
-					path: treeEntry.path,
-					mode: parseInt(treeEntry.mode, 8),
-					hash: treeEntry.hash,
-					stage: 0,
-					stat: defaultStat(),
-				});
-			} else if (hasConflict) {
+			if (hasConflict) {
 				return {
 					stdout: "",
 					stderr: `error: path '${path}' is unmerged\n`,
 					exitCode: 1,
 				};
-			} else {
-				const inIndex = index.entries.some((e) => e.path === path);
-				if (inIndex) {
-					index = removeEntry(index, path);
-				} else {
-					return err(`error: pathspec '${path}' did not match any file(s) known to git\n`);
-				}
 			}
+			index = removeEntry(index, path);
 		}
+	}
+	if (!matched) {
+		return err(`error: pathspec '${paths[0]}' did not match any file(s) known to git\n`);
 	}
 
 	await writeIndex(gitCtx, index);
@@ -197,31 +166,17 @@ async function restoreWorktreeFromTree(
 	}
 
 	const treeMap = await flattenTreeToMap(gitCtx, treeHash);
-	const hasGlobs = paths.some(containsWildcard);
-
+	const specs = paths.map((p) => parsePathspec(p, cwdPrefix));
 	const matchedPaths: string[] = [];
 
 	const index = await readIndex(gitCtx);
+	const allPaths = new Set<string>();
+	for (const [p] of treeMap) allPaths.add(p);
+	for (const e of index.entries) allPaths.add(e.path);
 
-	if (hasGlobs) {
-		const specs = paths.map((p) => parsePathspec(p, cwdPrefix));
-		const allPaths = new Set<string>();
-		for (const [p] of treeMap) allPaths.add(p);
-		for (const e of index.entries) allPaths.add(e.path);
-
-		for (const path of allPaths) {
-			if (matchPathspecs(specs, path)) {
-				matchedPaths.push(path);
-			}
-		}
-		if (matchedPaths.length === 0) {
-			return err(`error: pathspec '${paths[0]}' did not match any file(s) known to git\n`);
-		}
-	} else {
-		for (const path of paths) {
-			const inTree = treeMap.has(path);
-			if (!inTree) {
-				// Real git rejects restoring unmerged paths that aren't in the source tree
+	for (const path of allPaths) {
+		if (matchPathspecs(specs, path)) {
+			if (!treeMap.has(path)) {
 				const hasConflict = index.entries.some((e) => e.path === path && e.stage !== 0);
 				if (hasConflict) {
 					return {
@@ -231,12 +186,11 @@ async function restoreWorktreeFromTree(
 					};
 				}
 			}
-			const inIndex = findEntry(index, path);
-			if (!inTree && !inIndex) {
-				return err(`error: pathspec '${path}' did not match any file(s) known to git\n`);
-			}
 			matchedPaths.push(path);
 		}
+	}
+	if (matchedPaths.length === 0) {
+		return err(`error: pathspec '${paths[0]}' did not match any file(s) known to git\n`);
 	}
 
 	for (const path of matchedPaths) {
@@ -274,41 +228,20 @@ async function restoreStagedAndWorktree(
 
 	const treeMap = await flattenTreeToMap(gitCtx, sourceTree);
 	let index = await readIndex(gitCtx);
-	const hasGlobs = paths.some(containsWildcard);
-
+	const specs = paths.map((p) => parsePathspec(p, cwdPrefix));
 	const matchedPaths: string[] = [];
 
-	if (hasGlobs) {
-		const specs = paths.map((p) => parsePathspec(p, cwdPrefix));
-		const allPaths = new Set<string>();
-		for (const [p] of treeMap) allPaths.add(p);
-		for (const e of index.entries) allPaths.add(e.path);
+	const allPaths = new Set<string>();
+	for (const [p] of treeMap) allPaths.add(p);
+	for (const e of index.entries) allPaths.add(e.path);
 
-		for (const path of allPaths) {
-			if (matchPathspecs(specs, path)) {
-				matchedPaths.push(path);
-			}
-		}
-		if (matchedPaths.length === 0) {
-			return err(`error: pathspec '${paths[0]}' did not match any file(s) known to git\n`);
-		}
-	} else {
-		for (const path of paths) {
-			const hasConflict = index.entries.some((e) => e.path === path && e.stage > 0);
-			if (hasConflict) {
-				return {
-					stdout: "",
-					stderr: `error: path '${path}' is unmerged\n`,
-					exitCode: 1,
-				};
-			}
-			const treeEntry = treeMap.get(path);
-			const inIndex = index.entries.some((e) => e.path === path);
-			if (!treeEntry && !inIndex) {
-				return err(`error: pathspec '${path}' did not match any file(s) known to git\n`);
-			}
+	for (const path of allPaths) {
+		if (matchPathspecs(specs, path)) {
 			matchedPaths.push(path);
 		}
+	}
+	if (matchedPaths.length === 0) {
+		return err(`error: pathspec '${paths[0]}' did not match any file(s) known to git\n`);
 	}
 
 	for (const path of matchedPaths) {
@@ -327,6 +260,14 @@ async function restoreStagedAndWorktree(
 				mode: treeEntry.mode,
 			});
 		} else {
+			const hasConflict = index.entries.some((e) => e.path === path && e.stage > 0);
+			if (hasConflict) {
+				return {
+					stdout: "",
+					stderr: `error: path '${path}' is unmerged\n`,
+					exitCode: 1,
+				};
+			}
 			index = removeEntry(index, path);
 			const fullPath = `${gitCtx.workTree}/${path}`;
 			if (await gitCtx.fs.exists(fullPath)) {

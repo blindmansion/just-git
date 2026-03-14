@@ -107,7 +107,7 @@ export function parsePathspec(raw: string, cwdPrefix: string): Pathspec {
 	// Apply cwd prefix unless :(top)
 	let pattern: string;
 	if (magic & PATHSPEC_TOP || cwdPrefix === "") {
-		pattern = body;
+		pattern = normalizePath(body);
 	} else {
 		pattern = normalizePath(`${cwdPrefix}/${body}`);
 	}

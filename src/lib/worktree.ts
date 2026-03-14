@@ -47,7 +47,14 @@ export async function diffIndexToWorkTree(ctx: GitContext, index: Index): Promis
 			continue;
 		}
 
-		if (!st.isFile && !st.isSymbolicLink) continue;
+		if (!st.isFile && !st.isSymbolicLink) {
+			results.push({
+				path: entry.path,
+				status: "deleted",
+				indexHash: entry.hash,
+			});
+			continue;
+		}
 
 		const workTreeHash = await hashWorktreeEntry(ctx.fs, fullPath);
 
