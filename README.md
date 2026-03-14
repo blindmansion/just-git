@@ -3,7 +3,7 @@
 [![CI](https://github.com/blindmansion/just-git/actions/workflows/ci.yml/badge.svg)](https://github.com/blindmansion/just-git/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/just-git)](https://www.npmjs.com/package/just-git)
 
-Git implementation for virtual bash environments (particularly [just-bash](https://github.com/vercel-labs/just-bash)). Pure TypeScript, zero dependencies. Works in Node, Bun, Deno, and the browser. ~100 kB gzipped.
+Git implementation for virtual bash environments (particularly [just-bash](https://github.com/vercel-labs/just-bash)). Pure TypeScript, zero dependencies. 34 commands implemented. Works in Node, Bun, Deno, and the browser. ~100 kB gzipped.
 
 ## Install
 
@@ -226,7 +226,7 @@ See [`examples/multi-agent.ts`](examples/multi-agent.ts) for a full working exam
 
 ## Command coverage
 
-34 commands implemented. See [CLI.md](CLI.md) for full usage details.
+See [CLI.md](CLI.md) for full usage details.
 
 | Command                           | Flags / options                                                                                                                                                                |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
