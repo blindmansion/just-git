@@ -6,10 +6,12 @@ import {
 	firstLine,
 	isCommandError,
 	requireGitContext,
+	requireRevision,
 	requireWorkTree,
 } from "../lib/command-utils.ts";
 import {
 	appendBisectLog,
+	type BisectState,
 	cleanBisectState,
 	findBisectionCommit,
 	formatBisectStatus,
@@ -18,20 +20,12 @@ import {
 	isBisectInProgress,
 	readBisectState,
 	readBisectTerms,
-	writeBisectAncestorsOk,
-	writeBisectBad,
-	writeBisectExpectedRev,
-	writeBisectGood,
-	writeBisectNames,
-	writeBisectSkip,
-	writeBisectStart,
-	writeBisectTerms,
 } from "../lib/bisect.ts";
 import { detachHeadCore, switchBranchCore } from "../lib/checkout-utils.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { readStateFile, writeStateFile } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";
-import { readHead, resolveHead, resolveRef } from "../lib/refs.ts";
+import { readHead, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
 import { resolveRevision } from "../lib/rev-parse.ts";
 import type { GitContext } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
@@ -51,6 +45,20 @@ const RESERVED_TERMS = new Set([
 	"run",
 	"terms",
 ]);
+
+const NOT_BISECTING: CommandResult = {
+	stdout: 'You need to start by "git bisect start"\n',
+	stderr: "",
+	exitCode: 1,
+};
+
+async function resolveBisectHead(gitCtx: GitContext): Promise<string | CommandResult> {
+	const bh = await readStateFile(gitCtx, "BISECT_HEAD");
+	if (bh?.trim()) return bh.trim();
+	const h = await resolveHead(gitCtx);
+	if (!h) return fatal("no current commit");
+	return h;
+}
 
 // ── Registration ────────────────────────────────────────────────────
 
@@ -152,12 +160,10 @@ async function handleStart(
 	noCheckout: boolean,
 	firstParent: boolean,
 ): Promise<CommandResult> {
-	// If already bisecting, clean up first
 	if (await isBisectInProgress(gitCtx)) {
 		await cleanBisectState(gitCtx);
 	}
 
-	// Record where we started from
 	const head = await readHead(gitCtx);
 	let startRef: string;
 	if (head?.type === "symbolic") {
@@ -167,9 +173,9 @@ async function handleStart(
 		startRef = headHash ?? "HEAD";
 	}
 
-	await writeBisectStart(gitCtx, startRef);
-	await writeBisectTerms(gitCtx, termBad, termGood);
-	await writeBisectNames(gitCtx, "");
+	await writeStateFile(gitCtx, "BISECT_START", startRef + "\n");
+	await writeStateFile(gitCtx, "BISECT_TERMS", `${termBad}\n${termGood}\n`);
+	await writeStateFile(gitCtx, "BISECT_NAMES", "\n");
 
 	if (firstParent) {
 		await writeStateFile(gitCtx, "BISECT_FIRST_PARENT", "");
@@ -181,61 +187,31 @@ async function handleStart(
 		}
 	}
 
-	// Build log entry with quoted args
-	const quotedArgs = revArgs.map((r) => `'${r}'`);
-	const startLogArgs = quotedArgs.length > 0 ? ` ${quotedArgs.join(" ")}` : "";
-
-	let stdout = "";
-	let badHash: string | null = null;
-	const goodHashes: string[] = [];
-
-	// Parse rev args: first is bad, rest are good
 	if (revArgs.length > 0) {
 		const badRev = revArgs[0]!;
-		const resolved = await resolveRevision(gitCtx, badRev);
-		if (!resolved) return fatal(`bad revision '${badRev}'`);
-		badHash = resolved;
-		await writeBisectBad(gitCtx, badHash, termBad);
+		const badHash = await requireRevision(gitCtx, badRev);
+		if (isCommandError(badHash)) return badHash;
+		await updateRef(gitCtx, `refs/bisect/${termBad}`, badHash);
 
 		const commit = await readCommit(gitCtx, badHash);
-		const subject = firstLine(commit.message);
-		await appendBisectLog(gitCtx, `# ${termBad}: [${badHash}] ${subject}`);
+		await appendBisectLog(gitCtx, `# ${termBad}: [${badHash}] ${firstLine(commit.message)}`);
 
 		for (let i = 1; i < revArgs.length; i++) {
 			const goodRev = revArgs[i]!;
-			const goodHash = await resolveRevision(gitCtx, goodRev);
-			if (!goodHash) return fatal(`bad revision '${goodRev}'`);
-			goodHashes.push(goodHash);
-			await writeBisectGood(gitCtx, goodHash, termGood);
+			const goodHash = await requireRevision(gitCtx, goodRev);
+			if (isCommandError(goodHash)) return goodHash;
+			await updateRef(gitCtx, `refs/bisect/${termGood}-${goodHash}`, goodHash);
 
 			const gc = await readCommit(gitCtx, goodHash);
-			const gs = firstLine(gc.message);
-			await appendBisectLog(gitCtx, `# ${termGood}: [${goodHash}] ${gs}`);
+			await appendBisectLog(gitCtx, `# ${termGood}: [${goodHash}] ${firstLine(gc.message)}`);
 		}
 	}
 
+	const quotedArgs = revArgs.map((r) => `'${r}'`);
+	const startLogArgs = quotedArgs.length > 0 ? ` ${quotedArgs.join(" ")}` : "";
 	await appendBisectLog(gitCtx, `git bisect start${startLogArgs}`);
 
-	// Auto-next: if we have both bad and good, find midpoint
-	if (badHash && goodHashes.length > 0) {
-		await writeBisectAncestorsOk(gitCtx);
-		const result = await bisectAutoNext(
-			gitCtx,
-			env,
-			ext,
-			badHash,
-			goodHashes,
-			new Set(),
-			noCheckout,
-			firstParent,
-		);
-		return result;
-	}
-
-	// Not enough info yet — show status
-	const state = await readBisectState(gitCtx);
-	stdout = formatBisectStatus(state);
-	return { stdout, stderr: "", exitCode: 0 };
+	return checkAndAdvanceBisect(gitCtx, env, ext);
 }
 
 // ── Subcommand: bad/good/new/old ────────────────────────────────────
@@ -263,25 +239,12 @@ async function handleMark(
 	builtinTerm: "bad" | "good" | "new" | "old",
 	revArg: string | undefined,
 ): Promise<CommandResult> {
-	if (!(await isBisectInProgress(gitCtx))) {
-		return {
-			stdout: 'You need to start by "git bisect start"\n',
-			stderr: "",
-			exitCode: 1,
-		};
-	}
+	if (!(await isBisectInProgress(gitCtx))) return NOT_BISECTING;
 
-	const { termBad, termGood } = await readBisectTerms(gitCtx);
-
-	// Map built-in command names to the active terms
-	let actualTerm: string;
-	if (builtinTerm === "bad" || builtinTerm === "new") {
-		actualTerm = termBad;
-	} else {
-		actualTerm = termGood;
-	}
-
-	return markRevision(gitCtx, env, ext, actualTerm, revArg);
+	const terms = await readBisectTerms(gitCtx);
+	const actualTerm =
+		builtinTerm === "bad" || builtinTerm === "new" ? terms.termBad : terms.termGood;
+	return markRevision(gitCtx, env, ext, actualTerm, terms, revArg);
 }
 
 async function handleTermAlias(
@@ -291,17 +254,10 @@ async function handleTermAlias(
 	term: string,
 	restArgs: string[],
 ): Promise<CommandResult> {
-	if (!(await isBisectInProgress(gitCtx))) {
-		return {
-			stdout: 'You need to start by "git bisect start"\n',
-			stderr: "",
-			exitCode: 1,
-		};
-	}
+	if (!(await isBisectInProgress(gitCtx))) return NOT_BISECTING;
 
-	const { termBad, termGood } = await readBisectTerms(gitCtx);
-
-	if (term !== termBad && term !== termGood) {
+	const terms = await readBisectTerms(gitCtx);
+	if (term !== terms.termBad && term !== terms.termGood) {
 		return {
 			stdout: "",
 			stderr: `error: unknown command: 'git bisect ${term}'\n`,
@@ -309,7 +265,7 @@ async function handleTermAlias(
 		};
 	}
 
-	return markRevision(gitCtx, env, ext, term, restArgs[0]);
+	return markRevision(gitCtx, env, ext, term, terms, restArgs[0]);
 }
 
 async function markRevision(
@@ -317,65 +273,33 @@ async function markRevision(
 	env: Map<string, string>,
 	ext: GitExtensions | undefined,
 	term: string,
+	terms: { termBad: string; termGood: string },
 	revArg: string | undefined,
 ): Promise<CommandResult> {
-	const { termBad, termGood } = await readBisectTerms(gitCtx);
-	const state = await readBisectState(gitCtx);
-	const isBad = term === termBad;
-
-	// Resolve revision
 	let hash: string;
 	if (revArg) {
-		const resolved = await resolveRevision(gitCtx, revArg);
-		if (!resolved) return fatal(`bad revision '${revArg}'`);
+		const resolved = await requireRevision(gitCtx, revArg);
+		if (isCommandError(resolved)) return resolved;
 		hash = resolved;
-	} else if (state.noCheckout) {
-		const bisectHead = await readStateFile(gitCtx, "BISECT_HEAD");
-		hash = bisectHead?.trim() ?? "";
-		if (!hash) {
-			const h = await resolveHead(gitCtx);
-			if (!h) return fatal("no current commit");
-			hash = h;
-		}
 	} else {
-		const h = await resolveHead(gitCtx);
-		if (!h) return fatal("no current commit");
-		hash = h;
+		const headResult = await resolveBisectHead(gitCtx);
+		if (isCommandError(headResult)) return headResult;
+		hash = headResult;
 	}
 
 	const commit = await readCommit(gitCtx, hash);
 	const subject = firstLine(commit.message);
 
-	// Write ref and log
-	if (isBad) {
-		await writeBisectBad(gitCtx, hash, termBad);
+	if (term === terms.termBad) {
+		await updateRef(gitCtx, `refs/bisect/${terms.termBad}`, hash);
 	} else {
-		await writeBisectGood(gitCtx, hash, termGood);
+		await updateRef(gitCtx, `refs/bisect/${terms.termGood}-${hash}`, hash);
 	}
 
 	await appendBisectLog(gitCtx, `# ${term}: [${hash}] ${subject}`);
 	await appendBisectLog(gitCtx, `git bisect ${term} ${hash}`);
 
-	// Re-read state after writing
-	const newState = await readBisectState(gitCtx);
-
-	// Check if we have enough info for auto-next
-	if (!newState.badHash || newState.goodHashes.length === 0) {
-		const status = formatBisectStatus(newState);
-		return { stdout: status, stderr: "", exitCode: 0 };
-	}
-
-	await writeBisectAncestorsOk(gitCtx);
-	return bisectAutoNext(
-		gitCtx,
-		env,
-		ext,
-		newState.badHash,
-		newState.goodHashes,
-		new Set(newState.skipHashes),
-		newState.noCheckout,
-		newState.firstParent,
-	);
+	return checkAndAdvanceBisect(gitCtx, env, ext);
 }
 
 // ── Subcommand: skip ────────────────────────────────────────────────
@@ -389,34 +313,13 @@ function registerSkip(parent: Command, ext?: GitExtensions) {
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
 			const gitCtx = gitCtxOrError;
 
-			if (!(await isBisectInProgress(gitCtx))) {
-				return {
-					stdout: 'You need to start by "git bisect start"\n',
-					stderr: "",
-					exitCode: 1,
-				};
-			}
+			if (!(await isBisectInProgress(gitCtx))) return NOT_BISECTING;
 
 			const revs: string[] = args.revs ?? [];
-			const state = await readBisectState(gitCtx);
-
 			if (revs.length === 0) {
-				// Skip current HEAD
-				let hash: string;
-				if (state.noCheckout) {
-					const bh = await readStateFile(gitCtx, "BISECT_HEAD");
-					hash = bh?.trim() ?? "";
-					if (!hash) {
-						const h = await resolveHead(gitCtx);
-						if (!h) return fatal("no current commit");
-						hash = h;
-					}
-				} else {
-					const h = await resolveHead(gitCtx);
-					if (!h) return fatal("no current commit");
-					hash = h;
-				}
-				revs.push(hash);
+				const headResult = await resolveBisectHead(gitCtx);
+				if (isCommandError(headResult)) return headResult;
+				revs.push(headResult);
 			}
 
 			for (const rev of revs) {
@@ -424,35 +327,18 @@ function registerSkip(parent: Command, ext?: GitExtensions) {
 				if (rev.length === 40 && /^[0-9a-f]+$/.test(rev)) {
 					hash = rev;
 				} else {
-					const resolved = await resolveRevision(gitCtx, rev);
-					if (!resolved) return fatal(`bad revision '${rev}'`);
+					const resolved = await requireRevision(gitCtx, rev);
+					if (isCommandError(resolved)) return resolved;
 					hash = resolved;
 				}
 
-				await writeBisectSkip(gitCtx, hash);
-
+				await updateRef(gitCtx, `refs/bisect/skip-${hash}`, hash);
 				const commit = await readCommit(gitCtx, hash);
-				const subject = firstLine(commit.message);
-				await appendBisectLog(gitCtx, `# skip: [${hash}] ${subject}`);
+				await appendBisectLog(gitCtx, `# skip: [${hash}] ${firstLine(commit.message)}`);
 				await appendBisectLog(gitCtx, `git bisect skip ${hash}`);
 			}
 
-			const newState = await readBisectState(gitCtx);
-			if (!newState.badHash || newState.goodHashes.length === 0) {
-				const status = formatBisectStatus(newState);
-				return { stdout: status, stderr: "", exitCode: 0 };
-			}
-
-			return bisectAutoNext(
-				gitCtx,
-				ctx.env,
-				ext,
-				newState.badHash,
-				newState.goodHashes,
-				new Set(newState.skipHashes),
-				newState.noCheckout,
-				newState.firstParent,
-			);
+			return checkAndAdvanceBisect(gitCtx, ctx.env, ext);
 		},
 	});
 }
@@ -484,35 +370,27 @@ async function handleReset(
 	targetArg: string | undefined,
 ): Promise<CommandResult> {
 	const startRef = (await readStateFile(gitCtx, "BISECT_START"))?.trim() ?? "";
-
 	await cleanBisectState(gitCtx);
 
-	let stderr = "";
-
 	if (targetArg) {
-		const resolved = await resolveRevision(gitCtx, targetArg);
-		if (!resolved) return fatal(`bad revision '${targetArg}'`);
-		const result = await detachHeadCore(gitCtx, resolved, env, ext);
-		return result;
+		const resolved = await requireRevision(gitCtx, targetArg);
+		if (isCommandError(resolved)) return resolved;
+		return detachHeadCore(gitCtx, resolved, env, ext);
 	}
 
-	// Try to switch back to the branch we started from
 	if (startRef) {
 		const refName = `refs/heads/${startRef}`;
 		const branchHash = await resolveRef(gitCtx, refName);
 		if (branchHash) {
-			const result = await switchBranchCore(gitCtx, startRef, refName, branchHash, env, ext);
-			return result;
+			return switchBranchCore(gitCtx, startRef, refName, branchHash, env, ext);
 		}
-		// startRef might be a hash (was detached when bisect started)
 		const resolved = await resolveRevision(gitCtx, startRef);
 		if (resolved) {
-			const result = await detachHeadCore(gitCtx, resolved, env, ext);
-			return result;
+			return detachHeadCore(gitCtx, resolved, env, ext);
 		}
 	}
 
-	return { stdout: "", stderr, exitCode: 0 };
+	return { stdout: "", stderr: "", exitCode: 0 };
 }
 
 // ── Subcommand: log ─────────────────────────────────────────────────
@@ -567,63 +445,45 @@ async function handleReplay(
 	ext: GitExtensions | undefined,
 	logContent: string,
 ): Promise<CommandResult> {
-	// Clean up any existing bisect state
 	if (await isBisectInProgress(gitCtx)) {
 		await cleanBisectState(gitCtx);
 	}
 
+	const defaultTerms = { termBad: "bad", termGood: "good" };
 	let stdout = "";
-	const lines = logContent.split("\n");
 
-	for (const line of lines) {
+	for (const line of logContent.split("\n")) {
 		const trimmed = line.trim();
 		if (!trimmed || trimmed.startsWith("#")) continue;
 
-		// Parse "git bisect <cmd> [args...]" or "git-bisect <cmd> [args...]"
 		const match = trimmed.match(/^git[\s-]bisect\s+(\S+)(.*)$/);
 		if (!match) continue;
 
 		const cmd = match[1]!;
 		const rest = match[2]!.trim();
 
+		let result: CommandResult;
 		if (cmd === "start") {
 			const args = rest ? rest.split(/\s+/).map((a) => a.replace(/^'|'$/g, "")) : [];
-			const result = await handleStart(gitCtx, env, ext, args, "bad", "good", false, false);
-			if (result.exitCode !== 0) return result;
-			stdout += result.stdout;
+			result = await handleStart(gitCtx, env, ext, args, "bad", "good", false, false);
 		} else if (cmd === "bad" || cmd === "new") {
-			const result = await markRevision(gitCtx, env, ext, "bad", rest || undefined);
-			if (result.exitCode !== 0) return result;
-			stdout += result.stdout;
+			result = await markRevision(gitCtx, env, ext, "bad", defaultTerms, rest || undefined);
 		} else if (cmd === "good" || cmd === "old") {
-			const result = await markRevision(gitCtx, env, ext, "good", rest || undefined);
-			if (result.exitCode !== 0) return result;
-			stdout += result.stdout;
+			result = await markRevision(gitCtx, env, ext, "good", defaultTerms, rest || undefined);
 		} else if (cmd === "skip") {
-			const revs = rest ? rest.split(/\s+/) : [];
-			for (const rev of revs) {
-				await writeBisectSkip(gitCtx, rev);
+			for (const rev of rest ? rest.split(/\s+/) : []) {
+				await updateRef(gitCtx, `refs/bisect/skip-${rev}`, rev);
 				const commit = await readCommit(gitCtx, rev);
-				const subject = firstLine(commit.message);
-				await appendBisectLog(gitCtx, `# skip: [${rev}] ${subject}`);
+				await appendBisectLog(gitCtx, `# skip: [${rev}] ${firstLine(commit.message)}`);
 				await appendBisectLog(gitCtx, `git bisect skip ${rev}`);
 			}
-			const state = await readBisectState(gitCtx);
-			if (state.badHash && state.goodHashes.length > 0) {
-				const result = await bisectAutoNext(
-					gitCtx,
-					env,
-					ext,
-					state.badHash,
-					state.goodHashes,
-					new Set(state.skipHashes),
-					state.noCheckout,
-					state.firstParent,
-				);
-				if (result.exitCode !== 0) return result;
-				stdout += result.stdout;
-			}
+			result = await checkAndAdvanceBisect(gitCtx, env, ext);
+		} else {
+			continue;
 		}
+
+		if (result.exitCode !== 0) return result;
+		stdout += result.stdout;
 	}
 
 	return { stdout, stderr: "", exitCode: 0 };
@@ -640,17 +500,8 @@ function registerRun(parent: Command, ext?: GitExtensions) {
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
 			const gitCtx = gitCtxOrError;
 
-			if (!(await isBisectInProgress(gitCtx))) {
-				return {
-					stdout: 'You need to start by "git bisect start"\n',
-					stderr: "",
-					exitCode: 1,
-				};
-			}
-
-			if (!ctx.exec) {
-				return fatal("bisect run requires shell execution support");
-			}
+			if (!(await isBisectInProgress(gitCtx))) return NOT_BISECTING;
+			if (!ctx.exec) return fatal("bisect run requires shell execution support");
 
 			const cmdStr = (args.cmd as string[]).join(" ");
 			return handleRun(gitCtx, ctx.env, ext, cmdStr, ctx.exec, ctx.cwd);
@@ -677,50 +528,26 @@ async function handleRun(
 		const result = await exec(command, { cwd });
 		const exitCode = result.exitCode;
 
-		const state = await readBisectState(gitCtx);
-		const { termBad, termGood } = state;
+		if (exitCode === 125) {
+			const headResult = await resolveBisectHead(gitCtx);
+			if (isCommandError(headResult)) return headResult;
+			await updateRef(gitCtx, `refs/bisect/skip-${headResult}`, headResult);
+			const commit = await readCommit(gitCtx, headResult);
+			await appendBisectLog(gitCtx, `# skip: [${headResult}] ${firstLine(commit.message)}`);
+			await appendBisectLog(gitCtx, `git bisect skip ${headResult}`);
 
-		let term: string;
-		if (exitCode === 0) {
-			term = termGood;
-		} else if (exitCode === 125) {
-			// skip
-			const headHash = await resolveHead(gitCtx);
-			if (headHash) {
-				await writeBisectSkip(gitCtx, headHash);
-				const commit = await readCommit(gitCtx, headHash);
-				const subject = firstLine(commit.message);
-				await appendBisectLog(gitCtx, `# skip: [${headHash}] ${subject}`);
-				await appendBisectLog(gitCtx, `git bisect skip ${headHash}`);
-			}
-
-			const newState = await readBisectState(gitCtx);
-			if (!newState.badHash || newState.goodHashes.length === 0) {
-				return { stdout, stderr: "", exitCode: 0 };
-			}
-			const nextResult = await bisectAutoNext(
-				gitCtx,
-				env,
-				ext,
-				newState.badHash,
-				newState.goodHashes,
-				new Set(newState.skipHashes),
-				newState.noCheckout,
-				newState.firstParent,
-			);
-			stdout += nextResult.stdout;
-			if (nextResult.stdout.includes("is the first bad commit")) {
+			const advResult = await checkAndAdvanceBisect(gitCtx, env, ext);
+			stdout += advResult.stdout;
+			if (advResult.stdout.includes("is the first bad commit")) {
 				stdout += "bisect found first bad commit\n";
 				return { stdout, stderr: "", exitCode: 0 };
 			}
 			continue;
-		} else if (exitCode >= 1 && exitCode <= 127 && exitCode !== 125) {
-			term = termBad;
-		} else {
-			term = termBad;
 		}
 
-		const markResult = await markRevision(gitCtx, env, ext, term, undefined);
+		const state = await readBisectState(gitCtx);
+		const term = exitCode === 0 ? state.termGood : state.termBad;
+		const markResult = await markRevision(gitCtx, env, ext, term, state, undefined);
 		stdout += markResult.stdout;
 
 		if (markResult.stdout.includes("is the first bad commit")) {
@@ -785,13 +612,7 @@ function registerVisualize(parent: Command, ext?: GitExtensions) {
 				if (isCommandError(gitCtxOrError)) return gitCtxOrError;
 				const gitCtx = gitCtxOrError;
 
-				if (!(await isBisectInProgress(gitCtx))) {
-					return {
-						stdout: 'You need to start by "git bisect start"\n',
-						stderr: "",
-						exitCode: 1,
-					};
-				}
+				if (!(await isBisectInProgress(gitCtx))) return NOT_BISECTING;
 
 				const state = await readBisectState(gitCtx);
 				if (!state.badHash || state.goodHashes.length === 0) {
@@ -802,15 +623,12 @@ function registerVisualize(parent: Command, ext?: GitExtensions) {
 					};
 				}
 
-				// List all commits in the bisect range
 				const { walkCommits } = await import("../lib/commit-walk.ts");
 				let stdout = "";
 				for await (const entry of walkCommits(gitCtx, state.badHash, {
 					exclude: state.goodHashes,
 				})) {
-					const short = abbreviateHash(entry.hash);
-					const subject = firstLine(entry.commit.message);
-					stdout += `${short} ${subject}\n`;
+					stdout += `${abbreviateHash(entry.hash)} ${firstLine(entry.commit.message)}\n`;
 				}
 
 				return { stdout, stderr: "", exitCode: 0 };
@@ -821,17 +639,32 @@ function registerVisualize(parent: Command, ext?: GitExtensions) {
 
 // ── Core: auto-next ─────────────────────────────────────────────────
 
+async function checkAndAdvanceBisect(
+	gitCtx: GitContext,
+	env: Map<string, string>,
+	ext: GitExtensions | undefined,
+): Promise<CommandResult> {
+	const state = await readBisectState(gitCtx);
+	if (!state.badHash || state.goodHashes.length === 0) {
+		return { stdout: formatBisectStatus(state), stderr: "", exitCode: 0 };
+	}
+	await writeStateFile(gitCtx, "BISECT_ANCESTORS_OK", "");
+	return bisectAutoNext(gitCtx, env, ext, state);
+}
+
 async function bisectAutoNext(
 	gitCtx: GitContext,
 	env: Map<string, string>,
 	ext: GitExtensions | undefined,
-	badHash: string,
-	goodHashes: string[],
-	skipHashes: Set<string>,
-	noCheckout: boolean,
-	firstParent: boolean,
+	state: BisectState,
 ): Promise<CommandResult> {
-	const result = await findBisectionCommit(gitCtx, badHash, goodHashes, skipHashes, firstParent);
+	const result = await findBisectionCommit(
+		gitCtx,
+		state.badHash!,
+		state.goodHashes,
+		new Set(state.skipHashes),
+		state.firstParent,
+	);
 
 	if (!result) {
 		return {
@@ -847,18 +680,13 @@ async function bisectAutoNext(
 		return { stdout: foundOutput, stderr: "", exitCode: 0 };
 	}
 
-	// Checkout or update BISECT_HEAD
-	if (noCheckout) {
+	if (state.noCheckout) {
 		await writeStateFile(gitCtx, "BISECT_HEAD", result.hash);
 	} else {
 		const checkoutResult = await detachHeadCore(gitCtx, result.hash, env, ext);
-		if (checkoutResult.exitCode !== 0) {
-			return checkoutResult;
-		}
+		if (checkoutResult.exitCode !== 0) return checkoutResult;
 	}
 
-	await writeBisectExpectedRev(gitCtx, result.hash);
-
-	const stdout = formatBisectingLine(result);
-	return { stdout, stderr: "", exitCode: 0 };
+	await writeStateFile(gitCtx, "BISECT_EXPECTED_REV", result.hash + "\n");
+	return { stdout: formatBisectingLine(result), stderr: "", exitCode: 0 };
 }

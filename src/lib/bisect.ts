@@ -3,12 +3,12 @@ import { walkCommits } from "./commit-walk.ts";
 import { readCommit } from "./object-db.ts";
 import { deleteStateFile, readStateFile, writeStateFile } from "./operation-state.ts";
 import { join } from "./path.ts";
-import { deleteRef, listRefs, resolveRef, updateRef } from "./refs.ts";
+import { deleteRef, listRefs, resolveRef } from "./refs.ts";
 import type { GitContext } from "./types.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
 
-interface BisectState {
+export interface BisectState {
 	startRef: string;
 	badHash: string | null;
 	goodHashes: string[];
@@ -86,56 +86,9 @@ export async function readBisectState(ctx: GitContext): Promise<BisectState> {
 
 // ── State writes ────────────────────────────────────────────────────
 
-export async function writeBisectStart(ctx: GitContext, startRef: string): Promise<void> {
-	await writeStateFile(ctx, "BISECT_START", startRef + "\n");
-}
-
-export async function writeBisectTerms(
-	ctx: GitContext,
-	termBad: string,
-	termGood: string,
-): Promise<void> {
-	await writeStateFile(ctx, "BISECT_TERMS", `${termBad}\n${termGood}\n`);
-}
-
-export async function writeBisectNames(ctx: GitContext, names: string): Promise<void> {
-	await writeStateFile(ctx, "BISECT_NAMES", names + "\n");
-}
-
 export async function appendBisectLog(ctx: GitContext, line: string): Promise<void> {
 	const existing = (await readStateFile(ctx, "BISECT_LOG")) ?? "";
 	await writeStateFile(ctx, "BISECT_LOG", existing + line + "\n");
-}
-
-export async function writeBisectExpectedRev(ctx: GitContext, hash: string): Promise<void> {
-	await writeStateFile(ctx, "BISECT_EXPECTED_REV", hash + "\n");
-}
-
-export async function writeBisectAncestorsOk(ctx: GitContext): Promise<void> {
-	await writeStateFile(ctx, "BISECT_ANCESTORS_OK", "");
-}
-
-/** Write the bad ref under refs/bisect/<termBad>. */
-export async function writeBisectBad(
-	ctx: GitContext,
-	hash: string,
-	termBad: string,
-): Promise<void> {
-	await updateRef(ctx, `refs/bisect/${termBad}`, hash);
-}
-
-/** Write a good ref under refs/bisect/<termGood>-<hash>. */
-export async function writeBisectGood(
-	ctx: GitContext,
-	hash: string,
-	termGood: string,
-): Promise<void> {
-	await updateRef(ctx, `refs/bisect/${termGood}-${hash}`, hash);
-}
-
-/** Write a skip ref under refs/bisect/skip-<hash>. */
-export async function writeBisectSkip(ctx: GitContext, hash: string): Promise<void> {
-	await updateRef(ctx, `refs/bisect/skip-${hash}`, hash);
 }
 
 // ── State cleanup ───────────────────────────────────────────────────
