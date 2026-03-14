@@ -2,8 +2,11 @@
 
 [![CI](https://github.com/blindmansion/just-git/actions/workflows/ci.yml/badge.svg)](https://github.com/blindmansion/just-git/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/just-git)](https://www.npmjs.com/package/just-git)
+[![bundle size](https://img.shields.io/bundlejs/size/just-git)](https://bundlejs.com/?q=just-git)
 
-Git implementation for virtual bash environments (particularly [just-bash](https://github.com/vercel-labs/just-bash)). Pure TypeScript, zero dependencies. 34 commands implemented. Works in Node, Bun, Deno, and the browser. ~100 kB gzipped.
+Pure TypeScript git implementation. Zero dependencies. 34 commands. Works in Node, Bun, Deno, and the browser.
+
+Designed for sandboxed environments where shelling out to real git isn't possible or desirable. Targets faithful reproduction of real git's behavior and output. Operates on an abstract `FileSystem` interface — plug in an in-memory VFS, a real filesystem, or anything else. Pairs with [just-bash](https://github.com/vercel-labs/just-bash), which provides an in-memory filesystem and shell that just-git registers into as a custom command.
 
 ## Install
 
@@ -37,28 +40,26 @@ await bash.exec("git log --oneline");
 
 `createGit(options?)` accepts:
 
-| Option          | Description                                                                                                                                                         |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `identity`      | Author/committer override. With `locked: true`, always wins over env vars and git config. Without `locked`, acts as a fallback.                                     |
-| `credentials`   | `(url) => HttpAuth \| null` callback for Smart HTTP transport auth.                                                                                                 |
-| `disabled`      | `GitCommandName[]` of subcommands to block (e.g. `["push", "rebase"]`).                                                                                             |
-| `network`       | `{ allowed?: string[], fetch?: FetchFunction }` to restrict HTTP access and/or provide a custom `fetch` implementation. Set to `false` to block all network access. |
-| `resolveRemote` | `(url) => GitContext \| null` callback for cross-VFS remote resolution. See [Multi-agent collaboration](#multi-agent-collaboration).                                |
+| Option          | Description                                                                                                                                                                                   |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `identity`      | Author/committer override. With `locked: true`, always wins over env vars and git config. Without `locked`, acts as a fallback.                                                               |
+| `credentials`   | `(url) => HttpAuth \| null` callback for Smart HTTP transport auth.                                                                                                                           |
+| `disabled`      | `GitCommandName[]` of subcommands to block (e.g. `["push", "rebase"]`).                                                                                                                      |
+| `network`       | `{ allowed?: string[], fetch?: FetchFunction }` to restrict HTTP access and/or provide a custom `fetch`. `allowed` accepts hostnames (`"github.com"`) or URL prefixes (`"https://github.com/myorg/"`). Set to `false` to block all network access. |
+| `resolveRemote` | `(url) => GitContext \| null` callback for cross-VFS remote resolution. See [Multi-agent collaboration](#multi-agent-collaboration).                                                          |
 
 ```ts
 const git = createGit({
   identity: { name: "Agent Bot", email: "bot@company.com", locked: true },
   credentials: async (url) => ({ type: "bearer", token: "ghp_..." }),
   disabled: ["rebase"],
-  network: { allowed: ["github.com"], fetch: customFetch },
+  network: false, // no HTTP access
 });
 ```
 
 ## Middleware
 
-Middleware wraps every `git <subcommand>` invocation. Each middleware receives a `CommandEvent` and a `next()` function. Call `next()` to proceed, or return an `ExecResult` to short-circuit. Middlewares compose in registration order (first registered = outermost).
-
-The `CommandEvent` provides the execution context: `{ command, rawArgs, fs, cwd, env, stdin }`, plus optional `exec` and `signal` when available.
+Middleware wraps every `git <subcommand>` invocation. Each middleware receives a `CommandEvent` and a `next()` function. Call `next()` to proceed, or return an `ExecResult` to short-circuit. Middlewares compose in registration order (first registered = outermost). `git.use()` returns an unsubscribe function.
 
 ```ts
 // Audit log — record every command the agent runs
@@ -91,15 +92,11 @@ git.use(async (event, next) => {
 });
 ```
 
-`git.use()` returns an unsubscribe function to remove the middleware dynamically.
-
 ## Hooks
 
 Hooks fire at specific points inside command execution (after middleware, inside operation logic). Register with `git.on(event, handler)`, which returns an unsubscribe function.
 
-### Pre-hooks
-
-Pre-hooks can abort the operation by returning `{ abort: true, message? }`.
+Pre-hooks can abort the operation by returning `{ abort: true, message? }`. Post-hooks are observational — return value is ignored.
 
 ```ts
 // Block secrets from being committed
@@ -116,67 +113,16 @@ git.on("commit-msg", (event) => {
     return { abort: true, message: "Commit message must follow conventional commits format" };
   }
 });
-```
 
-| Hook               | Payload                                                         |
-| ------------------ | --------------------------------------------------------------- |
-| `pre-commit`       | `{ index, treeHash }`                                           |
-| `commit-msg`       | `{ message }` (mutable)                                         |
-| `merge-msg`        | `{ message, treeHash, headHash, theirsHash }` (mutable message) |
-| `pre-merge-commit` | `{ mergeMessage, treeHash, headHash, theirsHash }`              |
-| `pre-checkout`     | `{ target, mode }`                                              |
-| `pre-push`         | `{ remote, url, refs[] }`                                       |
-| `pre-fetch`        | `{ remote, url, refspecs, prune, tags }`                        |
-| `pre-clone`        | `{ repository, targetPath, bare, branch }`                      |
-| `pre-pull`         | `{ remote, branch }`                                            |
-| `pre-rebase`       | `{ upstream, branch }`                                          |
-| `pre-reset`        | `{ mode, target }`                                              |
-| `pre-clean`        | `{ dryRun, force, removeDirs, removeIgnored, onlyIgnored }`     |
-| `pre-rm`           | `{ paths, cached, recursive, force }`                           |
-| `pre-cherry-pick`  | `{ mode, commit }`                                              |
-| `pre-revert`       | `{ mode, commit }`                                              |
-| `pre-stash`        | `{ action, ref }`                                               |
-
-### Post-hooks
-
-Post-hooks are observational -- return value is ignored. Handlers are awaited in registration order.
-
-```ts
 // Feed agent activity to your UI or orchestration layer
 git.on("post-commit", (event) => {
   onAgentCommit({ hash: event.hash, branch: event.branch, message: event.message });
 });
-
-git.on("post-push", (event) => {
-  onAgentPush({ remote: event.remote, refs: event.refs });
-});
 ```
 
-| Hook               | Payload                                          |
-| ------------------ | ------------------------------------------------ |
-| `post-commit`      | `{ hash, message, branch, parents, author }`     |
-| `post-merge`       | `{ headHash, theirsHash, strategy, commitHash }` |
-| `post-checkout`    | `{ prevHead, newHead, isBranchCheckout }`        |
-| `post-push`        | same payload as `pre-push`                       |
-| `post-fetch`       | `{ remote, url, refsUpdated }`                   |
-| `post-clone`       | `{ repository, targetPath, bare, branch }`       |
-| `post-pull`        | `{ remote, branch, strategy, commitHash }`       |
-| `post-reset`       | `{ mode, targetHash }`                           |
-| `post-clean`       | `{ removed, dryRun }`                            |
-| `post-rm`          | `{ removedPaths, cached }`                       |
-| `post-cherry-pick` | `{ mode, commitHash, hadConflicts }`             |
-| `post-revert`      | `{ mode, commitHash, hadConflicts }`             |
-| `post-stash`       | `{ action, ok }`                                 |
+Available pre-hooks: `pre-commit`, `commit-msg`, `merge-msg`, `pre-merge-commit`, `pre-checkout`, `pre-push`, `pre-fetch`, `pre-clone`, `pre-pull`, `pre-rebase`, `pre-reset`, `pre-clean`, `pre-rm`, `pre-cherry-pick`, `pre-revert`, `pre-stash`. Available post-hooks: `post-commit`, `post-merge`, `post-checkout`, `post-push`, `post-fetch`, `post-clone`, `post-pull`, `post-reset`, `post-clean`, `post-rm`, `post-cherry-pick`, `post-revert`, `post-stash`. Low-level events: `ref:update`, `ref:delete`, `object:write`.
 
-### Low-level events
-
-Fire-and-forget events emitted on every object/ref write. Handler errors are caught and forwarded to `hooks.onError` (no-op by default).
-
-| Event          | Payload                     |
-| -------------- | --------------------------- |
-| `ref:update`   | `{ ref, oldHash, newHash }` |
-| `ref:delete`   | `{ ref, oldHash }`          |
-| `object:write` | `{ type, hash }`            |
+See [HOOKS.md](HOOKS.md) for full payload types and the `CommandEvent` shape.
 
 ## Multi-agent collaboration
 
@@ -200,22 +146,33 @@ await setupBash.exec("echo 'hello' > README.md");
 await setupBash.exec("git add . && git commit -m 'initial'");
 
 const originCtx = await findGitDir(originFs, "/repo");
+const resolve = (url: string) => (url === "/origin" ? originCtx : null);
 
 // Each agent gets its own filesystem + resolveRemote pointing to origin
-function createAgent(name: string, email: string) {
-  const agentFs = new InMemoryFs();
-  const git = createGit({
-    identity: { name, email, locked: true },
-    resolveRemote: (url) => (url === "/origin" ? originCtx : null),
-  });
-  return new Bash({ fs: agentFs, cwd: "/repo", customCommands: [git] });
-}
+const alice = new Bash({
+  fs: new InMemoryFs(),
+  cwd: "/repo",
+  customCommands: [
+    createGit({
+      identity: { name: "Alice", email: "alice@example.com", locked: true },
+      resolveRemote: resolve,
+    }),
+  ],
+});
 
-const alice = createAgent("Alice", "alice@example.com");
-const bob = createAgent("Bob", "bob@example.com");
+const bob = new Bash({
+  fs: new InMemoryFs(),
+  cwd: "/repo",
+  customCommands: [
+    createGit({
+      identity: { name: "Bob", email: "bob@example.com", locked: true },
+      resolveRemote: resolve,
+    }),
+  ],
+});
 
-await alice.exec("git clone /origin /repo", { cwd: "/" });
-await bob.exec("git clone /origin /repo", { cwd: "/" });
+await alice.exec("git clone /origin /repo");
+await bob.exec("git clone /origin /repo");
 
 // Alice and Bob work independently, push to origin, fetch each other's changes
 ```
@@ -268,6 +225,7 @@ See [CLI.md](CLI.md) for full usage details.
 ### Transport
 
 - **Local paths** -- direct filesystem transfer between repositories.
+- **Cross-VFS** -- clone, fetch, and push between isolated in-memory filesystems via `resolveRemote`. See [Multi-agent collaboration](#multi-agent-collaboration).
 - **Smart HTTP** -- clone, fetch, and push against real Git servers (e.g. GitHub) via Git Smart HTTP protocol. Auth via `credentials` option or `GIT_HTTP_BEARER_TOKEN` / `GIT_HTTP_USER` + `GIT_HTTP_PASSWORD` env vars.
 
 ### Internals
@@ -280,12 +238,30 @@ See [CLI.md](CLI.md) for full usage details.
 - Packfiles with zlib compression for storage and transport
 - Pathspec globs across `add`, `rm`, `diff`, `reset`, `checkout`, `restore`, `log`
 
-## Goals and testing
+## Testing
 
-High fidelity to real git (2.53.0) state and output. Tested using real git as an [oracle](test/oracle/README.md) — hundreds of randomized traces totaling hundreds of thousands of git operations, each verified step-by-step against real git's state and output.
+Targets high fidelity to real git (2.53.0). Tested with an [oracle framework](test/oracle/README.md) that generates hundreds of randomized git workflows totaling hundreds of thousands of operations, runs them against real git, then replays each step against just-git and compares repository state and command output. State comparison covers HEAD, refs, index, worktree, active operation state, and stash. Output comparison covers exit codes, stdout, and stderr.
 
-When backed by a real filesystem (e.g. `just-bash` `ReadWriteFs`), interoperable with real git on the same repo, though less extensively tested than behavioral correctness.
+When backed by a real filesystem (e.g. just-bash `ReadWriteFs`), interoperable with real git on the same repo, though less extensively tested than behavioral correctness.
 
-## Disclaimer
+## Without just-bash
 
-This project is not affiliated with [just-bash](https://github.com/vercel-labs/just-bash) or Vercel.
+`git.execute()` takes an args array and a `CommandContext`. Provide any `FileSystem` implementation:
+
+```ts
+import { createGit } from "just-git";
+
+const git = createGit({ identity: { name: "Bot", email: "bot@example.com" } });
+
+const result = await git.execute(["init"], {
+  fs: myFileSystem, // any FileSystem implementation
+  cwd: "/repo",
+  env: new Map(),
+  stdin: "",
+});
+
+console.log(result.exitCode); // 0
+```
+
+The `FileSystem` interface requires: `readFile`, `readFileBuffer`, `writeFile`, `exists`, `stat`, `mkdir`, `readdir`, `rm`. Optional: `lstat`, `readlink`, `symlink`.
+
