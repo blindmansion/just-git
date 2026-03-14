@@ -193,6 +193,58 @@ describe("git add", () => {
 		});
 	});
 
+	describe(".gitignore excludes .env files", () => {
+		test("git add . does not stage .env when .gitignore contains .env", async () => {
+			const bash = createTestBash({
+				files: {
+					"/repo/.gitignore": ".env\n",
+					"/repo/.env": "SECRET_KEY=hunter2\nDB_PASSWORD=abc123\n",
+					"/repo/app.ts": "export {};",
+				},
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+
+			const status = await bash.exec("git status -s");
+			const staged = status.stdout.split("\n").map((l: string) => l.trim());
+			expect(staged.some((l: string) => l.endsWith(".env"))).toBe(false);
+			expect(status.stdout).toContain("app.ts");
+			expect(status.stdout).toContain(".gitignore");
+		});
+
+		test("git add . does not stage .env* variants with glob pattern", async () => {
+			const bash = createTestBash({
+				files: {
+					"/repo/.gitignore": ".env*\n",
+					"/repo/.env": "SECRET=x\n",
+					"/repo/.env.local": "LOCAL=y\n",
+					"/repo/.env.production": "PROD=z\n",
+					"/repo/app.ts": "export {};",
+				},
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+
+			const status = await bash.exec("git status -s");
+			expect(status.stdout).not.toContain(".env");
+			expect(status.stdout).toContain("app.ts");
+		});
+
+		test(".env excluded from commit even when added by name", async () => {
+			const bash = createTestBash({
+				files: {
+					"/repo/.gitignore": ".env\n",
+					"/repo/.env": "SECRET=leaked\n",
+					"/repo/app.ts": "export {};",
+				},
+			});
+			await bash.exec("git init");
+			const result = await bash.exec("git add .env");
+
+			expect(result.stderr).toContain("ignored");
+		});
+	});
+
 	describe("--force / -f", () => {
 		test("stages a file that is normally ignored", async () => {
 			const bash = createTestBash({
