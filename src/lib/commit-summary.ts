@@ -51,7 +51,7 @@ export function formatShortstatParts(
  * mode lines for a set of tree diffs and renames. Shared by
  * formatCommitSummary and formatDiffStat.
  */
-async function computeDiffStats(
+export async function computeDiffStats(
 	ctx: GitContext,
 	diffs: TreeDiffEntry[],
 	renames: RenamePair[],

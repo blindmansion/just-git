@@ -12,10 +12,10 @@ Each middleware receives a `CommandEvent` and a `next()` function. Call `next()`
 
 ```ts
 interface CommandEvent {
-  command: string;    // subcommand name ("commit", "push", etc.)
-  rawArgs: string[];  // arguments after the subcommand
-  fs: FileSystem;     // virtual filesystem
-  cwd: string;        // current working directory
+  command: string; // subcommand name ("commit", "push", etc.)
+  rawArgs: string[]; // arguments after the subcommand
+  fs: FileSystem; // virtual filesystem
+  cwd: string; // current working directory
   env: Map<string, string>;
   stdin: string;
   exec?: (cmd: string) => Promise<ExecResult>;
@@ -41,24 +41,24 @@ Register with `git.on(event, handler)`, which returns an unsubscribe function. H
 
 Pre-hooks can abort the operation by returning `{ abort: true, message?: string }`.
 
-| Hook               | Payload                                                         | Type                 |
-| ------------------ | --------------------------------------------------------------- | -------------------- |
-| `pre-commit`       | `{ index, treeHash }`                                           | `PreCommitEvent`     |
-| `commit-msg`       | `{ message }` (mutable)                                         | `CommitMsgEvent`     |
-| `merge-msg`        | `{ message, treeHash, headHash, theirsHash }` (mutable message) | `MergeMsgEvent`      |
-| `pre-merge-commit` | `{ mergeMessage, treeHash, headHash, theirsHash }`              | `PreMergeCommitEvent`|
-| `pre-checkout`     | `{ target, mode }`                                              | `PreCheckoutEvent`   |
-| `pre-push`         | `{ remote, url, refs[] }`                                       | `PrePushEvent`       |
-| `pre-fetch`        | `{ remote, url, refspecs, prune, tags }`                        | `PreFetchEvent`      |
-| `pre-clone`        | `{ repository, targetPath, bare, branch }`                      | `PreCloneEvent`      |
-| `pre-pull`         | `{ remote, branch }`                                            | `PrePullEvent`       |
-| `pre-rebase`       | `{ upstream, branch }`                                          | `PreRebaseEvent`     |
-| `pre-reset`        | `{ mode, target }`                                              | `PreResetEvent`      |
-| `pre-clean`        | `{ dryRun, force, removeDirs, removeIgnored, onlyIgnored }`     | `PreCleanEvent`      |
-| `pre-rm`           | `{ paths, cached, recursive, force }`                           | `PreRmEvent`         |
-| `pre-cherry-pick`  | `{ mode, commit }`                                              | `PreCherryPickEvent` |
-| `pre-revert`       | `{ mode, commit }`                                              | `PreRevertEvent`     |
-| `pre-stash`        | `{ action, ref }`                                               | `PreStashEvent`      |
+| Hook               | Payload                                                         | Type                  |
+| ------------------ | --------------------------------------------------------------- | --------------------- |
+| `pre-commit`       | `{ index, treeHash }`                                           | `PreCommitEvent`      |
+| `commit-msg`       | `{ message }` (mutable)                                         | `CommitMsgEvent`      |
+| `merge-msg`        | `{ message, treeHash, headHash, theirsHash }` (mutable message) | `MergeMsgEvent`       |
+| `pre-merge-commit` | `{ mergeMessage, treeHash, headHash, theirsHash }`              | `PreMergeCommitEvent` |
+| `pre-checkout`     | `{ target, mode }`                                              | `PreCheckoutEvent`    |
+| `pre-push`         | `{ remote, url, refs[] }`                                       | `PrePushEvent`        |
+| `pre-fetch`        | `{ remote, url, refspecs, prune, tags }`                        | `PreFetchEvent`       |
+| `pre-clone`        | `{ repository, targetPath, bare, branch }`                      | `PreCloneEvent`       |
+| `pre-pull`         | `{ remote, branch }`                                            | `PrePullEvent`        |
+| `pre-rebase`       | `{ upstream, branch }`                                          | `PreRebaseEvent`      |
+| `pre-reset`        | `{ mode, target }`                                              | `PreResetEvent`       |
+| `pre-clean`        | `{ dryRun, force, removeDirs, removeIgnored, onlyIgnored }`     | `PreCleanEvent`       |
+| `pre-rm`           | `{ paths, cached, recursive, force }`                           | `PreRmEvent`          |
+| `pre-cherry-pick`  | `{ mode, commit }`                                              | `PreCherryPickEvent`  |
+| `pre-revert`       | `{ mode, commit }`                                              | `PreRevertEvent`      |
+| `pre-stash`        | `{ action, ref }`                                               | `PreStashEvent`       |
 
 ### Post-hooks
 

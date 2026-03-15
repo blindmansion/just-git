@@ -6,8 +6,10 @@ import {
 	requireGitContext,
 	requireHead,
 } from "../lib/command-utils.ts";
+import { computeDiffStats, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
 import { CommitHeap, walkCommits } from "../lib/commit-walk.ts";
 import { parseDate } from "../lib/date.ts";
+import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algorithm.ts";
 import {
 	expandFormat,
 	type FormatContext,
@@ -15,15 +17,25 @@ import {
 	parseFormatArg,
 } from "../lib/log-format.ts";
 import { findAllMergeBases } from "../lib/merge.ts";
-import { peelToCommit, readCommit } from "../lib/object-db.ts";
+import { isBinaryStr, peelToCommit, readBlobContent, readCommit } from "../lib/object-db.ts";
 import type { Pathspec } from "../lib/pathspec.ts";
 import { matchPathspecs, parsePathspec } from "../lib/pathspec.ts";
 import { parseRangeSyntax } from "../lib/range-syntax.ts";
 import { branchNameFromRef, listRefs, readHead, resolveHead } from "../lib/refs.ts";
+import { detectRenames, formatRenamePath, type RenamePair } from "../lib/rename-detection.ts";
 import { resolveRevision } from "../lib/rev-parse.ts";
 import { diffTrees } from "../lib/tree-ops.ts";
-import type { Commit, GitContext, ObjectId } from "../lib/types.ts";
+import type { Commit, GitContext, ObjectId, TreeDiffEntry } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+
+type LogDiffFormat =
+	| "name-status"
+	| "name-only"
+	| "stat"
+	| "shortstat"
+	| "numstat"
+	| "patch"
+	| null;
 
 export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("log", {
@@ -44,6 +56,12 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 			reverse: f().describe("Output commits in reverse order"),
 			format: o.string().describe("Pretty-print format string"),
 			pretty: o.string().describe("Pretty-print format or preset name"),
+			patch: f().alias("p").describe("Show diff in patch format"),
+			stat: f().describe("Show diffstat summary"),
+			nameStatus: f().describe("Show names and status of changed files"),
+			nameOnly: f().describe("Show only names of changed files"),
+			shortstat: f().describe("Show only the shortstat summary line"),
+			numstat: f().describe("Machine-readable insertions/deletions per file"),
 		},
 		handler: async (args, ctx, meta) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
@@ -161,6 +179,20 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 				presetName = parsed.preset;
 			}
 
+			const diffFormat: LogDiffFormat = args.patch
+				? "patch"
+				: args.stat
+					? "stat"
+					: args.nameStatus
+						? "name-status"
+						: args.nameOnly
+							? "name-only"
+							: args.shortstat
+								? "shortstat"
+								: args.numstat
+									? "numstat"
+									: null;
+
 			const needDecorations =
 				args.decorate ||
 				(customFormat != null && (customFormat.includes("%d") || customFormat.includes("%D")));
@@ -225,7 +257,12 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 						decorations: decoFn,
 						decorationsRaw: decoRawFn,
 					};
-					lines.push(expandFormat(customFormat, fctx));
+					let line = expandFormat(customFormat, fctx);
+					const diffText = await formatCommitDiff(gitCtx, entry.commit, diffFormat);
+					if (diffText) {
+						line += `\n\n${diffText.replace(/\n$/, "")}`;
+					}
+					lines.push(line);
 				}
 				return {
 					stdout: lines.length > 0 ? `${lines.join("\n")}\n` : "",
@@ -235,6 +272,7 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			const effectivePreset = presetName ?? "medium";
+			const isOneline = effectivePreset === "oneline";
 			const lines: string[] = [];
 			for (let idx = 0; idx < entries.length; idx++) {
 				const entry = entries[idx] as CommitEntry;
@@ -244,7 +282,13 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 					decorations: decoFn,
 					decorationsRaw: decoRawFn,
 				};
-				lines.push(formatPreset(effectivePreset, fctx, idx === 0, abbrevCommit));
+				let line = formatPreset(effectivePreset, fctx, idx === 0, abbrevCommit);
+				const diffText = await formatCommitDiff(gitCtx, entry.commit, diffFormat);
+				if (diffText) {
+					const sep = isOneline ? "\n" : "\n\n";
+					line += `${sep}${diffText.replace(/\n$/, "")}`;
+				}
+				lines.push(line);
 			}
 			return {
 				stdout: lines.length > 0 ? `${lines.join("\n")}\n` : "",
@@ -436,4 +480,179 @@ function formatDecorations(deco: DecorationMap, hash: ObjectId): string {
 	}
 
 	return parts.length > 0 ? `(${parts.join(", ")})` : "";
+}
+
+// ── Diff output for log ─────────────────────────────────────────────
+
+async function formatCommitDiff(
+	ctx: GitContext,
+	commit: Commit,
+	format: LogDiffFormat,
+): Promise<string> {
+	if (!format) return "";
+	if (commit.parents.length >= 2) return "";
+
+	const parentTree =
+		commit.parents.length === 1
+			? (await readCommit(ctx, commit.parents[0] as ObjectId)).tree
+			: null;
+
+	const rawDiffs = await diffTrees(ctx, parentTree, commit.tree);
+	const { remaining, renames } = await detectRenames(ctx, rawDiffs);
+
+	switch (format) {
+		case "name-only":
+			return logNameOnly(remaining, renames);
+		case "name-status":
+			return logNameStatus(remaining, renames);
+		case "stat":
+			return logStat(ctx, remaining, renames);
+		case "shortstat":
+			return logShortstat(ctx, remaining, renames);
+		case "numstat":
+			return logNumstat(ctx, remaining, renames);
+		case "patch":
+			return logPatch(ctx, remaining, renames);
+	}
+}
+
+function logNameOnly(remaining: TreeDiffEntry[], renames: RenamePair[]): string {
+	const items: { key: string; line: string }[] = [];
+	for (const d of remaining) items.push({ key: d.path, line: d.path });
+	for (const r of renames) items.push({ key: r.newPath, line: r.newPath });
+	items.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+	return items.map((i) => `${i.line}\n`).join("");
+}
+
+function logNameStatus(remaining: TreeDiffEntry[], renames: RenamePair[]): string {
+	const items: { key: string; line: string }[] = [];
+	for (const d of remaining) {
+		const s = d.status === "added" ? "A" : d.status === "deleted" ? "D" : "M";
+		items.push({ key: d.path, line: `${s}\t${d.path}` });
+	}
+	for (const r of renames) {
+		const score = String(r.similarity ?? 100).padStart(3, "0");
+		items.push({ key: r.newPath, line: `R${score}\t${r.oldPath}\t${r.newPath}` });
+	}
+	items.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+	return items.map((i) => `${i.line}\n`).join("");
+}
+
+async function logStat(
+	ctx: GitContext,
+	remaining: TreeDiffEntry[],
+	renames: RenamePair[],
+): Promise<string> {
+	const { fileStats } = await computeDiffStats(ctx, remaining, renames);
+	fileStats.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
+	return renderStatLines(fileStats);
+}
+
+async function logShortstat(
+	ctx: GitContext,
+	remaining: TreeDiffEntry[],
+	renames: RenamePair[],
+): Promise<string> {
+	const { fileStats } = await computeDiffStats(ctx, remaining, renames);
+	let totalIns = 0;
+	let totalDel = 0;
+	for (const s of fileStats) {
+		totalIns += s.insertions;
+		totalDel += s.deletions;
+	}
+	const line = formatShortstatParts(fileStats.length, totalIns, totalDel);
+	return line ? `${line}\n` : "";
+}
+
+async function logNumstat(
+	ctx: GitContext,
+	remaining: TreeDiffEntry[],
+	renames: RenamePair[],
+): Promise<string> {
+	const items: { key: string; oldHash?: string; newHash?: string; display: string }[] = [];
+	for (const d of remaining) {
+		items.push({ key: d.path, oldHash: d.oldHash, newHash: d.newHash, display: d.path });
+	}
+	for (const r of renames) {
+		items.push({
+			key: r.newPath,
+			oldHash: r.oldHash,
+			newHash: r.newHash,
+			display: formatRenamePath(r.oldPath, r.newPath),
+		});
+	}
+	items.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+
+	let out = "";
+	for (const item of items) {
+		const oldContent = item.oldHash ? await readBlobContent(ctx, item.oldHash) : "";
+		const newContent = item.newHash ? await readBlobContent(ctx, item.newHash) : "";
+		if (isBinaryStr(oldContent) || isBinaryStr(newContent)) {
+			out += `-\t-\t${item.display}\n`;
+		} else {
+			const oldLines = splitLinesWithNL(oldContent);
+			const newLines = splitLinesWithNL(newContent);
+			const edits = myersDiff(oldLines, newLines);
+			let ins = 0;
+			let del = 0;
+			for (const edit of edits) {
+				if (edit.type === "insert") ins++;
+				else if (edit.type === "delete") del++;
+			}
+			out += `${ins}\t${del}\t${item.display}\n`;
+		}
+	}
+	return out;
+}
+
+async function logPatch(
+	ctx: GitContext,
+	remaining: TreeDiffEntry[],
+	renames: RenamePair[],
+): Promise<string> {
+	type DiffItem = { type: "diff"; entry: TreeDiffEntry } | { type: "rename"; entry: RenamePair };
+	const allItems: DiffItem[] = [];
+	for (const d of remaining) allItems.push({ type: "diff", entry: d });
+	for (const r of renames) allItems.push({ type: "rename", entry: r });
+	allItems.sort((a, b) => {
+		const pathA = a.type === "diff" ? a.entry.path : a.entry.newPath;
+		const pathB = b.type === "diff" ? b.entry.path : b.entry.newPath;
+		return pathA < pathB ? -1 : pathA > pathB ? 1 : 0;
+	});
+
+	let output = "";
+	for (const item of allItems) {
+		if (item.type === "rename") {
+			const r = item.entry;
+			const oldContent = r.oldHash ? await readBlobContent(ctx, r.oldHash) : "";
+			const newContent = r.newHash ? await readBlobContent(ctx, r.newHash) : "";
+			output += formatUnifiedDiff({
+				path: r.oldPath,
+				oldContent,
+				newContent,
+				oldMode: r.oldMode,
+				newMode: r.newMode,
+				oldHash: r.oldHash,
+				newHash: r.newHash,
+				renameTo: r.newPath,
+				similarity: r.similarity,
+			});
+		} else {
+			const d = item.entry;
+			const oldContent = d.oldHash ? await readBlobContent(ctx, d.oldHash) : "";
+			const newContent = d.newHash ? await readBlobContent(ctx, d.newHash) : "";
+			output += formatUnifiedDiff({
+				path: d.path,
+				oldContent,
+				newContent,
+				oldMode: d.oldMode,
+				newMode: d.newMode,
+				oldHash: d.oldHash,
+				newHash: d.newHash,
+				isNew: d.status === "added",
+				isDeleted: d.status === "deleted",
+			});
+		}
+	}
+	return output;
 }

@@ -915,4 +915,181 @@ describe("git log", () => {
 			expect(lines[1]).toContain("feature commit 1");
 		});
 	});
+
+	describe("diff output flags", () => {
+		function setupDiffRepo() {
+			const bash = createTestBash();
+			const init = async () => {
+				await bash.exec("git init", { env: TEST_ENV });
+				await bash.fs.writeFile("/repo/a.txt", "hello\n");
+				await bash.fs.writeFile("/repo/b.txt", "world\n");
+				await bash.exec("git add .", { env: TEST_ENV });
+				await bash.exec('git commit -m "initial"', { env: TEST_ENV });
+				await bash.fs.writeFile("/repo/a.txt", "modified\n");
+				await bash.fs.writeFile("/repo/c.txt", "new file\n");
+				await bash.exec("git add .", { env: TEST_ENV });
+				await bash.exec('git commit -m "second"', { env: TEST_ENV });
+				await bash.exec("git rm b.txt", { env: TEST_ENV });
+				await bash.exec('git commit -m "third"', { env: TEST_ENV });
+			};
+			return { bash, init };
+		}
+
+		test("--name-status shows status letters with filenames", async () => {
+			const { bash, init } = setupDiffRepo();
+			await init();
+
+			const log = await bash.exec("git log --name-status", { env: TEST_ENV });
+			expect(log.exitCode).toBe(0);
+			expect(log.stdout).toContain("D\tb.txt");
+			expect(log.stdout).toContain("M\ta.txt");
+			expect(log.stdout).toContain("A\tc.txt");
+			expect(log.stdout).toContain("A\ta.txt");
+			expect(log.stdout).toContain("A\tb.txt");
+		});
+
+		test("--name-only shows only filenames", async () => {
+			const { bash, init } = setupDiffRepo();
+			await init();
+
+			const log = await bash.exec("git log --name-only -1", { env: TEST_ENV });
+			expect(log.exitCode).toBe(0);
+			expect(log.stdout).toContain("b.txt");
+			expect(log.stdout).not.toContain("D\t");
+		});
+
+		test("--stat shows diffstat table", async () => {
+			const { bash, init } = setupDiffRepo();
+			await init();
+
+			const log = await bash.exec("git log --stat -1", { env: TEST_ENV });
+			expect(log.exitCode).toBe(0);
+			expect(log.stdout).toContain("b.txt");
+			expect(log.stdout).toContain("1 file changed");
+			expect(log.stdout).toContain("1 deletion(-)");
+		});
+
+		test("--shortstat shows only summary line", async () => {
+			const { bash, init } = setupDiffRepo();
+			await init();
+
+			const log = await bash.exec("git log --shortstat -1", { env: TEST_ENV });
+			expect(log.exitCode).toBe(0);
+			expect(log.stdout).toContain("1 file changed");
+			expect(log.stdout).not.toContain("|");
+		});
+
+		test("--numstat shows machine-readable output", async () => {
+			const { bash, init } = setupDiffRepo();
+			await init();
+
+			const log = await bash.exec("git log --numstat -1", { env: TEST_ENV });
+			expect(log.exitCode).toBe(0);
+			expect(log.stdout).toContain("0\t1\tb.txt");
+		});
+
+		test("-p / --patch shows unified diff", async () => {
+			const { bash, init } = setupDiffRepo();
+			await init();
+
+			const log = await bash.exec("git log -p -1", { env: TEST_ENV });
+			expect(log.exitCode).toBe(0);
+			expect(log.stdout).toContain("diff --git a/b.txt b/b.txt");
+			expect(log.stdout).toContain("deleted file mode");
+			expect(log.stdout).toContain("-world");
+		});
+
+		test("--patch alias works", async () => {
+			const { bash, init } = setupDiffRepo();
+			await init();
+
+			const log = await bash.exec("git log --patch -1", { env: TEST_ENV });
+			expect(log.exitCode).toBe(0);
+			expect(log.stdout).toContain("diff --git");
+		});
+
+		test("merge commits produce no diff output", async () => {
+			const bash = createTestBash();
+			await bash.exec("git init", { env: TEST_ENV });
+			await bash.fs.writeFile("/repo/base.txt", "base\n");
+			await bash.exec("git add .", { env: TEST_ENV });
+			await bash.exec('git commit -m "base"', { env: TEST_ENV });
+			await bash.exec("git checkout -b feature", { env: TEST_ENV });
+			await bash.fs.writeFile("/repo/feat.txt", "feature\n");
+			await bash.exec("git add .", { env: TEST_ENV });
+			await bash.exec('git commit -m "feature"', { env: TEST_ENV });
+			await bash.exec("git checkout main", { env: TEST_ENV });
+			await bash.fs.writeFile("/repo/main.txt", "main\n");
+			await bash.exec("git add .", { env: TEST_ENV });
+			await bash.exec('git commit -m "main change"', { env: TEST_ENV });
+			await bash.exec("git merge feature --no-ff", { env: TEST_ENV });
+
+			const log = await bash.exec("git log --name-status -1", { env: TEST_ENV });
+			expect(log.exitCode).toBe(0);
+			expect(log.stdout).toContain("Merge:");
+			expect(log.stdout).not.toContain("\tbase.txt");
+			expect(log.stdout).not.toContain("\tfeat.txt");
+			expect(log.stdout).not.toContain("\tmain.txt");
+		});
+
+		test("--name-status works with --oneline (no blank line separator)", async () => {
+			const { bash, init } = setupDiffRepo();
+			await init();
+
+			const log = await bash.exec("git log --name-status --oneline -1", { env: TEST_ENV });
+			expect(log.exitCode).toBe(0);
+			const lines = log.stdout.trim().split("\n");
+			expect(lines[0]).toMatch(/^[a-f0-9]+ third$/);
+			expect(lines[1]).toBe("D\tb.txt");
+		});
+
+		test("--name-status works with --format", async () => {
+			const { bash, init } = setupDiffRepo();
+			await init();
+
+			const log = await bash.exec('git log --name-status --format="%h %s" -1', {
+				env: TEST_ENV,
+			});
+			expect(log.exitCode).toBe(0);
+			const lines = log.stdout.trim().split("\n");
+			expect(lines[0]).toMatch(/^[a-f0-9]+ third$/);
+			expect(lines[1]).toBe("");
+			expect(lines[2]).toBe("D\tb.txt");
+		});
+
+		test("root commit shows all files as Added", async () => {
+			const { bash, init } = setupDiffRepo();
+			await init();
+
+			const log = await bash.exec("git log --name-status --oneline", { env: TEST_ENV });
+			expect(log.exitCode).toBe(0);
+			const output = log.stdout;
+			const lastCommitSection = output.slice(output.lastIndexOf("initial"));
+			expect(lastCommitSection).toContain("A\ta.txt");
+			expect(lastCommitSection).toContain("A\tb.txt");
+		});
+
+		test("--name-status shows all commits in multi-commit log", async () => {
+			const { bash, init } = setupDiffRepo();
+			await init();
+
+			const log = await bash.exec("git log --name-status --oneline", { env: TEST_ENV });
+			expect(log.exitCode).toBe(0);
+			const lines = log.stdout.trim().split("\n");
+			expect(lines.some((l) => l === "D\tb.txt")).toBe(true);
+			expect(lines.some((l) => l === "M\ta.txt")).toBe(true);
+			expect(lines.some((l) => l === "A\tc.txt")).toBe(true);
+		});
+
+		test("--stat with multiple commits", async () => {
+			const { bash, init } = setupDiffRepo();
+			await init();
+
+			const log = await bash.exec("git log --stat", { env: TEST_ENV });
+			expect(log.exitCode).toBe(0);
+			const matches = log.stdout.match(/file(s?) changed/g);
+			expect(matches).not.toBeNull();
+			expect(matches!.length).toBe(3);
+		});
+	});
 });

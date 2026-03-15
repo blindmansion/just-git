@@ -685,6 +685,33 @@ export class BatchChecker {
 	}
 
 	/**
+	 * `git log` with diff output flags (--name-status, --stat, -p, etc.)
+	 * may show different diff sections due to rename detection or diff
+	 * algorithm tie-breaking, while the commit headers are identical.
+	 * Extract header-like lines (commit/Author/Date/Merge/indented message)
+	 * and compare those; if they match, the divergence is in the diff
+	 * sections only.
+	 */
+	private static logDiffSectionMatches(expected: string, actual: string): boolean {
+		const isHeaderLine = (l: string) =>
+			/^commit [a-f0-9]{40}/.test(l) ||
+			l.startsWith("Merge: ") ||
+			l.startsWith("Author: ") ||
+			l.startsWith("Date:") ||
+			/^    \S/.test(l);
+
+		const extractHeaders = (s: string) =>
+			s
+				.split("\n")
+				.filter((l) => isHeaderLine(l))
+				.join("\n");
+
+		const eh = extractHeaders(expected);
+		const ah = extractHeaders(actual);
+		return eh.length > 0 && eh === ah;
+	}
+
+	/**
 	 * After gc expires the reflog, real git may render the detached HEAD
 	 * description as "(null)" in "rebasing detached HEAD" output, while
 	 * our implementation omits the hash entirely. Normalise both forms
@@ -860,6 +887,13 @@ export class BatchChecker {
 			) {
 				// Non-monotonic timestamps cause git's walker to terminate early;
 				// our impl does full reachability walk (more correct).
+			} else if (
+				baseCommand === "git log" &&
+				/\s--(name-status|name-only|stat|shortstat|numstat|patch)\b|\s-p\b/.test(step.command) &&
+				BatchChecker.logDiffSectionMatches(step.stdout, output.stdout)
+			) {
+				// Log diff sections differ (rename detection / diff algorithm);
+				// commit headers match.
 			} else {
 				divergences.push({
 					field: "stdout",

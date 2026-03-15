@@ -423,6 +423,29 @@ const reflogExists: Action = {
 	},
 };
 
+const logDiff: Action = {
+	name: "logDiff",
+	category: "diagnostic",
+	canRun: (state) => state.hasCommits,
+	precondition: () => true,
+	weight: () => 1,
+	async execute(harness, rng) {
+		const n = rng.int(1, 5);
+		const flag = rng.pick([
+			"--name-status",
+			"--name-only",
+			"--stat",
+			"--shortstat",
+			"--numstat",
+			"-p",
+		]);
+		const oneline = rng.bool(0.3) ? " --oneline" : "";
+		const cmd = `log ${flag}${oneline} -n ${n}`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
 export const DIAGNOSTIC_ACTIONS: readonly Action[] = [
 	addDryRun,
 	logVariant,
@@ -432,6 +455,7 @@ export const DIAGNOSTIC_ACTIONS: readonly Action[] = [
 	logFormat,
 	logPretty,
 	logRange,
+	logDiff,
 	statusVariant,
 	diffUnstaged,
 	diffCached,

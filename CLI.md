@@ -498,6 +498,12 @@ Options:
   --reverse                 Output commits in reverse order
   --format <string>         Pretty-print format string
   --pretty <string>         Pretty-print format or preset name
+  -p, --patch               Show diff in patch format
+  --stat                    Show diffstat summary
+  --name-status             Show names and status of changed files
+  --name-only               Show only names of changed files
+  --shortstat               Show only the shortstat summary line
+  --numstat                 Machine-readable insertions/deletions per file
 ```
 
 ## git ls-files
