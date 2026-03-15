@@ -534,24 +534,42 @@ function refineConflictBlock(block: {
 /**
  * Merge adjacent conflict blocks when separated by ≤3 ok-lines.
  * Matches git's xdl_simplify_non_conflicts at XDL_MERGE_ZEALOUS level.
+ *
+ * First coalesces adjacent ok blocks (which can appear after refinement
+ * splits a conflict into [ok, conflict] fragments) so the
+ * conflict-ok-conflict absorption pattern works across them.
  */
 function simplifyNonConflicts(blocks: MergeBlock[]): MergeBlock[] {
 	if (blocks.length < 3) return blocks;
 
-	const result: MergeBlock[] = [blocks[0]!];
-
+	// Coalesce adjacent ok blocks so they form a single ok block.
+	const coalesced: MergeBlock[] = [blocks[0]!];
 	for (let i = 1; i < blocks.length; i++) {
-		const prev = result[result.length - 1]!;
+		const prev = coalesced[coalesced.length - 1]!;
 		const curr = blocks[i]!;
+		if (prev.type === "ok" && curr.type === "ok") {
+			(prev as { lines: string[] }).lines = [...prev.lines, ...curr.lines];
+		} else {
+			coalesced.push(curr);
+		}
+	}
+
+	if (coalesced.length < 3) return coalesced;
+
+	const result: MergeBlock[] = [coalesced[0]!];
+
+	for (let i = 1; i < coalesced.length; i++) {
+		const prev = result[result.length - 1]!;
+		const curr = coalesced[i]!;
 
 		if (
 			prev.type === "conflict" &&
 			curr.type === "ok" &&
 			curr.lines.length <= 3 &&
-			i + 1 < blocks.length &&
-			blocks[i + 1]!.type === "conflict"
+			i + 1 < coalesced.length &&
+			coalesced[i + 1]!.type === "conflict"
 		) {
-			const next = blocks[i + 1]! as typeof prev;
+			const next = coalesced[i + 1]! as typeof prev;
 			const p = prev as { a: string[]; b: string[]; o: string[] };
 			p.a = [...prev.a, ...curr.lines, ...next.a];
 			p.b = [...prev.b, ...curr.lines, ...next.b];
