@@ -245,14 +245,13 @@ async function createAndSwitch(
 	const fromName =
 		head?.type === "symbolic" ? head.target.replace(/^refs\/heads\//, "") : (headHash ?? ZERO_HASH);
 	if (headHash) {
-		await logRef(
-			gitCtx,
-			env,
-			refName,
-			existing,
-			headHash,
-			existing ? "branch: Reset to HEAD" : "branch: Created from HEAD",
-		);
+		if (existing) {
+			if (existing !== headHash) {
+				await logRef(gitCtx, env, refName, existing, headHash, "branch: Reset to HEAD");
+			}
+		} else {
+			await logRef(gitCtx, env, refName, null, headHash, "branch: Created from HEAD");
+		}
 	}
 	await logRef(
 		gitCtx,
