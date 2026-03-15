@@ -1,6 +1,6 @@
 {
 	"name": "just-git",
-	"version": "0.1.10",
+	"version": "0.1.11",
 	"description": "Git implementation for virtual bash environments. Pure TypeScript, zero dependencies.",
 	"keywords": [
 		"agent",
