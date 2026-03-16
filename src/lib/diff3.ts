@@ -77,9 +77,6 @@ function diffIndices(buffer1: string[], buffer2: string[]): DiffIndex[] {
 
 	const { changedOld, changedNew } = computeChangedLines(buffer1, buffer2);
 
-	changeCompact(changedOld, buffer1, changedNew, buffer2);
-	changeCompact(changedNew, buffer2, changedOld, buffer1);
-
 	return buildDiffIndices(changedOld, n1, changedNew, n2);
 }
 
@@ -117,120 +114,6 @@ function buildDiffIndices(
 	}
 
 	return result;
-}
-
-// ── Change compaction (matching git's xdl_change_compact) ───────────
-
-/**
- * Compact change groups by sliding them to align with changes in the
- * other file. Port of git's xdl_change_compact from xdiff/xdiffi.c.
- *
- * This normalizes ambiguous hunk positions (where identical lines allow
- * a change group to be attributed to different positions) by preferring
- * positions that align with the other side of the diff.
- */
-function changeCompact(
-	changed: Uint8Array,
-	lines: string[],
-	changedOther: Uint8Array,
-	linesOther: string[],
-): void {
-	const n = lines.length;
-	const nOther = linesOther.length;
-
-	// Initialize group cursors for both files
-	let gS = 0;
-	let gE = 0;
-	while (gE < n && changed[gE]) gE++;
-
-	let goS = 0;
-	let goE = 0;
-	while (goE < nOther && changedOther[goE]) goE++;
-
-	for (;;) {
-		if (gE === gS) {
-			// Empty group — advance to next
-			if (gE >= n) break;
-			gS = gE + 1;
-			gE = gS;
-			while (gE < n && changed[gE]) gE++;
-
-			if (goE >= nOther) break;
-			goS = goE + 1;
-			goE = goS;
-			while (goE < nOther && changedOther[goE]) goE++;
-			continue;
-		}
-
-		let groupsize: number;
-		let earliestEnd: number;
-		let endMatchingOther: number;
-
-		do {
-			groupsize = gE - gS;
-			endMatchingOther = -1;
-
-			// Slide the group backward as far as possible
-			while (gS > 0 && gE > 0 && lines[gS - 1] === lines[gE - 1]) {
-				changed[--gS] = 1;
-				changed[--gE] = 0;
-				// Absorb any preceding changed lines (merge groups)
-				while (gS > 0 && changed[gS - 1]) gS--;
-
-				// Move other-file cursor backward
-				if (goS === 0) break;
-				goE = goS - 1;
-				goS = goE;
-				while (goS > 0 && changedOther[goS - 1]) goS--;
-			}
-
-			earliestEnd = gE;
-
-			if (goE > goS) endMatchingOther = gE;
-
-			// Slide the group forward as far as possible
-			while (gE < n && lines[gS] === lines[gE]) {
-				changed[gS++] = 0;
-				changed[gE++] = 1;
-				// Absorb any following changed lines (merge groups)
-				while (gE < n && changed[gE]) gE++;
-
-				// Move other-file cursor forward
-				if (goE >= nOther) break;
-				goS = goE + 1;
-				goE = goS;
-				while (goE < nOther && changedOther[goE]) goE++;
-
-				if (goE > goS) endMatchingOther = gE;
-			}
-		} while (groupsize !== gE - gS);
-
-		// Position the group: align with the other file if possible
-		if (gE !== earliestEnd && endMatchingOther !== -1) {
-			while (goE === goS) {
-				if (gS <= 0 || lines[gS - 1] !== lines[gE - 1]) break;
-				changed[--gS] = 1;
-				changed[--gE] = 0;
-				while (gS > 0 && changed[gS - 1]) gS--;
-
-				if (goS === 0) break;
-				goE = goS - 1;
-				goS = goE;
-				while (goS > 0 && changedOther[goS - 1]) goS--;
-			}
-		}
-
-		// Advance to the next group
-		if (gE >= n) break;
-		gS = gE + 1;
-		gE = gS;
-		while (gE < n && changed[gE]) gE++;
-
-		if (goE >= nOther) break;
-		goS = goE + 1;
-		goE = goS;
-		while (goE < nOther && changedOther[goE]) goE++;
-	}
 }
 
 // ── diff3MergeRegions ───────────────────────────────────────────────

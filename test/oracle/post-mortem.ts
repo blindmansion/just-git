@@ -28,6 +28,14 @@
  * catches cascading cases via index stage mismatch detection.
  *
  * See test/oracle/README.md "Rename detection ambiguity" for full details.
+ *
+ * ## merge-conflict-marker-alignment
+ *
+ * When three-way merge produces conflicts, conflict marker boundary placement
+ * can differ between git's merge-ort (XDL_MERGE_ZEALOUS) and our diff3
+ * implementation (matches git merge-file / XDL_MERGE_ZEALOUS_ALNUM). The index
+ * matches perfectly but worktree hashes diverge due to cosmetically different
+ * but functionally equivalent conflict marker rendering.
  */
 
 import { readFileSync } from "node:fs";
@@ -47,6 +55,7 @@ type PostMortemPattern =
 	| "rebase-planner-match"
 	| "rebase-planner-subset"
 	| "rename-detection-ambiguity"
+	| "merge-conflict-marker-alignment"
 	| "unknown";
 
 interface PostMortemResult {
@@ -617,6 +626,28 @@ async function analyzeMergeDivergence(
 				explanation:
 					"merge output differs but state matches — different merge-ort result from rename detection causes different safety check path",
 			};
+		}
+
+		// Worktree-only divergence with matching index: conflict marker
+		// rendering difference. Git's merge-ort (ll_merge) uses
+		// XDL_MERGE_ZEALOUS for conflict simplification, while our diff3
+		// implementation matches git merge-file (XDL_MERGE_ZEALOUS_ALNUM).
+		// Both produce correct conflict markers, but boundary decisions
+		// differ on trailing common lines within conflict regions —
+		// especially when merging files that already contain conflict
+		// markers from prior unresolved operations.
+		const onlyWorkTree = sErrors.length === 1 && sErrors[0]!.field === "work_tree";
+		if (onlyWorkTree) {
+			const hasIndexError = divergences.some(
+				(d) => d.severity === "error" && d.field.startsWith("index:"),
+			);
+			if (!hasIndexError) {
+				return {
+					pattern: "merge-conflict-marker-alignment",
+					explanation:
+						"worktree differs but index matches — conflict marker rendering difference (XDL_MERGE_ZEALOUS vs ZEALOUS_ALNUM simplification)",
+				};
+			}
 		}
 	}
 

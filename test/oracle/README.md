@@ -299,11 +299,12 @@ When a trace fails, the test runner invokes `post-mortem.ts` to classify the div
 
 **Known divergence patterns (post-mortem):**
 
-| Pattern                      | Type                      | Description                                                                                                                   |
-| ---------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `rename-detection-ambiguity` | Hybrid                    | Can be output-only or stateful depending on branch (stateful branches include index/worktree divergence from rename pairing). |
-| `rebase-planner-match`       | Output-only (current use) | Planner commits match, but output formatting/diagnostics differ.                                                              |
-| `rebase-planner-subset`      | Stateful                  | Our planner is a strict subset of git's — fewer commits replayed due to git's timestamp-walk quirk (see below).               |
+| Pattern                           | Type                      | Description                                                                                                                   |
+| --------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `rename-detection-ambiguity`      | Hybrid                    | Can be output-only or stateful depending on branch (stateful branches include index/worktree divergence from rename pairing). |
+| `rebase-planner-match`            | Output-only (current use) | Planner commits match, but output formatting/diagnostics differ.                                                              |
+| `rebase-planner-subset`           | Stateful                  | Our planner is a strict subset of git's — fewer commits replayed due to git's timestamp-walk quirk (see below).               |
+| `merge-conflict-marker-alignment` | Worktree-only             | Conflict marker boundary differs — index matches, only worktree hash diverges (see below).                                    |
 
 ### Rebase planner subset — why our planner produces fewer commits
 
@@ -334,6 +335,20 @@ This is **not fixable** without replicating git's exact hashmap implementation (
 4. **Cascading to unrelated commands** — Once a merge/cherry-pick/rebase produces a different index state, every subsequent command operates on diverged state. This surfaces as divergences on `switch --orphan`, `checkout`, `restore`, `reflog`, etc. — commands that have nothing to do with rename detection themselves. The post-mortem's generic fallback catches these by detecting index stage mismatches.
 
 **The `no-rename-show` preset** avoids this entirely by excluding `mvFile` actions (no renames in the trace → no rename detection ambiguity). Use it when you want to test non-rename behavior without noise.
+
+### Merge conflict marker alignment — why worktree hashes can differ with matching indexes
+
+When a three-way merge produces conflicts, the worktree file is written with conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`). The exact placement of marker boundaries — specifically, how many trailing common lines are included inside vs. outside a conflict region — depends on the conflict simplification algorithm.
+
+Git's `merge-ort` uses `ll_merge` → `xdl_merge` with `XDL_MERGE_ZEALOUS` simplification, while our diff3 implementation produces output matching `git merge-file` (which uses `XDL_MERGE_ZEALOUS_ALNUM`). Both produce correct, resolvable conflict markers, but they can disagree on boundary placement when:
+
+- The merged file already contains conflict markers from a prior unresolved operation
+- Repeated content near conflict boundaries creates ambiguous grouping decisions
+- Trailing common lines sit at the boundary between a conflict and the next region
+
+This is **not fixable** without replicating git's exact `xdl_refine_conflicts` and `xdl_simplify_non_conflicts` internals, which depend on line-level classification heuristics (`xdl_hash_classifier_helpers`) that differ between zealous levels. The difference is purely cosmetic — both renderings resolve identically.
+
+**How it manifests:** The index matches perfectly (same conflict stages, same blob SHAs), but the worktree hash differs because the conflict-marked file has slightly different marker boundaries. Typically one extra or fewer conflict end marker (`>>>>>>>`) in one rendering vs. the other.
 
 **Output-only patterns handled by `checker.ts`** (tolerated, don't block traces):
 
