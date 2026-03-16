@@ -148,7 +148,6 @@ const WANTED_FETCH_CAPS = [
 	"no-done",
 	"side-band-64k",
 	"ofs-delta",
-	"thin-pack",
 	"include-tag",
 ];
 
