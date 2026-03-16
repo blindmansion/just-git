@@ -475,7 +475,7 @@ async function handleContinue(
 
 	let messageText = await readStateFile(gitCtx, "MERGE_MSG");
 	if (!messageText) {
-		messageText = originalCommit.message;
+		return err("Aborting commit due to empty commit message.\n", 1);
 	}
 
 	// Real git's sequencer runs `git commit -F .git/MERGE_MSG --cleanup=strip`.

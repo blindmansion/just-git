@@ -357,10 +357,9 @@ async function handleContinue(
 	const conflictErr = requireNoConflicts(index, "Committing");
 	if (conflictErr) return conflictErr;
 
-	let messageText = await readStateFile(gitCtx, "MERGE_MSG");
+	const messageText = await readStateFile(gitCtx, "MERGE_MSG");
 	if (!messageText) {
-		const originalCommit = await readCommit(gitCtx, revertHeadHash);
-		messageText = buildRevertMessage(originalCommit, revertHeadHash);
+		return err("Aborting commit due to empty commit message.\n", 1);
 	}
 
 	const stage0Entries = getStage0Entries(index);
