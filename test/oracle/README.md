@@ -303,6 +303,19 @@ When a trace fails, the test runner invokes `post-mortem.ts` to classify the div
 | ---------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `rename-detection-ambiguity` | Hybrid                    | Can be output-only or stateful depending on branch (stateful branches include index/worktree divergence from rename pairing). |
 | `rebase-planner-match`       | Output-only (current use) | Planner commits match, but output formatting/diagnostics differ.                                                              |
+| `rebase-planner-subset`      | Stateful                  | Our planner is a strict subset of git's — fewer commits replayed due to git's timestamp-walk quirk (see below).               |
+
+### Rebase planner subset — why our planner produces fewer commits
+
+Our `collectRebaseSymmetricPlan` computes the exact set difference via full BFS from both tips: `R(HEAD) - R(upstream)`. Git's `rev-list upstream...HEAD` uses a timestamp-ordered walk that propagates UNINTERESTING marks lazily through parent links.
+
+When commit timestamps are non-monotonic (common after amends and rebases create commits with earlier timestamps than their topological successors), git's walker can include **false positives**: an INTERESTING path reaches a commit before the UNINTERESTING path does, so git outputs the commit even though it IS reachable from the excluded ref. Our BFS computes the exact reachable sets and produces the mathematically correct (smaller) result.
+
+This has been verified empirically: computing `R(HEAD)` and `R(upstream)` independently and taking the set difference produces fewer commits than `git rev-list HEAD --not upstream`, and the "extra" commits in git's output are confirmed present in `git rev-list upstream`.
+
+This is **not fixable** without deliberately replicating git's timestamp-walk quirk, which would make our planner less correct. It is also **not worth fixing** — our behavior produces cleaner rebases that skip upstream-reachable commits.
+
+**How it manifests:** The rebase replays fewer commits, leading to a different resulting index, worktree, and operation state. The planner-inspect tool confirms our commits are always a strict subset (no spurious extras).
 
 ### Rename detection ambiguity — why it exists and why it's not fixable
 

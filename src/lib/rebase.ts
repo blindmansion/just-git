@@ -178,6 +178,14 @@ interface RebaseSymmetricPlan {
  * - right: commits reachable from head but not upstream
  * - left: commits reachable from upstream but not head
  *
+ * Uses proper set-difference reachability (full BFS from both tips),
+ * which is more correct than git's `rev-list upstream...HEAD`. Git's
+ * timestamp-ordered walker can include false positives when commit
+ * timestamps are non-monotonic (common after amends/rebases) because
+ * UNINTERESTING marks propagate lazily through parent links — an
+ * INTERESTING path may reach a commit before the UNINTERESTING path
+ * does. Our BFS computes the exact reachable sets, avoiding this.
+ *
  * Ordering is topological oldest-first (parents before children), with
  * merge commits filtered at output time (mirrors rev-list --max-parents=1
  * as an output filter).

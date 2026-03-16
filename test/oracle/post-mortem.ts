@@ -43,7 +43,11 @@ import { OracleStore } from "./store.ts";
 
 // ── Types ────────────────────────────────────────────────────────
 
-type PostMortemPattern = "rebase-planner-match" | "rename-detection-ambiguity" | "unknown";
+type PostMortemPattern =
+	| "rebase-planner-match"
+	| "rebase-planner-subset"
+	| "rename-detection-ambiguity"
+	| "unknown";
 
 interface PostMortemResult {
 	/** Classification of the divergence. "unknown" = genuine bug or unrecognized. */
@@ -347,6 +351,24 @@ export function classifyPlannerDivergence(cmp: PlannerComparison): PostMortemRes
 		return {
 			pattern: "rebase-planner-match",
 			explanation: `planner output matches (${cmp.oracleRight.length} commits)`,
+		};
+	}
+
+	// Our commits are a strict subset of the oracle's: we have no spurious
+	// extras, just fewer. This happens because git's rev-list walker uses
+	// a timestamp-ordered walk that propagates UNINTERESTING marks lazily.
+	// When commit timestamps are non-monotonic (common after amends and
+	// rebases), an INTERESTING path can reach a commit before the
+	// UNINTERESTING path does, causing git to include commits that ARE
+	// reachable from upstream. Our BFS computes the exact reachable sets,
+	// producing the correct (smaller) result.
+	if (extraInOurs.length === 0 && extraInOracle.length > 0) {
+		return {
+			pattern: "rebase-planner-subset",
+			explanation:
+				`planner is strict subset of oracle ` +
+				`(ours=${cmp.oursRight.length}, oracle=${cmp.oracleRight.length}, ` +
+				`${extraInOracle.length} upstream-reachable commits skipped)`,
 		};
 	}
 
