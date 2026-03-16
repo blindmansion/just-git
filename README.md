@@ -6,7 +6,7 @@
 
 Pure TypeScript git implementation. Zero dependencies. 34 commands. Works in Node, Bun, Deno, and the browser. [Tested against real git](TESTING.md) across hundreds of thousands of randomized operations, comparing repository state and command output at every step.
 
-Designed for sandboxed environments where shelling out to real git isn't possible or desirable. Targets faithful reproduction of real git's behavior and output. Operates on an abstract `FileSystem` interface — plug in an in-memory VFS, a real filesystem, or anything else. Pairs with [just-bash](https://github.com/vercel-labs/just-bash), which provides an in-memory filesystem and shell that just-git registers into as a custom command.
+Designed for sandboxed environments where shelling out to real git isn't possible or desirable. Targets faithful reproduction of real git's behavior and output. Built to work with [just-bash](https://github.com/vercel-labs/just-bash), which provides a filesystem interface and shell that just-git registers into as a custom command, but can be used on its own.
 
 ## Install
 

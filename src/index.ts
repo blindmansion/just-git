@@ -53,4 +53,5 @@ export type {
 	RemoteResolver,
 } from "./hooks";
 export type { GitContext } from "./lib/types";
+export type { HttpAuth } from "./lib/transport/transport";
 export { findGitDir } from "./lib/repo";
