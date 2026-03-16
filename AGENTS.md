@@ -404,7 +404,7 @@ Database naming/layout:
 Presets:
 
 - `default`, `basic`, `core`, `rebase-heavy`, `merge-heavy`, `cherry-pick-heavy`, `no-rename-show`, `no-show`, `wide-files`, `chaos`, `chaos-heavy`, `clone-cannoli`, `clone-core`, `fuzz-light`, `fuzz-heavy`, `chaos-fuzz`, `gitignore`, `stress`
-- `core` focuses on ~45 daily-use actions (add/commit/branch/merge/rebase/stash/reset/cherry-pick + essential diagnostics). Light chaos (5%) and fuzz (3%) for some error-path coverage. Best for exploring the state space of common workflows without noise from rare commands.
+- `core` focuses on ~60 daily-use actions (add/commit/branch/merge/rebase/cherry-pick/revert/stash/tag/reset/clean/restore + diagnostics). Light chaos (5%) and fuzz (3%) for some error-path coverage. Best for exploring the state space of common workflows without noise from rare commands.
 - `*-heavy` presets boost operation weights by category for targeted stress.
 - `no-rename-show` excludes `mvFile` and `showHead` actions (avoids rename-detection ambiguity and combined-diff non-determinism).
 - `no-show` excludes only `showHead` (allows renames via `mvFile`).

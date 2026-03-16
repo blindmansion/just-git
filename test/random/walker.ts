@@ -19,6 +19,8 @@ interface WalkConfig {
 	seed: number;
 	/** Number of actions to take in the walk. */
 	steps: number;
+	/** Actions to use. Defaults to ALL_ACTIONS. */
+	actions?: readonly Action[];
 	/** Probability (0-1) of bypassing soft preconditions per step. Default 0. */
 	chaosRate?: number;
 	/** Per-picker-type probability of injecting wrong values. */
@@ -120,6 +122,7 @@ export async function runWalk(
 	options?: WalkOptions,
 ): Promise<StepEvent[]> {
 	const { seed, steps, chaosRate, fuzz } = config;
+	const actionSet = config.actions ?? ALL_ACTIONS;
 	const rng = new SeededRNG(seed);
 	const log: StepEvent[] = [];
 
@@ -145,7 +148,7 @@ export async function runWalk(
 
 	for (let step = 1; step <= steps; step++) {
 		const state = await queryState(harness);
-		const action = pickAction(rng, state, ALL_ACTIONS, chaosRate);
+		const action = pickAction(rng, state, actionSet, chaosRate);
 
 		if (!action) {
 			log.push({

@@ -401,7 +401,7 @@ const FUZZ_HEAVY: FuzzConfig = {
 	remoteRate: 0.08,
 };
 
-/** ~45 daily-use actions for the core preset family. */
+/** ~60 daily-use actions for the core preset family. */
 const CORE_ACTIONS = includeNames(
 	ALL_ACTIONS,
 	// file-ops
@@ -411,6 +411,7 @@ const CORE_ACTIONS = includeNames(
 	"addAllFlag",
 	"addSpecific",
 	"addUpdate",
+	"rmFile",
 	// commit
 	"commit",
 	"commitAll",
@@ -423,6 +424,8 @@ const CORE_ACTIONS = includeNames(
 	"branchForceDelete",
 	"branchRename",
 	"createBranchFromRef",
+	"detachedCheckout",
+	"checkoutFile",
 	// merge
 	"merge",
 	"mergeAbort",
@@ -432,10 +435,14 @@ const CORE_ACTIONS = includeNames(
 	"rebaseAbort",
 	"rebaseContinue",
 	"rebaseSkip",
-	// cherry-pick (basics only)
+	// cherry-pick
 	"cherryPick",
 	"cherryPickAbort",
 	"cherryPickContinue",
+	// revert
+	"revert",
+	"revertAbort",
+	"revertContinue",
 	// conflict resolution
 	"resolveAndCommit",
 	"resolvePartial",
@@ -445,16 +452,23 @@ const CORE_ACTIONS = includeNames(
 	"stashPop",
 	"stashApply",
 	"stashDrop",
+	// tag
+	"createTag",
+	"deleteTag",
 	// reset
 	"resetMixed",
 	"resetHard",
+	"resetSoft",
 	"resetFile",
+	// clean
+	"cleanWorkTree",
 	// switch (modern branch switching)
 	"switchBranchViaSwitch",
 	"switchCreate",
-	// restore (modern unstage)
+	// restore
+	"restoreWorktree",
 	"restoreStaged",
-	// diagnostics (the daily essentials)
+	// diagnostics
 	"statusVariant",
 	"diffUnstaged",
 	"diffCached",
@@ -462,6 +476,9 @@ const CORE_ACTIONS = includeNames(
 	"logRef",
 	"branchList",
 	"branchListVerbose",
+	"listTags",
+	"reflogShow",
+	"lsFiles",
 );
 
 export const PRESETS: Record<string, Preset> = {
@@ -472,9 +489,9 @@ export const PRESETS: Record<string, Preset> = {
 	basic: { actions: ALL_ACTIONS },
 
 	/**
-	 * Core daily-use commands (~45 actions). Focused on the add/commit/branch/
-	 * merge/rebase loop that makes up ~90% of real git usage. Light chaos and
-	 * fuzz for some error-path coverage without the noise of the full set.
+	 * Core daily-use commands (~60 actions). Covers add/commit/branch/merge/
+	 * rebase plus revert, tags, rm, clean, restore, and detached checkout.
+	 * Light chaos and fuzz for error-path coverage without full-set noise.
 	 */
 	core: {
 		actions: CORE_ACTIONS,

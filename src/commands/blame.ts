@@ -60,6 +60,13 @@ function formatDefault(
 		}
 	}
 
+	let maxPathWidth = 0;
+	if (hasRename) {
+		for (const e of entries) {
+			if (e.origPath.length > maxPathWidth) maxPathWidth = e.origPath.length;
+		}
+	}
+
 	const lines: string[] = [];
 	for (const e of entries) {
 		let hash: string;
@@ -69,7 +76,7 @@ function formatDefault(
 			hash = e.boundary ? `^${e.hash.slice(0, 7)}` : e.hash.slice(0, 8);
 		}
 
-		const filenamePart = hasRename && e.origPath !== finalPath ? ` ${e.origPath}` : "";
+		const filenamePart = hasRename ? ` ${e.origPath.padEnd(maxPathWidth)}` : "";
 
 		if (suppress) {
 			lines.push(
