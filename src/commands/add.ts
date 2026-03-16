@@ -108,6 +108,15 @@ export function registerAddCommand(parent: Command, ext?: GitExtensions) {
 						);
 						const ignoredAs = await checkExplicitPathIgnored(gitCtx, workTree, relPath, isTracked);
 						if (ignoredAs) {
+							if (isTracked) {
+								const stat = await ctx.fs.stat(absPath);
+								if (stat.isDirectory) {
+									index = await stageDirectory(gitCtx, index, absPath, relPath, opts);
+								} else {
+									const result = await stageFile(gitCtx, index, relPath);
+									index = result.index;
+								}
+							}
 							ignoredPaths.push(ignoredAs);
 							continue;
 						}
@@ -147,6 +156,7 @@ export function registerAddCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			if (ignoredPaths.length > 0) {
+				if (!args["dry-run"]) await writeIndex(gitCtx, index);
 				return err(
 					"The following paths are ignored by one of your .gitignore files:\n" +
 						`${ignoredPaths.join("\n")}\n` +

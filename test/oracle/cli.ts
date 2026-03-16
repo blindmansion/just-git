@@ -158,8 +158,8 @@ async function warnIfGitVersionMismatch(): Promise<void> {
 		console.warn(
 			color.yellow(
 				`Warning: ${version.raw}\n` +
-				`Oracle traces target git ${TARGET_GIT_MAJOR}.${TARGET_GIT_MINOR}.x. ` +
-				`Version differences may cause false test failures.\n`,
+					`Oracle traces target git ${TARGET_GIT_MAJOR}.${TARGET_GIT_MINOR}.x. ` +
+					`Version differences may cause false test failures.\n`,
 			),
 		);
 	}
@@ -478,13 +478,13 @@ Examples:
 			"SELECT step_id, seq, command, exit_code, stdout, stderr FROM steps WHERE trace_id = ? AND seq = ?",
 		)
 		.get(traceId, seq) as {
-			step_id: number;
-			seq: number;
-			command: string;
-			exit_code: number;
-			stdout: string;
-			stderr: string;
-		} | null;
+		step_id: number;
+		seq: number;
+		command: string;
+		exit_code: number;
+		stdout: string;
+		stderr: string;
+	} | null;
 
 	if (!step) {
 		console.error(`No step found: trace ${traceId}, seq ${seq}`);
@@ -503,10 +503,10 @@ Examples:
 			"SELECT seq, command, exit_code FROM steps WHERE trace_id = ? AND seq < ? ORDER BY seq DESC LIMIT 5",
 		)
 		.all(traceId, seq) as {
-			seq: number;
-			command: string;
-			exit_code: number;
-		}[];
+		seq: number;
+		command: string;
+		exit_code: number;
+	}[];
 
 	conn.close();
 
@@ -688,10 +688,10 @@ Examples:
        LIMIT ?`,
 		)
 		.all(traceId, seq, before) as {
-			seq: number;
-			command: string;
-			exit_code: number;
-		}[];
+		seq: number;
+		command: string;
+		exit_code: number;
+	}[];
 	conn.close();
 
 	console.log(`\n--- Trace ${traceId}, Context up to Step ${seq} ---\n`);
