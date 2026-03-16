@@ -429,10 +429,11 @@ async function switchOrphanBranch(
 		detachPreamble = await formatPrevHeadPosition(gitCtx, prevHead);
 	}
 
-	// Unlike checkout --orphan, switch --orphan clears the index and
-	// removes tracked files from the worktree (untracked files are kept).
-	// Use checkoutTrees to an empty tree so the standard unpack-trees safety
-	// checks detect both dirty worktree files and staged changes.
+	// Unlike checkout --orphan, switch --orphan clears tracked files from
+	// the index and worktree but preserves newly-staged entries (files
+	// added to the index that aren't in the current commit tree).
+	// checkoutTrees (two-way merge to empty tree) handles this: case 4/5
+	// in twowayMerge KEEPs entries where old=null, new=null (staged adds).
 	if (gitCtx.workTree) {
 		const currentTree = prevHead ? (await readCommit(gitCtx, prevHead)).tree : null;
 		const emptyTree = await buildTreeFromIndex(gitCtx, []);
@@ -441,9 +442,10 @@ async function switchOrphanBranch(
 			return result.errorOutput ?? err("error: checkout would overwrite local changes");
 		}
 		await applyWorktreeOps(gitCtx, result.worktreeOps);
+		await writeIndex(gitCtx, { version: 2, entries: result.newEntries });
+	} else {
+		await writeIndex(gitCtx, clearIndex());
 	}
-
-	await writeIndex(gitCtx, clearIndex());
 
 	await createSymbolicRef(gitCtx, "HEAD", refName);
 	await clearDetachPoint(gitCtx);

@@ -22,10 +22,12 @@
  * candidate gets picked first.
  *
  * Manifestations: direct merge-ort state/output differences on merge,
- * cherry-pick, rebase; cascading index divergences on subsequent commands
- * (switch --orphan, checkout, restore, etc.) that inherit the diverged
- * index state. The generic fallback at the bottom of runPostMortem()
- * catches cascading cases via index stage mismatch detection.
+ * cherry-pick, rebase. For squash merges, the dominant mode is
+ * output-only divergence where formatDiffStat's rename detection
+ * produces different file pairings than git's diffstat code. The
+ * generic fallback at the bottom of runPostMortem() catches conflict
+ * stage (1/2/3) mismatches on any command, but only attributes stage-0
+ * mismatches to rename detection for merge-family commands.
  *
  * See test/oracle/README.md "Rename detection ambiguity" for full details.
  *
@@ -216,17 +218,20 @@ export async function runPostMortem(
 		}
 	}
 
-	// General fallback: any command with index conflict stage mismatches
-	// (stages 0-3 present on one side but not the other) is very likely
-	// a rename detection divergence, even for commands we don't have
-	// specific detectors for (e.g., rebase cherry-pick execution).
+	// General fallback: index conflict stage mismatches (stages 1-3) are
+	// genuine merge-related divergences regardless of the triggering command,
+	// since conflict entries only exist from merge-family operations.
+	// Stage-0 mismatches and SHA mismatches are only attributed to rename
+	// detection when the command itself uses the merge engine — otherwise
+	// they indicate a real implementation bug (e.g., switch --orphan
+	// clearing entries it shouldn't).
 	if (divergences && divergences.length > 0) {
 		const errors = divergences.filter((d) => d.severity === "error");
+
 		const hasConflictStageMismatch = errors.some(
 			(d) =>
-				(/^index:.+:[123]:/.test(d.field) &&
-					(d.expected === "<missing>" || d.actual === "<missing>")) ||
-				(/^index:.+:0:?/.test(d.field) && (d.expected === "<missing>" || d.actual === "<missing>")),
+				/^index:.+:[123]:/.test(d.field) &&
+				(d.expected === "<missing>" || d.actual === "<missing>"),
 		);
 		if (hasConflictStageMismatch) {
 			return {
@@ -235,13 +240,34 @@ export async function runPostMortem(
 			};
 		}
 
-		const hasIndexShaMismatch = errors.some((d) => /^index:.+:[0-3]:sha/.test(d.field));
-		if (hasIndexShaMismatch) {
-			return {
-				pattern: "rename-detection-ambiguity",
-				explanation:
-					"index blob sha differs — cascading merge-ort difference from active operation",
-			};
+		const isMergeAdjacent =
+			command.startsWith("git merge") ||
+			command.startsWith("git cherry-pick") ||
+			command.startsWith("git revert") ||
+			command.startsWith("git stash apply") ||
+			command.startsWith("git stash pop") ||
+			command.startsWith("git rebase");
+
+		if (isMergeAdjacent) {
+			const hasStage0Mismatch = errors.some(
+				(d) =>
+					/^index:.+:0:?/.test(d.field) && (d.expected === "<missing>" || d.actual === "<missing>"),
+			);
+			if (hasStage0Mismatch) {
+				return {
+					pattern: "rename-detection-ambiguity",
+					explanation: "index conflict stages differ — likely rename detection pairing divergence",
+				};
+			}
+
+			const hasIndexShaMismatch = errors.some((d) => /^index:.+:[0-3]:sha/.test(d.field));
+			if (hasIndexShaMismatch) {
+				return {
+					pattern: "rename-detection-ambiguity",
+					explanation:
+						"index blob sha differs — cascading merge-ort difference from active operation",
+				};
+			}
 		}
 	}
 
@@ -624,7 +650,7 @@ async function analyzeMergeDivergence(
 			return {
 				pattern: "rename-detection-ambiguity",
 				explanation:
-					"merge output differs but state matches — different merge-ort result from rename detection causes different safety check path",
+					"merge output differs but state matches — diffstat rename detection produces different file pairings",
 			};
 		}
 
