@@ -36,6 +36,7 @@
 		"prepublishOnly": "bun run build",
 		"check": "bunx tsc --noEmit && oxfmt && oxlint --fix",
 		"oracle": "bun test/oracle/cli.ts",
+		"sandbox": "bun sandbox.ts",
 		"knip": "knip",
 		"knip:prod": "knip --config knip-production.json",
 		"gen-docs": "bun run scripts/gen-lib-reference.ts > FILE_REFERENCE.md && bun run scripts/gen-cli-help.ts > CLI.md"

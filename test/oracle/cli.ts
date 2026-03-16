@@ -111,6 +111,53 @@ function ensureDbDir(path: string): void {
 	mkdirSync(dirname(path), { recursive: true });
 }
 
+// ── Git version check ────────────────────────────────────────────
+
+const TARGET_GIT_MAJOR = 2;
+const TARGET_GIT_MINOR = 53;
+
+async function getGitVersion(): Promise<{
+	major: number;
+	minor: number;
+	patch: string;
+	raw: string;
+} | null> {
+	try {
+		const proc = Bun.spawn(["git", "--version"], { stdout: "pipe", stderr: "pipe" });
+		const stdout = await new Response(proc.stdout).text();
+		await proc.exited;
+		const match = stdout.trim().match(/git version (\d+)\.(\d+)\.(.+)/);
+		if (!match) return null;
+		return {
+			major: parseInt(match[1], 10),
+			minor: parseInt(match[2], 10),
+			patch: match[3],
+			raw: stdout.trim(),
+		};
+	} catch {
+		return null;
+	}
+}
+
+async function warnIfGitVersionMismatch(): Promise<void> {
+	const version = await getGitVersion();
+	if (!version) {
+		console.warn(
+			color.yellow("Warning: could not determine git version. Oracle traces target git 2.53.x.\n"),
+		);
+		return;
+	}
+	if (version.major !== TARGET_GIT_MAJOR || version.minor !== TARGET_GIT_MINOR) {
+		console.warn(
+			color.yellow(
+				`Warning: ${version.raw}\n` +
+					`Oracle traces target git ${TARGET_GIT_MAJOR}.${TARGET_GIT_MINOR}.x. ` +
+					`Version differences may cause false test failures.\n`,
+			),
+		);
+	}
+}
+
 // ── generate ─────────────────────────────────────────────────────
 
 async function cmdGenerate(args: string[]): Promise<void> {
@@ -166,6 +213,7 @@ Examples:
 	const effectiveCloneUrl = cloneUrl ?? preset.cloneUrl;
 
 	ensureDbDir(db);
+	await warnIfGitVersionMismatch();
 
 	const chaosDesc = chaosRate > 0 ? `, chaos=${chaosRate}` : "";
 	const cloneDesc = effectiveCloneUrl ? `, clone=${effectiveCloneUrl}` : "";
@@ -1496,6 +1544,145 @@ async function cmdClean(_args: string[]): Promise<void> {
 	console.log("\nDone.");
 }
 
+// ── validate ─────────────────────────────────────────────────────
+
+async function cmdValidate(args: string[]): Promise<void> {
+	const { getOpt, hasFlag } = parseArgs(args);
+	const seedsArg = getOpt("--seeds") ?? "1-5";
+	const stepsArg = getOpt("--steps") ?? "300";
+	const verbose = hasFlag("--verbose") || hasFlag("-v");
+
+	if (hasFlag("--help") || hasFlag("-h")) {
+		console.log(`Usage: bun oracle validate [options]
+
+Generate and test a representative set of oracle traces in one step.
+Runs the core and kitchen presets with a small seed count for quick validation.
+
+Options:
+  --seeds <spec>   Seed specification (default: "1-5")
+  --steps <n>      Steps per seed (default: 300)
+  -v, --verbose    Show per-step output during testing
+
+Examples:
+  validate                    # 5 seeds × 300 steps, core + kitchen
+  validate --seeds 1-10       # more seeds for deeper coverage
+  validate --seeds 1-3 -v     # fewer seeds, verbose output`);
+		process.exit(0);
+	}
+
+	await warnIfGitVersionMismatch();
+
+	const seeds = parseSeeds(seedsArg);
+	const steps = parseInt(stepsArg, 10);
+	const presetNames = ["core", "kitchen"] as const;
+
+	console.log(
+		`Validating: ${seeds.length} seeds × ${steps} steps × ${presetNames.length} presets\n`,
+	);
+
+	let anyFailed = false;
+
+	for (const presetName of presetNames) {
+		const preset = PRESETS[presetName];
+		const db = dbPath(`validate-${presetName}`);
+		ensureDbDir(db);
+
+		console.log(`── ${presetName} ${"─".repeat(Math.max(0, 55 - presetName.length))}`);
+		console.log("");
+
+		const chaosRate = preset.chaosRate ?? 0;
+		const chaosDesc = chaosRate > 0 ? `, chaos=${chaosRate}` : "";
+		console.log(
+			`  Generating ${seeds.length} traces × ${steps} steps (${presetName}${chaosDesc})...`,
+		);
+
+		await generateTraces({
+			dbPath: db,
+			seeds,
+			steps,
+			actions: preset.actions,
+			chaosRate,
+			fuzz: preset.fuzz,
+			fileGen: preset.fileGen,
+			description: `validate: ${presetName}`,
+		});
+
+		console.log("  Testing...\n");
+
+		const conn = new Database(db, { readonly: true });
+		const rows = conn.prepare("SELECT trace_id FROM traces ORDER BY trace_id").all() as {
+			trace_id: number;
+		}[];
+		conn.close();
+		const traceIds = rows.map((r) => r.trace_id);
+
+		let passCount = 0;
+		let warnCount = 0;
+		let knownCount = 0;
+		let failCount = 0;
+
+		for (const traceId of traceIds) {
+			const result = await replayAndCheck(db, traceId, { verbose });
+
+			if (!result.firstDivergence && !result.firstWarning) {
+				passCount++;
+				if (verbose) {
+					console.log(`  ${color.green("PASS")}   trace ${traceId}   ${result.totalSteps} steps`);
+				}
+			} else if (!result.firstDivergence && result.firstWarning) {
+				warnCount++;
+				const w = result.firstWarning;
+				console.log(
+					`  ${color.yellow("WARN")}   trace ${traceId}   ${result.totalSteps} steps  ${color.dim(`(step ${w.seq})`)}`,
+				);
+			} else if (result.firstDivergence) {
+				const d = result.firstDivergence;
+				let postMortemResult: Awaited<ReturnType<typeof runPostMortem>> | null = null;
+				try {
+					postMortemResult = await runPostMortem(db, traceId, d.seq, d.command, d.divergences);
+				} catch {
+					postMortemResult = null;
+				}
+
+				const isKnown = postMortemResult !== null && postMortemResult.pattern !== "unknown";
+				if (isKnown && postMortemResult) {
+					knownCount++;
+					console.log(
+						`  ${color.cyan("KNOWN")}  trace ${traceId}   step ${d.seq}/${result.totalSteps}  ${color.dim(postMortemResult.pattern)}`,
+					);
+				} else {
+					failCount++;
+					anyFailed = true;
+					const cmd = truncateCommand(d.command, 50);
+					const firstErr = d.divergences.find((x) => x.severity === "error");
+					console.log(
+						`  ${color.red("FAIL")}   trace ${traceId}   step ${d.seq}/${result.totalSteps}  ${cmd}`,
+					);
+					if (firstErr) {
+						console.log(
+							`         ${firstErr.field}: expected=${fmt(firstErr.expected)} actual=${fmt(firstErr.actual)}`,
+						);
+					}
+				}
+			}
+		}
+
+		const parts: string[] = [];
+		parts.push(`${passCount} passed`);
+		if (warnCount > 0) parts.push(color.yellow(`${warnCount} warned`));
+		if (knownCount > 0) parts.push(color.cyan(`${knownCount} known`));
+		if (failCount > 0) parts.push(color.red(`${failCount} failed`));
+		console.log(`\n  ${parts.join(", ")}  (${traceIds.length} traces)\n`);
+	}
+
+	if (anyFailed) {
+		console.log(color.red("Validation failed."));
+		process.exit(1);
+	} else {
+		console.log(color.green("Validation passed."));
+	}
+}
+
 // ── summary ──────────────────────────────────────────────────────
 
 interface SummaryEntry {
@@ -1695,6 +1882,7 @@ function cmdSummary(_args: string[]): void {
 const USAGE = `Usage: bun oracle <command> [args]
 
 Commands:
+  validate                          Generate + test core & kitchen presets
   generate [name] --seeds <spec>    Create oracle traces from real git
   test [name] [trace]               Replay and compare against oracle
   profile [name] [trace]            Profile command execution times
@@ -1725,6 +1913,9 @@ if (import.meta.main) {
 	const rest = args.slice(1);
 
 	switch (command) {
+		case "validate":
+			await cmdValidate(rest);
+			break;
 		case "generate":
 			await cmdGenerate(rest);
 			break;

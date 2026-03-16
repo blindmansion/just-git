@@ -5,13 +5,14 @@ Compares `just-git` against real git by pre-generating **oracle traces** (record
 ## Quick start
 
 ```bash
-# 1. Generate traces (runs real git, stores results in SQLite)
-bun oracle generate basic --seeds 1-20 --steps 300
+# One-command validation (generates + tests core & kitchen presets)
+bun oracle validate
 
-# 2. Run all traces against our implementation
+# Or manually: generate, then test
+bun oracle generate basic --seeds 1-20 --steps 300
 bun oracle test basic
 
-# 3. Investigate a failure
+# Investigate a failure
 bun oracle inspect basic 5 42
 bun oracle rebuild basic 5 42
 ```
@@ -19,6 +20,26 @@ bun oracle rebuild basic 5 42
 ## CLI reference
 
 All operations go through `cli.ts`. The first argument after the subcommand is always the **database name**. Databases are stored at `data/<name>/traces.sqlite`, keeping the sqlite file and its WAL/SHM sidecars contained in their own directory.
+
+### `validate` — quick confidence check
+
+Generates and tests a representative set of oracle traces in one step. Runs the `core` and `kitchen` presets with a small seed count. Warns if the local git version doesn't match 2.53.x.
+
+```
+bun oracle validate [options]
+```
+
+| Option            | Default | Description                         |
+| ----------------- | ------- | ----------------------------------- |
+| `--seeds <spec>`  | `1-5`   | Seed specification                  |
+| `--steps <n>`     | 300     | Steps per seed                      |
+| `-v`, `--verbose` | —       | Show per-step output during testing |
+
+```bash
+bun oracle validate                    # 5 seeds × 300 steps, core + kitchen
+bun oracle validate --seeds 1-10       # more seeds for deeper coverage
+bun oracle validate --seeds 1-3 -v     # fewer seeds, verbose output
+```
 
 ### `generate` — create oracle traces
 

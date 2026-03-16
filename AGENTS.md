@@ -367,24 +367,22 @@ Database-backed oracle testing framework. Generates traces by running random wal
 Quick start:
 
 ```bash
-# 1) Generate traces
-bun oracle generate basic --seeds 1-20 --steps 300
+# One-command validation (generates + tests core & kitchen presets)
+bun oracle validate
 
-# 2) Replay against implementation
+# Or manually: generate, then test
+bun oracle generate basic --seeds 1-20 --steps 300
 bun oracle test basic
 
-# 3) Debug a divergence
+# Debug a divergence
 bun oracle inspect basic 5 42
 bun oracle rebuild basic 5 42
-
-# 4) Generate clone-based traces (requires network)
-bun oracle generate clone-cannoli --seeds 1-5 --steps 100
-bun oracle test clone-cannoli
 ```
 
 Commands:
 
-- `generate [name] --seeds <spec> [--steps <n>] [--preset <name>] [--chaos <rate>] [--clone-url <url>]` — run random walks against real git and store traces. `--chaos` overrides preset's chaos rate. `--clone-url` starts each trace with `git clone <url> .` instead of `git init`.
+- `validate [--seeds <spec>] [--steps <n>] [-v]` — generate and test core + kitchen presets in one step. Quick confidence check. Defaults to 5 seeds × 300 steps per preset. Warns if local git version doesn't match the target (2.53.x).
+- `generate [name] --seeds <spec> [--steps <n>] [--preset <name>] [--chaos <rate>] [--clone-url <url>]` — run random walks against real git and store traces. `--chaos` overrides preset's chaos rate. `--clone-url` starts each trace with `git clone <url> .` instead of `git init`. Warns if local git version doesn't match 2.53.x.
 - `test [name] [trace] [-v] [--stop-at N]` — replay traces against virtual impl and compare every step. Compares state (HEAD, refs, index, worktree), exit code, stdout, and stderr. Auto-logs results to `data/<name>/test-results.log`. PASS lines suppressed from console in non-verbose mode.
 - `inspect <name> <trace> <step>` — show oracle + impl state side-by-side at a step, including exit code / stdout / stderr comparison with character-level diff on mismatch
 - `trace-context <name> <trace> <step> [--before N]` — show preceding commands around a step (no replay, lightweight)

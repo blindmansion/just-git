@@ -4,7 +4,7 @@
 [![npm](https://img.shields.io/npm/v/just-git)](https://www.npmjs.com/package/just-git)
 [![bundle size](https://img.shields.io/bundlejs/size/just-git)](https://bundlejs.com/?q=just-git)
 
-Pure TypeScript git implementation. Zero dependencies. 34 commands. Works in Node, Bun, Deno, and the browser.
+Pure TypeScript git implementation. Zero dependencies. 34 commands. Works in Node, Bun, Deno, and the browser. [Tested against real git](TESTING.md) across hundreds of thousands of randomized operations, comparing repository state and command output at every step.
 
 Designed for sandboxed environments where shelling out to real git isn't possible or desirable. Targets faithful reproduction of real git's behavior and output. Operates on an abstract `FileSystem` interface — plug in an in-memory VFS, a real filesystem, or anything else. Pairs with [just-bash](https://github.com/vercel-labs/just-bash), which provides an in-memory filesystem and shell that just-git registers into as a custom command.
 
@@ -240,9 +240,9 @@ See [CLI.md](CLI.md) for full usage details.
 
 ## Testing
 
-Targets high fidelity to real git (2.53.0). Tested with an [oracle framework](test/oracle/README.md) that generates hundreds of randomized git workflows totaling hundreds of thousands of operations, runs them against real git, then replays each step against just-git and compares repository state and command output. State comparison covers HEAD, refs, index, worktree, active operation state, and stash. Output comparison covers exit codes, stdout, and stderr.
+Targets high fidelity to real git (2.53.0). Validated with an [oracle testing framework](test/oracle/README.md) that generates randomized git workflows, runs them against real git, replays each step against just-git, and compares repository state and command output at every step. Run `bun oracle validate` to generate and test a representative set of traces yourself. See [TESTING.md](TESTING.md) for the full methodology and how to interpret results.
 
-When backed by a real filesystem (e.g. just-bash `ReadWriteFs`), interoperable with real git on the same repo, though less extensively tested than behavioral correctness.
+When backed by a real filesystem (e.g. just-bash `ReadWriteFs`), interoperable with real git on the same repo. Try `bun sandbox "git init"` to explore interactively.
 
 ## Without just-bash
 
