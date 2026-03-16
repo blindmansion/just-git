@@ -24,6 +24,7 @@ import { peelToCommit, readCommit } from "../lib/object-db.ts";
 import {
 	clearMergeState,
 	clearRevertState,
+	deleteStateFile,
 	readStateFile,
 	writeStateFile,
 } from "../lib/operation-state.ts";
@@ -115,6 +116,7 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 
 			// Already up to date: base == theirs (or both are the same)
 			if (baseCommit === theirsHash) {
+				await deleteStateFile(gitCtx, "MERGE_MSG");
 				const suffix = args.squash ? " (nothing to squash)" : "";
 				return {
 					stdout: `Already up to date.${suffix}\n`,
@@ -162,6 +164,7 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 					);
 				}
 				if (result.exitCode === 0) {
+					await deleteStateFile(gitCtx, "MERGE_MSG");
 					const refName = head?.type === "symbolic" ? head.target : "HEAD";
 					await logRef(
 						gitCtx,
@@ -238,6 +241,7 @@ async function handleThreeWayMerge(
 	});
 
 	if (!applyResult.ok) {
+		await deleteStateFile(gitCtx, "MERGE_MSG");
 		// Real git writes a no-op reflog entry for three-way merge failures
 		// (dirty worktree) because the reflog is written before the worktree
 		// update is attempted. Squash merges don't write one because they
@@ -290,6 +294,7 @@ async function handleThreeWayMerge(
 	}
 
 	// Clean merge — create merge commit
+	await deleteStateFile(gitCtx, "MERGE_MSG");
 	const treeHash = applyResult.mergedTreeHash;
 
 	const author = await requireAuthor(gitCtx, env);
@@ -394,6 +399,7 @@ async function handleSquashMerge(
 	});
 
 	if (!applyResult.ok) {
+		await deleteStateFile(gitCtx, "MERGE_MSG");
 		// Real git writes a no-op reflog for non-FF squash merge failures
 		// but not for FF ones (the worktree check happens after the reflog
 		// write point in git's merge path for non-FF merges).
@@ -408,11 +414,16 @@ async function handleSquashMerge(
 	}
 
 	if (result.conflicts.length > 0) {
-		await updateRef(gitCtx, "ORIG_HEAD", headHash);
-		let mergeMsg = customMessage ?? (await buildMergeMessage(gitCtx, branchName, currentBranch));
-		mergeMsg = `Squashed commit of the following:\n\n${mergeMsg}`;
-		await writeStateFile(gitCtx, "MERGE_MSG", mergeMsg);
-		await writeStateFile(gitCtx, "MERGE_MODE", "");
+		// Real git does NOT call write_merge_state() for squash merges, so
+		// MERGE_HEAD, MERGE_MSG, and MERGE_MODE are not written. Instead,
+		// suggest_conflicts() appends conflict hints to existing MERGE_MSG.
+		const conflictPaths = getConflictedPaths({
+			version: 2,
+			entries: result.entries,
+		}).sort();
+		const conflictHints = `\n# Conflicts:\n${conflictPaths.map((p) => `#\t${p}`).join("\n")}\n`;
+		const existingMsg = await readStateFile(gitCtx, "MERGE_MSG");
+		await writeStateFile(gitCtx, "MERGE_MSG", (existingMsg ?? "") + conflictHints);
 
 		const mergeOutput = [
 			...result.messages,
