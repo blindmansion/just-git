@@ -1202,11 +1202,13 @@ async function handleSkip(gitCtx: GitContext, env: Map<string, string>): Promise
 		await applyWorktreeOps(gitCtx, result.worktreeOps);
 	}
 
-	// Clean up step refs (including any cherry-pick/revert started mid-rebase)
+	// Clean up step refs (including any merge/cherry-pick/revert started mid-rebase)
 	await deleteRef(gitCtx, "REBASE_HEAD");
 	await deleteRef(gitCtx, "CHERRY_PICK_HEAD");
 	await deleteRef(gitCtx, "REVERT_HEAD");
+	await deleteRef(gitCtx, "MERGE_HEAD");
 	await deleteStateFile(gitCtx, "MERGE_MSG");
+	await deleteStateFile(gitCtx, "MERGE_MODE");
 	await deleteStateFile(gitCtx, "rebase-merge/message");
 
 	// State was already advanced when the pick was attempted (before

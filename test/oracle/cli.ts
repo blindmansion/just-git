@@ -18,7 +18,14 @@
  */
 
 import { Database } from "bun:sqlite";
-import { appendFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+	appendFileSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	readdirSync,
+	writeFileSync,
+} from "node:fs";
 import { readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -151,8 +158,8 @@ async function warnIfGitVersionMismatch(): Promise<void> {
 		console.warn(
 			color.yellow(
 				`Warning: ${version.raw}\n` +
-					`Oracle traces target git ${TARGET_GIT_MAJOR}.${TARGET_GIT_MINOR}.x. ` +
-					`Version differences may cause false test failures.\n`,
+				`Oracle traces target git ${TARGET_GIT_MAJOR}.${TARGET_GIT_MINOR}.x. ` +
+				`Version differences may cause false test failures.\n`,
 			),
 		);
 	}
@@ -471,13 +478,13 @@ Examples:
 			"SELECT step_id, seq, command, exit_code, stdout, stderr FROM steps WHERE trace_id = ? AND seq = ?",
 		)
 		.get(traceId, seq) as {
-		step_id: number;
-		seq: number;
-		command: string;
-		exit_code: number;
-		stdout: string;
-		stderr: string;
-	} | null;
+			step_id: number;
+			seq: number;
+			command: string;
+			exit_code: number;
+			stdout: string;
+			stderr: string;
+		} | null;
 
 	if (!step) {
 		console.error(`No step found: trace ${traceId}, seq ${seq}`);
@@ -496,10 +503,10 @@ Examples:
 			"SELECT seq, command, exit_code FROM steps WHERE trace_id = ? AND seq < ? ORDER BY seq DESC LIMIT 5",
 		)
 		.all(traceId, seq) as {
-		seq: number;
-		command: string;
-		exit_code: number;
-	}[];
+			seq: number;
+			command: string;
+			exit_code: number;
+		}[];
 
 	conn.close();
 
@@ -681,10 +688,10 @@ Examples:
        LIMIT ?`,
 		)
 		.all(traceId, seq, before) as {
-		seq: number;
-		command: string;
-		exit_code: number;
-	}[];
+			seq: number;
+			command: string;
+			exit_code: number;
+		}[];
 	conn.close();
 
 	console.log(`\n--- Trace ${traceId}, Context up to Step ${seq} ---\n`);
@@ -1877,6 +1884,52 @@ function cmdSummary(_args: string[]): void {
 	console.log("");
 }
 
+// ── test-all ─────────────────────────────────────────────────────
+
+async function cmdTestAll(args: string[]): Promise<void> {
+	const passthrough = args.filter(
+		(a) => a === "-v" || a === "--verbose" || a === "--no-post-mortem",
+	);
+
+	let dirs: string[];
+	try {
+		dirs = readdirSync(DATA_DIR, { withFileTypes: true })
+			.filter((d) => d.isDirectory())
+			.map((d) => d.name)
+			.sort();
+	} catch {
+		console.log(`No data directory found at ${DATA_DIR}`);
+		process.exit(1);
+	}
+
+	const sets = dirs.filter((d) => existsSync(join(DATA_DIR, d, "traces.sqlite")));
+
+	if (sets.length === 0) {
+		console.log("No datasets with traces.sqlite found.");
+		process.exit(1);
+	}
+
+	console.log(`Testing ${sets.length} dataset${sets.length !== 1 ? "s" : ""}:\n`);
+	let anyFailed = false;
+
+	for (const name of sets) {
+		console.log(`${"═".repeat(60)}`);
+		console.log(`  ${name}`);
+		console.log(`${"═".repeat(60)}\n`);
+
+		const proc = Bun.spawn(["bun", import.meta.path, "test", name, ...passthrough], {
+			stdout: "inherit",
+			stderr: "inherit",
+		});
+		const code = await proc.exited;
+		if (code !== 0) anyFailed = true;
+		console.log("");
+	}
+
+	console.log(`Done. Run ${color.dim("bun oracle summary")} for aggregate results.`);
+	if (anyFailed) process.exit(1);
+}
+
 // ── Main dispatch ────────────────────────────────────────────────
 
 const USAGE = `Usage: bun oracle <command> [args]
@@ -1885,6 +1938,7 @@ Commands:
   validate                          Generate + test core & kitchen presets
   generate [name] --seeds <spec>    Create oracle traces from real git
   test [name] [trace]               Replay and compare against oracle
+  test-all                          Test all datasets in data/
   profile [name] [trace]            Profile command execution times
   size [name] [trace]               Measure repo size growth over time
   inspect <name> <trace> <step>     Examine a step with oracle + impl diff
@@ -1921,6 +1975,9 @@ if (import.meta.main) {
 			break;
 		case "test":
 			await cmdTest(rest);
+			break;
+		case "test-all":
+			await cmdTestAll(rest);
 			break;
 		case "inspect":
 			await cmdInspect(rest);

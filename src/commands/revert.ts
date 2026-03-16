@@ -371,10 +371,18 @@ async function handleContinue(
 
 	const headCommit = await readCommit(gitCtx, headHash);
 
-	const author = await requireAuthor(gitCtx, env);
+	let author = await requireAuthor(gitCtx, env);
 	if (isCommandError(author)) return author;
 	const committer = await requireCommitter(gitCtx, env);
 	if (isCommandError(committer)) return committer;
+
+	// Real git's revert --continue runs `git commit` internally, which
+	// preserves the original author when CHERRY_PICK_HEAD exists.
+	const cherryPickHeadHash = await resolveRef(gitCtx, "CHERRY_PICK_HEAD");
+	if (cherryPickHeadHash) {
+		const originalCommit = await readCommit(gitCtx, cherryPickHeadHash);
+		author = originalCommit.author;
+	}
 
 	const message = ensureTrailingNewline(messageText);
 
