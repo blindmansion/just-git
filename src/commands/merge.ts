@@ -16,7 +16,9 @@ import {
 	stripCommentLines,
 	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
+import { walkCommits } from "../lib/commit-walk.ts";
 import { formatDiffStat } from "../lib/commit-summary.ts";
+import { formatDate } from "../lib/date.ts";
 import { getConflictedPaths, getStage0Entries, readIndex } from "../lib/index.ts";
 import { buildMergeMessage, findAllMergeBases, handleFastForward } from "../lib/merge.ts";
 import { type ApplyMergeFailure, applyMergeResult, mergeOrtRecursive } from "../lib/merge-ort.ts";
@@ -368,6 +370,32 @@ async function handleThreeWayMerge(
 
 // ── Squash merge ────────────────────────────────────────────────────
 
+/**
+ * Build the SQUASH_MSG content matching real git's `squash_message()`:
+ * lists each commit in HEAD..theirs in medium format (hash, author, date,
+ * indented message).
+ */
+async function buildSquashMessageLog(
+	gitCtx: GitContext,
+	headHash: ObjectId,
+	theirsHash: ObjectId,
+): Promise<string> {
+	const lines: string[] = [];
+	for await (const entry of walkCommits(gitCtx, theirsHash, { exclude: [headHash] })) {
+		if (entry.commit.parents.length > 1) continue;
+		lines.push(`commit ${entry.hash}`);
+		const a = entry.commit.author;
+		lines.push(`Author: ${a.name} <${a.email}>`);
+		lines.push(`Date:   ${formatDate(a.timestamp, a.timezone)}`);
+		lines.push("");
+		for (const msgLine of entry.commit.message.replace(/\n+$/, "").split("\n")) {
+			lines.push(`    ${msgLine}`);
+		}
+		lines.push("");
+	}
+	return lines.join("\n");
+}
+
 async function handleSquashMerge(
 	gitCtx: GitContext,
 	headHash: ObjectId,
@@ -379,7 +407,6 @@ async function handleSquashMerge(
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
 	const headCommit = await readCommit(gitCtx, headHash);
 	const head = await readHead(gitCtx);
-	const currentBranch = head?.type === "symbolic" ? branchNameFromRef(head.target) : "HEAD";
 
 	const labels = { a: "HEAD", b: branchName };
 
@@ -413,10 +440,21 @@ async function handleSquashMerge(
 		return failure;
 	}
 
+	// Real git writes SQUASH_MSG (not MERGE_MSG) for squash merges,
+	// in both success and conflict paths.
+	let squashMsg: string;
+	if (customMessage) {
+		squashMsg = `Squashed commit of the following:\n\n${customMessage}`;
+	} else {
+		const commitLog = await buildSquashMessageLog(gitCtx, headHash, theirsHash);
+		squashMsg = `Squashed commit of the following:\n\n${commitLog}`;
+	}
+	await writeStateFile(gitCtx, "SQUASH_MSG", squashMsg);
+
 	if (result.conflicts.length > 0) {
 		// Real git does NOT call write_merge_state() for squash merges, so
 		// MERGE_HEAD, MERGE_MSG, and MERGE_MODE are not written. Instead,
-		// suggest_conflicts() appends conflict hints to existing MERGE_MSG.
+		// suggest_conflicts() appends conflict hints to MERGE_MSG.
 		const conflictPaths = getConflictedPaths({
 			version: 2,
 			entries: result.entries,
@@ -441,10 +479,6 @@ async function handleSquashMerge(
 	const treeHash = applyResult.mergedTreeHash;
 	const diffstat = await formatDiffStat(gitCtx, headCommit.tree, treeHash);
 	const mergeMessages = result.messages.length > 0 ? `${result.messages.join("\n")}\n` : "";
-
-	let squashMsg = customMessage ?? (await buildMergeMessage(gitCtx, branchName, currentBranch));
-	squashMsg = `Squashed commit of the following:\n\n${squashMsg}`;
-	await writeStateFile(gitCtx, "MERGE_MSG", squashMsg);
 
 	const ffSuccessPrefix = isFF ? `${ffPrefix}Fast-forward\n` : "";
 

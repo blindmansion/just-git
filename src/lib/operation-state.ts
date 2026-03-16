@@ -43,6 +43,7 @@ export async function clearMergeState(gitCtx: GitContext): Promise<void> {
 	await deleteRef(gitCtx, "ORIG_HEAD");
 	await deleteStateFile(gitCtx, "MERGE_MSG");
 	await deleteStateFile(gitCtx, "MERGE_MODE");
+	await deleteStateFile(gitCtx, "SQUASH_MSG");
 }
 
 /**
@@ -73,6 +74,7 @@ export async function clearAllOperationState(gitCtx: GitContext): Promise<void> 
 	}
 	await deleteStateFile(gitCtx, "MERGE_MSG");
 	await deleteStateFile(gitCtx, "MERGE_MODE");
+	await deleteStateFile(gitCtx, "SQUASH_MSG");
 }
 
 // ── Detach point tracking ────────────────────────────────────────────

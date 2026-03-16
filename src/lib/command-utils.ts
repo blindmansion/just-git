@@ -310,6 +310,7 @@ export function stripCommentLines(text: string): string {
 	return text
 		.split("\n")
 		.filter((line) => !line.startsWith("#"))
+		.map((line) => line.trimEnd())
 		.join("\n")
 		.replace(/\n+$/, "\n");
 }

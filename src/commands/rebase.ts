@@ -14,6 +14,7 @@ import {
 	requireCommitter,
 	requireGitContext,
 	requireHead,
+	stripCommentLines,
 	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
 import { formatCommitSummary } from "../lib/commit-summary.ts";
@@ -578,6 +579,14 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 				return ffErr;
 			}
 
+			// Real git clears these during checkout_onto() / reset_head().
+			// Stale refs from prior cherry-pick/revert would otherwise poison
+			// later commits (commit.ts uses CHERRY_PICK_HEAD's author info).
+			await deleteRef(gitCtx, "CHERRY_PICK_HEAD");
+			await deleteRef(gitCtx, "REVERT_HEAD");
+			await deleteStateFile(gitCtx, "MERGE_MSG");
+			await deleteStateFile(gitCtx, "MERGE_MODE");
+
 			await logRef(
 				gitCtx,
 				ctx.env,
@@ -1091,6 +1100,15 @@ async function handleContinue(
 			// User resolved conflicts but didn't finalize replayed commit yet.
 			const originalCommit = await readCommit(gitCtx, rebaseHeadHash);
 
+			// When CHERRY_PICK_HEAD exists (from a standalone cherry-pick
+			// run mid-rebase), real git's sequencer uses its author info
+			// instead of REBASE_HEAD's, because the internal `git commit`
+			// sees CHERRY_PICK_HEAD and preserves that commit's author.
+			const cherryPickHead = await resolveRef(gitCtx, "CHERRY_PICK_HEAD");
+			const authorSource = cherryPickHead
+				? await readCommit(gitCtx, cherryPickHead)
+				: originalCommit;
+
 			// Prefer rebase-merge/message (the authoritative source for the
 			// replayed commit's message), then MERGE_MSG, then original.
 			// MERGE_MSG may contain a stale message from an unrelated
@@ -1101,6 +1119,10 @@ async function handleContinue(
 				(await readStateFile(gitCtx, "rebase-merge/message")) ??
 				(await readStateFile(gitCtx, "MERGE_MSG")) ??
 				undefined;
+
+			if (messageText) {
+				messageText = stripCommentLines(messageText);
+			}
 			if (!messageText) {
 				messageText = originalCommit.message;
 			}
@@ -1123,7 +1145,7 @@ async function handleContinue(
 				gitCtx,
 				indexTree,
 				parents,
-				originalCommit.author,
+				authorSource.author,
 				committer,
 				message,
 			);
@@ -1146,13 +1168,16 @@ async function handleContinue(
 
 			// Output commit summary (matches git's print_commit_summary)
 			const label = await headLabel(gitCtx);
+			const showDate =
+				authorSource.author.timestamp !== committer.timestamp ||
+				authorSource.author.timezone !== committer.timezone;
 			const summary = await formatCommitSummary(
 				gitCtx,
 				headCommit.tree,
 				indexTree,
-				originalCommit.author,
+				authorSource.author,
 				committer,
-				false, // showDate — rebase does not show Date line
+				showDate,
 			);
 			continueStdout = `${formatCommitOneLiner(label, commitHash, message)}\n${summary}`;
 		}

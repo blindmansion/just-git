@@ -182,11 +182,17 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 				!messageText &&
 				(mergeHeadHash || cherryPickHeadHash || revertHeadHash || rebaseHeadHash)
 			) {
-				// Try reading MERGE_MSG (used by merge, cherry-pick, and rebase)
-				const raw = await readStateFile(gitCtx, "MERGE_MSG");
-				if (raw !== null) {
-					// Strip comment lines (starting with #), matching real git's cleanup
-					messageText = stripCommentLines(raw);
+				// Real git's prepare_to_commit() reads SQUASH_MSG first; if
+				// present, it takes priority over MERGE_MSG (they're mutually
+				// exclusive in git's message source chain).
+				const squashMsg = await readStateFile(gitCtx, "SQUASH_MSG");
+				if (squashMsg) {
+					messageText = stripCommentLines(squashMsg);
+				} else {
+					const raw = await readStateFile(gitCtx, "MERGE_MSG");
+					if (raw !== null) {
+						messageText = stripCommentLines(raw);
+					}
 				}
 			}
 			if (!messageText) {
@@ -403,6 +409,9 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 			if (rebaseHeadHash) {
 				await deleteStateFile(gitCtx, "MERGE_MSG");
 			}
+
+			// Clean up SQUASH_MSG after commit (consumed by message resolution above)
+			await deleteStateFile(gitCtx, "SQUASH_MSG");
 
 			// post-commit hook
 			await ext?.hooks?.emitPost("post-commit", {

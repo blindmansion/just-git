@@ -14,6 +14,7 @@ import {
 	requireGitContext,
 	requireHead,
 	requireNoConflicts,
+	stripCommentLines,
 	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
 import { formatCommitSummary } from "../lib/commit-summary.ts";
@@ -27,6 +28,7 @@ import { readCommit } from "../lib/object-db.ts";
 import {
 	clearCherryPickState,
 	clearRevertState,
+	deleteStateFile,
 	readStateFile,
 	writeStateFile,
 } from "../lib/operation-state.ts";
@@ -476,6 +478,16 @@ async function handleContinue(
 		messageText = originalCommit.message;
 	}
 
+	// Real git's sequencer runs `git commit -F .git/MERGE_MSG --cleanup=strip`.
+	// When SQUASH_MSG exists (from a prior `git merge --squash`),
+	// prepare_to_commit() prepends it to the message buffer, then
+	// --cleanup=strip removes comment lines (like `# Conflicts:` hints).
+	const squashMsg = await readStateFile(gitCtx, "SQUASH_MSG");
+	if (squashMsg) {
+		messageText = squashMsg + messageText;
+	}
+	messageText = stripCommentLines(messageText);
+
 	const stage0Entries = getStage0Entries(index);
 	const treeHash = await buildTreeFromIndex(gitCtx, stage0Entries);
 
@@ -501,6 +513,7 @@ async function handleContinue(
 
 	await clearCherryPickState(gitCtx);
 	await clearRevertState(gitCtx);
+	await deleteStateFile(gitCtx, "SQUASH_MSG");
 
 	const head = await readHead(gitCtx);
 	const cpSubject = firstLine(message);
