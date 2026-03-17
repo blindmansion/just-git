@@ -7,7 +7,7 @@ import { myersDiff, splitLinesWithNL } from "./diff-algorithm.ts";
 import { isBinaryBytes, isBinaryStr, readBlobBytes, readBlobContent } from "./object-db.ts";
 import { detectRenames, formatRenamePath, type RenamePair } from "./rename-detection.ts";
 import { diffTrees } from "./tree-ops.ts";
-import type { GitContext, Identity, ObjectId, TreeDiffEntry } from "./types.ts";
+import type { GitRepo, Identity, ObjectId, TreeDiffEntry } from "./types.ts";
 
 const textDecoder = new TextDecoder();
 
@@ -52,7 +52,7 @@ export function formatShortstatParts(
  * formatCommitSummary and formatDiffStat.
  */
 export async function computeDiffStats(
-	ctx: GitContext,
+	ctx: GitRepo,
 	diffs: TreeDiffEntry[],
 	renames: RenamePair[],
 ): Promise<{ fileStats: FileStat[]; modeLines: string[] }> {
@@ -191,7 +191,7 @@ export async function computeDiffStats(
  * `git commit`, `git cherry-pick`, and `git merge` create a commit.
  */
 export async function formatCommitSummary(
-	ctx: GitContext,
+	ctx: GitRepo,
 	parentTree: ObjectId | null,
 	newTree: ObjectId,
 	author: Identity,
@@ -388,7 +388,7 @@ export function renderStatLines(fileStats: FileStat[]): string {
  *   create mode 100644 <path>
  */
 export async function formatDiffStat(
-	ctx: GitContext,
+	ctx: GitRepo,
 	oldTree: ObjectId | null,
 	newTree: ObjectId,
 ): Promise<string> {

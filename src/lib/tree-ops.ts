@@ -1,7 +1,7 @@
 import { comparePaths } from "./command-utils.ts";
 import { readObject, writeObject } from "./object-db.ts";
 import { parseTree, serializeTree } from "./objects/tree.ts";
-import type { GitContext, IndexEntry, ObjectId, TreeDiffEntry, TreeEntry } from "./types.ts";
+import type { GitRepo, IndexEntry, ObjectId, TreeDiffEntry, TreeEntry } from "./types.ts";
 import { FileMode as FM } from "./types.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -22,16 +22,13 @@ export interface FlatTreeEntry {
  * This is the core of `git commit` — it takes the staging area
  * and produces the tree snapshot.
  */
-export async function buildTreeFromIndex(
-	ctx: GitContext,
-	entries: IndexEntry[],
-): Promise<ObjectId> {
+export async function buildTreeFromIndex(ctx: GitRepo, entries: IndexEntry[]): Promise<ObjectId> {
 	// Build a nested structure: group entries by their top-level directory
 	return buildTreeRecursive(ctx, entries, "");
 }
 
 async function buildTreeRecursive(
-	ctx: GitContext,
+	ctx: GitRepo,
 	entries: IndexEntry[],
 	prefix: string,
 ): Promise<ObjectId> {
@@ -95,7 +92,7 @@ async function buildTreeRecursive(
  * (no directory entries — only leaf blobs/symlinks/submodules).
  */
 export async function flattenTree(
-	ctx: GitContext,
+	ctx: GitRepo,
 	treeHash: ObjectId,
 	prefix: string = "",
 ): Promise<FlatTreeEntry[]> {
@@ -127,7 +124,7 @@ export async function flattenTree(
  * Returns an empty map when treeHash is null (e.g. initial commit).
  */
 export async function flattenTreeToMap(
-	ctx: GitContext,
+	ctx: GitRepo,
 	treeHash: ObjectId | null,
 ): Promise<Map<string, FlatTreeEntry>> {
 	if (!treeHash) return new Map();
@@ -143,7 +140,7 @@ export async function flattenTreeToMap(
  * (useful for the initial commit or comparing against nothing).
  */
 export async function diffTrees(
-	ctx: GitContext,
+	ctx: GitRepo,
 	treeA: ObjectId | null,
 	treeB: ObjectId | null,
 ): Promise<TreeDiffEntry[]> {

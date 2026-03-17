@@ -46,7 +46,7 @@ await bash.exec("git log --oneline");
 | `credentials`   | `(url) => HttpAuth \| null` callback for Smart HTTP transport auth.                                                                                                                                                                                |
 | `disabled`      | `GitCommandName[]` of subcommands to block (e.g. `["push", "rebase"]`).                                                                                                                                                                            |
 | `network`       | `{ allowed?: string[], fetch?: FetchFunction }` to restrict HTTP access and/or provide a custom `fetch`. `allowed` accepts hostnames (`"github.com"`) or URL prefixes (`"https://github.com/myorg/"`). Set to `false` to block all network access. |
-| `resolveRemote` | `(url) => GitContext \| null` callback for cross-VFS remote resolution. See [Multi-agent collaboration](#multi-agent-collaboration).                                                                                                               |
+| `resolveRemote` | `(url) => GitRepo \| null` callback for cross-VFS remote resolution. See [Multi-agent collaboration](#multi-agent-collaboration).                                                                                                                  |
 
 ```ts
 const git = createGit({
@@ -126,7 +126,7 @@ See [HOOKS.md](HOOKS.md) for full payload types and the `CommandEvent` shape.
 
 ## Multi-agent collaboration
 
-Multiple agents can work on clones of the same repository in the same process, each with full VFS isolation. The `resolveRemote` option maps remote URLs to `GitContext` instances on other virtual filesystems, so clone/fetch/push/pull cross VFS boundaries without any network or shared filesystem.
+Multiple agents can work on clones of the same repository in the same process, each with full VFS isolation. The `resolveRemote` option maps remote URLs to `GitRepo` instances (any object/ref store — VFS-backed, SQLite, etc.), so clone/fetch/push/pull cross VFS boundaries without any network or shared filesystem.
 
 ```ts
 import { Bash, InMemoryFs } from "just-bash";

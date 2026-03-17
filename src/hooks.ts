@@ -18,20 +18,6 @@ export interface IdentityOverride {
 	locked?: boolean;
 }
 
-// ── Remote resolver ─────────────────────────────────────────────────
-
-/**
- * Resolves a remote URL to a GitContext, enabling cross-VFS transport.
- * Called before local filesystem lookup for non-HTTP URLs.
- * Return null to fall back to local filesystem resolution.
- */
-export type RemoteResolver = (
-	url: string,
-) =>
-	| import("./lib/types.ts").GitContext
-	| null
-	| Promise<import("./lib/types.ts").GitContext | null>;
-
 // ── Network policy ──────────────────────────────────────────────────
 
 export type FetchFunction = (

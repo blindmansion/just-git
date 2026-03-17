@@ -5,7 +5,6 @@ import type {
 	HookEmitter,
 	IdentityOverride,
 	NetworkPolicy,
-	RemoteResolver,
 } from "../hooks.ts";
 
 // ── Object identifiers ──────────────────────────────────────────────
@@ -175,18 +174,40 @@ export interface ObjectStore {
 // ── Repository context ──────────────────────────────────────────────
 
 /**
- * Bundles the filesystem handle with resolved repository paths.
- * Threaded through all library functions so they don't need to
- * re-discover the .git directory on every call.
+ * Minimal repository handle: object store + ref store + hooks.
+ * Sufficient for all pure object/ref operations (read, write, walk,
+ * diff trees, merge-base, blame, etc.) without filesystem access.
+ *
+ * Used directly by the server module and accepted by ~35 lib functions.
  */
-export interface GitContext {
+export interface GitRepo {
+	objectStore: ObjectStore;
+	refStore: RefStore;
+	/** Hook emitter for operation hooks and low-level events. */
+	hooks?: HookEmitter;
+}
+
+/**
+ * Resolves a remote URL to a GitRepo, enabling cross-VFS transport.
+ * Called before local filesystem lookup for non-HTTP URLs.
+ * Return null to fall back to local filesystem resolution.
+ */
+export type RemoteResolver = (url: string) => GitRepo | null | Promise<GitRepo | null>;
+
+/**
+ * Full repository context including filesystem access.
+ * Extends `GitRepo` with the filesystem handle, resolved paths,
+ * and operator-level extensions (credentials, identity, network).
+ *
+ * Threaded through command handlers and lib functions that need
+ * worktree/index/config/reflog access.
+ */
+export interface GitContext extends GitRepo {
 	fs: FileSystem;
 	/** Absolute path to the .git directory. */
 	gitDir: string;
 	/** Absolute path to the working tree root, or null for bare repos. */
 	workTree: string | null;
-	/** Hook emitter for operation hooks and low-level events. */
-	hooks?: HookEmitter;
 	/** Operator-provided credential resolver (bypasses env vars). */
 	credentialProvider?: CredentialProvider;
 	/** Operator-provided identity override for author/committer. */
@@ -195,12 +216,8 @@ export interface GitContext {
 	fetchFn?: FetchFunction;
 	/** Network access policy. `false` blocks all HTTP access. */
 	networkPolicy?: NetworkPolicy | false;
-	/** Resolves remote URLs to GitContexts on potentially different VFS instances. */
+	/** Resolves remote URLs to GitRepos on potentially different VFS instances. */
 	resolveRemote?: RemoteResolver;
-	/** Cached object store instance. Lazily created by object-db. */
-	objectStore?: ObjectStore;
-	/** Cached ref store instance. Lazily created by refs. */
-	refStore?: RefStore;
 }
 
 // ── Diff result types ───────────────────────────────────────────────

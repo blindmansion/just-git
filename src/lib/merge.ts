@@ -4,7 +4,7 @@ import { getConfigValue } from "./config.ts";
 import { readIndex, writeIndex } from "./index.ts";
 import { readCommit } from "./object-db.ts";
 import { advanceBranchRef } from "./refs.ts";
-import type { GitContext, IndexEntry, ObjectId } from "./types.ts";
+import type { GitContext, GitRepo, IndexEntry, ObjectId } from "./types.ts";
 import { applyWorktreeOps, fastForwardMerge } from "./unpack-trees.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -56,7 +56,7 @@ export interface MergeTreeResult {
 /**
  * Collect all ancestors of a commit (including itself) via BFS.
  */
-async function collectAncestors(ctx: GitContext, hash: ObjectId): Promise<Set<ObjectId>> {
+async function collectAncestors(ctx: GitRepo, hash: ObjectId): Promise<Set<ObjectId>> {
 	const ancestors = new Set<ObjectId>();
 	const queue: ObjectId[] = [hash];
 	let qi = 0;
@@ -78,7 +78,7 @@ async function collectAncestors(ctx: GitContext, hash: ObjectId): Promise<Set<Ob
  * rather than building the full ancestor set.
  */
 export async function isAncestor(
-	ctx: GitContext,
+	ctx: GitRepo,
 	candidate: ObjectId,
 	descendant: ObjectId,
 ): Promise<boolean> {
@@ -111,7 +111,7 @@ export async function isAncestor(
  * Returns an empty array for disjoint histories.
  */
 export async function findAllMergeBases(
-	ctx: GitContext,
+	ctx: GitRepo,
 	hashA: ObjectId,
 	hashB: ObjectId,
 ): Promise<ObjectId[]> {
@@ -180,7 +180,7 @@ interface PaintQueueItem {
  * LCAs are returned in the order they become common during this paint.
  */
 async function orderMergeBasesByPaintOrder(
-	ctx: GitContext,
+	ctx: GitRepo,
 	hashA: ObjectId,
 	hashB: ObjectId,
 	lcas: ObjectId[],

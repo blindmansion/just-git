@@ -11,7 +11,7 @@ import type {
 	RefEntry,
 	RefStore,
 } from "../lib/types.ts";
-import type { ServerRepoContext } from "./types.ts";
+import type { GitRepo } from "../lib/types.ts";
 
 // ── Schema ──────────────────────────────────────────────────────────
 
@@ -108,11 +108,11 @@ export class SqliteStorage {
 		);
 	}
 
-	/** Get a `ServerRepoContext` scoped to a specific repo. */
-	repo(repoId: string): ServerRepoContext {
+	/** Get a `GitRepo` scoped to a specific repo. */
+	repo(repoId: string): GitRepo {
 		return {
-			objects: new SqliteObjectStore(this.stmts, this.ingestTx, repoId),
-			refs: new SqliteRefStore(this.stmts, repoId),
+			objectStore: new SqliteObjectStore(this.stmts, this.ingestTx, repoId),
+			refStore: new SqliteRefStore(this.stmts, repoId),
 		};
 	}
 

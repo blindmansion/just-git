@@ -1,5 +1,4 @@
 import type { FileSystem } from "../fs.ts";
-import type { HookEmitter } from "../hooks.ts";
 import { bytesToHex } from "./hex.ts";
 import { buildPackIndex } from "./pack/pack-index.ts";
 import { PackReader } from "./pack/pack-reader.ts";
@@ -71,7 +70,6 @@ export class PackedObjectStore implements ObjectStore {
 	constructor(
 		private fs: FileSystem,
 		private gitDir: string,
-		private hooks?: HookEmitter,
 	) {}
 
 	async write(type: ObjectType, content: Uint8Array): Promise<ObjectId> {
@@ -87,7 +85,6 @@ export class PackedObjectStore implements ObjectStore {
 		await this.fs.mkdir(dir, { recursive: true });
 
 		await this.fs.writeFile(path, await deflate(data));
-		this.hooks?.emit("object:write", { type, hash });
 		return hash;
 	}
 

@@ -93,7 +93,7 @@ describe("SQLite-backed server roundtrip", () => {
 
 		// Set up HEAD symref (push doesn't create it — real git needs it for checkout)
 		const repo = storage.repo("my-repo");
-		await repo.refs.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
+		await repo.refStore.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
 	});
 
 	afterAll(async () => {
@@ -146,7 +146,7 @@ describe("SQLite-backed server roundtrip", () => {
 			await realGit(sandbox, `clone http://localhost:${port}/my-repo ${cloneDir}`);
 
 			const repo = storage.repo("my-repo");
-			const mainBefore = await repo.refs.readRef("refs/heads/main");
+			const mainBefore = await repo.refStore.readRef("refs/heads/main");
 			const hashBefore = mainBefore?.type === "direct" ? mainBefore.hash : null;
 
 			writeFileSync(join(cloneDir, "new-file.txt"), "pushed from real git");
@@ -156,10 +156,10 @@ describe("SQLite-backed server roundtrip", () => {
 			const pushResult = await realGit(cloneDir, "push origin main");
 			expect(pushResult.exitCode).toBe(0);
 
-			const mainAfter = await repo.refs.readRef("refs/heads/main");
+			const mainAfter = await repo.refStore.readRef("refs/heads/main");
 			const hashAfter = mainAfter?.type === "direct" ? mainAfter.hash : null;
 			expect(hashAfter).not.toBe(hashBefore);
-			expect(await repo.objects.exists(hashAfter!)).toBe(true);
+			expect(await repo.objectStore.exists(hashAfter!)).toBe(true);
 		} finally {
 			await rm(sandbox, { recursive: true, force: true });
 		}
@@ -218,14 +218,14 @@ describe("SQLite-backed server roundtrip", () => {
 			expect(pushResult.exitCode).toBe(0);
 
 			const repo = storage.repo("my-repo");
-			const branchRef = await repo.refs.readRef("refs/heads/sqlite-feature");
+			const branchRef = await repo.refStore.readRef("refs/heads/sqlite-feature");
 			expect(branchRef).not.toBeNull();
 
 			// Delete
 			const deleteResult = await realGit(cloneDir, "push origin --delete sqlite-feature");
 			expect(deleteResult.exitCode).toBe(0);
 
-			const afterDelete = await repo.refs.readRef("refs/heads/sqlite-feature");
+			const afterDelete = await repo.refStore.readRef("refs/heads/sqlite-feature");
 			expect(afterDelete).toBeNull();
 		} finally {
 			await rm(sandbox, { recursive: true, force: true });

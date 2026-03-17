@@ -39,7 +39,7 @@ const bash = new Bash({ cwd: "/repo", customCommands: [git] });
 - `disabled` — `GitCommandName[]` of subcommands to exclude from registration. Disabled commands return unknown-command errors.
 - `identity` — `IdentityOverride` with `name`, `email`, optional `locked`. When `locked: true`, overrides env vars (`GIT_AUTHOR_NAME`, etc.); when unlocked (default), acts as fallback when env vars and git config are absent.
 - `credentials` — `CredentialProvider` callback `(url) => HttpAuth | null`. Provides auth for Smart HTTP transport. Takes precedence over `GIT_HTTP_BEARER_TOKEN`/`GIT_HTTP_USER` env vars.
-- `resolveRemote` — `RemoteResolver` callback `(url) => GitContext | null`. Resolves non-HTTP remote URLs to a `GitContext`, enabling cross-VFS transport. Called before local filesystem lookup. Return null to fall back to `findGitDir` on the local VFS. Enables multi-agent setups where each agent has its own isolated filesystem but can clone/fetch/push between repos on different VFS instances via `LocalTransport`.
+- `resolveRemote` — `RemoteResolver` callback `(url) => GitRepo | null`. Resolves non-HTTP remote URLs to a `GitRepo`, enabling cross-VFS transport. Called before local filesystem lookup. Return null to fall back to `findGitDir` on the local VFS. Enables multi-agent setups where each agent has its own isolated filesystem but can clone/fetch/push between repos on different VFS instances via `LocalTransport`. Also enables resolving to server-backed repos (e.g. `SqliteStorage`) for hybrid in-process/server scenarios.
 
 **Hooks** (`git.on(event, handler)` → unsubscribe function):
 

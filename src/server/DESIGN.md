@@ -21,9 +21,9 @@ The server module adds three things `resolveRemote` can't do:
 
 1. **Real git client access.** A human (or external tool) can `git clone http://your-server/repo`. VS Code, GitHub Desktop, the `git` CLI — anything that speaks git — can interact with server-hosted repos. `resolveRemote` is a closed system; only just-git clients can participate.
 
-2. **Crossing process/network boundaries.** `resolveRemote` requires GitContexts in the same process (passing object references). The server works over HTTP across machines or deployments.
+2. **Crossing process/network boundaries.** `resolveRemote` requires `GitRepo` instances in the same process (passing object references). The server works over HTTP across machines or deployments.
 
-3. **Decoupled storage backends.** `resolveRemote` requires a VFS with a `.git` directory structure. The server's `ServerRepoContext` is `ObjectStore + RefStore` — backed by SQLite, Postgres, Turso, S3, or anything else. No VFS needed for persistence.
+3. **Decoupled storage backends.** `resolveRemote` requires a VFS with a `.git` directory structure. The server's `GitRepo` is `ObjectStore + RefStore` — backed by SQLite, Postgres, Turso, S3, or anything else. No VFS needed for persistence.
 
 They're complementary: `resolveRemote` for agent-to-agent within a process, the server for persistence and external access.
 
@@ -55,14 +55,14 @@ The Smart HTTP protocol surface is small and well-specified. The three endpoints
 
 Features not yet implemented that generally don't matter for the target use case:
 
-| Feature | Matters for agents? |
-|---|---|
-| Protocol v2 | No — v1 works, clients fall back |
-| Shallow clones (`--depth`) | Rarely — agent repos are small |
-| Partial clones (`--filter`) | No |
-| SSH transport | No — bearer token auth over HTTP is better for agents |
-| LFS | Unlikely for now |
-| Delta compression in server-generated packs | Performance optimization, not correctness |
+| Feature                                     | Matters for agents?                                   |
+| ------------------------------------------- | ----------------------------------------------------- |
+| Protocol v2                                 | No — v1 works, clients fall back                      |
+| Shallow clones (`--depth`)                  | Rarely — agent repos are small                        |
+| Partial clones (`--filter`)                 | No                                                    |
+| SSH transport                               | No — bearer token auth over HTTP is better for agents |
+| LFS                                         | Unlikely for now                                      |
+| Delta compression in server-generated packs | Performance optimization, not correctness             |
 
 Concurrent push safety (ref CAS) is the one gap that matters for production use.
 
@@ -87,7 +87,7 @@ Higher-level functions that combine protocol primitives with storage access.
 - `handleUploadPack` — parses wants/haves, enumerates objects, builds packfile
 - `handleReceivePack` — parses push commands, ingests pack, validates and applies ref updates
 
-These accept `ServerRepoContext` and return response bodies. No HTTP, no framework coupling.
+These accept `GitRepo` and return response bodies. No HTTP, no framework coupling.
 
 **Layer 2: HTTP handler** (`handler.ts`)
 
@@ -100,12 +100,48 @@ Thin adapter mapping web-standard `Request`/`Response` to the operations layer. 
 ### Type hierarchy
 
 ```
-ServerRepoContext { objects: ObjectStore, refs: RefStore }
-    └── used by operations.ts, bridged to GitContext via toGitContext()
+GitRepo { objectStore: ObjectStore, refStore: RefStore, hooks?: HookEmitter }
+    └── base type — used by operations.ts and ~35 lib functions directly
+    └── server's resolve() callback returns GitRepo
 
-GitContext { fs, gitDir, workTree, objectStore?, refStore?, hooks?, ... }
-    └── used by all lib/ functions
+GitContext extends GitRepo { fs, gitDir, workTree, credentialProvider?, ... }
+    └── used by command handlers and lib functions that need filesystem access
 ```
+
+`GitRepo` is the minimal repository handle: sufficient for all pure object/ref operations (read, write, walk, diff trees, merge-base, blame, etc.) without filesystem access. The server module operates entirely through `GitRepo`. The base library's `GitContext` extends it, adding filesystem, paths, and operator-level extensions.
+
+This split is enforced at the type level — lib functions that don't need filesystem access accept `GitRepo`, so calling them from the server is statically safe. No runtime stubs or proxies needed.
+
+### lib/ function split
+
+_Functions accepting `GitRepo` (no filesystem access) — safe for server use:_
+
+- `object-db.ts` — read/write/hash objects (routes through `objectStore`)
+- `tree-ops.ts` — `buildTreeFromIndex`, `flattenTree`, `diffTrees`
+- `commit-walk.ts` — graph traversal, ahead/behind counts
+- `merge.ts` — `findAllMergeBases`, `isAncestor`
+- `refs.ts` — `resolveRef`, `readHead`, `resolveHead`, `updateRef`, `createSymbolicRef`, `listRefs`, `advanceBranchRef`
+- `blame.ts` — line-level blame
+- `rename-detection.ts` — content similarity matching
+- `commit-summary.ts` — diffstat computation and formatting
+- `patch-id.ts` — patch ID computation
+- `transport/object-walk.ts` — reachability enumeration
+- `diff-algorithm.ts` — Myers diff
+- `diff3.ts` — three-way merge
+- `rev-parse.ts` — revision resolution
+- `range-syntax.ts`, `date.ts`, `path.ts`
+
+_Functions requiring `GitContext` (filesystem access):_
+
+- `worktree.ts`, `unpack-trees.ts`, `checkout-utils.ts` — working tree
+- `index.ts` — staging area (reads `.git/index` file)
+- `stash.ts` — reads working tree files
+- `config.ts` — reads `.git/config`
+- `reflog.ts` — reflog files
+- `refs.ts` — `deleteRef`, `writePackedRefs`, `cleanEmptyRefDirs` (filesystem cleanup)
+- `operation-state.ts` — `MERGE_HEAD`, `MERGE_MSG`, etc.
+- `bisect.ts` — bisect state files
+- `ignore.ts` — `.gitignore`
 
 ## Design review
 
@@ -115,74 +151,31 @@ GitContext { fs, gitDir, workTree, objectStore?, refStore?, hooks?, ... }
 
 **The `ObjectStore`/`RefStore` interfaces.** The right abstraction for pluggable storage. The SQLite implementation is solid — prepared statements, transactional pack ingestion, multi-repo partitioning.
 
-**The lib/ function split is favorable for server-side use.** Tracing `ctx.fs` usage across all of `lib/` reveals a clean divide:
-
-*Pure object/ref operations (no filesystem access) — safe for server use:*
-- `object-db.ts` — read/write/hash objects (routes through `objectStore`)
-- `tree-ops.ts` — `buildTreeFromIndex`, `flattenTree`, `diffTrees`
-- `commit-walk.ts` — graph traversal, ahead/behind counts
-- `merge.ts` — `findAllMergeBases`, `isAncestor`
-- `diff-algorithm.ts` — Myers diff
-- `diff3.ts` — three-way merge
-- `rev-parse.ts` — revision resolution
-- `rename-detection.ts` — content similarity
-- `transport/object-walk.ts` — reachability enumeration
-- `patch-id.ts`, `range-syntax.ts`, `date.ts`, `path.ts`
-
-*Filesystem-dependent operations — require VFS, not available server-side:*
-- `worktree.ts`, `unpack-trees.ts`, `checkout-utils.ts` — working tree
-- `index.ts` — staging area (reads `.git/index` file)
-- `stash.ts` — reads working tree files
-- `config.ts` — reads `.git/config`
-- `reflog.ts` — reflog files
-- `operation-state.ts` — `MERGE_HEAD`, `MERGE_MSG`, etc.
-- `bisect.ts` — bisect state files
-- `ignore.ts` — `.gitignore`
-
-All the operations you'd want for server-side introspection are in the pure category.
+**The `GitRepo` / `GitContext` type split.** The server operates on `GitRepo`; lib functions that only need object/ref access accept `GitRepo`; functions requiring filesystem access require `GitContext`. This is enforced by the compiler — no runtime stubs or proxies. The split also makes composition natural: you can build a `GitContext` from a `GitRepo` by adding filesystem parts (see "Working copies in hooks" below).
 
 ### What needs work
-
-**`toGitContext` is a fragile bridge.**
-
-The current bridge from `ServerRepoContext` to lib functions:
-
-```typescript
-const STUB_FS = new Proxy({} as FileSystem, {
-  get(_, prop) {
-    return () => { throw new Error(`FileSystem.${String(prop)} is not available`); };
-  },
-});
-
-function toGitContext(repo: ServerRepoContext): GitContext {
-  return { fs: STUB_FS, gitDir: "/.git", workTree: null, objectStore: repo.objects, refStore: repo.refs };
-}
-```
-
-This works today because the server only calls `enumerateObjectsWithContent` and `isAncestor`, both pure operations. But it's a runtime landmine — any lib function that transitively touches `ctx.fs` will throw an opaque proxy error. No compile-time safety. As more lib functions get called from server hooks, this will break in unexpected ways.
-
-**Root cause:** `GitContext` conflates object/ref storage with filesystem/worktree context. Server-side repos need the former without the latter.
-
-**Potential direction:** Extract a `RepoContext` type that contains just `objectStore`, `refStore`, and `hooks`. The pure lib functions would accept this narrower type. `GitContext` would extend it, adding `fs`, `gitDir`, `workTree`, etc. This is a type-level change — the functions don't change behavior, just their parameter type narrows. It would make the server-safe subset statically verifiable.
 
 **The hook model is too thin.**
 
 Current:
+
 ```typescript
 onPush?: (repoPath: string, refUpdates: RefUpdate[]) => void | Promise<void>;
 ```
 
 Problems:
-- Fires *after* refs are updated — no ability to reject a push based on content
+
+- Fires _after_ refs are updated — no ability to reject a push based on content
 - Receives only ref names and hashes — no ergonomic way to read commits, diff trees, or inspect files
 - No pre-receive equivalent
 
 For the vision of hooks that perform git operations, this needs:
 
 1. **Pre-receive hook** that runs after pack ingestion but before ref updates, with the ability to accept/reject per-ref
-2. **A repo handle** passed into hooks that wraps storage and exposes pure git operations ergonomically
+2. **A `RepoHandle`** passed into hooks that wraps `GitRepo` and exposes pure git operations ergonomically
 
 Sketch:
+
 ```typescript
 interface RepoHandle {
   readCommit(hash: string): Promise<Commit>;
@@ -198,16 +191,23 @@ interface RepoHandle {
 }
 ```
 
-This is the API surface that would make writing a server hook feel like application code rather than git plumbing. All the underlying primitives exist in `lib/` — this is a facade, not new logic.
+This is a thin facade over existing lib functions that all accept `GitRepo`. No new logic needed — just wrapping function calls with a `GitRepo` closure. The type split makes this statically safe: every function `RepoHandle` calls is guaranteed not to touch a filesystem.
 
 Hook model sketch:
+
 ```typescript
 interface GitServerOptions {
   // ... existing options ...
-  onPreReceive?: (ctx: { repo: RepoHandle; repoPath: string; commands: PushCommand[] }) =>
-    Promise<PreReceiveResult>;
-  onPostReceive?: (ctx: { repo: RepoHandle; repoPath: string; refUpdates: RefUpdate[] }) =>
-    void | Promise<void>;
+  onPreReceive?: (ctx: {
+    repo: RepoHandle;
+    repoPath: string;
+    commands: PushCommand[];
+  }) => Promise<PreReceiveResult>;
+  onPostReceive?: (ctx: {
+    repo: RepoHandle;
+    repoPath: string;
+    refUpdates: RefUpdate[];
+  }) => void | Promise<void>;
 }
 ```
 
@@ -221,14 +221,76 @@ compareAndSwapRef?(name: string, expectedOldHash: string, newRef: Ref): Promise<
 
 The SQLite implementation would use `UPDATE ... WHERE hash = ?`. The filesystem implementation could use a lock file. Not urgent for single-process use, but needed before production concurrent access.
 
+## Working copies in hooks
+
+Beyond read-only inspection via `RepoHandle`, some hook use cases require a full working tree — running tests against pushed code, having an agent inspect or modify files, running git CLI operations like `gc` or `rebase`.
+
+### How it works
+
+The `GitRepo` / `GitContext` type split makes this compositional. A `GitContext` is just a `GitRepo` plus filesystem parts:
+
+```typescript
+import { InMemoryFs } from "just-bash";
+
+async function checkout(repo: GitRepo, ref?: string): Promise<GitContext> {
+  const fs = new InMemoryFs();
+  const ctx: GitContext = {
+    ...repo, // objectStore, refStore, hooks — shared references
+    fs,
+    gitDir: "/.git",
+    workTree: "/",
+  };
+  // init .git directory structure in the VFS
+  // resolve ref (or HEAD), read tree, populate worktree + index
+  return ctx;
+}
+```
+
+The key property is that `objectStore` and `refStore` are **shared references** — the working copy reads from and writes to the same backing store as the server. Blobs checked out come from the real store. Objects created by commits go into the real store. No copying.
+
+This means a hook can:
+
+```typescript
+onPostReceive: async ({ repo, repoPath, refUpdates }) => {
+  // Read-only inspection — fast, no VFS allocation
+  const commit = await repo.readCommit(refUpdates[0].newHash);
+  const files = await repo.flattenTree(commit.tree);
+
+  // Or: full working copy for heavier operations
+  const ctx = await checkout(repo.raw, "main");
+  const git = createGit();
+  const bash = new Bash({ cwd: "/", customCommands: [git] });
+  await bash.execute("git log --oneline -10");
+};
+```
+
+### Two tiers of hook capability
+
+| Tier             | API                         | VFS needed      | Use cases                                                                      |
+| ---------------- | --------------------------- | --------------- | ------------------------------------------------------------------------------ |
+| **Inspection**   | `RepoHandle`                | No              | Read commits, diff trees, read file contents, check ancestry, enforce policies |
+| **Working copy** | `checkout()` → `GitContext` | Yes (in-memory) | Run tests, execute scripts, run git CLI commands, agent file inspection        |
+
+Most hooks only need the inspection tier. The working copy tier is an escape hatch for heavier operations.
+
+### Considerations for working copies
+
+**Config.** A `GitContext` composed from a `GitRepo` + temp VFS starts with an empty `.git/config`. Commands that read config (`user.name`, `merge.ff`, etc.) will use defaults or fall back to env vars. The `checkout()` helper should accept optional config values to inject, or the caller can write a config file into the VFS.
+
+**Concurrency.** A working copy shares the backing `objectStore` and `refStore`. Concurrent operations (multiple hooks running simultaneously, or a hook running alongside a push) could race on ref updates. The same CAS primitive needed for concurrent pushes also applies here. For the `ObjectStore`, writes are append-only (content-addressed), so concurrent object writes are safe. Ref updates are the contention point.
+
+**Memory.** In-memory working copies consume memory proportional to the repo's checked-out file tree. For the target use case (agent-sized repos), this is fine. For large repos, consider that the working copy only needs to exist for the duration of the hook.
+
+**Which CLI commands work.** Commands that only read objects and refs (`log`, `show`, `diff <commit> <commit>`, `rev-parse`, `blame`, `branch -v`) work directly because they go through `objectStore`/`refStore`. Commands that touch the worktree (`add`, `commit`, `checkout`, `status`) work because the VFS provides the filesystem layer. Commands like `gc` are storage-backend-specific — `gc` repacks loose objects in `PackedObjectStore` (VFS-backed), which doesn't apply to `SqliteStorage`. Storage backends may need their own maintenance operations.
+
 ## Next steps (rough priority)
 
-1. **`RepoHandle` facade** — expose the pure lib operations through an ergonomic interface that hooks can use. This is the key API that makes the server interesting.
+1. **`RepoHandle` facade** — wrap the `GitRepo`-accepting lib functions in an ergonomic object interface. This is the key API that makes server hooks feel like application code.
 
-2. **Pre-receive hook** — fire after pack ingestion, before ref updates. Pass `RepoHandle` so the hook can inspect what's being pushed.
+2. **Pre-receive hook** — fire after pack ingestion, before ref updates. Pass `RepoHandle` so the hook can inspect what's being pushed and accept/reject per-ref.
 
-3. **Type split (`RepoContext`)** — extract the object/ref subset from `GitContext` so the pure lib functions have a narrower parameter type. Eliminates the `STUB_FS` hack and makes server-safe operations statically verifiable.
+3. **Post-receive with `RepoHandle`** — replace `onPush` with a richer `onPostReceive` that passes the handle.
 
-4. **Ref CAS** — add `compareAndSwapRef` to `RefStore` and use it in `handleReceivePack`.
+4. **`checkout()` helper** — compose a `GitContext` from a `GitRepo` + temp VFS, populate the worktree from a ref. Enables full git operations inside hooks.
 
-5. **Post-receive with `RepoHandle`** — replace `onPush` with a richer `onPostReceive` that passes the handle.
+5. **Ref CAS** — add `compareAndSwapRef` to `RefStore` and use it in `handleReceivePack`. Becomes more important once hooks can write refs.

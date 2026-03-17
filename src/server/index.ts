@@ -20,7 +20,7 @@ export {
 } from "./protocol.ts";
 
 // Types
-export type { AuthResult, GitServerOptions, RefUpdate, ServerRepoContext } from "./types.ts";
+export type { AuthResult, GitServerOptions, RefUpdate } from "./types.ts";
 
 // Storage implementations
 export { PackedObjectStore } from "../lib/object-store.ts";

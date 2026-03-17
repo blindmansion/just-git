@@ -19,8 +19,8 @@ export interface GitServer {
  * ```ts
  * const server = createGitServer({
  *   resolve: async (repoPath) => ({
- *     objects: myObjectStore,
- *     refs: myRefStore,
+ *     objectStore: myObjectStore,
+ *     refStore: myRefStore,
  *   }),
  * });
  * Bun.serve({ fetch: (req) => server.handle(req) });

@@ -50,8 +50,14 @@ export type {
 	PreStashEvent,
 	RefDeleteEvent,
 	RefUpdateEvent,
-	RemoteResolver,
 } from "./hooks";
-export type { GitContext, ObjectStore, RefEntry, RefStore } from "./lib/types";
+export type {
+	GitContext,
+	GitRepo,
+	ObjectStore,
+	RefEntry,
+	RefStore,
+	RemoteResolver,
+} from "./lib/types";
 export type { HttpAuth } from "./lib/transport/transport";
 export { findGitDir } from "./lib/repo";

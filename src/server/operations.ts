@@ -1,18 +1,17 @@
 /**
  * High-level server operations for Git Smart HTTP.
  *
- * Each operation accepts a `ServerRepoContext` (ObjectStore + RefStore)
+ * Each operation accepts a `GitRepo` (ObjectStore + RefStore)
  * and returns the appropriate protocol response body.
  */
 
-import type { FileSystem } from "../fs.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 import { isAncestor } from "../lib/merge.ts";
 import { parseTag } from "../lib/objects/tag.ts";
 import type { PackInput } from "../lib/pack/packfile.ts";
 import { writePack } from "../lib/pack/packfile.ts";
 import { enumerateObjectsWithContent } from "../lib/transport/object-walk.ts";
-import type { GitContext } from "../lib/types.ts";
+import type { GitRepo } from "../lib/types.ts";
 import {
 	type AdvertisedRef,
 	buildRefAdvertisement,
@@ -21,7 +20,7 @@ import {
 	parseReceivePackRequest,
 	parseUploadPackRequest,
 } from "./protocol.ts";
-import type { RefUpdate, ServerRepoContext } from "./types.ts";
+import type { RefUpdate } from "./types.ts";
 
 // ── Capabilities ────────────────────────────────────────────────────
 
@@ -41,11 +40,11 @@ const RECEIVE_PACK_CAPS = ["report-status", "side-band-64k", "ofs-delta", "delet
  * Build the full ref advertisement response body for info/refs.
  */
 export async function advertiseRefs(
-	repo: ServerRepoContext,
+	repo: GitRepo,
 	service: "git-upload-pack" | "git-receive-pack",
 ): Promise<Uint8Array> {
-	const refEntries = await repo.refs.listRefs("refs");
-	const headRef = await repo.refs.readRef("HEAD");
+	const refEntries = await repo.refStore.listRefs("refs");
+	const headRef = await repo.refStore.readRef("HEAD");
 
 	const refs: AdvertisedRef[] = [];
 
@@ -57,7 +56,7 @@ export async function advertiseRefs(
 		if (headRef.type === "symbolic") {
 			headTarget = headRef.target;
 			// Resolve the symref to get the hash
-			const targetRef = await repo.refs.readRef(headRef.target);
+			const targetRef = await repo.refStore.readRef(headRef.target);
 			if (targetRef?.type === "direct") {
 				headHash = targetRef.hash;
 			}
@@ -75,7 +74,7 @@ export async function advertiseRefs(
 
 		if (entry.name.startsWith("refs/tags/")) {
 			try {
-				const obj = await repo.objects.read(entry.hash);
+				const obj = await repo.objectStore.read(entry.hash);
 				if (obj.type === "tag") {
 					const tag = parseTag(obj.content);
 					refs.push({ name: `${entry.name}^{}`, hash: tag.object });
@@ -98,7 +97,7 @@ export async function advertiseRefs(
  * Parses wants/haves, enumerates objects, builds a packfile, returns the response.
  */
 export async function handleUploadPack(
-	repo: ServerRepoContext,
+	repo: GitRepo,
 	requestBody: Uint8Array,
 ): Promise<Uint8Array> {
 	const { wants, haves, capabilities } = parseUploadPackRequest(requestBody);
@@ -114,15 +113,14 @@ export async function handleUploadPack(
 	if (useMultiAck && haves.length > 0) {
 		commonHashes = [];
 		for (const hash of haves) {
-			if (await repo.objects.exists(hash)) {
+			if (await repo.objectStore.exists(hash)) {
 				commonHashes.push(hash);
 			}
 		}
 		if (commonHashes.length === 0) commonHashes = undefined;
 	}
 
-	const ctx = toGitContext(repo);
-	const objects = await enumerateObjectsWithContent(ctx, wants, haves);
+	const objects = await enumerateObjectsWithContent(repo, wants, haves);
 
 	if (objects.length === 0) {
 		return buildUploadPackResponse(new Uint8Array(0), useSideband, commonHashes);
@@ -135,11 +133,11 @@ export async function handleUploadPack(
 
 	if (capabilities.includes("include-tag")) {
 		const sentHashes = new Set(objects.map((obj) => obj.hash));
-		const tagRefs = await repo.refs.listRefs("refs/tags");
+		const tagRefs = await repo.refStore.listRefs("refs/tags");
 		for (const tagRef of tagRefs) {
 			if (sentHashes.has(tagRef.hash)) continue;
 			try {
-				const obj = await repo.objects.read(tagRef.hash);
+				const obj = await repo.objectStore.read(tagRef.hash);
 				if (obj.type === "tag") {
 					const tag = parseTag(obj.content);
 					if (sentHashes.has(tag.object)) {
@@ -165,7 +163,7 @@ export async function handleUploadPack(
  * Parses commands + packfile, ingests objects, validates and applies ref updates.
  */
 export async function handleReceivePack(
-	repo: ServerRepoContext,
+	repo: GitRepo,
 	requestBody: Uint8Array,
 	options?: { denyNonFastForwards?: boolean },
 ): Promise<{ response: Uint8Array; refUpdates: RefUpdate[] }> {
@@ -178,7 +176,7 @@ export async function handleReceivePack(
 	let unpackOk = true;
 	if (packData.byteLength > 0) {
 		try {
-			await repo.objects.ingestPack(packData);
+			await repo.objectStore.ingestPack(packData);
 		} catch {
 			unpackOk = false;
 			if (useReportStatus) {
@@ -207,7 +205,7 @@ export async function handleReceivePack(
 		try {
 			if (cmd.newHash === ZERO_HASH) {
 				// Delete ref
-				await repo.refs.deleteRef(cmd.refName);
+				await repo.refStore.deleteRef(cmd.refName);
 				refUpdates.push({
 					name: cmd.refName,
 					oldHash: cmd.oldHash,
@@ -218,7 +216,7 @@ export async function handleReceivePack(
 			}
 
 			if (options?.denyNonFastForwards && cmd.oldHash !== ZERO_HASH) {
-				const ff = await isAncestor(toGitContext(repo), cmd.oldHash, cmd.newHash);
+				const ff = await isAncestor(repo, cmd.oldHash, cmd.newHash);
 				if (!ff) {
 					refUpdates.push({
 						name: cmd.refName,
@@ -231,7 +229,7 @@ export async function handleReceivePack(
 				}
 			}
 
-			await repo.refs.writeRef(cmd.refName, { type: "direct", hash: cmd.newHash });
+			await repo.refStore.writeRef(cmd.refName, { type: "direct", hash: cmd.newHash });
 			refUpdates.push({
 				name: cmd.refName,
 				oldHash: cmd.oldHash,
@@ -260,29 +258,4 @@ export async function handleReceivePack(
 	}
 
 	return { response: new Uint8Array(0), refUpdates };
-}
-
-// ── Internal helpers ────────────────────────────────────────────────
-
-const STUB_FS = new Proxy({} as FileSystem, {
-	get(_, prop) {
-		return () => {
-			throw new Error(`FileSystem.${String(prop)} is not available in server context`);
-		};
-	},
-});
-
-/**
- * Create a minimal GitContext from a ServerRepoContext.
- * The stub FS is never accessed -- all operations route through
- * the objectStore and refStore.
- */
-function toGitContext(repo: ServerRepoContext): GitContext {
-	return {
-		fs: STUB_FS,
-		gitDir: "/.git",
-		workTree: null,
-		objectStore: repo.objects,
-		refStore: repo.refs,
-	};
 }

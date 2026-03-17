@@ -1,20 +1,11 @@
-import type { ObjectStore, RefStore } from "../lib/types.ts";
-
-/**
- * Minimal storage context for a server-side repository.
- * Provides just the two backends needed for Smart HTTP serving.
- */
-export interface ServerRepoContext {
-	objects: ObjectStore;
-	refs: RefStore;
-}
+import type { GitRepo } from "../lib/types.ts";
 
 /**
  * Options for `createGitServer()`.
  */
 export interface GitServerOptions {
 	/** Map a URL path segment to a repo's storage backends. */
-	resolve: (repoPath: string) => ServerRepoContext | Promise<ServerRepoContext>;
+	resolve: (repoPath: string) => GitRepo | Promise<GitRepo>;
 	/** Optional authorization hook called before upload-pack and receive-pack. */
 	authorize?: (
 		req: Request,

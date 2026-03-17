@@ -11,8 +11,8 @@ import {
 	type IdentityOverride,
 	type Middleware,
 	type NetworkPolicy,
-	type RemoteResolver,
 } from "./hooks.ts";
+import type { RemoteResolver } from "./lib/types.ts";
 
 /** Options for subcommand execution (mirrors just-bash's CommandExecOptions). */
 export interface CommandExecOptions {

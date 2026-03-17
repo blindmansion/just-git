@@ -1,11 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { PackedObjectStore } from "../../src/lib/object-store.ts";
-import { FileSystemRefStore } from "../../src/lib/refs.ts";
 import { findGitDir } from "../../src/lib/repo.ts";
+import type { GitContext } from "../../src/lib/types.ts";
 import { createGitServer } from "../../src/server/handler.ts";
-import type { ServerRepoContext } from "../../src/server/types.ts";
 
 const TEST_ENV = {
 	GIT_AUTHOR_NAME: "Test",
@@ -24,7 +22,7 @@ describe("server roundtrip", () => {
 	let srv: ReturnType<typeof Bun.serve>;
 	let serverFs: InMemoryFs;
 	let serverBash: Bash;
-	let serverRepo: ServerRepoContext;
+	let serverRepo: GitContext;
 	let port: number;
 
 	beforeAll(async () => {
@@ -55,14 +53,9 @@ describe("server roundtrip", () => {
 		// Create feature branch
 		await serverBash.exec("git branch feature");
 
-		// Build the storage backends from the server's VFS
 		const ctx = await findGitDir(serverFs, "/repo");
 		if (!ctx) throw new Error("failed to find git dir");
-
-		serverRepo = {
-			objects: new PackedObjectStore(ctx.fs, ctx.gitDir),
-			refs: new FileSystemRefStore(ctx.fs, ctx.gitDir),
-		};
+		serverRepo = ctx;
 
 		// Start the HTTP server
 		const server = createGitServer({
@@ -136,7 +129,7 @@ describe("server roundtrip", () => {
 		});
 
 		// Read the server's main ref before push
-		const mainBefore = await serverRepo.refs.readRef("refs/heads/main");
+		const mainBefore = await serverRepo.refStore.readRef("refs/heads/main");
 		expect(mainBefore).not.toBeNull();
 		const hashBefore = mainBefore!.type === "direct" ? mainBefore!.hash : null;
 
@@ -153,14 +146,14 @@ describe("server roundtrip", () => {
 		expect(pushResult.exitCode).toBe(0);
 
 		// Verify the server's main ref was updated
-		const mainAfter = await serverRepo.refs.readRef("refs/heads/main");
+		const mainAfter = await serverRepo.refStore.readRef("refs/heads/main");
 		expect(mainAfter).not.toBeNull();
 		const hashAfter = mainAfter!.type === "direct" ? mainAfter!.hash : null;
 		expect(hashAfter).not.toBe(hashBefore);
 
 		// Verify the pushed object exists in the server's store
 		expect(hashAfter).toBeTruthy();
-		const exists = await serverRepo.objects.exists(hashAfter!);
+		const exists = await serverRepo.objectStore.exists(hashAfter!);
 		expect(exists).toBe(true);
 	});
 
@@ -228,14 +221,14 @@ describe("server roundtrip", () => {
 		expect(pushResult.exitCode).toBe(0);
 
 		// Verify the server has the new branch
-		const newBranch = await serverRepo.refs.readRef("refs/heads/new-feature");
+		const newBranch = await serverRepo.refStore.readRef("refs/heads/new-feature");
 		expect(newBranch).not.toBeNull();
 		expect(newBranch!.type).toBe("direct");
 	});
 
 	test("delete remote branch via push", async () => {
 		// First verify the branch exists
-		const before = await serverRepo.refs.readRef("refs/heads/feature");
+		const before = await serverRepo.refStore.readRef("refs/heads/feature");
 		expect(before).not.toBeNull();
 
 		const clientFs = new InMemoryFs();
@@ -257,7 +250,7 @@ describe("server roundtrip", () => {
 		expect(deleteResult.exitCode).toBe(0);
 
 		// Verify the server no longer has the branch
-		const after = await serverRepo.refs.readRef("refs/heads/feature");
+		const after = await serverRepo.refStore.readRef("refs/heads/feature");
 		expect(after).toBeNull();
 	});
 

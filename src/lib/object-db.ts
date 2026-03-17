@@ -1,25 +1,8 @@
-import { envelope, PackedObjectStore } from "./object-store.ts";
+import { envelope } from "./object-store.ts";
 import { parseCommit } from "./objects/commit.ts";
 import { parseTag } from "./objects/tag.ts";
 import { sha1 } from "./sha1.ts";
-import type {
-	Commit,
-	GitContext,
-	ObjectId,
-	ObjectStore,
-	ObjectType,
-	RawObject,
-	Tag,
-} from "./types.ts";
-
-// ── Store resolution ────────────────────────────────────────────────
-
-function getStore(ctx: GitContext): ObjectStore {
-	if (ctx.objectStore) return ctx.objectStore;
-	const store = new PackedObjectStore(ctx.fs, ctx.gitDir, ctx.hooks);
-	ctx.objectStore = store;
-	return store;
-}
+import type { Commit, GitRepo, ObjectId, ObjectType, RawObject, Tag } from "./types.ts";
 
 // ── Public API ──────────────────────────────────────────────────────
 
@@ -36,42 +19,44 @@ export async function hashObject(type: ObjectType, content: Uint8Array): Promise
  * If the object already exists, this is a no-op (content-addressable).
  */
 export async function writeObject(
-	ctx: GitContext,
+	ctx: GitRepo,
 	type: ObjectType,
 	content: Uint8Array,
 ): Promise<ObjectId> {
-	return getStore(ctx).write(type, content);
+	const hash = await ctx.objectStore.write(type, content);
+	ctx.hooks?.emit("object:write", { type, hash });
+	return hash;
 }
 
 /**
  * Read a raw object from the store.
  * Parses the stored data and returns the type + content.
  */
-export async function readObject(ctx: GitContext, hash: ObjectId): Promise<RawObject> {
-	return getStore(ctx).read(hash);
+export async function readObject(ctx: GitRepo, hash: ObjectId): Promise<RawObject> {
+	return ctx.objectStore.read(hash);
 }
 
 /**
  * Check whether an object exists in the store.
  */
-export async function objectExists(ctx: GitContext, hash: ObjectId): Promise<boolean> {
-	return getStore(ctx).exists(hash);
+export async function objectExists(ctx: GitRepo, hash: ObjectId): Promise<boolean> {
+	return ctx.objectStore.exists(hash);
 }
 
 /**
  * Import a raw packfile into the object store. The pack is retained
  * on disk with an index for efficient random-access reads.
  */
-export async function ingestPackData(ctx: GitContext, packData: Uint8Array): Promise<number> {
-	return getStore(ctx).ingestPack(packData);
+export async function ingestPackData(ctx: GitRepo, packData: Uint8Array): Promise<number> {
+	return ctx.objectStore.ingestPack(packData);
 }
 
 /**
  * Find all object hashes matching a hex prefix.
  * Searches both loose objects and packfiles.
  */
-export async function findObjectsByPrefix(ctx: GitContext, prefix: string): Promise<ObjectId[]> {
-	return getStore(ctx).findByPrefix(prefix);
+export async function findObjectsByPrefix(ctx: GitRepo, prefix: string): Promise<ObjectId[]> {
+	return ctx.objectStore.findByPrefix(prefix);
 }
 
 // ── Binary detection ────────────────────────────────────────────────
@@ -102,7 +87,7 @@ const decoder = new TextDecoder();
  * Read a blob object and return its content as a UTF-8 string.
  * Throws if the hash doesn't point to a blob.
  */
-export async function readBlobContent(ctx: GitContext, hash: ObjectId): Promise<string> {
+export async function readBlobContent(ctx: GitRepo, hash: ObjectId): Promise<string> {
 	const raw = await readObject(ctx, hash);
 	if (raw.type !== "blob") {
 		throw new Error(`Expected blob for ${hash}, got ${raw.type}`);
@@ -114,7 +99,7 @@ export async function readBlobContent(ctx: GitContext, hash: ObjectId): Promise<
  * Read a blob object and return its raw bytes.
  * Throws if the hash doesn't point to a blob.
  */
-export async function readBlobBytes(ctx: GitContext, hash: ObjectId): Promise<Uint8Array> {
+export async function readBlobBytes(ctx: GitRepo, hash: ObjectId): Promise<Uint8Array> {
 	const raw = await readObject(ctx, hash);
 	if (raw.type !== "blob") {
 		throw new Error(`Expected blob for ${hash}, got ${raw.type}`);
@@ -128,7 +113,7 @@ export async function readBlobBytes(ctx: GitContext, hash: ObjectId): Promise<Ui
  * Read and parse a commit object. Throws if the hash doesn't
  * point to a commit.
  */
-export async function readCommit(ctx: GitContext, hash: ObjectId): Promise<Commit> {
+export async function readCommit(ctx: GitRepo, hash: ObjectId): Promise<Commit> {
 	const raw = await readObject(ctx, hash);
 	if (raw.type !== "commit") {
 		throw new Error(`Expected commit object for ${hash}, got ${raw.type}`);
@@ -140,7 +125,7 @@ export async function readCommit(ctx: GitContext, hash: ObjectId): Promise<Commi
  * Read and parse a tag object. Throws if the hash doesn't
  * point to a tag.
  */
-export async function readTag(ctx: GitContext, hash: ObjectId): Promise<Tag> {
+export async function readTag(ctx: GitRepo, hash: ObjectId): Promise<Tag> {
 	const raw = await readObject(ctx, hash);
 	if (raw.type !== "tag") {
 		throw new Error(`Expected tag object for ${hash}, got ${raw.type}`);
@@ -153,7 +138,7 @@ export async function readTag(ctx: GitContext, hash: ObjectId): Promise<Tag> {
  * If the hash already points to a commit, returns it unchanged.
  * Follows chains of annotated tags (tag → tag → commit).
  */
-export async function peelToCommit(ctx: GitContext, hash: ObjectId): Promise<ObjectId> {
+export async function peelToCommit(ctx: GitRepo, hash: ObjectId): Promise<ObjectId> {
 	let current = hash;
 	for (let depth = 0; depth < 100; depth++) {
 		const raw = await readObject(ctx, current);

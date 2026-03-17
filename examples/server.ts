@@ -7,11 +7,8 @@
 
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../src";
-import { PackedObjectStore } from "../src/lib/object-store.ts";
-import { FileSystemRefStore } from "../src/lib/refs.ts";
 import { findGitDir } from "../src/lib/repo.ts";
 import { createGitServer } from "../src/server/handler.ts";
-import type { ServerRepoContext } from "../src/server/types.ts";
 
 const ENV = {
 	GIT_AUTHOR_NAME: "Test",
@@ -35,13 +32,8 @@ await serverBash.exec("git add .");
 await serverBash.exec('git commit -m "initial commit"', { env: ENV });
 await serverBash.exec("git tag v0.1.0");
 
-const ctx = await findGitDir(serverFs, "/repo");
-if (!ctx) throw new Error("repo not found");
-
-const repo: ServerRepoContext = {
-	objects: new PackedObjectStore(ctx.fs, ctx.gitDir),
-	refs: new FileSystemRefStore(ctx.fs, ctx.gitDir),
-};
+const repo = await findGitDir(serverFs, "/repo");
+if (!repo) throw new Error("repo not found");
 
 console.log("  Server repo initialized with 1 commit and tag v0.1.0\n");
 
@@ -105,7 +97,7 @@ const pushResult = await client.exec("git push origin main", { cwd: "/work" });
 console.log(`  Push exit: ${pushResult.exitCode}`);
 
 // Verify on the server side
-const mainRef = await repo.refs.readRef("refs/heads/main");
+const mainRef = await repo.refStore.readRef("refs/heads/main");
 console.log(`  Server main ref: ${mainRef?.type === "direct" ? mainRef.hash.slice(0, 12) : "?"}…`);
 console.log(`  Push log: ${pushLog.join(", ")}\n`);
 
@@ -121,10 +113,10 @@ await client.exec('git commit -m "feat: add awesome module"', { cwd: "/work", en
 const branchPush = await client.exec("git push origin feature/awesome", { cwd: "/work" });
 console.log(`  Push exit: ${branchPush.exitCode}`);
 
-const featureRef = await repo.refs.readRef("refs/heads/feature/awesome");
+const featureRef = await repo.refStore.readRef("refs/heads/feature/awesome");
 console.log(`  Server has feature/awesome: ${featureRef !== null}`);
 
-const allRefs = await repo.refs.listRefs("refs/heads");
+const allRefs = await repo.refStore.listRefs("refs/heads");
 console.log(
 	`  Server branches: ${allRefs.map((r) => r.name.replace("refs/heads/", "")).join(", ")}\n`,
 );

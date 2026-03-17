@@ -11,7 +11,7 @@ import { findGitDir, initRepository } from "../lib/repo.ts";
 import { createTransportForUrl } from "../lib/transport/remote.ts";
 import type { Transport } from "../lib/transport/transport.ts";
 import { flattenTree } from "../lib/tree-ops.ts";
-import type { GitContext, ObjectId } from "../lib/types.ts";
+import type { GitContext, GitRepo, ObjectId } from "../lib/types.ts";
 import { checkoutTree } from "../lib/worktree.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 
@@ -75,15 +75,15 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			// For local paths, verify the source is a git repository
-			let sourceCtx: Awaited<ReturnType<typeof findGitDir>> = null;
+			let sourceRepo: GitRepo | null = null;
 			if (!isHttp) {
 				if (ext?.resolveRemote) {
-					sourceCtx = await ext.resolveRemote(sourcePath);
+					sourceRepo = await ext.resolveRemote(sourcePath);
 				}
-				if (!sourceCtx) {
-					sourceCtx = await findGitDir(ctx.fs, sourcePath);
+				if (!sourceRepo) {
+					sourceRepo = await findGitDir(ctx.fs, sourcePath);
 				}
-				if (!sourceCtx) {
+				if (!sourceRepo) {
 					return fatal(`repository '${repository}' does not exist`);
 				}
 			}
@@ -122,7 +122,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 					newCtx,
 					sourcePath,
 					ctx.env,
-					sourceCtx ?? undefined,
+					sourceRepo ?? undefined,
 				);
 			} catch (e) {
 				const msg = e instanceof Error ? e.message : "";

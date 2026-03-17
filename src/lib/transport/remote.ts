@@ -1,6 +1,6 @@
 import { readConfig } from "../config.ts";
 import { findGitDir } from "../repo.ts";
-import type { GitContext } from "../types.ts";
+import type { GitContext, GitRepo } from "../types.ts";
 import type { NetworkPolicy } from "../../hooks.ts";
 import { type HttpAuth, LocalTransport, SmartHttpTransport, type Transport } from "./transport.ts";
 
@@ -92,7 +92,7 @@ export async function createTransportForUrl(
 	ctx: GitContext,
 	url: string,
 	env: Map<string, string>,
-	remoteCtx?: GitContext,
+	remoteRepo?: GitRepo,
 ): Promise<Transport> {
 	if (isHttpUrl(url)) {
 		const networkErr = validateNetworkAccess(url, ctx.networkPolicy);
@@ -100,13 +100,13 @@ export async function createTransportForUrl(
 		const auth = await resolveAuthForUrl(ctx, url, env);
 		return new SmartHttpTransport(ctx, url, auth, ctx.fetchFn);
 	}
-	if (!remoteCtx && ctx.resolveRemote) {
-		remoteCtx = (await ctx.resolveRemote(url)) ?? undefined;
+	if (!remoteRepo && ctx.resolveRemote) {
+		remoteRepo = (await ctx.resolveRemote(url)) ?? undefined;
 	}
-	if (!remoteCtx) {
+	if (!remoteRepo) {
 		throw new Error(`'${url}' does not appear to be a git repository`);
 	}
-	return new LocalTransport(ctx, remoteCtx);
+	return new LocalTransport(ctx, remoteRepo);
 }
 
 /**
@@ -131,13 +131,13 @@ export async function resolveRemoteTransport(
 		};
 	}
 
-	const remoteCtx =
+	const remoteRepo: GitRepo | null =
 		(ctx.resolveRemote ? await ctx.resolveRemote(remote.url) : null) ??
 		(await findGitDir(ctx.fs, remote.url));
-	if (!remoteCtx) return null;
+	if (!remoteRepo) return null;
 
 	return {
-		transport: new LocalTransport(ctx, remoteCtx),
+		transport: new LocalTransport(ctx, remoteRepo),
 		config: remote,
 	};
 }

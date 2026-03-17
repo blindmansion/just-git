@@ -1,7 +1,7 @@
 import { firstLine } from "./command-utils.ts";
 import { peelToCommit, readCommit } from "./object-db.ts";
 import { listRefs } from "./refs.ts";
-import type { Commit, GitContext, ObjectId } from "./types.ts";
+import type { Commit, GitRepo, ObjectId } from "./types.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -91,7 +91,7 @@ export class CommitHeap {
  * by date rather than followed depth-first.
  */
 export async function* walkCommits(
-	ctx: GitContext,
+	ctx: GitRepo,
 	startHash: ObjectId | ObjectId[],
 	opts?: { exclude?: ObjectId[] },
 ): AsyncGenerator<CommitEntry> {
@@ -127,7 +127,7 @@ export async function* walkCommits(
  * behind = commits reachable from upstreamHash but not localHash.
  */
 export async function countAheadBehind(
-	ctx: GitContext,
+	ctx: GitRepo,
 	localHash: ObjectId,
 	upstreamHash: ObjectId,
 ): Promise<{ ahead: number; behind: number }> {
@@ -175,7 +175,7 @@ export async function countAheadBehind(
  * this, so we may report fewer orphans than Git in these edge cases.
  */
 export async function findOrphanedCommits(
-	ctx: GitContext,
+	ctx: GitRepo,
 	startHash: ObjectId,
 	opts?: { targetHash?: ObjectId; maxCount?: number },
 ): Promise<{ hash: string; subject: string }[]> {
@@ -233,7 +233,7 @@ export async function findOrphanedCommits(
 // ── Helpers ─────────────────────────────────────────────────────────
 
 async function buildExcludeSet(
-	ctx: GitContext,
+	ctx: GitRepo,
 	exclude: ObjectId[] | undefined,
 ): Promise<Set<ObjectId>> {
 	if (!exclude || exclude.length === 0) return new Set();
@@ -244,6 +244,6 @@ async function buildExcludeSet(
 	return set;
 }
 
-async function loadCommit(ctx: GitContext, hash: ObjectId): Promise<CommitEntry> {
+async function loadCommit(ctx: GitRepo, hash: ObjectId): Promise<CommitEntry> {
 	return { hash, commit: await readCommit(ctx, hash) };
 }

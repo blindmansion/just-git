@@ -5,11 +5,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { PackedObjectStore } from "../../src/lib/object-store.ts";
-import { FileSystemRefStore } from "../../src/lib/refs.ts";
 import { findGitDir } from "../../src/lib/repo.ts";
+import type { GitContext } from "../../src/lib/types.ts";
 import { createGitServer } from "../../src/server/handler.ts";
-import type { ServerRepoContext } from "../../src/server/types.ts";
 
 const TEST_ENV = {
 	GIT_AUTHOR_NAME: "Test",
@@ -57,7 +55,7 @@ describe("server with real git client", () => {
 	let srv: ReturnType<typeof Bun.serve>;
 	let serverFs: InMemoryFs;
 	let serverBash: Bash;
-	let serverRepo: ServerRepoContext;
+	let serverRepo: GitContext;
 	let port: number;
 
 	beforeAll(async () => {
@@ -82,11 +80,7 @@ describe("server with real git client", () => {
 
 		const ctx = await findGitDir(serverFs, "/repo");
 		if (!ctx) throw new Error("failed to find git dir");
-
-		serverRepo = {
-			objects: new PackedObjectStore(ctx.fs, ctx.gitDir),
-			refs: new FileSystemRefStore(ctx.fs, ctx.gitDir),
-		};
+		serverRepo = ctx;
 
 		const server = createGitServer({ resolve: async () => serverRepo });
 		srv = Bun.serve({ fetch: (req) => server.handle(req), port: 0 });
@@ -130,7 +124,7 @@ describe("server with real git client", () => {
 			const cloneDir = join(sandbox, "local");
 			await realGit(sandbox, `clone http://localhost:${port}/repo ${cloneDir}`);
 
-			const mainBefore = await serverRepo.refs.readRef("refs/heads/main");
+			const mainBefore = await serverRepo.refStore.readRef("refs/heads/main");
 			const hashBefore = mainBefore?.type === "direct" ? mainBefore.hash : null;
 
 			writeFileSync(join(cloneDir, "pushed.txt"), "from real git");
@@ -140,11 +134,11 @@ describe("server with real git client", () => {
 			const pushResult = await realGit(cloneDir, "push origin main");
 			expect(pushResult.exitCode).toBe(0);
 
-			const mainAfter = await serverRepo.refs.readRef("refs/heads/main");
+			const mainAfter = await serverRepo.refStore.readRef("refs/heads/main");
 			const hashAfter = mainAfter?.type === "direct" ? mainAfter.hash : null;
 			expect(hashAfter).not.toBe(hashBefore);
 			expect(hashAfter).toBeTruthy();
-			expect(await serverRepo.objects.exists(hashAfter!)).toBe(true);
+			expect(await serverRepo.objectStore.exists(hashAfter!)).toBe(true);
 		} finally {
 			await rm(sandbox, { recursive: true, force: true });
 		}
@@ -191,7 +185,7 @@ describe("server with real git client", () => {
 			const pushResult = await realGit(cloneDir, "push origin real-git-branch");
 			expect(pushResult.exitCode).toBe(0);
 
-			const newBranch = await serverRepo.refs.readRef("refs/heads/real-git-branch");
+			const newBranch = await serverRepo.refStore.readRef("refs/heads/real-git-branch");
 			expect(newBranch).not.toBeNull();
 			expect(newBranch!.type).toBe("direct");
 		} finally {
@@ -200,7 +194,7 @@ describe("server with real git client", () => {
 	});
 
 	test("delete remote branch via push", async () => {
-		const before = await serverRepo.refs.readRef("refs/heads/feature");
+		const before = await serverRepo.refStore.readRef("refs/heads/feature");
 		expect(before).not.toBeNull();
 
 		const sandbox = await mkdtemp(join(tmpdir(), "just-git-realclient-"));
@@ -211,7 +205,7 @@ describe("server with real git client", () => {
 			const deleteResult = await realGit(cloneDir, "push origin --delete feature");
 			expect(deleteResult.exitCode).toBe(0);
 
-			const after = await serverRepo.refs.readRef("refs/heads/feature");
+			const after = await serverRepo.refStore.readRef("refs/heads/feature");
 			expect(after).toBeNull();
 		} finally {
 			await rm(sandbox, { recursive: true, force: true });

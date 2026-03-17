@@ -3,7 +3,7 @@ import { myersDiff } from "./diff-algorithm.ts";
 import { readBlobContent, readCommit } from "./object-db.ts";
 import { detectRenames } from "./rename-detection.ts";
 import { diffTrees, flattenTreeToMap } from "./tree-ops.ts";
-import type { Commit, GitContext, Identity, ObjectId } from "./types.ts";
+import type { Commit, GitRepo, Identity, ObjectId } from "./types.ts";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -30,7 +30,7 @@ interface BlameOptions {
 // ── Helpers ──────────────────────────────────────────────────────────
 
 async function getBlobHashAtPath(
-	ctx: GitContext,
+	ctx: GitRepo,
 	treeHash: ObjectId,
 	path: string,
 ): Promise<ObjectId | null> {
@@ -44,7 +44,7 @@ async function getBlobHashAtPath(
  * return the old path. Otherwise return null.
  */
 async function findRenamedPath(
-	ctx: GitContext,
+	ctx: GitRepo,
 	parentTree: ObjectId,
 	currentTree: ObjectId,
 	path: string,
@@ -75,7 +75,7 @@ interface UnblamedLine {
  * Returns a map of finalIdx → BlameEntry.
  */
 async function blameLines(
-	ctx: GitContext,
+	ctx: GitRepo,
 	commitHash: ObjectId,
 	path: string,
 	lines: UnblamedLine[],
@@ -223,7 +223,7 @@ async function blameLines(
 }
 
 export async function blame(
-	ctx: GitContext,
+	ctx: GitRepo,
 	commitHash: ObjectId,
 	path: string,
 	opts?: BlameOptions,

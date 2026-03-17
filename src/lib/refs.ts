@@ -7,6 +7,7 @@ import { ensureParentDir } from "./repo.ts";
 import type {
 	DirectRef,
 	GitContext,
+	GitRepo,
 	ObjectId,
 	Ref,
 	RefEntry,
@@ -183,19 +184,10 @@ export class FileSystemRefStore implements RefStore {
 	}
 }
 
-// ── Store access ────────────────────────────────────────────────────
-
-function getRefStore(ctx: GitContext): RefStore {
-	if (ctx.refStore) return ctx.refStore;
-	const store = new FileSystemRefStore(ctx.fs, ctx.gitDir);
-	ctx.refStore = store;
-	return store;
-}
-
 // ── Read ────────────────────────────────────────────────────────────
 
-async function readRef(ctx: GitContext, name: string): Promise<Ref | null> {
-	return getRefStore(ctx).readRef(name);
+async function readRef(ctx: GitRepo, name: string): Promise<Ref | null> {
+	return ctx.refStore.readRef(name);
 }
 
 /**
@@ -204,7 +196,7 @@ async function readRef(ctx: GitContext, name: string): Promise<Ref | null> {
  * Returns null if the ref doesn't exist or points to a nonexistent target
  * (e.g. HEAD on an empty repo pointing to refs/heads/main which doesn't exist yet).
  */
-export async function resolveRef(ctx: GitContext, name: string): Promise<ObjectId | null> {
+export async function resolveRef(ctx: GitRepo, name: string): Promise<ObjectId | null> {
 	let current = name;
 
 	for (let depth = 0; depth < MAX_SYMREF_DEPTH; depth++) {
@@ -221,21 +213,21 @@ export async function resolveRef(ctx: GitContext, name: string): Promise<ObjectI
 }
 
 /** Shorthand: read HEAD as a Ref. */
-export async function readHead(ctx: GitContext): Promise<Ref | null> {
+export async function readHead(ctx: GitRepo): Promise<Ref | null> {
 	return readRef(ctx, "HEAD");
 }
 
 /** Shorthand: resolve HEAD to a commit hash (null on empty repo). */
-export async function resolveHead(ctx: GitContext): Promise<ObjectId | null> {
+export async function resolveHead(ctx: GitRepo): Promise<ObjectId | null> {
 	return resolveRef(ctx, "HEAD");
 }
 
 // ── Write ───────────────────────────────────────────────────────────
 
 /** Write a direct ref (a file containing just a hex hash). */
-export async function updateRef(ctx: GitContext, name: string, hash: ObjectId): Promise<void> {
+export async function updateRef(ctx: GitRepo, name: string, hash: ObjectId): Promise<void> {
 	const oldHash = ctx.hooks ? await resolveRef(ctx, name) : null;
-	await getRefStore(ctx).writeRef(name, { type: "direct", hash });
+	await ctx.refStore.writeRef(name, { type: "direct", hash });
 	ctx.hooks?.emit("ref:update", {
 		ref: name,
 		oldHash,
@@ -244,18 +236,14 @@ export async function updateRef(ctx: GitContext, name: string, hash: ObjectId): 
 }
 
 /** Write a symbolic ref (a file containing `ref: <target>`). */
-export async function createSymbolicRef(
-	ctx: GitContext,
-	name: string,
-	target: string,
-): Promise<void> {
-	await getRefStore(ctx).writeRef(name, { type: "symbolic", target });
+export async function createSymbolicRef(ctx: GitRepo, name: string, target: string): Promise<void> {
+	await ctx.refStore.writeRef(name, { type: "symbolic", target });
 }
 
 /** Delete a ref (removes from storage, deletes reflog, emits hook). */
 export async function deleteRef(ctx: GitContext, name: string): Promise<void> {
 	const oldHash = ctx.hooks ? await resolveRef(ctx, name) : null;
-	await getRefStore(ctx).deleteRef(name);
+	await ctx.refStore.deleteRef(name);
 	await deleteReflog(ctx, name);
 	if (ctx.hooks && oldHash) {
 		ctx.hooks.emit("ref:delete", { ref: name, oldHash });
@@ -269,8 +257,8 @@ export async function deleteRef(ctx: GitContext, name: string): Promise<void> {
  * Returns resolved hashes (follows symbolic refs).
  * Merges loose refs with packed-refs; loose refs take precedence.
  */
-export async function listRefs(ctx: GitContext, prefix: string = "refs"): Promise<RefEntry[]> {
-	return getRefStore(ctx).listRefs(prefix);
+export async function listRefs(ctx: GitRepo, prefix: string = "refs"): Promise<RefEntry[]> {
+	return ctx.refStore.listRefs(prefix);
 }
 
 // ── Branch helpers ──────────────────────────────────────────────────
@@ -281,7 +269,7 @@ export function branchNameFromRef(ref: string): string {
 }
 
 /** Advance the current branch (or detached HEAD) to point at `hash`. */
-export async function advanceBranchRef(ctx: GitContext, hash: ObjectId): Promise<void> {
+export async function advanceBranchRef(ctx: GitRepo, hash: ObjectId): Promise<void> {
 	const head = await readHead(ctx);
 	if (head && head.type === "symbolic") {
 		await updateRef(ctx, head.target, hash);

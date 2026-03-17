@@ -4,8 +4,8 @@ import { isAncestor } from "../merge.ts";
 import { ingestPackData, readObject } from "../object-db.ts";
 import type { PackInput } from "../pack/packfile.ts";
 import { writePack } from "../pack/packfile.ts";
-import { deleteRef, listRefs, readHead, resolveRef, updateRef } from "../refs.ts";
-import type { GitContext, ObjectId } from "../types.ts";
+import { listRefs, readHead, resolveRef, updateRef } from "../refs.ts";
+import type { GitContext, GitRepo, ObjectId } from "../types.ts";
 import { enumerateObjects } from "./object-walk.ts";
 import {
 	discoverRefs,
@@ -96,11 +96,11 @@ class Mutex {
 
 const pushLocks = new WeakMap<object, Mutex>();
 
-function getPushLock(fs: object): Mutex {
-	let lock = pushLocks.get(fs);
+function getPushLock(repo: object): Mutex {
+	let lock = pushLocks.get(repo);
 	if (!lock) {
 		lock = new Mutex();
-		pushLocks.set(fs, lock);
+		pushLocks.set(repo, lock);
 	}
 	return lock;
 }
@@ -108,16 +108,16 @@ function getPushLock(fs: object): Mutex {
 // ── Local transport ──────────────────────────────────────────────────
 
 /**
- * Transport implementation for local paths. Both repos live in the
- * same virtual filesystem, so "transfer" means reading objects from
- * one GitContext and writing them to another via packfile serialization.
+ * Transport implementation for local paths. Reads objects from
+ * one repo and writes them to another via packfile serialization.
+ * The remote only needs object/ref access (GitRepo), not a filesystem.
  */
 export class LocalTransport implements Transport {
 	headTarget?: string;
 
 	constructor(
 		private local: GitContext,
-		private remote: GitContext,
+		private remote: GitRepo,
 	) {}
 
 	async advertiseRefs(): Promise<RemoteRef[]> {
@@ -168,7 +168,7 @@ export class LocalTransport implements Transport {
 	}
 
 	async push(updates: PushRefUpdate[]): Promise<PushResult> {
-		const release = await getPushLock(this.remote.fs).acquire();
+		const release = await getPushLock(this.remote).acquire();
 		try {
 			return await this.pushInner(updates);
 		} finally {
@@ -207,7 +207,11 @@ export class LocalTransport implements Transport {
 		for (const update of updates) {
 			try {
 				if (update.newHash === ZERO_HASH) {
-					await deleteRef(this.remote, update.name);
+					const oldHash = this.remote.hooks ? await resolveRef(this.remote, update.name) : null;
+					await this.remote.refStore.deleteRef(update.name);
+					if (this.remote.hooks && oldHash) {
+						this.remote.hooks.emit("ref:delete", { ref: update.name, oldHash });
+					}
 					results.push({ ...update, ok: true });
 					continue;
 				}

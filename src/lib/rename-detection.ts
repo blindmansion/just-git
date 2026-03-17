@@ -11,7 +11,7 @@
  * Used by: git status, git diff --cached, commit summary, merge diffstat.
  */
 import { readBlobBytes } from "./object-db.ts";
-import type { GitContext, TreeDiffEntry } from "./types.ts";
+import type { GitRepo, TreeDiffEntry } from "./types.ts";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -86,7 +86,7 @@ const DEFAULT_THRESHOLD = 50;
  * @param threshold Minimum similarity percentage (0–100). Default 50.
  */
 export async function detectRenames(
-	ctx: GitContext,
+	ctx: GitRepo,
 	diffs: TreeDiffEntry[],
 	threshold = DEFAULT_THRESHOLD,
 ): Promise<RenameResult> {
@@ -199,7 +199,7 @@ export async function detectRenames(
  * different directory while keeping its name (with or without edits).
  */
 async function findBasenameMatches(
-	ctx: GitContext,
+	ctx: GitRepo,
 	deleted: TreeDiffEntry[],
 	added: TreeDiffEntry[],
 	threshold: number,
@@ -418,7 +418,7 @@ function computeSimilarityFromChunks(
  * deleted and added entries. Uses greedy best-match approach.
  */
 async function findSimilarityRenames(
-	ctx: GitContext,
+	ctx: GitRepo,
 	deleted: TreeDiffEntry[],
 	added: TreeDiffEntry[],
 	threshold: number,

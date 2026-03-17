@@ -21,7 +21,7 @@ import { readObject } from "./object-db.ts";
 import { parseCommit } from "./objects/commit.ts";
 import { createHasher } from "./sha1.ts";
 import { diffTrees } from "./tree-ops.ts";
-import type { GitContext, ObjectId } from "./types.ts";
+import type { GitRepo, ObjectId } from "./types.ts";
 
 /**
  * Compute the patch-id for a commit.
@@ -31,10 +31,7 @@ import type { GitContext, ObjectId } from "./types.ts";
  *
  * Returns null if the commit produces no diff (empty commit).
  */
-export async function computePatchId(
-	ctx: GitContext,
-	commitHash: ObjectId,
-): Promise<string | null> {
+export async function computePatchId(ctx: GitRepo, commitHash: ObjectId): Promise<string | null> {
 	const raw = await readObject(ctx, commitHash);
 	if (raw.type !== "commit") return null;
 

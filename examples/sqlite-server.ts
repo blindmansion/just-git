@@ -26,10 +26,10 @@ const server = createGitServer({
 		console.log(`  [resolve] ${repoPath}`);
 		const repo = storage.repo(repoPath);
 
-		const head = await repo.refs.readRef("HEAD");
+		const head = await repo.refStore.readRef("HEAD");
 		if (!head) {
 			console.log(`  [init] auto-creating repo "${repoPath}"`);
-			await repo.refs.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
+			await repo.refStore.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
 		}
 
 		return repo;

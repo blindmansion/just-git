@@ -2,7 +2,7 @@ import { objectExists, readObject } from "../object-db.ts";
 import { parseCommit } from "../objects/commit.ts";
 import { parseTag } from "../objects/tag.ts";
 import { parseTree } from "../objects/tree.ts";
-import type { GitContext, ObjectId, ObjectType } from "../types.ts";
+import type { GitRepo, ObjectId, ObjectType } from "../types.ts";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ interface WalkObjectWithContent {
  * and what it already has, determine the minimal set of objects to send.
  */
 export async function enumerateObjects(
-	ctx: GitContext,
+	ctx: GitRepo,
 	wants: ObjectId[],
 	haves: ObjectId[],
 ): Promise<WalkObject[]> {
@@ -40,7 +40,7 @@ export async function enumerateObjects(
  * result so callers (e.g. repack) avoid a second read pass.
  */
 export async function enumerateObjectsWithContent(
-	ctx: GitContext,
+	ctx: GitRepo,
 	wants: ObjectId[],
 	haves: ObjectId[],
 ): Promise<WalkObjectWithContent[]> {
@@ -48,7 +48,7 @@ export async function enumerateObjectsWithContent(
 }
 
 async function enumerateMissing(
-	ctx: GitContext,
+	ctx: GitRepo,
 	wants: ObjectId[],
 	haves: ObjectId[],
 	includeContent: boolean,
@@ -73,11 +73,7 @@ async function enumerateMissing(
 /**
  * Walk all objects reachable from `hash`, adding them to `visited`.
  */
-async function walkReachable(
-	ctx: GitContext,
-	hash: ObjectId,
-	visited: Set<ObjectId>,
-): Promise<void> {
+async function walkReachable(ctx: GitRepo, hash: ObjectId, visited: Set<ObjectId>): Promise<void> {
 	if (visited.has(hash)) return;
 	visited.add(hash);
 
@@ -120,7 +116,7 @@ async function walkReachable(
  * object bytes so callers avoid a second read pass.
  */
 async function collectMissing(
-	ctx: GitContext,
+	ctx: GitRepo,
 	hash: ObjectId,
 	haveSet: Set<ObjectId>,
 	visited: Set<ObjectId>,

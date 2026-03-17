@@ -1,7 +1,8 @@
 import type { FileSystem } from "../fs.ts";
 import { type GitConfig, serializeConfig } from "./config.ts";
+import { PackedObjectStore } from "./object-store.ts";
 import { join } from "./path.ts";
-import { createSymbolicRef } from "./refs.ts";
+import { createSymbolicRef, FileSystemRefStore } from "./refs.ts";
 import type { GitContext } from "./types.ts";
 
 // ── Repository discovery ────────────────────────────────────────────
@@ -21,13 +22,25 @@ export async function findGitDir(fs: FileSystem, startPath: string): Promise<Git
 		if (await fs.exists(candidate)) {
 			const stat = await fs.stat(candidate);
 			if (stat.isDirectory) {
-				return { fs, gitDir: candidate, workTree: current };
+				return {
+					fs,
+					gitDir: candidate,
+					workTree: current,
+					objectStore: new PackedObjectStore(fs, candidate),
+					refStore: new FileSystemRefStore(fs, candidate),
+				};
 			}
 		}
 
 		// Check for bare repo (HEAD + objects/ + refs/ in directory itself)
 		if (await isBareGitDir(fs, current)) {
-			return { fs, gitDir: current, workTree: null };
+			return {
+				fs,
+				gitDir: current,
+				workTree: null,
+				objectStore: new PackedObjectStore(fs, current),
+				refStore: new FileSystemRefStore(fs, current),
+			};
 		}
 
 		// Move up one level
@@ -118,7 +131,13 @@ export async function initRepository(
 	await fs.mkdir(join(gitDir, "refs", "heads"), { recursive: true });
 	await fs.mkdir(join(gitDir, "refs", "tags"), { recursive: true });
 
-	const ctx: GitContext = { fs, gitDir, workTree };
+	const ctx: GitContext = {
+		fs,
+		gitDir,
+		workTree,
+		objectStore: new PackedObjectStore(fs, gitDir),
+		refStore: new FileSystemRefStore(fs, gitDir),
+	};
 
 	if (!reinit) {
 		await createSymbolicRef(ctx, "HEAD", `refs/heads/${initialBranch}`);
