@@ -1,6 +1,6 @@
 import { hexAt, hexToBytes } from "../hex.ts";
 import { createHasher } from "../sha1.ts";
-import type { ObjectId, ObjectType } from "../types.ts";
+import type { ObjectId, ObjectType, RawObject } from "../types.ts";
 import { deflate, inflate } from "./zlib.ts";
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -77,11 +77,25 @@ interface PackWriteResult {
 // ── Pack reader ──────────────────────────────────────────────────────
 
 /**
+ * Callback for resolving delta bases not present in the pack (thin packs).
+ * Called when a REF_DELTA references an object that isn't in the pack itself.
+ * Return the object if available, or null to signal it's missing.
+ */
+type ExternalBaseResolver = (hash: ObjectId) => Promise<RawObject | null>;
+
+/**
  * Parse a packfile and return all objects with byte-offset metadata.
  * Fully resolves deltas. Useful for building pack indices (CRC32
  * is computed over `data[offset..nextOffset]` for each entry).
+ *
+ * For thin packs (where REF_DELTA bases reference objects not in the pack),
+ * provide an `externalBase` resolver that fetches the base from an
+ * existing object store.
  */
-export async function readPack(data: Uint8Array): Promise<PackObjectMeta[]> {
+export async function readPack(
+	data: Uint8Array,
+	externalBase?: ExternalBaseResolver,
+): Promise<PackObjectMeta[]> {
 	const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
 	const sig = view.getUint32(0);
@@ -104,7 +118,7 @@ export async function readPack(data: Uint8Array): Promise<PackObjectMeta[]> {
 		offset = entry.nextOffset;
 	}
 
-	const resolved = await resolveEntries(entries);
+	const resolved = await resolveEntries(entries, externalBase);
 	return resolved.map(
 		(obj, i): PackObjectMeta => ({
 			...obj,
@@ -187,7 +201,10 @@ async function readEntry(data: Uint8Array, offset: number): Promise<RawPackEntry
  * Resolve all entries: apply deltas, compute hashes, return
  * fully materialized objects.
  */
-async function resolveEntries(entries: RawPackEntry[]): Promise<PackObject[]> {
+async function resolveEntries(
+	entries: RawPackEntry[],
+	externalBase?: ExternalBaseResolver,
+): Promise<PackObject[]> {
 	// Index base entries by header offset for OFS_DELTA lookup.
 	const byOffset = new Map<number, number>();
 	for (let i = 0; i < entries.length; i++) {
@@ -216,21 +233,35 @@ async function resolveEntries(entries: RawPackEntry[]): Promise<PackObject[]> {
 		}
 
 		// Delta — find and resolve the base first
-		let baseIdx: number | undefined;
 		if (entry.typeNum === OBJ_OFS_DELTA) {
-			baseIdx = byOffset.get(entry.baseOffset!);
+			const baseIdx = byOffset.get(entry.baseOffset!);
 			if (baseIdx === undefined) {
 				throw new Error(`OFS_DELTA base not found at offset ${entry.baseOffset}`);
 			}
-		} else {
-			// REF_DELTA — search by hash (need to resolve everything it might be)
-			baseIdx = await findByHash(entries, resolved, entry.baseHash!, resolve);
-			if (baseIdx === undefined) {
-				throw new Error(`REF_DELTA base not found for hash ${entry.baseHash}`);
-			}
+			const base = await resolve(baseIdx);
+			const content = applyDelta(base.content, entry.inflated);
+			const obj: PackObject = {
+				type: base.type,
+				content,
+				hash: await hashGitObject(base.type, content),
+			};
+			resolved[idx] = obj;
+			return obj;
 		}
 
-		const base = await resolve(baseIdx);
+		// REF_DELTA — search in pack first, then external store
+		const baseIdx = await findByHash(entries, resolved, entry.baseHash!, resolve);
+		let base: RawObject | undefined;
+		if (baseIdx !== undefined) {
+			base = await resolve(baseIdx);
+		} else if (externalBase) {
+			const ext = await externalBase(entry.baseHash!);
+			if (ext) base = ext;
+		}
+		if (!base) {
+			throw new Error(`REF_DELTA base not found for hash ${entry.baseHash}`);
+		}
+
 		const content = applyDelta(base.content, entry.inflated);
 		const obj: PackObject = {
 			type: base.type,

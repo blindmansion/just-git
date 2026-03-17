@@ -22,6 +22,7 @@ export {
 // Types
 export type { AuthResult, GitServerOptions, RefUpdate, ServerRepoContext } from "./types.ts";
 
-// FS-backed storage implementations (convenience re-exports)
+// Storage implementations
 export { PackedObjectStore } from "../lib/object-store.ts";
 export { FileSystemRefStore } from "../lib/refs.ts";
+export { SqliteStorage } from "./sqlite-storage.ts";
