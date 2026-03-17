@@ -2,11 +2,11 @@ import { envelope, PackedObjectStore } from "./object-store.ts";
 import { parseCommit } from "./objects/commit.ts";
 import { parseTag } from "./objects/tag.ts";
 import { sha1 } from "./sha1.ts";
-import type { Commit, GitContext, ObjectId, ObjectType, RawObject, Tag } from "./types.ts";
+import type { Commit, GitContext, ObjectId, ObjectStore, ObjectType, RawObject, Tag } from "./types.ts";
 
 // ── Store resolution ────────────────────────────────────────────────
 
-function getStore(ctx: GitContext): PackedObjectStore {
+function getStore(ctx: GitContext): ObjectStore {
 	if (ctx.objectStore) return ctx.objectStore;
 	const store = new PackedObjectStore(ctx.fs, ctx.gitDir, ctx.hooks);
 	ctx.objectStore = store;
@@ -56,6 +56,17 @@ export async function objectExists(ctx: GitContext, hash: ObjectId): Promise<boo
  */
 export async function ingestPackData(ctx: GitContext, packData: Uint8Array): Promise<number> {
 	return getStore(ctx).ingestPack(packData);
+}
+
+/**
+ * Find all object hashes matching a hex prefix.
+ * Searches both loose objects and packfiles.
+ */
+export async function findObjectsByPrefix(
+	ctx: GitContext,
+	prefix: string,
+): Promise<ObjectId[]> {
+	return getStore(ctx).findByPrefix(prefix);
 }
 
 // ── Binary detection ────────────────────────────────────────────────

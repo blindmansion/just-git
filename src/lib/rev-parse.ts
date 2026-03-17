@@ -1,5 +1,4 @@
-import { objectExists, peelToCommit, readCommit } from "./object-db.ts";
-import { join } from "./path.ts";
+import { findObjectsByPrefix, objectExists, peelToCommit, readCommit } from "./object-db.ts";
 import { readReflog } from "./reflog.ts";
 import { resolveRef } from "./refs.ts";
 import type { GitContext, ObjectId } from "./types.ts";
@@ -77,25 +76,19 @@ const SPECIAL_REFS = [
 // ── Short hash resolution ───────────────────────────────────────
 
 /**
- * Resolve a short hex prefix (4-39 chars) to a full ObjectId by scanning
- * the loose object store. Returns the full hash if exactly one match is
- * found, null if none, and throws on ambiguity.
+ * Resolve a short hex prefix (4-39 chars) to a full ObjectId.
+ * Searches both loose objects and packfiles via the object store.
+ * Returns the full hash if exactly one match is found, null if none,
+ * and throws on ambiguity.
  */
 async function resolveShortHash(ctx: GitContext, prefix: string): Promise<ObjectId | null> {
-	const fanout = prefix.slice(0, 2);
-	const rest = prefix.slice(2);
-	const dir = join(ctx.gitDir, "objects", fanout);
-
-	if (!(await ctx.fs.exists(dir))) return null;
-
-	const entries = await ctx.fs.readdir(dir);
-	const matches = entries.filter((e) => e.startsWith(rest));
+	const matches = await findObjectsByPrefix(ctx, prefix);
 
 	if (matches.length === 0) return null;
 	if (matches.length > 1) {
 		throw new ShortHashAmbiguousError(prefix);
 	}
-	return `${fanout}${matches[0]}`;
+	return matches[0]!;
 }
 
 class ShortHashAmbiguousError extends Error {

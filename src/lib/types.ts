@@ -7,7 +7,6 @@ import type {
 	NetworkPolicy,
 	RemoteResolver,
 } from "../hooks.ts";
-import type { PackedObjectStore } from "./object-store.ts";
 
 // ── Object identifiers ──────────────────────────────────────────────
 
@@ -134,6 +133,45 @@ export interface Index {
 	entries: IndexEntry[];
 }
 
+// ── Ref store ───────────────────────────────────────────────────────
+
+export interface RefEntry {
+	name: string;
+	hash: ObjectId;
+}
+
+/**
+ * Abstract ref storage backend.
+ * Implementations handle reading, writing, deleting, and listing git refs.
+ * The default filesystem-backed implementation is `FileSystemRefStore`.
+ */
+export interface RefStore {
+	/** Read a single ref without following symbolic refs. */
+	readRef(name: string): Promise<Ref | null>;
+	/** Write a ref (direct or symbolic). */
+	writeRef(name: string, ref: Ref): Promise<void>;
+	/** Delete a ref from storage. */
+	deleteRef(name: string): Promise<void>;
+	/** List all refs under a prefix, returning resolved hashes. */
+	listRefs(prefix?: string): Promise<RefEntry[]>;
+}
+
+// ── Object store ────────────────────────────────────────────────────
+
+/**
+ * Abstract object storage backend.
+ * Implementations handle reading, writing, and querying git objects.
+ * The default filesystem-backed implementation is `PackedObjectStore`.
+ */
+export interface ObjectStore {
+	read(hash: ObjectId): Promise<RawObject>;
+	write(type: ObjectType, content: Uint8Array): Promise<ObjectId>;
+	exists(hash: ObjectId): Promise<boolean>;
+	ingestPack(packData: Uint8Array): Promise<number>;
+	/** Return all object hashes matching a hex prefix (for short hash resolution). */
+	findByPrefix(prefix: string): Promise<ObjectId[]>;
+}
+
 // ── Repository context ──────────────────────────────────────────────
 
 /**
@@ -160,7 +198,9 @@ export interface GitContext {
 	/** Resolves remote URLs to GitContexts on potentially different VFS instances. */
 	resolveRemote?: RemoteResolver;
 	/** Cached object store instance. Lazily created by object-db. */
-	objectStore?: PackedObjectStore;
+	objectStore?: ObjectStore;
+	/** Cached ref store instance. Lazily created by refs. */
+	refStore?: RefStore;
 }
 
 // ── Diff result types ───────────────────────────────────────────────

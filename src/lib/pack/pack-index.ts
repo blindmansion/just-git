@@ -92,15 +92,54 @@ export class PackIndex {
 	allHashes(): ObjectId[] {
 		const result: ObjectId[] = [];
 		for (let i = 0; i < this.count; i++) {
-			let hex = "";
-			const offset = i * 20;
-			for (let j = 0; j < 20; j++) {
-				const b = this.hashes[offset + j] as number;
-				hex += (b >> 4).toString(16) + (b & 0xf).toString(16);
-			}
-			result.push(hex);
+			result.push(this.hashAtSlot(i));
 		}
 		return result;
+	}
+
+	/** Return all hashes matching a hex prefix (4-39 chars). */
+	findByPrefix(prefix: string): ObjectId[] {
+		if (prefix.length < 2) return [];
+		const firstByte = parseInt(prefix.slice(0, 2), 16);
+		const lo = firstByte === 0 ? 0 : this.fanout[firstByte - 1]!;
+		const hi = this.fanout[firstByte]!;
+
+		const prefixBytes = hexToBytes(prefix.padEnd(40, "0"));
+		const prefixLen = prefix.length;
+		const results: ObjectId[] = [];
+
+		for (let i = lo; i < hi; i++) {
+			const offset = i * 20;
+			let match = true;
+			for (let j = 0; j < prefixLen; j++) {
+				const hashNibble =
+					j % 2 === 0
+						? (this.hashes[offset + (j >> 1)]! >> 4) & 0xf
+						: this.hashes[offset + (j >> 1)]! & 0xf;
+				const prefixNibble =
+					j % 2 === 0
+						? (prefixBytes[j >> 1]! >> 4) & 0xf
+						: prefixBytes[j >> 1]! & 0xf;
+				if (hashNibble !== prefixNibble) {
+					match = false;
+					break;
+				}
+			}
+			if (match) {
+				results.push(this.hashAtSlot(i));
+			}
+		}
+		return results;
+	}
+
+	private hashAtSlot(idx: number): ObjectId {
+		let hex = "";
+		const offset = idx * 20;
+		for (let j = 0; j < 20; j++) {
+			const b = this.hashes[offset + j] as number;
+			hex += (b >> 4).toString(16) + (b & 0xf).toString(16);
+		}
+		return hex;
 	}
 
 	private compareAt(idx: number, target: Uint8Array): number {

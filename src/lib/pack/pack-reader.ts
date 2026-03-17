@@ -33,6 +33,10 @@ export class PackReader {
 		return this.index.has(hash);
 	}
 
+	findByPrefix(prefix: string): ObjectId[] {
+		return this.index.findByPrefix(prefix);
+	}
+
 	async readObject(hash: ObjectId): Promise<RawObject | null> {
 		const offset = this.index.lookup(hash);
 		if (offset === null) return null;

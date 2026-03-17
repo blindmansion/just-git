@@ -6,7 +6,7 @@ import { PackReader } from "./pack/pack-reader.ts";
 import { deflate, inflate } from "./pack/zlib.ts";
 import { join } from "./path.ts";
 import { sha1 } from "./sha1.ts";
-import type { ObjectId, ObjectType, RawObject } from "./types.ts";
+import type { ObjectId, ObjectStore, ObjectType, RawObject } from "./types.ts";
 
 // ── Shared helpers ──────────────────────────────────────────────────
 
@@ -63,7 +63,7 @@ function objectPath(gitDir: string, hash: ObjectId): string {
  * retained packfiles from fetch/clone. Reads check loose first,
  * then fall back to pack indices.
  */
-export class PackedObjectStore {
+export class PackedObjectStore implements ObjectStore {
 	private packs: PackReader[] = [];
 	private loadedPackNames = new Set<string>();
 	private discoverPromise: Promise<void> | null = null;
@@ -138,6 +138,35 @@ export class PackedObjectStore {
 		this.loadedPackNames.add(packName);
 		this.packs.push(new PackReader(packData, idxData));
 		return numObjects;
+	}
+
+	async findByPrefix(prefix: string): Promise<ObjectId[]> {
+		if (prefix.length < 4) return [];
+		const fanout = prefix.slice(0, 2);
+		const rest = prefix.slice(2);
+		const dir = join(this.gitDir, "objects", fanout);
+
+		const matches: ObjectId[] = [];
+
+		if (await this.fs.exists(dir)) {
+			const entries = await this.fs.readdir(dir);
+			for (const e of entries) {
+				if (e.startsWith(rest)) {
+					matches.push(`${fanout}${e}`);
+				}
+			}
+		}
+
+		await this.discover();
+		for (const pack of this.packs) {
+			for (const hash of pack.findByPrefix(prefix)) {
+				if (!matches.includes(hash)) {
+					matches.push(hash);
+				}
+			}
+		}
+
+		return matches;
 	}
 
 	/** Scan `.git/objects/pack/` for existing pack/idx pairs. */
