@@ -308,7 +308,7 @@ export async function cleanEmptyDirs(
 		exists(p: string): Promise<boolean>;
 		stat(p: string): Promise<{ isDirectory: boolean }>;
 		readdir(p: string): Promise<string[]>;
-		rm(p: string): Promise<void>;
+		rm(p: string, options?: { recursive?: boolean }): Promise<void>;
 	},
 	dir: string,
 	stopAt: string,
@@ -322,7 +322,7 @@ export async function cleanEmptyDirs(
 	if (!stat.isDirectory) return;
 	const entries = await fs.readdir(dir);
 	if (entries.length === 0) {
-		await fs.rm(dir);
+		await fs.rm(dir, { recursive: true });
 		// Recurse up
 		await cleanEmptyDirs(fs, dirname(dir), stopAt);
 	}
