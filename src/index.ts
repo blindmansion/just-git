@@ -52,6 +52,6 @@ export type {
 	RefUpdateEvent,
 	RemoteResolver,
 } from "./hooks";
-export type { GitContext, ObjectStore } from "./lib/types";
+export type { GitContext, ObjectStore, RefEntry, RefStore } from "./lib/types";
 export type { HttpAuth } from "./lib/transport/transport";
 export { findGitDir } from "./lib/repo";
