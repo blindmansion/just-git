@@ -478,10 +478,10 @@ async function handleContinue(
 		return err("Aborting commit due to empty commit message.\n", 1);
 	}
 
-	// Real git's sequencer runs `git commit -F .git/MERGE_MSG --cleanup=strip`.
-	// When SQUASH_MSG exists (from a prior `git merge --squash`),
-	// prepare_to_commit() prepends it to the message buffer, then
-	// --cleanup=strip removes comment lines (like `# Conflicts:` hints).
+	// Real git's sequencer runs `git commit --no-edit --cleanup=strip`
+	// (without -F). In prepare_to_commit(), both SQUASH_MSG and MERGE_MSG
+	// are read if present — SQUASH_MSG is prepended to the message buffer.
+	// Then --cleanup=strip removes comment lines.
 	const squashMsg = await readStateFile(gitCtx, "SQUASH_MSG");
 	if (squashMsg) {
 		messageText = squashMsg + messageText;

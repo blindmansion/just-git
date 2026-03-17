@@ -316,7 +316,7 @@ export async function saveStash(
 	for (const refName of ["CHERRY_PICK_HEAD", "MERGE_HEAD", "ORIG_HEAD", "REVERT_HEAD"]) {
 		await deleteRef(ctx, refName);
 	}
-	for (const fileName of ["MERGE_MSG", "MERGE_MODE"]) {
+	for (const fileName of ["MERGE_MSG", "MERGE_MODE", "SQUASH_MSG"]) {
 		const p = join(ctx.gitDir, fileName);
 		if (await ctx.fs.exists(p)) {
 			await ctx.fs.rm(p);

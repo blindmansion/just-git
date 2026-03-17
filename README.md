@@ -4,7 +4,7 @@
 [![npm](https://img.shields.io/npm/v/just-git)](https://www.npmjs.com/package/just-git)
 [![bundle size](https://img.shields.io/bundlejs/size/just-git)](https://bundlejs.com/?q=just-git)
 
-Pure TypeScript git implementation. Zero dependencies. 34 commands. Works in Node, Bun, Deno, and the browser. [Tested against real git](TESTING.md) across hundreds of thousands of randomized operations, comparing repository state and command output at every step.
+Pure TypeScript git implementation. Zero dependencies. 34 commands. Works in Node, Bun, Deno, and the browser. [Tested against real git](TESTING.md) across more than a million randomized operations, comparing repository state and command output at every step.
 
 Designed for sandboxed environments where shelling out to real git isn't possible or desirable. Targets faithful reproduction of real git's behavior and output. Built to work with [just-bash](https://github.com/vercel-labs/just-bash), which provides a filesystem interface and shell that just-git registers into as a custom command, but can be used on its own.
 
