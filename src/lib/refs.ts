@@ -163,11 +163,7 @@ export class FileSystemRefStore implements RefStore {
 		}
 	}
 
-	private async walkRefs(
-		dirPath: string,
-		prefix: string,
-		results: RefEntry[],
-	): Promise<void> {
+	private async walkRefs(dirPath: string, prefix: string, results: RefEntry[]): Promise<void> {
 		const entries = await this.fs.readdir(dirPath);
 
 		for (const entry of entries) {

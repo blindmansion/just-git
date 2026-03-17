@@ -8,7 +8,6 @@
 import type { FileSystem } from "../fs.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 import { isAncestor } from "../lib/merge.ts";
-import { readObject } from "../lib/object-db.ts";
 import type { PackInput } from "../lib/pack/packfile.ts";
 import { writePack } from "../lib/pack/packfile.ts";
 import { enumerateObjectsWithContent } from "../lib/transport/object-walk.ts";

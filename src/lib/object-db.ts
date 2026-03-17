@@ -2,7 +2,15 @@ import { envelope, PackedObjectStore } from "./object-store.ts";
 import { parseCommit } from "./objects/commit.ts";
 import { parseTag } from "./objects/tag.ts";
 import { sha1 } from "./sha1.ts";
-import type { Commit, GitContext, ObjectId, ObjectStore, ObjectType, RawObject, Tag } from "./types.ts";
+import type {
+	Commit,
+	GitContext,
+	ObjectId,
+	ObjectStore,
+	ObjectType,
+	RawObject,
+	Tag,
+} from "./types.ts";
 
 // ── Store resolution ────────────────────────────────────────────────
 
@@ -62,10 +70,7 @@ export async function ingestPackData(ctx: GitContext, packData: Uint8Array): Pro
  * Find all object hashes matching a hex prefix.
  * Searches both loose objects and packfiles.
  */
-export async function findObjectsByPrefix(
-	ctx: GitContext,
-	prefix: string,
-): Promise<ObjectId[]> {
+export async function findObjectsByPrefix(ctx: GitContext, prefix: string): Promise<ObjectId[]> {
 	return getStore(ctx).findByPrefix(prefix);
 }
 

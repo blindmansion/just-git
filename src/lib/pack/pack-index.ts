@@ -117,9 +117,7 @@ export class PackIndex {
 						? (this.hashes[offset + (j >> 1)]! >> 4) & 0xf
 						: this.hashes[offset + (j >> 1)]! & 0xf;
 				const prefixNibble =
-					j % 2 === 0
-						? (prefixBytes[j >> 1]! >> 4) & 0xf
-						: prefixBytes[j >> 1]! & 0xf;
+					j % 2 === 0 ? (prefixBytes[j >> 1]! >> 4) & 0xf : prefixBytes[j >> 1]! & 0xf;
 				if (hashNibble !== prefixNibble) {
 					match = false;
 					break;

@@ -86,10 +86,7 @@ export function createGitServer(options: GitServerOptions): GitServer {
 					}
 					const repo = await resolve(repoPath);
 					const body = new Uint8Array(await req.arrayBuffer());
-					const { response: responseBody, refUpdates } = await handleReceivePack(
-						repo,
-						body,
-					);
+					const { response: responseBody, refUpdates } = await handleReceivePack(repo, body);
 
 					if (onPush) {
 						const successfulUpdates = refUpdates.filter((u) => u.ok);

@@ -179,9 +179,7 @@ describe("server roundtrip", () => {
 		});
 
 		// Record the tracking ref before fetch
-		const trackingBefore = await clientFs.readFile(
-			"/local/.git/refs/remotes/origin/main",
-		);
+		const trackingBefore = await clientFs.readFile("/local/.git/refs/remotes/origin/main");
 
 		// Create a new commit on the server
 		await serverBash.writeFile("/repo/server-change.txt", "server side");
@@ -193,9 +191,7 @@ describe("server roundtrip", () => {
 		expect(fetchResult.exitCode).toBe(0);
 
 		// Verify tracking ref was updated
-		const trackingAfter = await clientFs.readFile(
-			"/local/.git/refs/remotes/origin/main",
-		);
+		const trackingAfter = await clientFs.readFile("/local/.git/refs/remotes/origin/main");
 		expect(trackingAfter.trim()).not.toBe(trackingBefore.trim());
 
 		// Verify we can see the new commit in the log

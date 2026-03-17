@@ -13,8 +13,6 @@ import {
 	pktLineText,
 } from "../lib/transport/pkt-line.ts";
 
-const encoder = new TextEncoder();
-
 const SIDEBAND_MAX_PAYLOAD = 65519 - 5; // pkt-line max (65520) minus 4-byte header minus 1-byte band
 
 // ── Ref advertisement ───────────────────────────────────────────────
@@ -107,7 +105,10 @@ export function parseUploadPackRequest(body: Uint8Array): UploadPackRequest {
 				const spaceIdx = rest.indexOf(" ");
 				if (spaceIdx !== -1) {
 					wants.push(rest.slice(0, spaceIdx));
-					capabilities = rest.slice(spaceIdx + 1).split(" ").filter(Boolean);
+					capabilities = rest
+						.slice(spaceIdx + 1)
+						.split(" ")
+						.filter(Boolean);
 				} else {
 					wants.push(rest);
 				}
@@ -131,10 +132,7 @@ export function parseUploadPackRequest(body: Uint8Array): UploadPackRequest {
  * Sends NAK followed by pack data. When sideband is enabled,
  * pack data is wrapped in band-1 sideband pkt-lines.
  */
-export function buildUploadPackResponse(
-	packData: Uint8Array,
-	useSideband: boolean,
-): Uint8Array {
+export function buildUploadPackResponse(packData: Uint8Array, useSideband: boolean): Uint8Array {
 	const parts: Uint8Array[] = [];
 
 	// NAK line (always present for stateless HTTP)
