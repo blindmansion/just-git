@@ -255,6 +255,117 @@ describe("git checkout", () => {
 		});
 	});
 
+	describe("checkout --detach", () => {
+		test("detaches HEAD at a branch tip", async () => {
+			const bash = createTestBash({
+				files: EMPTY_REPO,
+				env: TEST_ENV,
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "first"');
+			await bash.exec("git branch feature");
+
+			const result = await bash.exec("git checkout --detach main");
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("HEAD is now at");
+
+			const head = await readFile(bash.fs, "/repo/.git/HEAD");
+			expect(head?.trim()).toMatch(/^[a-f0-9]{40}$/);
+		});
+
+		test("detaches at current HEAD when no target given", async () => {
+			const bash = createTestBash({
+				files: EMPTY_REPO,
+				env: TEST_ENV,
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "first"');
+
+			const headBefore = await bash.exec("git rev-parse HEAD");
+			const result = await bash.exec("git checkout --detach");
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("HEAD is now at");
+
+			const head = await readFile(bash.fs, "/repo/.git/HEAD");
+			expect(head?.trim()).toBe(headBefore.stdout.trim());
+		});
+
+		test("-d short alias works", async () => {
+			const bash = createTestBash({
+				files: EMPTY_REPO,
+				env: TEST_ENV,
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "first"');
+			await bash.exec("git branch feature");
+
+			const result = await bash.exec("git checkout -d feature");
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("HEAD is now at");
+
+			const head = await readFile(bash.fs, "/repo/.git/HEAD");
+			expect(head?.trim()).toMatch(/^[a-f0-9]{40}$/);
+		});
+
+		test("incompatible with -b", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "first"', "git checkout --detach -b foo"],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			expect(results[3].exitCode).toBe(128);
+			expect(results[3].stderr).toContain("'--detach' cannot be used with '-b/-B/--orphan'");
+		});
+
+		test("incompatible with --orphan", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "first"', "git checkout --detach --orphan bar"],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			expect(results[3].exitCode).toBe(128);
+			expect(results[3].stderr).toContain("'--detach' cannot be used with '-b/-B/--orphan'");
+		});
+
+		test("incompatible with -- paths", async () => {
+			const bash = createTestBash({
+				files: BASIC_REPO,
+				env: TEST_ENV,
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "first"');
+
+			const result = await bash.exec("git checkout --detach -- README.md");
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain(
+				"git checkout: --detach does not take a path argument 'README.md'",
+			);
+		});
+
+		test("updates worktree when detaching at a different commit", async () => {
+			const bash = createTestBash({
+				files: BASIC_REPO,
+				env: TEST_ENV,
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			const first = await bash.exec("git rev-parse HEAD");
+
+			await bash.exec('echo "changed" > /repo/README.md');
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "update"');
+
+			const result = await bash.exec(`git checkout --detach ${first.stdout.trim()}`);
+			expect(result.exitCode).toBe(0);
+
+			const readme = await readFile(bash.fs, "/repo/README.md");
+			expect(readme).toBe("# My Project");
+		});
+	});
+
 	describe("conflict detection", () => {
 		test("aborts when local changes would be overwritten", async () => {
 			const bash = createTestBash({

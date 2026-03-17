@@ -36,6 +36,7 @@ export function registerCheckoutCommand(parent: Command, ext?: GitExtensions) {
 		options: {
 			branch: f().alias("b").describe("Create and switch to a new branch"),
 			forceBranch: f().alias("B").describe("Create/reset and switch to a new branch"),
+			detach: f().alias("d").describe("Detach HEAD at named commit"),
 			orphan: f().describe("Create a new orphan branch"),
 			ours: f().describe("Checkout our version for unmerged files"),
 			theirs: f().describe("Checkout their version for unmerged files"),
@@ -51,8 +52,17 @@ export function registerCheckoutCommand(parent: Command, ext?: GitExtensions) {
 				return fatal("--ours and --theirs are incompatible");
 			}
 
+			if (args.detach && (args.branch || args.forceBranch || args.orphan)) {
+				return fatal("'--detach' cannot be used with '-b/-B/--orphan'");
+			}
+
 			// ── Explicit `--` separator: everything after is paths ──────
 			if (meta.passthrough.length > 0) {
+				if (args.detach) {
+					return fatal(
+						`git checkout: --detach does not take a path argument '${meta.passthrough[0]}'`,
+					);
+				}
 				const cwdPrefix = getCwdPrefix(gitCtx, ctx.cwd);
 
 				const passthroughPaths = meta.passthrough;
@@ -86,6 +96,14 @@ export function registerCheckoutCommand(parent: Command, ext?: GitExtensions) {
 					return fatal("you must specify a branch to checkout");
 				}
 				return createOrphanBranch(gitCtx, target, ctx.env, ext);
+			}
+
+			// ── Detach HEAD (--detach) ─────────────────────────────────
+			if (args.detach) {
+				const rev = target ?? "HEAD";
+				const result = await requireCommit(gitCtx, rev, `invalid reference: ${rev}`);
+				if (isCommandError(result)) return result;
+				return detachHead(gitCtx, rev, result.hash, ctx.env, ext);
 			}
 
 			if (!target) {

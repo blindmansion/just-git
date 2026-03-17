@@ -306,6 +306,7 @@ Arguments:
 Options:
   -b, --branch        Create and switch to a new branch
   -B, --force-branch  Create/reset and switch to a new branch
+  -d, --detach        Detach HEAD at named commit
   --orphan            Create a new orphan branch
   --ours              Checkout our version for unmerged files
   --theirs            Checkout their version for unmerged files
