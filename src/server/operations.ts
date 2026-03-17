@@ -8,6 +8,7 @@
 import type { FileSystem } from "../fs.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 import { isAncestor } from "../lib/merge.ts";
+import { parseTag } from "../lib/objects/tag.ts";
 import type { PackInput } from "../lib/pack/packfile.ts";
 import { writePack } from "../lib/pack/packfile.ts";
 import { enumerateObjectsWithContent } from "../lib/transport/object-walk.ts";
@@ -71,6 +72,18 @@ export async function advertiseRefs(
 
 	for (const entry of refEntries) {
 		refs.push({ name: entry.name, hash: entry.hash });
+
+		if (entry.name.startsWith("refs/tags/")) {
+			try {
+				const obj = await repo.objects.read(entry.hash);
+				if (obj.type === "tag") {
+					const tag = parseTag(obj.content);
+					refs.push({ name: `${entry.name}^{}`, hash: tag.object });
+				}
+			} catch {
+				// Object unreadable; skip peeling
+			}
+		}
 	}
 
 	const caps = service === "git-upload-pack" ? UPLOAD_PACK_CAPS : RECEIVE_PACK_CAPS;
@@ -94,11 +107,25 @@ export async function handleUploadPack(
 		return buildUploadPackResponse(new Uint8Array(0), false);
 	}
 
+	const useMultiAck = capabilities.includes("multi_ack_detailed");
+	const useSideband = capabilities.includes("side-band-64k");
+
+	let commonHashes: string[] | undefined;
+	if (useMultiAck && haves.length > 0) {
+		commonHashes = [];
+		for (const hash of haves) {
+			if (await repo.objects.exists(hash)) {
+				commonHashes.push(hash);
+			}
+		}
+		if (commonHashes.length === 0) commonHashes = undefined;
+	}
+
 	const ctx = toGitContext(repo);
 	const objects = await enumerateObjectsWithContent(ctx, wants, haves);
 
 	if (objects.length === 0) {
-		return buildUploadPackResponse(new Uint8Array(0), capabilities.includes("side-band-64k"));
+		return buildUploadPackResponse(new Uint8Array(0), useSideband, commonHashes);
 	}
 
 	const packInputs: PackInput[] = objects.map((obj) => ({
@@ -106,10 +133,29 @@ export async function handleUploadPack(
 		content: obj.content,
 	}));
 
-	const packData = await writePack(packInputs);
-	const useSideband = capabilities.includes("side-band-64k");
+	if (capabilities.includes("include-tag")) {
+		const sentHashes = new Set(objects.map((obj) => obj.hash));
+		const tagRefs = await repo.refs.listRefs("refs/tags");
+		for (const tagRef of tagRefs) {
+			if (sentHashes.has(tagRef.hash)) continue;
+			try {
+				const obj = await repo.objects.read(tagRef.hash);
+				if (obj.type === "tag") {
+					const tag = parseTag(obj.content);
+					if (sentHashes.has(tag.object)) {
+						packInputs.push({ type: "tag", content: obj.content });
+						sentHashes.add(tagRef.hash);
+					}
+				}
+			} catch {
+				// Tag object missing or unreadable; skip
+			}
+		}
+	}
 
-	return buildUploadPackResponse(packData, useSideband);
+	const packData = await writePack(packInputs);
+
+	return buildUploadPackResponse(packData, useSideband, commonHashes);
 }
 
 // ── Receive-pack (push handling) ────────────────────────────────────
@@ -121,6 +167,7 @@ export async function handleUploadPack(
 export async function handleReceivePack(
 	repo: ServerRepoContext,
 	requestBody: Uint8Array,
+	options?: { denyNonFastForwards?: boolean },
 ): Promise<{ response: Uint8Array; refUpdates: RefUpdate[] }> {
 	const { commands, packData, capabilities } = parseReceivePackRequest(requestBody);
 
@@ -154,7 +201,6 @@ export async function handleReceivePack(
 		}
 	}
 
-	const ctx = toGitContext(repo);
 	const refUpdates: RefUpdate[] = [];
 
 	for (const cmd of commands) {
@@ -171,9 +217,8 @@ export async function handleReceivePack(
 				continue;
 			}
 
-			// Non-delete: validate fast-forward if old hash is non-zero
-			if (cmd.oldHash !== ZERO_HASH) {
-				const ff = await isAncestor(ctx, cmd.oldHash, cmd.newHash);
+			if (options?.denyNonFastForwards && cmd.oldHash !== ZERO_HASH) {
+				const ff = await isAncestor(toGitContext(repo), cmd.oldHash, cmd.newHash);
 				if (!ff) {
 					refUpdates.push({
 						name: cmd.refName,

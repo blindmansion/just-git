@@ -129,14 +129,29 @@ export function parseUploadPackRequest(body: Uint8Array): UploadPackRequest {
 /**
  * Build the response body for `POST /git-upload-pack`.
  *
- * Sends NAK followed by pack data. When sideband is enabled,
- * pack data is wrapped in band-1 sideband pkt-lines.
+ * With multi_ack_detailed, emits `ACK <hash> common` for each
+ * recognized have, `ACK <last> ready`, then a final plain
+ * `ACK <last>` to terminate negotiation before pack data.
+ * When no common objects exist, sends `NAK` before the pack.
+ * Sideband-64k wraps pack data in band-1 pkt-lines.
  */
-export function buildUploadPackResponse(packData: Uint8Array, useSideband: boolean): Uint8Array {
+export function buildUploadPackResponse(
+	packData: Uint8Array,
+	useSideband: boolean,
+	commonHashes?: string[],
+): Uint8Array {
 	const parts: Uint8Array[] = [];
 
-	// NAK line (always present for stateless HTTP)
-	parts.push(encodePktLine("NAK\n"));
+	if (commonHashes && commonHashes.length > 0) {
+		for (const hash of commonHashes) {
+			parts.push(encodePktLine(`ACK ${hash} common\n`));
+		}
+		const lastCommon = commonHashes[commonHashes.length - 1];
+		parts.push(encodePktLine(`ACK ${lastCommon} ready\n`));
+		parts.push(encodePktLine(`ACK ${lastCommon}\n`));
+	} else {
+		parts.push(encodePktLine("NAK\n"));
+	}
 
 	if (useSideband) {
 		// Chunk pack data into sideband band-1 packets

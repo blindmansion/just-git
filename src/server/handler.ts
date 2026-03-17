@@ -27,7 +27,7 @@ export interface GitServer {
  * ```
  */
 export function createGitServer(options: GitServerOptions): GitServer {
-	const { resolve, authorize, onPush, basePath } = options;
+	const { resolve, authorize, onPush, basePath, denyNonFastForwards } = options;
 
 	return {
 		async handle(req: Request): Promise<Response> {
@@ -86,7 +86,9 @@ export function createGitServer(options: GitServerOptions): GitServer {
 					}
 					const repo = await resolve(repoPath);
 					const body = new Uint8Array(await req.arrayBuffer());
-					const { response: responseBody, refUpdates } = await handleReceivePack(repo, body);
+					const { response: responseBody, refUpdates } = await handleReceivePack(repo, body, {
+						denyNonFastForwards,
+					});
 
 					if (onPush) {
 						const successfulUpdates = refUpdates.filter((u) => u.ok);

@@ -25,6 +25,8 @@ export interface GitServerOptions {
 	onPush?: (repoPath: string, refUpdates: RefUpdate[]) => void | Promise<void>;
 	/** Base path prefix to strip from URLs (e.g. "/git"). */
 	basePath?: string;
+	/** Reject non-fast-forward ref updates (like `receive.denyNonFastForwards`). Defaults to false. */
+	denyNonFastForwards?: boolean;
 }
 
 export interface AuthResult {
