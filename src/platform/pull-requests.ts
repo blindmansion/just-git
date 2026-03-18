@@ -10,7 +10,8 @@ export class MergeError extends Error {
 			| "head_mismatch"
 			| "ref_missing"
 			| "conflicts"
-			| "not_fast_forward",
+			| "not_fast_forward"
+			| "rejected",
 	) {
 		super(message);
 		this.name = "MergeError";

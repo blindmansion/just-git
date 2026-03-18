@@ -7,12 +7,15 @@ import type { GitServer, GitServerConfig, ServerHooks } from "../server/types.ts
 import { executeMerge, MergeError } from "./pull-requests.ts";
 import { PlatformDb } from "./storage.ts";
 import type {
+	Authorize,
 	CreatePullRequestOptions,
 	ListPullRequestsFilter,
 	MergePullRequestOptions,
 	MergeResult,
 	PlatformCallbacks,
 	PlatformConfig,
+	PlatformServerOptions,
+	PRState,
 	PullRequest,
 	Repo,
 	UpdatePullRequestOptions,
@@ -150,6 +153,18 @@ export class Platform {
 
 		const gitRepo = this.storage.repo(repoId);
 
+		if (this.callbacks.beforeMerge) {
+			const rejection = await this.callbacks.beforeMerge({
+				repo: gitRepo,
+				repoId,
+				pr,
+				strategy: opts.strategy,
+			});
+			if (rejection && "reject" in rejection && rejection.reject) {
+				throw new MergeError(rejection.message ?? `merge rejected for PR #${number}`, "rejected");
+			}
+		}
+
 		const result = await executeMerge({
 			repo: gitRepo,
 			strategy: opts.strategy,
@@ -187,14 +202,23 @@ export class Platform {
 
 	// ── Git server integration ──────────────────────────────────────
 
-	gitServer(options?: { hooks?: ServerHooks; basePath?: string }): GitServer {
+	gitServer(options?: {
+		hooks?: ServerHooks;
+		basePath?: string;
+		authorize?: Authorize;
+	}): GitServer {
 		const platform = this;
+		const authorize = options?.authorize;
 		const repoIdByStore = new WeakMap<ObjectStore, string>();
 
 		const config: GitServerConfig = {
-			resolveRepo: (repoPath: string) => {
+			resolveRepo: async (repoPath: string, request: Request) => {
 				const repoRecord = platform.platformDb.getRepo(repoPath);
 				if (!repoRecord) return null;
+				if (authorize) {
+					const denied = await authorize(request, repoPath);
+					if (denied) return denied;
+				}
 				const repo = platform.storage.repo(repoPath);
 				repoIdByStore.set(repo.objectStore, repoPath);
 				return repo;
@@ -227,11 +251,26 @@ export class Platform {
 
 						const openPRs = platform.platformDb.findOpenPRsByHeadRef(repoId, branch);
 						for (const pr of openPRs) {
+							const previousHeadSha = pr.headSha;
 							platform.platformDb.updateHeadSha(repoId, pr.number, update.newHash);
 							await event.repo.refStore.writeRef(`refs/pull/${pr.number}/head`, {
 								type: "direct",
 								hash: update.newHash,
 							});
+
+							if (platform.callbacks.onPullRequestUpdated) {
+								const updated = platform.platformDb.getPullRequest(repoId, pr.number)!;
+								try {
+									await platform.callbacks.onPullRequestUpdated({
+										repo: event.repo,
+										repoId,
+										pr: updated,
+										previousHeadSha,
+									});
+								} catch {
+									// fire-and-forget
+								}
+							}
 						}
 					}
 
@@ -246,6 +285,126 @@ export class Platform {
 
 		return createGitServer(config);
 	}
+
+	// ── Combined server (git protocol + REST API) ────────────────────
+
+	/**
+	 * Returns a combined server handling both git Smart HTTP protocol
+	 * and REST API routes for pull requests.
+	 *
+	 * API routes (under `apiBasePath`, default "/api"):
+	 *   GET    /:repo/pulls            — list PRs (?state=open|closed|merged)
+	 *   POST   /:repo/pulls            — create PR
+	 *   GET    /:repo/pulls/:number    — get PR
+	 *   PATCH  /:repo/pulls/:number    — update PR title/body
+	 *   POST   /:repo/pulls/:number/merge — merge PR
+	 *   POST   /:repo/pulls/:number/close — close PR
+	 *
+	 * All other routes are handled by the git protocol server.
+	 */
+	server(options?: PlatformServerOptions): GitServer {
+		const apiBase = options?.apiBasePath ?? "/api";
+		const authorize = options?.authorize;
+		const git = this.gitServer({ hooks: options?.hooks, authorize });
+
+		return {
+			fetch: async (req: Request): Promise<Response> => {
+				const { pathname } = new URL(req.url);
+				if (pathname.startsWith(apiBase + "/")) {
+					const apiPath = pathname.slice(apiBase.length);
+					if (authorize) {
+						const repoId = apiPath.split("/")[1];
+						if (repoId) {
+							const denied = await authorize(req, repoId);
+							if (denied) return denied;
+						}
+					}
+					const apiResponse = await this.handleApiRoute(req, apiPath);
+					if (apiResponse) return apiResponse;
+					return jsonResponse({ error: "not found" }, 404);
+				}
+				return git.fetch(req);
+			},
+		};
+	}
+
+	private async handleApiRoute(req: Request, path: string): Promise<Response | null> {
+		const { method } = req;
+
+		// /:repo/pulls
+		const pullsMatch = path.match(/^\/([^/]+)\/pulls$/);
+		if (pullsMatch) {
+			const repoId = pullsMatch[1]!;
+			if (method === "GET") {
+				const state = new URL(req.url).searchParams.get("state") as PRState | null;
+				return jsonResponse(this.listPullRequests(repoId, state ? { state } : undefined));
+			}
+			if (method === "POST") {
+				try {
+					const body = (await req.json()) as CreatePullRequestOptions;
+					const pr = await this.createPullRequest(repoId, body);
+					return jsonResponse(pr, 201);
+				} catch (e: any) {
+					return jsonResponse({ error: e.message }, 400);
+				}
+			}
+			return null;
+		}
+
+		// /:repo/pulls/:number/merge
+		const mergeMatch = path.match(/^\/([^/]+)\/pulls\/(\d+)\/merge$/);
+		if (mergeMatch && method === "POST") {
+			try {
+				const body = (await req.json()) as MergePullRequestOptions;
+				const result = await this.mergePullRequest(mergeMatch[1]!, Number(mergeMatch[2]!), body);
+				return jsonResponse(result);
+			} catch (e: any) {
+				const status = e instanceof MergeError ? 409 : 400;
+				return jsonResponse({ error: e.message }, status);
+			}
+		}
+
+		// /:repo/pulls/:number/close
+		const closeMatch = path.match(/^\/([^/]+)\/pulls\/(\d+)\/close$/);
+		if (closeMatch && method === "POST") {
+			try {
+				await this.closePullRequest(closeMatch[1]!, Number(closeMatch[2]!));
+				return jsonResponse({ ok: true });
+			} catch (e: any) {
+				return jsonResponse({ error: e.message }, 400);
+			}
+		}
+
+		// /:repo/pulls/:number (must come after /merge and /close)
+		const prMatch = path.match(/^\/([^/]+)\/pulls\/(\d+)$/);
+		if (prMatch) {
+			const repoId = prMatch[1]!;
+			const num = Number(prMatch[2]!);
+			if (method === "GET") {
+				const pr = this.getPullRequest(repoId, num);
+				return pr ? jsonResponse(pr) : jsonResponse({ error: "not found" }, 404);
+			}
+			if (method === "PATCH") {
+				try {
+					const body = (await req.json()) as UpdatePullRequestOptions;
+					this.updatePullRequest(repoId, num, body);
+					return jsonResponse(this.getPullRequest(repoId, num));
+				} catch (e: any) {
+					return jsonResponse({ error: e.message }, 400);
+				}
+			}
+			return null;
+		}
+
+		return null;
+	}
+}
+
+function jsonResponse(data: unknown, status = 200): Response {
+	return new Response(JSON.stringify(data, null, 2), {
+		status,
+		headers: { "content-type": "application/json" },
+	});
 }
 
 export function createPlatform(config: PlatformConfig): Platform {

@@ -6,8 +6,10 @@ import type { Identity } from "../../src/lib/types.ts";
 import {
 	createPlatform,
 	MergeError,
+	type BeforeMergeEvent,
 	type Platform,
 	type PRMergedEvent,
+	type PRUpdatedEvent,
 } from "../../src/platform/index.ts";
 import {
 	createCommit,
@@ -594,6 +596,258 @@ describe("callbacks", () => {
 		expect(mergedEvent!.strategy).toBe("merge");
 		expect(mergedEvent!.pr.state).toBe("merged");
 	});
+
+	test("beforeMerge can reject a merge", async () => {
+		const platform = freshPlatform({
+			beforeMerge: (event) => {
+				if (event.strategy === "fast-forward") {
+					return { reject: true, message: "fast-forward not allowed" };
+				}
+			},
+		});
+
+		await seedRepo(platform, "repo");
+		await createBranchFromMain(platform, "repo", "feature");
+		await addCommitOnBranch(platform, "repo", "feature", "f.txt", "f\n", 1000000100);
+
+		const pr = await platform.createPullRequest("repo", {
+			head: "feature",
+			base: "main",
+			title: "PR",
+			author: { name: "Test", email: "test@test.com" },
+		});
+
+		try {
+			await platform.mergePullRequest("repo", pr.number, {
+				strategy: "fast-forward",
+				committer: identityAt(1000000200),
+			});
+			expect(true).toBe(false);
+		} catch (e) {
+			expect(e).toBeInstanceOf(MergeError);
+			expect((e as MergeError).code).toBe("rejected");
+			expect((e as MergeError).message).toBe("fast-forward not allowed");
+		}
+
+		const stillOpen = platform.getPullRequest("repo", pr.number);
+		expect(stillOpen!.state).toBe("open");
+	});
+
+	test("beforeMerge allows merge when it returns void", async () => {
+		let beforeMergeEvent: BeforeMergeEvent | null = null;
+
+		const platform = freshPlatform({
+			beforeMerge: (event) => {
+				beforeMergeEvent = event;
+			},
+		});
+
+		await seedRepo(platform, "repo");
+		await createBranchFromMain(platform, "repo", "feature");
+		await addCommitOnBranch(platform, "repo", "feature", "f.txt", "f\n", 1000000100);
+
+		const pr = await platform.createPullRequest("repo", {
+			head: "feature",
+			base: "main",
+			title: "PR",
+			author: { name: "Test", email: "test@test.com" },
+		});
+
+		const result = await platform.mergePullRequest("repo", pr.number, {
+			strategy: "merge",
+			committer: identityAt(1000000200),
+		});
+
+		expect(result.sha).toHaveLength(40);
+		expect(beforeMergeEvent).not.toBeNull();
+		expect(beforeMergeEvent!.repoId).toBe("repo");
+		expect(beforeMergeEvent!.pr.number).toBe(pr.number);
+		expect(beforeMergeEvent!.strategy).toBe("merge");
+	});
+
+	test("beforeMerge rejection uses default message when none provided", async () => {
+		const platform = freshPlatform({
+			beforeMerge: () => ({ reject: true }),
+		});
+
+		await seedRepo(platform, "repo");
+		await createBranchFromMain(platform, "repo", "feature");
+		await addCommitOnBranch(platform, "repo", "feature", "f.txt", "f\n", 1000000100);
+
+		const pr = await platform.createPullRequest("repo", {
+			head: "feature",
+			base: "main",
+			title: "PR",
+			author: { name: "Test", email: "test@test.com" },
+		});
+
+		try {
+			await platform.mergePullRequest("repo", pr.number, {
+				strategy: "merge",
+				committer: identityAt(1000000200),
+			});
+			expect(true).toBe(false);
+		} catch (e) {
+			expect(e).toBeInstanceOf(MergeError);
+			expect((e as MergeError).code).toBe("rejected");
+			expect((e as MergeError).message).toContain("PR #1");
+		}
+	});
+
+	test("beforeMerge rejection returns 409 via REST", async () => {
+		const platform = freshPlatform({
+			beforeMerge: () => ({ reject: true, message: "checks pending" }),
+		});
+		await seedRepo(platform, "repo");
+		await createBranchFromMain(platform, "repo", "feature");
+		await addCommitOnBranch(platform, "repo", "feature", "feat.txt", "feat\n", 1000000100);
+
+		await platform.createPullRequest("repo", {
+			head: "feature",
+			base: "main",
+			title: "PR",
+			author: { name: "T", email: "t@t.com" },
+		});
+
+		const srv = platform.server();
+		const port = 49152 + Math.floor(Math.random() * 16000);
+		const bunServer = Bun.serve({ port, fetch: srv.fetch });
+		try {
+			const res = await fetch(`http://localhost:${port}/api/repo/pulls/1/merge`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					strategy: "merge",
+					committer: TEST_IDENTITY,
+				}),
+			});
+			expect(res.status).toBe(409);
+			const body = (await res.json()) as any;
+			expect(body.error).toBe("checks pending");
+		} finally {
+			bunServer.stop(true);
+		}
+	});
+});
+
+// ── onPullRequestUpdated ────────────────────────────────────────────
+
+describe("onPullRequestUpdated", () => {
+	test("fires when push updates an open PR's head", async () => {
+		let updatedEvent: PRUpdatedEvent | null = null;
+
+		const platform = freshPlatform({
+			onPullRequestUpdated: (event) => {
+				updatedEvent = event;
+			},
+		});
+
+		await seedRepo(platform, "repo");
+		await createBranchFromMain(platform, "repo", "feature");
+		const initialFeatureHash = await addCommitOnBranch(
+			platform,
+			"repo",
+			"feature",
+			"f.txt",
+			"feature\n",
+			1000000100,
+		);
+
+		await platform.createPullRequest("repo", {
+			head: "feature",
+			base: "main",
+			title: "PR",
+			author: { name: "Test", email: "test@test.com" },
+		});
+
+		const server = platform.gitServer();
+
+		const fs = new InMemoryFs();
+		const git = createGit();
+		const bash = new Bash({ fs, cwd: "/local", customCommands: [git] });
+
+		const env = {
+			GIT_AUTHOR_NAME: "Test",
+			GIT_AUTHOR_EMAIL: "test@test.com",
+			GIT_COMMITTER_NAME: "Test",
+			GIT_COMMITTER_EMAIL: "test@test.com",
+			GIT_AUTHOR_DATE: "1000000200",
+			GIT_COMMITTER_DATE: "1000000200",
+		};
+
+		const port = 49152 + Math.floor(Math.random() * 16000);
+		const bunServer = Bun.serve({ port, fetch: server.fetch });
+
+		try {
+			await bash.exec(`git clone http://localhost:${port}/repo /local`, { env });
+			await bash.exec("git switch feature", { env });
+
+			await bash.writeFile("/local/update.txt", "updated\n");
+			await bash.exec("git add .", { env });
+			await bash.exec('git commit -m "push update"', {
+				env: { ...env, GIT_AUTHOR_DATE: "1000000300", GIT_COMMITTER_DATE: "1000000300" },
+			});
+
+			const pushResult = await bash.exec("git push origin feature", { env });
+			expect(pushResult.exitCode).toBe(0);
+
+			expect(updatedEvent).not.toBeNull();
+			expect(updatedEvent!.repoId).toBe("repo");
+			expect(updatedEvent!.pr.number).toBe(1);
+			expect(updatedEvent!.previousHeadSha).toBe(initialFeatureHash);
+			expect(updatedEvent!.pr.headSha).not.toBe(initialFeatureHash);
+		} finally {
+			bunServer.stop(true);
+		}
+	});
+
+	test("does not fire for pushes to branches without open PRs", async () => {
+		let updated = false;
+
+		const platform = freshPlatform({
+			onPullRequestUpdated: () => {
+				updated = true;
+			},
+		});
+
+		await seedRepo(platform, "repo");
+		await createBranchFromMain(platform, "repo", "feature");
+		await addCommitOnBranch(platform, "repo", "feature", "f.txt", "feature\n", 1000000100);
+
+		const server = platform.gitServer();
+
+		const fs = new InMemoryFs();
+		const git = createGit();
+		const bash = new Bash({ fs, cwd: "/local", customCommands: [git] });
+
+		const env = {
+			GIT_AUTHOR_NAME: "Test",
+			GIT_AUTHOR_EMAIL: "test@test.com",
+			GIT_COMMITTER_NAME: "Test",
+			GIT_COMMITTER_EMAIL: "test@test.com",
+			GIT_AUTHOR_DATE: "1000000200",
+			GIT_COMMITTER_DATE: "1000000200",
+		};
+
+		const port = 49152 + Math.floor(Math.random() * 16000);
+		const bunServer = Bun.serve({ port, fetch: server.fetch });
+
+		try {
+			await bash.exec(`git clone http://localhost:${port}/repo /local`, { env });
+			await bash.exec("git switch feature", { env });
+
+			await bash.writeFile("/local/update.txt", "updated\n");
+			await bash.exec("git add .", { env });
+			await bash.exec('git commit -m "push update"', {
+				env: { ...env, GIT_AUTHOR_DATE: "1000000300", GIT_COMMITTER_DATE: "1000000300" },
+			});
+			await bash.exec("git push origin feature", { env });
+
+			expect(updated).toBe(false);
+		} finally {
+			bunServer.stop(true);
+		}
+	});
 });
 
 // ── Git server integration ──────────────────────────────────────────
@@ -660,6 +914,357 @@ describe("git server integration", () => {
 
 			const pullRef = await resolveRef(repo, "refs/pull/1/head");
 			expect(pullRef).toBe(featureHash);
+		} finally {
+			bunServer.stop(true);
+		}
+	});
+});
+
+// ── REST API via platform.server() ──────────────────────────────────
+
+describe("REST API via server()", () => {
+	async function apiSetup() {
+		const platform = freshPlatform();
+		await seedRepo(platform, "repo");
+		await createBranchFromMain(platform, "repo", "feature");
+		await addCommitOnBranch(platform, "repo", "feature", "feat.txt", "feat\n", 1000000100);
+
+		const srv = platform.server();
+		const port = 49152 + Math.floor(Math.random() * 16000);
+		const bunServer = Bun.serve({ port, fetch: srv.fetch });
+
+		const api = (path: string, init?: RequestInit) =>
+			fetch(`http://localhost:${port}/api${path}`, {
+				headers: { "content-type": "application/json" },
+				...init,
+			});
+
+		return { platform, port, bunServer, api };
+	}
+
+	test("create and get a PR via REST", async () => {
+		const { bunServer, api } = await apiSetup();
+		try {
+			const createRes = await api("/repo/pulls", {
+				method: "POST",
+				body: JSON.stringify({
+					head: "feature",
+					base: "main",
+					title: "My PR",
+					body: "description",
+					author: { name: "Test", email: "test@test.com" },
+				}),
+			});
+			expect(createRes.status).toBe(201);
+			const pr = (await createRes.json()) as any;
+			expect(pr.number).toBe(1);
+			expect(pr.title).toBe("My PR");
+			expect(pr.state).toBe("open");
+
+			const getRes = await api("/repo/pulls/1");
+			expect(getRes.status).toBe(200);
+			const fetched = (await getRes.json()) as any;
+			expect(fetched.number).toBe(1);
+			expect(fetched.title).toBe("My PR");
+		} finally {
+			bunServer.stop(true);
+		}
+	});
+
+	test("list PRs with state filter", async () => {
+		const { platform, bunServer, api } = await apiSetup();
+		try {
+			await platform.createPullRequest("repo", {
+				head: "feature",
+				base: "main",
+				title: "Open PR",
+				author: { name: "T", email: "t@t.com" },
+			});
+
+			const allRes = await api("/repo/pulls");
+			expect(allRes.status).toBe(200);
+			const all = (await allRes.json()) as any[];
+			expect(all.length).toBe(1);
+
+			const openRes = await api("/repo/pulls?state=open");
+			const open = (await openRes.json()) as any[];
+			expect(open.length).toBe(1);
+
+			const mergedRes = await api("/repo/pulls?state=merged");
+			const merged = (await mergedRes.json()) as any[];
+			expect(merged.length).toBe(0);
+		} finally {
+			bunServer.stop(true);
+		}
+	});
+
+	test("update PR title and body", async () => {
+		const { platform, bunServer, api } = await apiSetup();
+		try {
+			await platform.createPullRequest("repo", {
+				head: "feature",
+				base: "main",
+				title: "Original",
+				author: { name: "T", email: "t@t.com" },
+			});
+
+			const res = await api("/repo/pulls/1", {
+				method: "PATCH",
+				body: JSON.stringify({ title: "Updated", body: "new body" }),
+			});
+			expect(res.status).toBe(200);
+			const updated = (await res.json()) as any;
+			expect(updated.title).toBe("Updated");
+			expect(updated.body).toBe("new body");
+		} finally {
+			bunServer.stop(true);
+		}
+	});
+
+	test("merge PR via REST", async () => {
+		const { platform, bunServer, api } = await apiSetup();
+		try {
+			await platform.createPullRequest("repo", {
+				head: "feature",
+				base: "main",
+				title: "To merge",
+				author: { name: "T", email: "t@t.com" },
+			});
+
+			const res = await api("/repo/pulls/1/merge", {
+				method: "POST",
+				body: JSON.stringify({
+					strategy: "merge",
+					committer: TEST_IDENTITY,
+				}),
+			});
+			expect(res.status).toBe(200);
+			const result = (await res.json()) as any;
+			expect(result.strategy).toBe("merge");
+			expect(result.sha).toBeTruthy();
+
+			const pr = platform.getPullRequest("repo", 1);
+			expect(pr!.state).toBe("merged");
+		} finally {
+			bunServer.stop(true);
+		}
+	});
+
+	test("merge conflict returns 409", async () => {
+		const { platform, bunServer, api } = await apiSetup();
+		try {
+			await addCommitOnBranch(platform, "repo", "main", "feat.txt", "conflict\n", 1000000200);
+
+			await platform.createPullRequest("repo", {
+				head: "feature",
+				base: "main",
+				title: "Conflicting",
+				author: { name: "T", email: "t@t.com" },
+			});
+
+			const res = await api("/repo/pulls/1/merge", {
+				method: "POST",
+				body: JSON.stringify({
+					strategy: "merge",
+					committer: TEST_IDENTITY,
+				}),
+			});
+			expect(res.status).toBe(409);
+			const body = (await res.json()) as any;
+			expect(body.error).toBeDefined();
+		} finally {
+			bunServer.stop(true);
+		}
+	});
+
+	test("close PR via REST", async () => {
+		const { platform, bunServer, api } = await apiSetup();
+		try {
+			await platform.createPullRequest("repo", {
+				head: "feature",
+				base: "main",
+				title: "To close",
+				author: { name: "T", email: "t@t.com" },
+			});
+
+			const res = await api("/repo/pulls/1/close", { method: "POST" });
+			expect(res.status).toBe(200);
+
+			const pr = platform.getPullRequest("repo", 1);
+			expect(pr!.state).toBe("closed");
+		} finally {
+			bunServer.stop(true);
+		}
+	});
+
+	test("get nonexistent PR returns 404", async () => {
+		const { bunServer, api } = await apiSetup();
+		try {
+			const res = await api("/repo/pulls/999");
+			expect(res.status).toBe(404);
+		} finally {
+			bunServer.stop(true);
+		}
+	});
+
+	test("unknown API route returns 404", async () => {
+		const { bunServer, api } = await apiSetup();
+		try {
+			const res = await api("/repo/unknown");
+			expect(res.status).toBe(404);
+		} finally {
+			bunServer.stop(true);
+		}
+	});
+
+	test("git protocol works alongside API", async () => {
+		const { bunServer, port } = await apiSetup();
+		try {
+			const fs = new InMemoryFs();
+			const git = createGit();
+			const bash = new Bash({ fs, cwd: "/", customCommands: [git] });
+
+			const env = {
+				GIT_AUTHOR_NAME: "Test",
+				GIT_AUTHOR_EMAIL: "test@test.com",
+				GIT_COMMITTER_NAME: "Test",
+				GIT_COMMITTER_EMAIL: "test@test.com",
+			};
+
+			const cloneResult = await bash.exec(`git clone http://localhost:${port}/repo /work`, { env });
+			expect(cloneResult.exitCode).toBe(0);
+
+			const readme = await fs.readFile("/work/README.md");
+			expect(readme).toBe("initial content\n");
+		} finally {
+			bunServer.stop(true);
+		}
+	});
+
+	test("custom apiBasePath", async () => {
+		const platform = freshPlatform();
+		await seedRepo(platform, "repo");
+		await createBranchFromMain(platform, "repo", "feature");
+		await addCommitOnBranch(platform, "repo", "feature", "feat.txt", "feat\n", 1000000100);
+
+		const srv = platform.server({ apiBasePath: "/v1" });
+		const port = 49152 + Math.floor(Math.random() * 16000);
+		const bunServer = Bun.serve({ port, fetch: srv.fetch });
+
+		try {
+			await platform.createPullRequest("repo", {
+				head: "feature",
+				base: "main",
+				title: "Custom path",
+				author: { name: "T", email: "t@t.com" },
+			});
+
+			const res = await fetch(`http://localhost:${port}/v1/repo/pulls/1`);
+			expect(res.status).toBe(200);
+			const pr = (await res.json()) as any;
+			expect(pr.title).toBe("Custom path");
+
+			// /api/ is not the configured prefix, so it falls through to git (404)
+			const wrongPath = await fetch(`http://localhost:${port}/api/repo/pulls/1`);
+			expect(wrongPath.status).toBe(404);
+		} finally {
+			bunServer.stop(true);
+		}
+	});
+
+	test("authorize blocks API requests", async () => {
+		const platform = freshPlatform();
+		await seedRepo(platform, "repo");
+		await createBranchFromMain(platform, "repo", "feature");
+		await addCommitOnBranch(platform, "repo", "feature", "feat.txt", "feat\n", 1000000100);
+
+		await platform.createPullRequest("repo", {
+			head: "feature",
+			base: "main",
+			title: "PR",
+			author: { name: "T", email: "t@t.com" },
+		});
+
+		const srv = platform.server({
+			authorize: (req) => {
+				const token = req.headers.get("authorization");
+				if (token !== "Bearer valid-token") {
+					return new Response("Unauthorized", { status: 401 });
+				}
+			},
+		});
+
+		const port = 49152 + Math.floor(Math.random() * 16000);
+		const bunServer = Bun.serve({ port, fetch: srv.fetch });
+		try {
+			const denied = await fetch(`http://localhost:${port}/api/repo/pulls`);
+			expect(denied.status).toBe(401);
+
+			const allowed = await fetch(`http://localhost:${port}/api/repo/pulls`, {
+				headers: { authorization: "Bearer valid-token" },
+			});
+			expect(allowed.status).toBe(200);
+			const prs = (await allowed.json()) as any[];
+			expect(prs.length).toBe(1);
+		} finally {
+			bunServer.stop(true);
+		}
+	});
+
+	test("authorize blocks git clone", async () => {
+		const platform = freshPlatform();
+		await seedRepo(platform, "repo");
+
+		const srv = platform.server({
+			authorize: (req) => {
+				const token = req.headers.get("authorization");
+				if (token !== "Bearer git-token") {
+					return new Response("Unauthorized", { status: 401 });
+				}
+			},
+		});
+
+		const port = 49152 + Math.floor(Math.random() * 16000);
+		const bunServer = Bun.serve({ port, fetch: srv.fetch });
+		try {
+			const fs = new InMemoryFs();
+			const git = createGit();
+			const bash = new Bash({ fs, cwd: "/", customCommands: [git] });
+			const env = {
+				GIT_AUTHOR_NAME: "Test",
+				GIT_AUTHOR_EMAIL: "test@test.com",
+				GIT_COMMITTER_NAME: "Test",
+				GIT_COMMITTER_EMAIL: "test@test.com",
+			};
+
+			const result = await bash.exec(`git clone http://localhost:${port}/repo /work`, { env });
+			expect(result.exitCode).not.toBe(0);
+
+			const authedResult = await bash.exec(`git clone http://localhost:${port}/repo /work2`, {
+				env: { ...env, GIT_HTTP_BEARER_TOKEN: "git-token" },
+			});
+			expect(authedResult.exitCode).toBe(0);
+		} finally {
+			bunServer.stop(true);
+		}
+	});
+
+	test("authorize receives correct repoId", async () => {
+		const platform = freshPlatform();
+		await seedRepo(platform, "my-org/my-repo");
+
+		const receivedRepoIds: string[] = [];
+		const srv = platform.server({
+			authorize: (_req, repoId) => {
+				receivedRepoIds.push(repoId);
+			},
+		});
+
+		const port = 49152 + Math.floor(Math.random() * 16000);
+		const bunServer = Bun.serve({ port, fetch: srv.fetch });
+		try {
+			await fetch(`http://localhost:${port}/api/my-org%2Fmy-repo/pulls`);
+			expect(receivedRepoIds).toContain("my-org%2Fmy-repo");
 		} finally {
 			bunServer.stop(true);
 		}

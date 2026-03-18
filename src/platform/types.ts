@@ -8,8 +8,15 @@ export interface PlatformConfig {
 	on?: PlatformCallbacks;
 }
 
+export interface Rejection {
+	reject: true;
+	message?: string;
+}
+
 export interface PlatformCallbacks {
+	beforeMerge?: (event: BeforeMergeEvent) => void | Rejection | Promise<void | Rejection>;
 	onPullRequestCreated?: (event: PRCreatedEvent) => void | Promise<void>;
+	onPullRequestUpdated?: (event: PRUpdatedEvent) => void | Promise<void>;
 	onPullRequestMerged?: (event: PRMergedEvent) => void | Promise<void>;
 	onPullRequestClosed?: (event: PRClosedEvent) => void | Promise<void>;
 	onPush?: (event: PushEvent) => void | Promise<void>;
@@ -29,6 +36,20 @@ export interface PRMergedEvent {
 	pr: PullRequest;
 	mergeCommitSha: string;
 	strategy: MergeStrategy;
+}
+
+export interface BeforeMergeEvent {
+	repo: GitRepo;
+	repoId: string;
+	pr: PullRequest;
+	strategy: MergeStrategy;
+}
+
+export interface PRUpdatedEvent {
+	repo: GitRepo;
+	repoId: string;
+	pr: PullRequest;
+	previousHeadSha: string | null;
 }
 
 export interface PRClosedEvent {
@@ -105,4 +126,29 @@ export interface UpdatePullRequestOptions {
 
 export interface ListPullRequestsFilter {
 	state?: PRState;
+}
+
+// ── Server ──────────────────────────────────────────────────────────
+
+/**
+ * Called before each request that targets a repo (git protocol and API).
+ * Return a `Response` to deny the request (e.g., 401/403).
+ * Return `void` to allow it.
+ */
+export type Authorize = (
+	request: Request,
+	repoId: string,
+) => Response | void | Promise<Response | void>;
+
+export interface PlatformServerOptions {
+	/** Server-side git hooks (preReceive, update, postReceive, advertiseRefs). */
+	hooks?: import("../server/types.ts").ServerHooks;
+	/** URL prefix for REST API routes (default: "/api"). */
+	apiBasePath?: string;
+	/**
+	 * Called before each request (git and API) that targets a repo.
+	 * Receives the raw `Request` and the `repoId` extracted from the URL.
+	 * Return a `Response` to deny (e.g., 401/403). Return void to allow.
+	 */
+	authorize?: Authorize;
 }
