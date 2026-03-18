@@ -203,7 +203,7 @@ describe("resolveRemote", () => {
 		expect(content).toBe("local");
 	});
 
-	test("concurrent pushes to same remote are serialized by mutex", async () => {
+	test("concurrent pushes to same ref — CAS rejects the stale one", async () => {
 		const { originCtx } = await setupOrigin();
 
 		const alice = createAgentBash(originCtx);
@@ -221,9 +221,8 @@ describe("resolveRemote", () => {
 		await bob.exec("git add .");
 		await bob.exec('git commit -m "bob on main"', { env: envAt(1000000300) });
 
-		// Push concurrently — without the mutex both could succeed because
-		// both would read the old ref before either writes. With the mutex,
-		// the second push sees the first's update and rejects as non-fast-forward.
+		// Push concurrently — both hold the same oldHash from their clone.
+		// CAS ensures the second push fails because the ref has moved.
 		const [aliceResult, bobResult] = await Promise.all([
 			alice.exec("git push origin main", { env: envAt(1000000200) }),
 			bob.exec("git push origin main", { env: envAt(1000000300) }),
@@ -233,7 +232,7 @@ describe("resolveRemote", () => {
 		expect(exits).toEqual([0, 1]);
 
 		const failedResult = aliceResult.exitCode === 1 ? aliceResult : bobResult;
-		expect(failedResult.stderr).toContain("non-fast-forward");
+		expect(failedResult.stderr).toContain("rejected");
 	});
 
 	test("concurrent pushes to different branches both succeed", async () => {

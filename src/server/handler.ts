@@ -172,13 +172,18 @@ export function createGitServer(config: GitServerConfig): GitServer {
 						}
 
 						try {
-							if (update.isDelete) {
-								await repo.refStore.deleteRef(update.ref);
-							} else {
-								await repo.refStore.writeRef(update.ref, {
-									type: "direct",
-									hash: update.newHash,
+							const expectedOld = update.isCreate ? null : update.oldHash;
+							const newRef = update.isDelete
+								? null
+								: { type: "direct" as const, hash: update.newHash };
+							const ok = await repo.refStore.compareAndSwapRef(update.ref, expectedOld, newRef);
+							if (!ok) {
+								results.push({
+									ref: update.ref,
+									ok: false,
+									error: "failed to lock",
 								});
+								continue;
 							}
 							results.push({ ref: update.ref, ok: true });
 							applied.push(update);

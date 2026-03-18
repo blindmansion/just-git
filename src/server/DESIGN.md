@@ -294,7 +294,8 @@ The push handling flow with hooks:
 4. preReceive hook → reject entire push if Rejection returned
 5. For each ref:
    a. update hook → skip this ref if Rejection returned
-   b. Apply to RefStore (writeRef or deleteRef)
+   b. CAS: compareAndSwapRef(ref, clientOldHash, newRef)
+   c. If CAS fails → report "failed to lock" for that ref
 6. postReceive hook (fire-and-forget, only successful updates)
 7. Build report-status response
 ```
@@ -337,19 +338,46 @@ The key property is that `objectStore` and `refStore` are **shared references** 
 
 Most hooks only need the inspection tier. The working copy tier is an escape hatch for heavier operations.
 
-## Known gaps
+## Concurrent push safety
 
-### No concurrent push safety
+Ref updates during push use compare-and-swap (CAS) to prevent lost updates when multiple writers target the same ref concurrently.
 
-`handleReceivePack` applies ref updates with bare `writeRef` — no compare-and-swap. Two concurrent pushes to the same ref can race. The `RefStore` interface needs a conditional update primitive:
+### `RefStore.compareAndSwapRef`
 
 ```typescript
-compareAndSwapRef?(name: string, expectedOldHash: string, newRef: Ref): Promise<boolean>;
+compareAndSwapRef(
+  name: string,
+  expectedOldHash: string | null,  // null = create-only (ref must not exist)
+  newRef: Ref | null               // null = conditional delete
+): Promise<boolean>;               // true = succeeded, false = ref moved
 ```
 
-The SQLite implementation would use `UPDATE ... WHERE hash = ?`. The filesystem implementation could use a lock file. Not urgent for single-process use, but needed before production concurrent access.
+Required on all `RefStore` implementations. Returns `false` when the ref's current resolved hash doesn't match `expectedOldHash`, meaning another writer updated the ref between the caller's read and write.
+
+### Implementations
+
+- **`SqliteRefStore`** — wraps read + conditional write in a `db.transaction()`. SQLite's write lock serializes concurrent transactions, making this truly atomic across all callers sharing the same database, even from different `SqliteRefStore` instances.
+
+- **`FileSystemRefStore`** — read-compare-write. Safe for VFS use because the in-memory filesystem has no real I/O concurrency between `await` points.
+
+### Where CAS is used
+
+| Writer                      | CAS expected value                 | Protects against                |
+| --------------------------- | ---------------------------------- | ------------------------------- |
+| Server receive-pack handler | `oldHash` from client push command | Concurrent HTTP pushes          |
+| `LocalTransport.push`       | `oldHash` from `advertiseRefs`     | Concurrent resolveRemote pushes |
+| `Platform.mergePullRequest` | `baseSha` read before merge        | Push racing with PR merge       |
+
+All three paths can target the same backing store (e.g. the same SQLite database). CAS at the `RefStore` level ensures correctness regardless of which code path performs the write. The previous `WeakMap<object, Mutex>` in `LocalTransport` was removed — it keyed on JS object identity and couldn't coordinate across different `GitRepo` instances from `SqliteStorage.repo()`.
+
+### Behavior on CAS failure
+
+- **Server handler**: reports `ng <ref> failed to lock` in the report-status response. The client sees a rejected push and can retry.
+- **LocalTransport**: reports `failed to lock ref '<ref>'`. The push command surfaces this as a rejected update.
+- **Platform merge**: throws `MergeError` with message "base branch was updated concurrently". The caller can retry the merge.
 
 ## Future work
 
-- **Ref CAS** — add `compareAndSwapRef` to `RefStore` and use it during ref application.
+- **`atomic` push capability** — all-or-nothing ref updates. Needs a batch CAS method that runs multiple ref swaps in a single SQL transaction. Natural follow-on from per-ref CAS.
+- **Server-side GC** — clean up orphaned objects from rejected pushes.
 - **Additional presets** — review/merge-request tracking, CI integration, audit logging.

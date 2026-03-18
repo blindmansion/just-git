@@ -207,6 +207,126 @@ describe("SqliteStorage", () => {
 		});
 	});
 
+	// ── compareAndSwapRef ───────────────────────────────────────
+
+	describe("compareAndSwapRef", () => {
+		const HASH_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+		const HASH_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+		const HASH_C = "cccccccccccccccccccccccccccccccccccccccc";
+
+		test("create succeeds when ref does not exist", async () => {
+			const { refStore } = storage.repo("test-repo");
+			const ok = await refStore.compareAndSwapRef("refs/heads/main", null, {
+				type: "direct",
+				hash: HASH_A,
+			});
+			expect(ok).toBe(true);
+			const ref = await refStore.readRef("refs/heads/main");
+			expect(ref).toEqual({ type: "direct", hash: HASH_A });
+		});
+
+		test("create fails when ref already exists", async () => {
+			const { refStore } = storage.repo("test-repo");
+			await refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
+
+			const ok = await refStore.compareAndSwapRef("refs/heads/main", null, {
+				type: "direct",
+				hash: HASH_B,
+			});
+			expect(ok).toBe(false);
+			const ref = await refStore.readRef("refs/heads/main");
+			expect(ref).toEqual({ type: "direct", hash: HASH_A });
+		});
+
+		test("update succeeds with matching expected hash", async () => {
+			const { refStore } = storage.repo("test-repo");
+			await refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
+
+			const ok = await refStore.compareAndSwapRef("refs/heads/main", HASH_A, {
+				type: "direct",
+				hash: HASH_B,
+			});
+			expect(ok).toBe(true);
+			const ref = await refStore.readRef("refs/heads/main");
+			expect(ref).toEqual({ type: "direct", hash: HASH_B });
+		});
+
+		test("update fails with wrong expected hash", async () => {
+			const { refStore } = storage.repo("test-repo");
+			await refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
+
+			const ok = await refStore.compareAndSwapRef("refs/heads/main", HASH_C, {
+				type: "direct",
+				hash: HASH_B,
+			});
+			expect(ok).toBe(false);
+			const ref = await refStore.readRef("refs/heads/main");
+			expect(ref).toEqual({ type: "direct", hash: HASH_A });
+		});
+
+		test("update fails when ref does not exist", async () => {
+			const { refStore } = storage.repo("test-repo");
+			const ok = await refStore.compareAndSwapRef("refs/heads/main", HASH_A, {
+				type: "direct",
+				hash: HASH_B,
+			});
+			expect(ok).toBe(false);
+		});
+
+		test("conditional delete succeeds with matching hash", async () => {
+			const { refStore } = storage.repo("test-repo");
+			await refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
+
+			const ok = await refStore.compareAndSwapRef("refs/heads/main", HASH_A, null);
+			expect(ok).toBe(true);
+			expect(await refStore.readRef("refs/heads/main")).toBeNull();
+		});
+
+		test("conditional delete fails with wrong hash", async () => {
+			const { refStore } = storage.repo("test-repo");
+			await refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
+
+			const ok = await refStore.compareAndSwapRef("refs/heads/main", HASH_C, null);
+			expect(ok).toBe(false);
+			expect(await refStore.readRef("refs/heads/main")).toEqual({ type: "direct", hash: HASH_A });
+		});
+
+		test("CAS resolves symbolic refs for hash comparison", async () => {
+			const { refStore } = storage.repo("test-repo");
+			await refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
+			await refStore.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
+
+			const ok = await refStore.compareAndSwapRef("HEAD", HASH_A, {
+				type: "symbolic",
+				target: "refs/heads/dev",
+			});
+			expect(ok).toBe(true);
+			const ref = await refStore.readRef("HEAD");
+			expect(ref).toEqual({ type: "symbolic", target: "refs/heads/dev" });
+		});
+
+		test("two repo instances race — only one CAS wins", async () => {
+			const repo1 = storage.repo("test-repo");
+			const repo2 = storage.repo("test-repo");
+
+			await repo1.refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
+
+			const [ok1, ok2] = await Promise.all([
+				repo1.refStore.compareAndSwapRef("refs/heads/main", HASH_A, {
+					type: "direct",
+					hash: HASH_B,
+				}),
+				repo2.refStore.compareAndSwapRef("refs/heads/main", HASH_A, {
+					type: "direct",
+					hash: HASH_C,
+				}),
+			]);
+
+			const results = [ok1, ok2].sort();
+			expect(results).toEqual([false, true]);
+		});
+	});
+
 	// ── Multi-repo isolation ────────────────────────────────────
 
 	describe("multi-repo isolation", () => {

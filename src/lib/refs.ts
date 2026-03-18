@@ -92,6 +92,28 @@ export class FileSystemRefStore implements RefStore {
 		return results.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 	}
 
+	async compareAndSwapRef(
+		name: string,
+		expectedOldHash: string | null,
+		newRef: Ref | null,
+	): Promise<boolean> {
+		const currentHash = await this.resolveRefInternal(name);
+
+		if (expectedOldHash === null) {
+			const current = await this.readRef(name);
+			if (current !== null) return false;
+		} else {
+			if (currentHash !== expectedOldHash) return false;
+		}
+
+		if (newRef === null) {
+			await this.deleteRef(name);
+		} else {
+			await this.writeRef(name, newRef);
+		}
+		return true;
+	}
+
 	private async resolveRefInternal(name: string): Promise<ObjectId | null> {
 		let current = name;
 		for (let depth = 0; depth < MAX_SYMREF_DEPTH; depth++) {

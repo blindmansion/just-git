@@ -5,7 +5,7 @@ import { ingestPackData } from "../object-db.ts";
 import { findBestDeltas } from "../pack/delta.ts";
 import type { DeltaPackInput } from "../pack/packfile.ts";
 import { writePackDeltified } from "../pack/packfile.ts";
-import { listRefs, readHead, resolveRef, updateRef } from "../refs.ts";
+import { listRefs, readHead, resolveRef } from "../refs.ts";
 import type { GitContext, GitRepo, ObjectId } from "../types.ts";
 import { collectEnumeration, enumerateObjectsWithContent } from "./object-walk.ts";
 import {
@@ -78,34 +78,6 @@ export interface Transport {
 	headTarget?: string;
 }
 
-// ── Per-repo push mutex ──────────────────────────────────────────────
-
-class Mutex {
-	private queue: Promise<void> = Promise.resolve();
-
-	async acquire(): Promise<() => void> {
-		let release!: () => void;
-		const next = new Promise<void>((r) => {
-			release = r;
-		});
-		const prev = this.queue;
-		this.queue = next;
-		await prev;
-		return release;
-	}
-}
-
-const pushLocks = new WeakMap<object, Mutex>();
-
-function getPushLock(repo: object): Mutex {
-	let lock = pushLocks.get(repo);
-	if (!lock) {
-		lock = new Mutex();
-		pushLocks.set(repo, lock);
-	}
-	return lock;
-}
-
 // ── Local transport ──────────────────────────────────────────────────
 
 /**
@@ -160,15 +132,6 @@ export class LocalTransport implements Transport {
 	}
 
 	async push(updates: PushRefUpdate[]): Promise<PushResult> {
-		const release = await getPushLock(this.remote).acquire();
-		try {
-			return await this.pushInner(updates);
-		} finally {
-			release();
-		}
-	}
-
-	private async pushInner(updates: PushRefUpdate[]): Promise<PushResult> {
 		const allWants: ObjectId[] = [];
 		const allHaves: ObjectId[] = [];
 
@@ -191,20 +154,11 @@ export class LocalTransport implements Transport {
 		const results: PushRefUpdate[] = [];
 		for (const update of updates) {
 			try {
-				if (update.newHash === ZERO_HASH) {
-					const oldHash = this.remote.hooks ? await resolveRef(this.remote, update.name) : null;
-					await this.remote.refStore.deleteRef(update.name);
-					if (this.remote.hooks && oldHash) {
-						this.remote.hooks.emit("ref:delete", { ref: update.name, oldHash });
-					}
-					results.push({ ...update, ok: true });
-					continue;
-				}
+				const isDelete = update.newHash === ZERO_HASH;
+				const expectedOld = update.oldHash ?? null;
 
-				const currentHash = await resolveRef(this.remote, update.name);
-
-				if (currentHash && !update.ok) {
-					const ff = await isAncestor(this.remote, currentHash, update.newHash);
+				if (!isDelete && !update.ok && update.oldHash) {
+					const ff = await isAncestor(this.remote, update.oldHash, update.newHash);
 					if (!ff) {
 						results.push({
 							...update,
@@ -215,7 +169,36 @@ export class LocalTransport implements Transport {
 					}
 				}
 
-				await updateRef(this.remote, update.name, update.newHash);
+				const newRef = isDelete ? null : { type: "direct" as const, hash: update.newHash };
+				const swapped = await this.remote.refStore.compareAndSwapRef(
+					update.name,
+					expectedOld,
+					newRef,
+				);
+				if (!swapped) {
+					results.push({
+						...update,
+						ok: false,
+						error: `failed to lock ref '${update.name}'`,
+					});
+					continue;
+				}
+
+				if (this.remote.hooks) {
+					if (isDelete && update.oldHash) {
+						this.remote.hooks.emit("ref:delete", {
+							ref: update.name,
+							oldHash: update.oldHash,
+						});
+					} else if (!isDelete) {
+						this.remote.hooks.emit("ref:update", {
+							ref: update.name,
+							oldHash: update.oldHash,
+							newHash: update.newHash,
+						});
+					}
+				}
+
 				results.push({ ...update, ok: true });
 			} catch (err) {
 				results.push({

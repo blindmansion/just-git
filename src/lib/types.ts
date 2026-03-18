@@ -153,6 +153,21 @@ export interface RefStore {
 	deleteRef(name: string): Promise<void>;
 	/** List all refs under a prefix, returning resolved hashes. */
 	listRefs(prefix?: string): Promise<RefEntry[]>;
+	/**
+	 * Atomically update a ref only if its current resolved hash matches
+	 * `expectedOldHash`. Returns true on success, false if the ref has
+	 * been modified concurrently.
+	 *
+	 * - `expectedOldHash === null` — create-only: fails if the ref exists.
+	 * - `expectedOldHash === "<hash>"` — fails if current hash !== expected.
+	 * - `newRef === null` — conditional delete.
+	 * - `newRef === Ref` — conditional create/update.
+	 */
+	compareAndSwapRef(
+		name: string,
+		expectedOldHash: string | null,
+		newRef: Ref | null,
+	): Promise<boolean>;
 }
 
 // ── Object store ────────────────────────────────────────────────────
