@@ -1,8 +1,15 @@
 // Layer 2: HTTP handler
-export { createGitServer, type GitServer } from "./handler.ts";
+export { createGitServer } from "./handler.ts";
 
 // Layer 1: Operations (building blocks)
-export { advertiseRefs, handleReceivePack, handleUploadPack } from "./operations.ts";
+export {
+	buildRefAdvertisementBytes,
+	collectRefs,
+	handleUploadPack,
+	ingestReceivePack,
+	type ReceivePackResult,
+	type RefsData,
+} from "./operations.ts";
 
 // Layer 1: Protocol primitives
 export {
@@ -20,7 +27,37 @@ export {
 } from "./protocol.ts";
 
 // Types
-export type { AuthResult, GitServerOptions, RefUpdate } from "./types.ts";
+export type {
+	AdvertiseRefsEvent,
+	GitServer,
+	GitServerConfig,
+	PostReceiveEvent,
+	PreReceiveEvent,
+	RefAdvertisement,
+	RefUpdate,
+	Rejection,
+	ServerHooks,
+	UpdateEvent,
+} from "./types.ts";
+
+// Helpers
+export {
+	diffTrees,
+	flattenTree,
+	getChangedFiles,
+	getNewCommits,
+	isAncestor,
+	listBranches,
+	listTags,
+	readBlob,
+	readBlobText,
+	readCommit,
+	resolveRef,
+	type CommitEntry,
+} from "./helpers.ts";
+
+// Presets
+export { createStandardHooks, type StandardHooksConfig } from "./presets.ts";
 
 // Storage implementations
 export { PackedObjectStore } from "../lib/object-store.ts";

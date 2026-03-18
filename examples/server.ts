@@ -44,26 +44,27 @@ console.log("═══ 2. Starting Git server ═══\n");
 const pushLog: string[] = [];
 
 const server = createGitServer({
-	resolve: async (repoPath) => {
+	resolveRepo: async (repoPath) => {
 		console.log(`  [resolve] ${repoPath}`);
 		return repo;
 	},
 
-	authorize: async (_req, repoPath, operation) => {
-		console.log(`  [auth] ${operation} on ${repoPath}`);
-		return { ok: true };
-	},
+	hooks: {
+		preReceive: async (event) => {
+			console.log(`  [pre-receive] ${event.updates.length} ref(s)`);
+		},
 
-	onPush: async (repoPath, refUpdates) => {
-		for (const u of refUpdates) {
-			const line = `${u.name}: ${u.oldHash.slice(0, 7)}..${u.newHash.slice(0, 7)}`;
-			pushLog.push(line);
-			console.log(`  [push] ${repoPath} — ${line}`);
-		}
+		postReceive: async (event) => {
+			for (const u of event.updates) {
+				const line = `${u.ref}: ${(u.oldHash ?? "0000000").slice(0, 7)}..${u.newHash.slice(0, 7)}`;
+				pushLog.push(line);
+				console.log(`  [push] ${line}`);
+			}
+		},
 	},
 });
 
-const srv = Bun.serve({ fetch: (req) => server.handle(req), port: 0 });
+const srv = Bun.serve({ fetch: server.fetch, port: 0 });
 const url = `http://localhost:${srv.port}`;
 console.log(`  Listening on ${url}\n`);
 
@@ -96,7 +97,6 @@ await client.exec('git commit -m "update greeting"', { cwd: "/work", env: ENV })
 const pushResult = await client.exec("git push origin main", { cwd: "/work" });
 console.log(`  Push exit: ${pushResult.exitCode}`);
 
-// Verify on the server side
 const mainRef = await repo.refStore.readRef("refs/heads/main");
 console.log(`  Server main ref: ${mainRef?.type === "direct" ? mainRef.hash.slice(0, 12) : "?"}…`);
 console.log(`  Push log: ${pushLog.join(", ")}\n`);

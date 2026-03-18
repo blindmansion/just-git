@@ -64,10 +64,10 @@ describe("SQLite-backed server roundtrip", () => {
 
 		// Seed a repo by pushing from a just-git client
 		const server = createGitServer({
-			resolve: async (repoPath) => storage.repo(repoPath),
+			resolveRepo: async (repoPath) => storage.repo(repoPath),
 		});
 
-		srv = Bun.serve({ fetch: (req) => server.handle(req), port: 0 });
+		srv = Bun.serve({ fetch: server.fetch, port: 0 });
 		port = srv.port!;
 
 		// Seed "my-repo" with initial content via just-git push

@@ -59,11 +59,11 @@ describe("server roundtrip", () => {
 
 		// Start the HTTP server
 		const server = createGitServer({
-			resolve: async () => serverRepo,
+			resolveRepo: async () => serverRepo,
 		});
 
 		srv = Bun.serve({
-			fetch: (req) => server.handle(req),
+			fetch: server.fetch,
 			port: 0,
 		});
 		port = srv.port;
@@ -254,18 +254,20 @@ describe("server roundtrip", () => {
 		expect(after).toBeNull();
 	});
 
-	test("onPush hook is called", async () => {
-		const pushEvents: Array<{ repoPath: string; count: number }> = [];
+	test("postReceive hook is called", async () => {
+		const pushEvents: Array<{ refCount: number }> = [];
 
 		const hookedServer = createGitServer({
-			resolve: async () => serverRepo,
-			onPush: async (repoPath, refUpdates) => {
-				pushEvents.push({ repoPath, count: refUpdates.length });
+			resolveRepo: async () => serverRepo,
+			hooks: {
+				postReceive: async (event) => {
+					pushEvents.push({ refCount: event.updates.length });
+				},
 			},
 		});
 
 		const hookedSrv = Bun.serve({
-			fetch: (req) => hookedServer.handle(req),
+			fetch: hookedServer.fetch,
 			port: 0,
 		});
 
@@ -292,26 +294,24 @@ describe("server roundtrip", () => {
 			await client.exec("git push origin main", { cwd: "/local" });
 
 			expect(pushEvents.length).toBe(1);
-			expect(pushEvents[0]!.repoPath).toBe("myrepo");
-			expect(pushEvents[0]!.count).toBe(1);
+			expect(pushEvents[0]!.refCount).toBe(1);
 		} finally {
 			hookedSrv.stop();
 		}
 	});
 
-	test("authorize hook blocks unauthorized push", async () => {
+	test("preReceive hook can reject a push", async () => {
 		const authServer = createGitServer({
-			resolve: async () => serverRepo,
-			authorize: async (_req, _repoPath, operation) => {
-				if (operation === "receive-pack") {
-					return { ok: false, status: 403, message: "Push not allowed" };
-				}
-				return { ok: true };
+			resolveRepo: async () => serverRepo,
+			hooks: {
+				preReceive: async () => {
+					return { reject: true, message: "Push not allowed" };
+				},
 			},
 		});
 
 		const authSrv = Bun.serve({
-			fetch: (req) => authServer.handle(req),
+			fetch: authServer.fetch,
 			port: 0,
 		});
 
@@ -324,7 +324,7 @@ describe("server roundtrip", () => {
 				customCommands: [git],
 			});
 
-			// Clone should succeed (upload-pack is allowed)
+			// Clone should succeed (no hooks on upload-pack)
 			const cloneResult = await client.exec(
 				`git clone http://localhost:${authSrv.port}/repo /local`,
 				{ env: envAt(1000001200) },

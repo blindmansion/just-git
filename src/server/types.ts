@@ -1,35 +1,101 @@
 import type { GitRepo } from "../lib/types.ts";
 
-/**
- * Options for `createGitServer()`.
- */
-export interface GitServerOptions {
-	/** Map a URL path segment to a repo's storage backends. */
-	resolve: (repoPath: string) => GitRepo | Promise<GitRepo>;
-	/** Optional authorization hook called before upload-pack and receive-pack. */
-	authorize?: (
-		req: Request,
-		repoPath: string,
-		operation: "upload-pack" | "receive-pack",
-	) => AuthResult | Promise<AuthResult>;
-	/** Called after a successful push with the list of ref updates. */
-	onPush?: (repoPath: string, refUpdates: RefUpdate[]) => void | Promise<void>;
+// ── Server config ───────────────────────────────────────────────────
+
+export interface GitServerConfig {
+	/**
+	 * Resolve an incoming request path to a repository.
+	 * Return null to 404.
+	 */
+	resolveRepo: (repoPath: string, request: Request) => GitRepo | null | Promise<GitRepo | null>;
+
+	/** Server-side hooks. All optional. */
+	hooks?: ServerHooks;
+
 	/** Base path prefix to strip from URLs (e.g. "/git"). */
 	basePath?: string;
-	/** Reject non-fast-forward ref updates (like `receive.denyNonFastForwards`). Defaults to false. */
-	denyNonFastForwards?: boolean;
 }
 
-export interface AuthResult {
-	ok: boolean;
-	status?: number;
-	message?: string;
+export interface GitServer {
+	/** Standard fetch-API handler: (Request) => Response */
+	fetch: (request: Request) => Promise<Response>;
 }
+
+// ── Hooks ───────────────────────────────────────────────────────────
+
+export interface ServerHooks {
+	/**
+	 * Called after objects are unpacked but before any refs update.
+	 * Receives ALL ref updates as a batch. Return a Rejection to abort
+	 * the entire push. Auth, branch protection, and repo-wide policy
+	 * belong here.
+	 */
+	preReceive?: (event: PreReceiveEvent) => void | Rejection | Promise<void | Rejection>;
+
+	/**
+	 * Called per-ref, after preReceive passes.
+	 * Return a Rejection to block this specific ref update while
+	 * allowing others. Per-branch rules belong here.
+	 */
+	update?: (event: UpdateEvent) => void | Rejection | Promise<void | Rejection>;
+
+	/**
+	 * Called after all ref updates succeed. Cannot reject.
+	 * CI triggers, webhooks, notifications belong here.
+	 */
+	postReceive?: (event: PostReceiveEvent) => void | Promise<void>;
+
+	/**
+	 * Called when a client wants to fetch or push (during ref advertisement).
+	 * Return a filtered ref list to hide branches, or void to advertise all.
+	 */
+	advertiseRefs?: (
+		event: AdvertiseRefsEvent,
+	) => RefAdvertisement[] | void | Promise<RefAdvertisement[] | void>;
+}
+
+// ── Hook events ─────────────────────────────────────────────────────
 
 export interface RefUpdate {
-	name: string;
-	oldHash: string;
+	ref: string;
+	oldHash: string | null;
 	newHash: string;
-	ok: boolean;
-	error?: string;
+	isFF: boolean;
+	isCreate: boolean;
+	isDelete: boolean;
+}
+
+export interface PreReceiveEvent {
+	repo: GitRepo;
+	updates: readonly RefUpdate[];
+	request: Request;
+}
+
+export interface UpdateEvent {
+	repo: GitRepo;
+	update: RefUpdate;
+	request: Request;
+}
+
+export interface PostReceiveEvent {
+	repo: GitRepo;
+	updates: readonly RefUpdate[];
+	request: Request;
+}
+
+export interface AdvertiseRefsEvent {
+	repo: GitRepo;
+	refs: RefAdvertisement[];
+	service: "git-upload-pack" | "git-receive-pack";
+	request: Request;
+}
+
+export interface RefAdvertisement {
+	name: string;
+	hash: string;
+}
+
+export interface Rejection {
+	reject: true;
+	message?: string;
 }

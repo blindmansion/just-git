@@ -82,8 +82,8 @@ describe("server with real git client", () => {
 		if (!ctx) throw new Error("failed to find git dir");
 		serverRepo = ctx;
 
-		const server = createGitServer({ resolve: async () => serverRepo });
-		srv = Bun.serve({ fetch: (req) => server.handle(req), port: 0 });
+		const server = createGitServer({ resolveRepo: async () => serverRepo });
+		srv = Bun.serve({ fetch: server.fetch, port: 0 });
 		port = srv.port!;
 	});
 

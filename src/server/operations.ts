@@ -2,7 +2,8 @@
  * High-level server operations for Git Smart HTTP.
  *
  * Each operation accepts a `GitRepo` (ObjectStore + RefStore)
- * and returns the appropriate protocol response body.
+ * and returns protocol-level results. The handler layer is
+ * responsible for hook invocation and ref application.
  */
 
 import { ZERO_HASH } from "../lib/hex.ts";
@@ -20,12 +21,11 @@ import type { GitRepo } from "../lib/types.ts";
 import {
 	type AdvertisedRef,
 	buildRefAdvertisement,
-	buildReportStatus,
 	buildUploadPackResponse,
 	parseReceivePackRequest,
 	parseUploadPackRequest,
 } from "./protocol.ts";
-import type { RefUpdate } from "./types.ts";
+import type { RefAdvertisement, RefUpdate } from "./types.ts";
 
 // ── Capabilities ────────────────────────────────────────────────────
 
@@ -41,26 +41,28 @@ const RECEIVE_PACK_CAPS = ["report-status", "side-band-64k", "ofs-delta", "delet
 
 // ── Ref advertisement ───────────────────────────────────────────────
 
+export interface RefsData {
+	refs: RefAdvertisement[];
+	headTarget?: string;
+}
+
 /**
- * Build the full ref advertisement response body for info/refs.
+ * Collect the structured ref list from a repo (no wire encoding).
+ * The handler can pass this through an advertiseRefs hook to filter,
+ * then call `buildRefAdvertisementBytes` to produce the wire format.
  */
-export async function advertiseRefs(
-	repo: GitRepo,
-	service: "git-upload-pack" | "git-receive-pack",
-): Promise<Uint8Array> {
+export async function collectRefs(repo: GitRepo): Promise<RefsData> {
 	const refEntries = await repo.refStore.listRefs("refs");
 	const headRef = await repo.refStore.readRef("HEAD");
 
-	const refs: AdvertisedRef[] = [];
+	const refs: RefAdvertisement[] = [];
 
-	// Resolve HEAD
 	let headHash: string | null = null;
 	let headTarget: string | undefined;
 
 	if (headRef) {
 		if (headRef.type === "symbolic") {
 			headTarget = headRef.target;
-			// Resolve the symref to get the hash
 			const targetRef = await repo.refStore.readRef(headRef.target);
 			if (targetRef?.type === "direct") {
 				headHash = targetRef.hash;
@@ -90,9 +92,19 @@ export async function advertiseRefs(
 		}
 	}
 
-	const caps = service === "git-upload-pack" ? UPLOAD_PACK_CAPS : RECEIVE_PACK_CAPS;
+	return { refs, headTarget };
+}
 
-	return buildRefAdvertisement(refs, service, caps, headTarget);
+/**
+ * Build the wire-format ref advertisement from a (possibly filtered) ref list.
+ */
+export function buildRefAdvertisementBytes(
+	refs: RefAdvertisement[],
+	service: "git-upload-pack" | "git-receive-pack",
+	headTarget?: string,
+): Uint8Array {
+	const caps = service === "git-upload-pack" ? UPLOAD_PACK_CAPS : RECEIVE_PACK_CAPS;
+	return buildRefAdvertisement(refs as AdvertisedRef[], service, caps, headTarget);
 }
 
 // ── Upload-pack (fetch/clone serving) ───────────────────────────────
@@ -170,104 +182,55 @@ export async function handleUploadPack(
 
 // ── Receive-pack (push handling) ────────────────────────────────────
 
+export interface ReceivePackResult {
+	updates: RefUpdate[];
+	unpackOk: boolean;
+	capabilities: string[];
+}
+
 /**
- * Handle a `POST /git-receive-pack` request.
- * Parses commands + packfile, ingests objects, validates and applies ref updates.
+ * Ingest a receive-pack request: parse commands, ingest the packfile,
+ * and compute enriched RefUpdate objects. Does NOT apply ref updates —
+ * the handler runs hooks first, then applies surviving updates.
  */
-export async function handleReceivePack(
+export async function ingestReceivePack(
 	repo: GitRepo,
 	requestBody: Uint8Array,
-	options?: { denyNonFastForwards?: boolean },
-): Promise<{ response: Uint8Array; refUpdates: RefUpdate[] }> {
+): Promise<ReceivePackResult> {
 	const { commands, packData, capabilities } = parseReceivePackRequest(requestBody);
 
-	const useSideband = capabilities.includes("side-band-64k");
-	const useReportStatus = capabilities.includes("report-status");
-
-	// Ingest the pack data
 	let unpackOk = true;
 	if (packData.byteLength > 0) {
 		try {
 			await repo.objectStore.ingestPack(packData);
 		} catch {
 			unpackOk = false;
-			if (useReportStatus) {
-				const refResults = commands.map((cmd) => ({
-					name: cmd.refName,
-					ok: false,
-					error: "unpack failed",
-				}));
-				const response = buildReportStatus(false, refResults, useSideband);
-				const refUpdates: RefUpdate[] = commands.map((cmd) => ({
-					name: cmd.refName,
-					oldHash: cmd.oldHash,
-					newHash: cmd.newHash,
-					ok: false,
-					error: "unpack failed",
-				}));
-				return { response, refUpdates };
-			}
-			return { response: new Uint8Array(0), refUpdates: [] };
 		}
 	}
 
-	const refUpdates: RefUpdate[] = [];
-
+	const updates: RefUpdate[] = [];
 	for (const cmd of commands) {
-		try {
-			if (cmd.newHash === ZERO_HASH) {
-				// Delete ref
-				await repo.refStore.deleteRef(cmd.refName);
-				refUpdates.push({
-					name: cmd.refName,
-					oldHash: cmd.oldHash,
-					newHash: cmd.newHash,
-					ok: true,
-				});
-				continue;
-			}
+		const isCreate = cmd.oldHash === ZERO_HASH;
+		const isDelete = cmd.newHash === ZERO_HASH;
+		let isFF = false;
 
-			if (options?.denyNonFastForwards && cmd.oldHash !== ZERO_HASH) {
-				const ff = await isAncestor(repo, cmd.oldHash, cmd.newHash);
-				if (!ff) {
-					refUpdates.push({
-						name: cmd.refName,
-						oldHash: cmd.oldHash,
-						newHash: cmd.newHash,
-						ok: false,
-						error: "non-fast-forward",
-					});
-					continue;
-				}
+		if (!isCreate && !isDelete && unpackOk) {
+			try {
+				isFF = await isAncestor(repo, cmd.oldHash, cmd.newHash);
+			} catch {
+				// Ancestry check failed; leave isFF false
 			}
-
-			await repo.refStore.writeRef(cmd.refName, { type: "direct", hash: cmd.newHash });
-			refUpdates.push({
-				name: cmd.refName,
-				oldHash: cmd.oldHash,
-				newHash: cmd.newHash,
-				ok: true,
-			});
-		} catch (err) {
-			refUpdates.push({
-				name: cmd.refName,
-				oldHash: cmd.oldHash,
-				newHash: cmd.newHash,
-				ok: false,
-				error: err instanceof Error ? err.message : String(err),
-			});
 		}
+
+		updates.push({
+			ref: cmd.refName,
+			oldHash: isCreate ? null : cmd.oldHash,
+			newHash: cmd.newHash,
+			isFF,
+			isCreate,
+			isDelete,
+		});
 	}
 
-	if (useReportStatus) {
-		const refResults = refUpdates.map((u) => ({
-			name: u.name,
-			ok: u.ok,
-			error: u.error,
-		}));
-		const response = buildReportStatus(unpackOk, refResults, useSideband);
-		return { response, refUpdates };
-	}
-
-	return { response: new Uint8Array(0), refUpdates };
+	return { updates, unpackOk, capabilities };
 }

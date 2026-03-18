@@ -1,41 +1,38 @@
 /**
- * Layer 2: Framework-agnostic Git Smart HTTP request handler.
+ * Framework-agnostic Git Smart HTTP request handler.
  *
  * Uses web-standard Request/Response, works with Bun.serve, Hono,
  * Cloudflare Workers, or any framework that speaks fetch API.
  */
 
-import { advertiseRefs, handleReceivePack, handleUploadPack } from "./operations.ts";
-import type { GitServerOptions } from "./types.ts";
-
-export interface GitServer {
-	/** Handle a Git Smart HTTP request. Returns a Response. */
-	handle(req: Request): Promise<Response>;
-}
+import {
+	buildRefAdvertisementBytes,
+	collectRefs,
+	handleUploadPack,
+	ingestReceivePack,
+} from "./operations.ts";
+import { buildReportStatus } from "./protocol.ts";
+import type { GitServerConfig, GitServer, Rejection, RefUpdate } from "./types.ts";
 
 /**
  * Create a Git Smart HTTP server handler.
  *
  * ```ts
  * const server = createGitServer({
- *   resolve: async (repoPath) => ({
- *     objectStore: myObjectStore,
- *     refStore: myRefStore,
- *   }),
+ *   resolveRepo: async (repoPath, request) => storage.repo(repoPath),
  * });
- * Bun.serve({ fetch: (req) => server.handle(req) });
+ * Bun.serve({ fetch: server.fetch });
  * ```
  */
-export function createGitServer(options: GitServerOptions): GitServer {
-	const { resolve, authorize, onPush, basePath, denyNonFastForwards } = options;
+export function createGitServer(config: GitServerConfig): GitServer {
+	const { resolveRepo, hooks, basePath } = config;
 
 	return {
-		async handle(req: Request): Promise<Response> {
+		async fetch(req: Request): Promise<Response> {
 			try {
 				const url = new URL(req.url);
 				let pathname = decodeURIComponent(url.pathname);
 
-				// Strip basePath prefix
 				if (basePath) {
 					const normalized = basePath.replace(/\/+$/, "");
 					if (!pathname.startsWith(normalized)) {
@@ -44,63 +41,164 @@ export function createGitServer(options: GitServerOptions): GitServer {
 					pathname = pathname.slice(normalized.length);
 				}
 
-				// Ensure leading slash
 				if (!pathname.startsWith("/")) {
 					pathname = `/${pathname}`;
 				}
 
-				// Match Git endpoints at the end of the path
+				// ── info/refs ───────────────────────────────────────
 				if (pathname.endsWith("/info/refs") && req.method === "GET") {
-					return await handleInfoRefs(pathname, url, resolve);
+					const service = url.searchParams.get("service");
+					if (service !== "git-upload-pack" && service !== "git-receive-pack") {
+						return new Response("Unsupported service", { status: 403 });
+					}
+
+					const repoPath = extractRepoPath(pathname, "/info/refs");
+					const repo = await resolveRepo(repoPath, req);
+					if (!repo) return new Response("Not Found", { status: 404 });
+
+					const { refs: allRefs, headTarget } = await collectRefs(repo);
+
+					let refs = allRefs;
+					if (hooks?.advertiseRefs) {
+						const filtered = await hooks.advertiseRefs({
+							repo,
+							refs: allRefs,
+							service,
+							request: req,
+						});
+						if (filtered) refs = filtered;
+					}
+
+					const body = buildRefAdvertisementBytes(refs, service, headTarget);
+					return new Response(body, {
+						headers: {
+							"Content-Type": `application/x-${service}-advertisement`,
+							"Cache-Control": "no-cache",
+						},
+					});
 				}
 
+				// ── git-upload-pack ─────────────────────────────────
 				if (pathname.endsWith("/git-upload-pack") && req.method === "POST") {
 					const repoPath = extractRepoPath(pathname, "/git-upload-pack");
-					if (authorize) {
-						const authResult = await authorize(req, repoPath, "upload-pack");
-						if (!authResult.ok) {
-							return new Response(authResult.message ?? "Forbidden", {
-								status: authResult.status ?? 403,
-							});
-						}
-					}
-					const repo = await resolve(repoPath);
+					const repo = await resolveRepo(repoPath, req);
+					if (!repo) return new Response("Not Found", { status: 404 });
+
 					const body = new Uint8Array(await req.arrayBuffer());
 					const responseBody = await handleUploadPack(repo, body);
 					return new Response(responseBody, {
-						headers: {
-							"Content-Type": "application/x-git-upload-pack-result",
-						},
+						headers: { "Content-Type": "application/x-git-upload-pack-result" },
 					});
 				}
 
+				// ── git-receive-pack ────────────────────────────────
 				if (pathname.endsWith("/git-receive-pack") && req.method === "POST") {
 					const repoPath = extractRepoPath(pathname, "/git-receive-pack");
-					if (authorize) {
-						const authResult = await authorize(req, repoPath, "receive-pack");
-						if (!authResult.ok) {
-							return new Response(authResult.message ?? "Forbidden", {
-								status: authResult.status ?? 403,
+					const repo = await resolveRepo(repoPath, req);
+					if (!repo) return new Response("Not Found", { status: 404 });
+
+					const body = new Uint8Array(await req.arrayBuffer());
+					const { updates, unpackOk, capabilities } = await ingestReceivePack(repo, body);
+
+					const useSideband = capabilities.includes("side-band-64k");
+					const useReportStatus = capabilities.includes("report-status");
+
+					if (!unpackOk) {
+						if (useReportStatus) {
+							const refResults = updates.map((u) => ({
+								name: u.ref,
+								ok: false,
+								error: "unpack failed",
+							}));
+							return new Response(buildReportStatus(false, refResults, useSideband), {
+								headers: { "Content-Type": "application/x-git-receive-pack-result" },
+							});
+						}
+						return new Response(new Uint8Array(0), {
+							headers: { "Content-Type": "application/x-git-receive-pack-result" },
+						});
+					}
+
+					// Pre-receive hook: abort entire push on rejection
+					if (hooks?.preReceive) {
+						const result = await hooks.preReceive({ repo, updates, request: req });
+						if (isRejection(result)) {
+							if (useReportStatus) {
+								const msg = result.message ?? "pre-receive hook declined";
+								const refResults = updates.map((u) => ({
+									name: u.ref,
+									ok: false,
+									error: msg,
+								}));
+								return new Response(buildReportStatus(true, refResults, useSideband), {
+									headers: { "Content-Type": "application/x-git-receive-pack-result" },
+								});
+							}
+							return new Response(new Uint8Array(0), {
+								headers: { "Content-Type": "application/x-git-receive-pack-result" },
 							});
 						}
 					}
-					const repo = await resolve(repoPath);
-					const body = new Uint8Array(await req.arrayBuffer());
-					const { response: responseBody, refUpdates } = await handleReceivePack(repo, body, {
-						denyNonFastForwards,
-					});
 
-					if (onPush) {
-						const successfulUpdates = refUpdates.filter((u) => u.ok);
-						if (successfulUpdates.length > 0) {
-							await onPush(repoPath, successfulUpdates);
+					// Per-ref update hook + ref application
+					const results: { ref: string; ok: boolean; error?: string }[] = [];
+					const applied: RefUpdate[] = [];
+
+					for (const update of updates) {
+						if (hooks?.update) {
+							const result = await hooks.update({ repo, update, request: req });
+							if (isRejection(result)) {
+								results.push({
+									ref: update.ref,
+									ok: false,
+									error: result.message ?? "update hook declined",
+								});
+								continue;
+							}
+						}
+
+						try {
+							if (update.isDelete) {
+								await repo.refStore.deleteRef(update.ref);
+							} else {
+								await repo.refStore.writeRef(update.ref, {
+									type: "direct",
+									hash: update.newHash,
+								});
+							}
+							results.push({ ref: update.ref, ok: true });
+							applied.push(update);
+						} catch (err) {
+							results.push({
+								ref: update.ref,
+								ok: false,
+								error: err instanceof Error ? err.message : String(err),
+							});
 						}
 					}
 
-					return new Response(responseBody, {
-						headers: {
-							"Content-Type": "application/x-git-receive-pack-result",
-						},
+					// Post-receive hook (fire-and-forget, only for successful updates)
+					if (hooks?.postReceive && applied.length > 0) {
+						try {
+							await hooks.postReceive({ repo, updates: applied, request: req });
+						} catch {
+							// Post-receive errors don't affect the response
+						}
+					}
+
+					if (useReportStatus) {
+						const refResults = results.map((r) => ({
+							name: r.ref,
+							ok: r.ok,
+							error: r.error,
+						}));
+						return new Response(buildReportStatus(true, refResults, useSideband), {
+							headers: { "Content-Type": "application/x-git-receive-pack-result" },
+						});
+					}
+
+					return new Response(new Uint8Array(0), {
+						headers: { "Content-Type": "application/x-git-receive-pack-result" },
 					});
 				}
 
@@ -114,34 +212,14 @@ export function createGitServer(options: GitServerOptions): GitServer {
 
 // ── Internal helpers ────────────────────────────────────────────────
 
-async function handleInfoRefs(
-	pathname: string,
-	url: URL,
-	resolve: GitServerOptions["resolve"],
-): Promise<Response> {
-	const service = url.searchParams.get("service");
-	if (service !== "git-upload-pack" && service !== "git-receive-pack") {
-		return new Response("Unsupported service", { status: 403 });
-	}
-
-	const repoPath = extractRepoPath(pathname, "/info/refs");
-	const repo = await resolve(repoPath);
-	const body = await advertiseRefs(repo, service);
-
-	return new Response(body, {
-		headers: {
-			"Content-Type": `application/x-${service}-advertisement`,
-			"Cache-Control": "no-cache",
-		},
-	});
-}
-
-/** Extract the repo path by removing the endpoint suffix. */
 function extractRepoPath(pathname: string, suffix: string): string {
 	let repoPath = pathname.slice(0, -suffix.length);
-	// Strip leading slash
 	if (repoPath.startsWith("/")) {
 		repoPath = repoPath.slice(1);
 	}
 	return repoPath;
+}
+
+function isRejection(value: void | Rejection | undefined): value is Rejection {
+	return value != null && typeof value === "object" && "reject" in value && value.reject === true;
 }

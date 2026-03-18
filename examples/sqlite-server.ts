@@ -22,7 +22,7 @@ db.run("PRAGMA journal_mode = WAL");
 const storage = new SqliteStorage(db);
 
 const server = createGitServer({
-	resolve: async (repoPath) => {
+	resolveRepo: async (repoPath) => {
 		console.log(`  [resolve] ${repoPath}`);
 		const repo = storage.repo(repoPath);
 
@@ -35,16 +35,18 @@ const server = createGitServer({
 		return repo;
 	},
 
-	onPush: async (repoPath, refUpdates) => {
-		for (const u of refUpdates) {
-			console.log(
-				`  [push] ${repoPath} ${u.name}: ${u.oldHash.slice(0, 7)}..${u.newHash.slice(0, 7)}`,
-			);
-		}
+	hooks: {
+		postReceive: async (event) => {
+			for (const u of event.updates) {
+				console.log(
+					`  [push] ${u.ref}: ${(u.oldHash ?? "0000000").slice(0, 7)}..${u.newHash.slice(0, 7)}`,
+				);
+			}
+		},
 	},
 });
 
-const srv = Bun.serve({ fetch: (req) => server.handle(req), port: PORT });
+const srv = Bun.serve({ fetch: server.fetch, port: PORT });
 
 console.log(`just-git sqlite server listening on http://localhost:${srv.port}`);
 console.log(`database: ${DB_PATH === ":memory:" ? "(in-memory)" : DB_PATH}`);
