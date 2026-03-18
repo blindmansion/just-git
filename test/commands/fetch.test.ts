@@ -143,9 +143,7 @@ describe("git fetch", () => {
 
 		// Add a second remote pointing at a different repo
 		await bash.exec("git init --bare /remote2");
-		await bash.exec(
-			"cd /remote2 && git config receive.denyCurrentBranch ignore",
-		);
+		await bash.exec("cd /remote2 && git config receive.denyCurrentBranch ignore");
 		// Push current local state to remote2 so it has a main branch
 		await bash.exec("git remote add upstream /remote2", { cwd: "/local" });
 		await bash.exec("git push upstream main", { cwd: "/local" });

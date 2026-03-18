@@ -6,9 +6,8 @@
  */
 
 import { Bash, InMemoryFs } from "just-bash";
-import { createGit } from "../src";
-import { findRepo } from "../src/lib/repo.ts";
-import { createGitServer } from "../src/server/handler.ts";
+import { createGit, findRepo } from "../src"; // "just-git"
+import { createGitServer } from "../src/server"; // "just-git/server"
 
 const ENV = {
 	GIT_AUTHOR_NAME: "Test",

@@ -221,7 +221,7 @@ const server = createGitServer({
   hooks: {
     preReceive: async ({ updates }) => {
       for (const u of updates) {
-        if (u.ref === "refs/heads/main" && !u.isFF) {
+        if (u.ref === "refs/heads/main" && !u.isFF && !u.isCreate) {
           return { reject: true, message: "no force-push to main" };
         }
       }
@@ -240,7 +240,7 @@ Bun.serve({ fetch: server.fetch });
 
 `SqliteStorage` persists repos in SQLite without a filesystem — works with `bun:sqlite`, `better-sqlite3`, or any compatible driver. Repos backed by `SqliteStorage` work with both the server (external HTTP) and `resolveRemote` (in-process), with CAS-protected ref updates ensuring correctness regardless of write path.
 
-See [SERVER.md](SERVER.md) for the full API: hooks, `createStandardHooks`, `SqliteStorage`, configuration, and deployment patterns. See [`src/platform/`](src/platform/) for a reference implementation that builds GitHub-like functionality (repos, pull requests, merge strategies) on top of these primitives.
+See [SERVER.md](SERVER.md) for the full API: hooks, `createStandardHooks`, `SqliteStorage`, configuration, and deployment patterns. See [`examples/sqlite-server.ts`](examples/sqlite-server.ts) for a runnable SQLite server and [`examples/server.ts`](examples/server.ts) for a VFS-backed server with virtual client. See [`src/platform/`](src/platform/) for a reference implementation that builds GitHub-like functionality (repos, pull requests, merge strategies) on top of these primitives.
 
 ## Command coverage
 
@@ -325,3 +325,18 @@ console.log(result.exitCode); // 0
 ```
 
 The `FileSystem` interface requires: `readFile`, `readFileBuffer`, `writeFile`, `exists`, `stat`, `mkdir`, `readdir`, `rm`. Optional: `lstat`, `readlink`, `symlink`.
+
+## Examples
+
+Runnable examples in [`examples/`](examples/):
+
+| File                                                            | What it demonstrates                                                 |
+| --------------------------------------------------------------- | -------------------------------------------------------------------- |
+| [`usage.ts`](examples/usage.ts)                                 | Identity, disabled commands, hooks, compose, full sandbox setup      |
+| [`multi-agent.ts`](examples/multi-agent.ts)                     | Cross-VFS collaboration with clone/push/pull between isolated agents |
+| [`server.ts`](examples/server.ts)                               | VFS-backed Smart HTTP server with virtual client clone and push      |
+| [`sqlite-server.ts`](examples/sqlite-server.ts)                 | SQLite-backed server with auto-creating repos, works with real `git` |
+| [`platform-server.ts`](examples/platform-server.ts)             | GitHub-like PR workflows: create, merge, close via REST API          |
+| [`agent-remote-workflow.ts`](examples/agent-remote-workflow.ts) | Clone from GitHub, work in sandbox, push back (requires token)       |
+
+Run any example with `bun examples/<file>`.

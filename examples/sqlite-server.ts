@@ -11,8 +11,8 @@
  */
 
 import { Database } from "bun:sqlite";
-import { SqliteStorage } from "../src/server/sqlite-storage.ts";
-import { createGitServer } from "../src/server/handler.ts";
+import { createGitServer, SqliteStorage } from "../src/server"; // "just-git/server"
+import { getChangedFiles } from "../src/repo"; // "just-git/repo"
 
 const DB_PATH = process.env.DB_PATH ?? ":memory:";
 const PORT = Number(process.env.PORT ?? 4200);
@@ -36,10 +36,19 @@ const server = createGitServer({
 	},
 
 	hooks: {
-		postReceive: async (event) => {
-			for (const u of event.updates) {
+		preReceive: async ({ updates }) => {
+			for (const u of updates) {
+				if (u.ref === "refs/heads/main" && !u.isFF && !u.isCreate) {
+					return { reject: true, message: "no force-push to main" };
+				}
+			}
+		},
+
+		postReceive: async ({ repo, updates }) => {
+			for (const u of updates) {
+				const files = await getChangedFiles(repo, u.oldHash, u.newHash);
 				console.log(
-					`  [push] ${u.ref}: ${(u.oldHash ?? "0000000").slice(0, 7)}..${u.newHash.slice(0, 7)}`,
+					`  [push] ${u.ref}: ${(u.oldHash ?? "0000000").slice(0, 7)}..${u.newHash.slice(0, 7)} (${files.length} files changed)`,
 				);
 			}
 		},

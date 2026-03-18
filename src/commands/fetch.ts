@@ -46,7 +46,15 @@ export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 				const allStderr: string[] = [];
 				let lastExit = 0;
 				for (const name of remoteNames) {
-					const result = await fetchOneRemote(gitCtx, name, undefined, args.prune, args.tags, ctx.env, ext);
+					const result = await fetchOneRemote(
+						gitCtx,
+						name,
+						undefined,
+						args.prune,
+						args.tags,
+						ctx.env,
+						ext,
+					);
 					if (result.stderr) allStderr.push(result.stderr);
 					if (result.exitCode !== 0) lastExit = result.exitCode;
 				}
@@ -211,9 +219,7 @@ async function fetchOneRemote(
 					tz: ident.tz,
 					message: "fetch: storing head",
 				});
-				stderr.push(
-					` * [new tag]         ${shortenRef(ref.name)} -> ${shortenRef(ref.name)}\n`,
-				);
+				stderr.push(` * [new tag]         ${shortenRef(ref.name)} -> ${shortenRef(ref.name)}\n`);
 			}
 		}
 	}
