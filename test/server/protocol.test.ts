@@ -14,7 +14,7 @@ import {
 	pktLineText,
 } from "../../src/lib/transport/pkt-line.ts";
 import { createGitServer } from "../../src/server/handler.ts";
-import { findGitDir } from "../../src/lib/repo.ts";
+import { findRepo } from "../../src/lib/repo.ts";
 import { InMemoryFs, Bash } from "just-bash";
 import { createGit } from "../../src/index.ts";
 import { envAt } from "./util.ts";
@@ -292,7 +292,7 @@ describe("handler HTTP conformance", () => {
 		await bash.exec("git add .");
 		await bash.exec('git commit -m "init"', { env: envAt(1000000000) });
 
-		const ctx = await findGitDir(fs, "/repo");
+		const ctx = await findRepo(fs, "/repo");
 		if (!ctx) throw new Error("no git dir");
 
 		const server = createGitServer({
@@ -419,7 +419,7 @@ describe("handler HTTP conformance", () => {
 		await bash.exec("git add .");
 		await bash.exec('git commit -m "init"', { env: envAt(1000000000) });
 
-		const ctx = await findGitDir(fs, "/repo");
+		const ctx = await findRepo(fs, "/repo");
 		if (!ctx) throw new Error("no git dir");
 
 		const server = createGitServer({

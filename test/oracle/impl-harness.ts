@@ -10,7 +10,7 @@ import { createGitCommand } from "../../src/commands/git";
 import { readIndex } from "../../src/lib/index";
 import { readReflog } from "../../src/lib/reflog";
 import { listRefs, readHead, resolveRef } from "../../src/lib/refs";
-import { findGitDir } from "../../src/lib/repo";
+import { findRepo } from "../../src/lib/repo";
 import type { GitContext } from "../../src/lib/types";
 import {
 	DEFAULT_FILE_GEN_CONFIG,
@@ -118,7 +118,7 @@ async function walkDir(
  * Produces an ImplState that can be compared against an OracleState.
  */
 async function captureImplState(fs: IFileSystem): Promise<ImplState> {
-	const gitCtx = await findGitDir(fs, VFS_ROOT);
+	const gitCtx = await findRepo(fs, VFS_ROOT);
 
 	if (!gitCtx) {
 		return {
@@ -745,7 +745,7 @@ async function measureRepoSize(fs: IFileSystem, seq: number, command: string): P
 	let indexEntries = 0;
 	let conflictEntries = 0;
 	try {
-		const gitCtx = await findGitDir(fs, root);
+		const gitCtx = await findRepo(fs, root);
 		if (gitCtx) {
 			const index = await readIndex(gitCtx);
 			for (const entry of index.entries) {

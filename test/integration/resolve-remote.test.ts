@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { findGitDir } from "../../src/lib/repo.ts";
+import { findRepo } from "../../src/lib/repo.ts";
 import type { GitContext } from "../../src/lib/types.ts";
 
 const TEST_ENV = {
@@ -30,7 +30,7 @@ async function setupOrigin(): Promise<{ originFs: InMemoryFs; originCtx: GitCont
 	await originBash.exec("git add .");
 	await originBash.exec('git commit -m "initial"', { env: envAt(1000000000) });
 
-	const originCtx = await findGitDir(originFs, "/repo");
+	const originCtx = await findRepo(originFs, "/repo");
 	if (!originCtx) throw new Error("failed to set up origin");
 	return { originFs, originCtx };
 }

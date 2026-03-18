@@ -3,7 +3,7 @@ import { findAllMergeBases } from "../../src/lib/merge";
 import { mergeOrtNonRecursive } from "../../src/lib/merge-ort";
 import { readCommit } from "../../src/lib/object-db";
 import { resolveRef } from "../../src/lib/refs";
-import { findGitDir } from "../../src/lib/repo";
+import { findRepo } from "../../src/lib/repo";
 import type { GitContext, ObjectId } from "../../src/lib/types";
 import { EMPTY_REPO, envAt } from "../fixtures";
 import { createTestBash } from "../util";
@@ -36,7 +36,7 @@ describe("mergeOrtNonRecursive", () => {
 		await bash.exec("git add feature-file.txt");
 		await bash.exec('git commit -m "feature adds file"');
 
-		const gitCtx = (await findGitDir(bash.fs, "/repo"))!;
+		const gitCtx = (await findRepo(bash.fs, "/repo"))!;
 		const mainHash = (await resolveRef(gitCtx, "refs/heads/main"))!;
 		const featureHash = (await resolveRef(gitCtx, "refs/heads/feature"))!;
 
@@ -79,7 +79,7 @@ describe("mergeOrtNonRecursive", () => {
 		await bash.exec("git add README.md");
 		await bash.exec('git commit -m "feature changes"');
 
-		const gitCtx = (await findGitDir(bash.fs, "/repo"))!;
+		const gitCtx = (await findRepo(bash.fs, "/repo"))!;
 		const mainHash = (await resolveRef(gitCtx, "refs/heads/main"))!;
 		const featureHash = (await resolveRef(gitCtx, "refs/heads/feature"))!;
 
@@ -130,7 +130,7 @@ describe("mergeOrtNonRecursive", () => {
 		await bash.exec("git add README.md");
 		await bash.exec('git commit -m "feature updates readme"');
 
-		const gitCtx = (await findGitDir(bash.fs, "/repo"))!;
+		const gitCtx = (await findRepo(bash.fs, "/repo"))!;
 		const mainHash = (await resolveRef(gitCtx, "refs/heads/main"))!;
 		const featureHash = (await resolveRef(gitCtx, "refs/heads/feature"))!;
 		const baseHash = (await findMergeBase(gitCtx, mainHash, featureHash))!;
@@ -174,7 +174,7 @@ describe("mergeOrtNonRecursive", () => {
 		await bash.exec("git add new.txt");
 		await bash.exec('git commit -m "feature adds new.txt"');
 
-		const gitCtx = (await findGitDir(bash.fs, "/repo"))!;
+		const gitCtx = (await findRepo(bash.fs, "/repo"))!;
 		const mainHash = (await resolveRef(gitCtx, "refs/heads/main"))!;
 		const featureHash = (await resolveRef(gitCtx, "refs/heads/feature"))!;
 		const baseHash = (await findMergeBase(gitCtx, mainHash, featureHash))!;
@@ -217,7 +217,7 @@ describe("mergeOrtNonRecursive", () => {
 		await bash.exec("git add README.md");
 		await bash.exec('git commit -m "feature changes"');
 
-		const gitCtx = (await findGitDir(bash.fs, "/repo"))!;
+		const gitCtx = (await findRepo(bash.fs, "/repo"))!;
 		const mainHash = (await resolveRef(gitCtx, "refs/heads/main"))!;
 		const featureHash = (await resolveRef(gitCtx, "refs/heads/feature"))!;
 		const baseHash = (await findMergeBase(gitCtx, mainHash, featureHash))!;
@@ -252,7 +252,7 @@ describe("mergeOrtNonRecursive", () => {
 		await bash.exec("git add new-feature.txt");
 		await bash.exec('git commit -m "feature adds file"');
 
-		const gitCtx = (await findGitDir(bash.fs, "/repo"))!;
+		const gitCtx = (await findRepo(bash.fs, "/repo"))!;
 		const mainHash = (await resolveRef(gitCtx, "refs/heads/main"))!;
 		const featureHash = (await resolveRef(gitCtx, "refs/heads/feature"))!;
 		const baseHash = (await findMergeBase(gitCtx, mainHash, featureHash))!;
@@ -297,7 +297,7 @@ describe("mergeOrtNonRecursive", () => {
 		await bash.exec("git add file.txt");
 		await bash.exec('git commit -m "feature edits"');
 
-		const gitCtx = (await findGitDir(bash.fs, "/repo"))!;
+		const gitCtx = (await findRepo(bash.fs, "/repo"))!;
 		const mainHash = (await resolveRef(gitCtx, "refs/heads/main"))!;
 		const featureHash = (await resolveRef(gitCtx, "refs/heads/feature"))!;
 		const baseHash = (await findMergeBase(gitCtx, mainHash, featureHash))!;

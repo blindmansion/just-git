@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readCommit } from "../../src/lib/object-db";
 import { resolveHead, resolveRef } from "../../src/lib/refs";
-import { findGitDir } from "../../src/lib/repo";
+import { findRepo } from "../../src/lib/repo";
 import { EMPTY_REPO, TEST_ENV_NAMED as TEST_ENV, envAt } from "../fixtures";
 import { createTestBash, pathExists, readFile } from "../util";
 
@@ -108,7 +108,7 @@ describe("git revert", () => {
 			await bash.exec("git add extra.txt");
 			await bash.exec('git commit -m "add extra"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const secondHash = await resolveHead(gitCtx!);
 
 			await bash.fs.writeFile("/repo/another.txt", "another");
@@ -137,7 +137,7 @@ describe("git revert", () => {
 			await bash.exec("git add new.txt");
 			await bash.exec('git commit -m "add new file"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const commitHash = await resolveHead(gitCtx!);
 
 			await bash.exec("git revert HEAD");
@@ -170,7 +170,7 @@ describe("git revert", () => {
 
 			await bash.exec("git revert HEAD");
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const newHead = await resolveHead(gitCtx!);
 			const commit = await readCommit(gitCtx!, newHead!);
 			// Author should be from env (current identity), not preserved from original
@@ -191,7 +191,7 @@ describe("git revert", () => {
 			await bash.exec("git add new.txt");
 			await bash.exec('git commit -m "add file"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const preRevertHead = await resolveHead(gitCtx!);
 
 			await bash.exec("git revert HEAD");
@@ -285,7 +285,7 @@ describe("git revert", () => {
 
 			await bash.exec("git revert HEAD -m 1");
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const newHead = await resolveHead(gitCtx!);
 			const commit = await readCommit(gitCtx!, newHead!);
 			expect(commit.message).toContain("reversing");
@@ -310,7 +310,7 @@ describe("git revert", () => {
 			await bash.exec("git add file.txt");
 			await bash.exec('git commit -m "change1"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const change1Hash = await resolveHead(gitCtx!);
 
 			await bash.fs.writeFile("/repo/file.txt", "change2");
@@ -350,7 +350,7 @@ describe("git revert", () => {
 			await bash.exec("git add file.txt");
 			await bash.exec('git commit -m "change1"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const change1Hash = await resolveHead(gitCtx!);
 
 			await bash.fs.writeFile("/repo/file.txt", "change2");
@@ -389,7 +389,7 @@ describe("git revert", () => {
 			await bash.exec("git add file.txt");
 			await bash.exec('git commit -m "change1"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const change1Hash = await resolveHead(gitCtx!);
 
 			await bash.fs.writeFile("/repo/file.txt", "change2");
@@ -426,7 +426,7 @@ describe("git revert", () => {
 			await bash.exec("git add file.txt");
 			await bash.exec('git commit -m "change1"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const change1Hash = await resolveHead(gitCtx!);
 
 			await bash.fs.writeFile("/repo/file.txt", "change2");
@@ -459,7 +459,7 @@ describe("git revert", () => {
 			await bash.exec("git add file.txt");
 			await bash.exec('git commit -m "change1"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const change1Hash = await resolveHead(gitCtx!);
 
 			await bash.fs.writeFile("/repo/file.txt", "change2");
@@ -520,7 +520,7 @@ describe("git revert", () => {
 			await bash.exec("git add new.txt");
 			await bash.exec('git commit -m "add new file"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const commitHash = await resolveHead(gitCtx!);
 
 			const result = await bash.exec("git revert HEAD --no-commit");
@@ -622,7 +622,7 @@ describe("git revert", () => {
 			await bash.exec("git add file.txt");
 			await bash.exec('git commit -m "change1"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const change1Hash = await resolveHead(gitCtx!);
 
 			await bash.fs.writeFile("/repo/file.txt", "change2");
@@ -654,7 +654,7 @@ describe("git revert", () => {
 			await bash.exec("git add file.txt");
 			await bash.exec('git commit -m "change1"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const change1Hash = await resolveHead(gitCtx!);
 
 			await bash.fs.writeFile("/repo/file.txt", "change2");
@@ -685,7 +685,7 @@ describe("git revert", () => {
 			await bash.exec("git add file.txt");
 			await bash.exec('git commit -m "change1"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const change1Hash = await resolveHead(gitCtx!);
 
 			await bash.fs.writeFile("/repo/file.txt", "change2");

@@ -44,7 +44,7 @@ import { readFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { collectRebaseSymmetricPlan, readRebaseState } from "../../src/lib/rebase.ts";
-import { findGitDir } from "../../src/lib/repo.ts";
+import { findRepo } from "../../src/lib/repo.ts";
 import { resolveRevision } from "../../src/lib/rev-parse.ts";
 import { replayToVirtual } from "./impl-harness.ts";
 import { replayTo } from "./runner.ts";
@@ -344,7 +344,7 @@ export async function comparePlannerOutput(
 		const oracleLeft = parseMarkedList(revLeft.stdout);
 
 		// Run our planner in virtual FS
-		const gitCtx = await findGitDir(virtualEnv.bash.fs, "/repo");
+		const gitCtx = await findRepo(virtualEnv.bash.fs, "/repo");
 		if (!gitCtx) {
 			throw new Error("Virtual replay did not produce a git repository");
 		}
@@ -504,7 +504,7 @@ async function analyzeRebaseTodoDivergence(
 		}
 
 		// Read impl's todo list from virtual FS
-		const gitCtx = await findGitDir(virtualEnv.bash.fs, "/repo");
+		const gitCtx = await findRepo(virtualEnv.bash.fs, "/repo");
 		if (!gitCtx) {
 			return {
 				pattern: "unknown",

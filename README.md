@@ -124,7 +124,7 @@ Multiple agents can work on clones of the same repository in the same process, e
 
 ```ts
 import { Bash, InMemoryFs } from "just-bash";
-import { createGit, findGitDir } from "just-git";
+import { createGit, findRepo } from "just-git";
 
 // Origin repo on its own filesystem
 const originFs = new InMemoryFs();
@@ -139,17 +139,13 @@ await setupBash.exec("git init");
 await setupBash.exec("echo 'hello' > README.md");
 await setupBash.exec("git add . && git commit -m 'initial'");
 
-const originCtx = await findGitDir(originFs, "/repo");
-const resolve = (url: string) => (url === "/origin" ? originCtx : null);
-
-// Each agent gets its own filesystem + resolveRemote pointing to origin
 const alice = new Bash({
   fs: new InMemoryFs(),
   cwd: "/repo",
   customCommands: [
     createGit({
       identity: { name: "Alice", email: "alice@example.com", locked: true },
-      resolveRemote: resolve,
+      resolveRemote: () => findRepo(originFs, "/repo"),
     }),
   ],
 });
@@ -160,7 +156,7 @@ const bob = new Bash({
   customCommands: [
     createGit({
       identity: { name: "Bob", email: "bob@example.com", locked: true },
-      resolveRemote: resolve,
+      resolveRemote: () => findRepo(originFs, "/repo"),
     }),
   ],
 });

@@ -31,7 +31,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readIndex } from "../../src/lib/index";
 import { readObject } from "../../src/lib/object-db";
-import { findGitDir } from "../../src/lib/repo";
+import { findRepo } from "../../src/lib/repo";
 import { captureIndex, captureWorkTree, type GitSnapshot, type WorkTreeFile } from "./capture";
 import { compare, type OracleState } from "./compare";
 import { generateTraces, PRESETS, parseSeeds } from "./generate";
@@ -841,7 +841,7 @@ Examples:
 
 	try {
 		const virtual = await replayToVirtual(db, traceId, step);
-		const gitCtx = await findGitDir(virtual.bash.fs, "/repo");
+		const gitCtx = await findRepo(virtual.bash.fs, "/repo");
 		if (!gitCtx) {
 			console.log("No git repository in virtual replay.\n");
 			return;

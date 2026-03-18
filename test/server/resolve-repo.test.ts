@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { InMemoryFs, Bash } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { findGitDir } from "../../src/lib/repo.ts";
+import { findRepo } from "../../src/lib/repo.ts";
 import { createGitServer } from "../../src/server/handler.ts";
 
 const TEST_ENV = {
@@ -21,7 +21,7 @@ async function setupServerRepo() {
 	await bash.exec("git init");
 	await bash.exec("git add .");
 	await bash.exec('git commit -m "init"', { env: TEST_ENV });
-	const ctx = await findGitDir(fs, "/repo");
+	const ctx = await findRepo(fs, "/repo");
 	if (!ctx) throw new Error("repo not found");
 	return ctx;
 }

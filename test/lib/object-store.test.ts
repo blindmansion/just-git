@@ -5,7 +5,7 @@ import { buildPackIndex, PackIndex } from "../../src/lib/pack/pack-index";
 import { PackReader } from "../../src/lib/pack/pack-reader";
 import { writePack } from "../../src/lib/pack/packfile";
 import { inflate } from "../../src/lib/pack/zlib";
-import { findGitDir } from "../../src/lib/repo";
+import { findRepo } from "../../src/lib/repo";
 import { BASIC_REPO, TEST_ENV } from "../fixtures";
 import { createTestBash } from "../util";
 
@@ -248,7 +248,7 @@ describe("PackedObjectStore", () => {
 		const packDir = "/repo/.git/objects/pack";
 		expect(await bash2.fs.exists(packDir)).toBe(false);
 
-		const ctx = await findGitDir(bash2.fs, "/repo");
+		const ctx = await findRepo(bash2.fs, "/repo");
 		expect(ctx).not.toBeNull();
 
 		const store = new PackedObjectStore(bash2.fs, ctx?.gitDir ?? "");

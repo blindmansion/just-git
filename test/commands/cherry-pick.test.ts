@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readCommit } from "../../src/lib/object-db";
 import { resolveHead, resolveRef } from "../../src/lib/refs";
-import { findGitDir } from "../../src/lib/repo";
+import { findRepo } from "../../src/lib/repo";
 import { EMPTY_REPO, TEST_ENV_NAMED as TEST_ENV, envAt } from "../fixtures";
 import { createTestBash, pathExists, readFile } from "../util";
 
@@ -66,7 +66,7 @@ describe("git cherry-pick", () => {
 			await bash.exec("git merge main");
 
 			// Get the merge commit hash
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const mergeHash = await resolveHead(gitCtx!);
 
 			// Go back to main and try to cherry-pick the merge commit
@@ -97,7 +97,7 @@ describe("git cherry-pick", () => {
 			await bash.exec('git commit -m "add feature file"');
 
 			// Get the feature commit hash
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const featureHash = await resolveHead(gitCtx!);
 
 			// Switch back to main and cherry-pick
@@ -135,7 +135,7 @@ describe("git cherry-pick", () => {
 			await setup.exec("git add feature.txt");
 			await setup.exec('git commit -m "feature"');
 
-			const gitCtx = await findGitDir(setup.fs, "/repo");
+			const gitCtx = await findRepo(setup.fs, "/repo");
 			const featureHash = await resolveHead(gitCtx!);
 			const featureCommit = await readCommit(gitCtx!, featureHash!);
 
@@ -180,7 +180,7 @@ describe("git cherry-pick", () => {
 			await bash.exec("git add feature.txt");
 			await bash.exec('git commit -m "feature"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const featureHash = await resolveHead(gitCtx!);
 			const mainHash = await resolveRef(gitCtx!, "refs/heads/main");
 
@@ -209,7 +209,7 @@ describe("git cherry-pick", () => {
 			await bash.exec("git add feature.txt");
 			await bash.exec('git commit -m "my important feature change"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const featureHash = await resolveHead(gitCtx!);
 
 			await bash.exec("git checkout main");
@@ -236,7 +236,7 @@ describe("git cherry-pick", () => {
 			await bash.exec("git add new.txt");
 			await bash.exec('git commit -m "add new file"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const featureHash = await resolveHead(gitCtx!);
 
 			// On main, add a different file so there's no conflict
@@ -274,7 +274,7 @@ describe("git cherry-pick", () => {
 			await bash.exec("git add file.txt");
 			await bash.exec('git commit -m "feature change"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const featureHash = await resolveHead(gitCtx!);
 
 			// Main also changes file.txt
@@ -320,7 +320,7 @@ describe("git cherry-pick", () => {
 			await bash.exec("git add file.txt");
 			await bash.exec('git commit -m "feature change"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const featureHash = await resolveHead(gitCtx!);
 			const featureCommit = await readCommit(gitCtx!, featureHash!);
 
@@ -378,7 +378,7 @@ describe("git cherry-pick", () => {
 			await bash.exec("git add file.txt");
 			await bash.exec('git commit -m "feature change"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const featureHash = await resolveHead(gitCtx!);
 
 			await bash.exec("git checkout main");
@@ -424,7 +424,7 @@ describe("git cherry-pick", () => {
 			await bash.exec("git add file.txt");
 			await bash.exec('git commit -m "feature change"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const featureHash = await resolveHead(gitCtx!);
 
 			await bash.exec("git checkout main");
@@ -460,7 +460,7 @@ describe("git cherry-pick", () => {
 			await bash.exec("git add file.txt");
 			await bash.exec('git commit -m "feature change"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const featureHash = await resolveHead(gitCtx!);
 
 			await bash.exec("git checkout main");
@@ -526,7 +526,7 @@ describe("git cherry-pick", () => {
 			await bash.exec("git add file.txt");
 			await bash.exec('git commit -m "feature change"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const featureHash = await resolveHead(gitCtx!);
 
 			await bash.exec("git checkout main");
@@ -559,7 +559,7 @@ describe("git cherry-pick", () => {
 			await bash.exec("git add file.txt");
 			await bash.exec('git commit -m "feature change"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const featureHash = await resolveHead(gitCtx!);
 
 			await bash.exec("git checkout main");
@@ -596,7 +596,7 @@ describe("git cherry-pick", () => {
 			await bash.exec("git add feature.txt");
 			await bash.exec('git commit -m "feature"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const featureHash = await resolveHead(gitCtx!);
 
 			// Switch back to main, stage some change
@@ -630,7 +630,7 @@ describe("git cherry-pick", () => {
 			await bash.exec("git add new.txt");
 			await bash.exec('git commit -m "add new file"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const secondHash = await resolveHead(gitCtx!);
 
 			// Stage deletion of remove.txt
@@ -662,7 +662,7 @@ describe("git cherry-pick", () => {
 			await bash.exec("git add feature.txt");
 			await bash.exec('git commit -m "add feature file"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const featureHash = await resolveHead(gitCtx!);
 
 			// Back to main, stage a modification to file.txt
@@ -696,7 +696,7 @@ describe("git cherry-pick", () => {
 			await bash.exec("git add conflict.txt");
 			await bash.exec('git commit -m "feature change"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const featureHash = await resolveHead(gitCtx!);
 
 			// Back to main, commit a different modification (so HEAD differs from base)
@@ -730,7 +730,7 @@ describe("git cherry-pick", () => {
 			await bash.exec("git add file.txt");
 			await bash.exec('git commit -m "feature"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const featureHash = await resolveHead(gitCtx!);
 
 			await bash.exec("git checkout main");
@@ -761,7 +761,7 @@ describe("git cherry-pick", () => {
 			await bash.exec("git add new.txt");
 			await bash.exec('git commit -m "add new"');
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const featureHash = await resolveHead(gitCtx!);
 
 			await bash.exec("git checkout main");

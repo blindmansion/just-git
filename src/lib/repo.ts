@@ -13,7 +13,7 @@ import type { GitContext } from "./types.ts";
  * (`HEAD` + `objects/` + `refs/` directly in the directory).
  * Returns a GitContext if found, null otherwise.
  */
-export async function findGitDir(fs: FileSystem, startPath: string): Promise<GitContext | null> {
+export async function findRepo(fs: FileSystem, startPath: string): Promise<GitContext | null> {
 	let current = startPath;
 
 	while (true) {

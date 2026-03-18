@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { collectRebaseSymmetricPlan } from "../../src/lib/rebase";
-import { findGitDir } from "../../src/lib/repo";
+import { findRepo } from "../../src/lib/repo";
 import { resolveRevision } from "../../src/lib/rev-parse";
 import { RealGitHarness } from "../oracle/real-harness";
 import { createTestBash } from "../util";
@@ -34,11 +34,11 @@ async function readRevList(real: RealGitHarness, rangeExpr: string): Promise<str
 }
 
 async function resolvePlanInputs(bash: ReturnType<typeof createTestBash>): Promise<{
-	gitCtx: NonNullable<Awaited<ReturnType<typeof findGitDir>>>;
+	gitCtx: NonNullable<Awaited<ReturnType<typeof findRepo>>>;
 	upstream: string;
 	head: string;
 }> {
-	const gitCtx = await findGitDir(bash.fs, "/repo");
+	const gitCtx = await findRepo(bash.fs, "/repo");
 	expect(gitCtx).not.toBeNull();
 	if (!gitCtx) {
 		throw new Error("expected git context");

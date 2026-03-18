@@ -14,7 +14,7 @@
 
 import { Bash } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { findGitDir } from "../../src/lib/repo.ts";
+import { findRepo } from "../../src/lib/repo.ts";
 import {
 	enumerateObjects,
 	enumerateObjectsWithContent,
@@ -64,7 +64,7 @@ if (cloneResult.exitCode !== 0) {
 	process.exit(1);
 }
 
-const ctx = (await findGitDir(bash.fs, "/repo"))!;
+const ctx = (await findRepo(bash.fs, "/repo"))!;
 const store = ctx.objectStore as PackedObjectStore;
 
 // ── Repo stats ───────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { objectExists, readObject } from "../../src/lib/object-db.ts";
 import { resolveHead, resolveRef } from "../../src/lib/refs.ts";
-import { findGitDir } from "../../src/lib/repo.ts";
+import { findRepo } from "../../src/lib/repo.ts";
 import { LocalTransport } from "../../src/lib/transport/transport.ts";
 import { TEST_ENV as ENV } from "../fixtures";
 import { createTestBash } from "../util";
@@ -24,8 +24,8 @@ async function setupPair() {
 	// Init local as empty repo
 	await bash.exec("cd /local && git init");
 
-	const remoteCtx = (await findGitDir(bash.fs, "/remote"))!;
-	const localCtx = (await findGitDir(bash.fs, "/local"))!;
+	const remoteCtx = (await findRepo(bash.fs, "/remote"))!;
+	const localCtx = (await findRepo(bash.fs, "/local"))!;
 
 	return { bash, remoteCtx, localCtx };
 }

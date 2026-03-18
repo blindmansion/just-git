@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readCommit } from "../../src/lib/object-db";
 import { isRebaseInProgress, readRebaseState } from "../../src/lib/rebase";
 import { resolveHead, resolveRef } from "../../src/lib/refs";
-import { findGitDir } from "../../src/lib/repo";
+import { findRepo } from "../../src/lib/repo";
 import { EMPTY_REPO, TEST_ENV_NAMED as TEST_ENV, envAt } from "../fixtures";
 import { createTestBash, pathExists, readFile } from "../util";
 
@@ -128,7 +128,7 @@ describe("git rebase", () => {
 			expect(result.exitCode).toBe(0);
 
 			// Feature branch should now be on top of main
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const headHash = await resolveHead(gitCtx!);
 			const headCommit = await readCommit(gitCtx!, headHash!);
 
@@ -179,7 +179,7 @@ describe("git rebase", () => {
 			await bash.exec("git rebase main", { env: rebaseEnv });
 
 			// Check that the author is preserved from the original commit
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const headHash = await resolveHead(gitCtx!);
 			const headCommit = await readCommit(gitCtx!, headHash!);
 			expect(headCommit.author.timestamp).toBe(2000000000);
@@ -218,7 +218,7 @@ describe("git rebase", () => {
 			expect(result.exitCode).toBe(0);
 
 			// Verify commit chain
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const headHash = await resolveHead(gitCtx!);
 			const head = await readCommit(gitCtx!, headHash!);
 			expect(head.message).toContain("feature commit 2");
@@ -254,7 +254,7 @@ describe("git rebase", () => {
 			const bash = await setupDivergent();
 			await bash.exec("git rebase main");
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			expect(await isRebaseInProgress(gitCtx!)).toBe(false);
 			expect(await resolveRef(gitCtx!, "REBASE_HEAD")).toBeNull();
 			expect(await resolveRef(gitCtx!, "ORIG_HEAD")).toBeNull();
@@ -299,7 +299,7 @@ describe("git rebase", () => {
 			const result = await bash.exec("git rebase --onto main main");
 			expect(result.exitCode).toBe(0);
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const headHash = await resolveHead(gitCtx!);
 			const headCommit = await readCommit(gitCtx!, headHash!);
 			expect(headCommit.message).toContain("commit C");
@@ -319,7 +319,7 @@ describe("git rebase", () => {
 			expect(result.exitCode).toBe(1);
 			expect(result.stdout).toContain("CONFLICT");
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			expect(await isRebaseInProgress(gitCtx!)).toBe(true);
 			expect(await resolveRef(gitCtx!, "REBASE_HEAD")).not.toBeNull();
 		});
@@ -352,7 +352,7 @@ describe("git rebase", () => {
 			expect(result.exitCode).toBe(0);
 
 			// Rebase should be complete
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			expect(await isRebaseInProgress(gitCtx!)).toBe(false);
 
 			// Verify the commit chain
@@ -382,7 +382,7 @@ describe("git rebase", () => {
 			expect(result.exitCode).toBe(0);
 
 			// Rebase should be complete
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			expect(await isRebaseInProgress(gitCtx!)).toBe(false);
 
 			// HEAD should be at main's tip (the skipped commit's changes are gone)
@@ -398,7 +398,7 @@ describe("git rebase", () => {
 		test("abort restores original branch and HEAD", async () => {
 			const bash = await setupConflict();
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const origFeatureHead = await resolveHead(gitCtx!);
 
 			// Start rebase (will conflict)
@@ -537,7 +537,7 @@ describe("git rebase", () => {
 			const result = await bash.exec("git rebase --continue");
 			expect(result.exitCode).toBe(0);
 
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			expect(await isRebaseInProgress(gitCtx!)).toBe(false);
 		});
 	});
@@ -598,7 +598,7 @@ describe("git rebase", () => {
 			expect(abortResult.stderr).toContain("could not move back to");
 
 			// Rebase should still be in progress
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const inProgress = await isRebaseInProgress(gitCtx!);
 			expect(inProgress).toBe(true);
 		});
@@ -639,7 +639,7 @@ describe("git rebase", () => {
 			expect(result.stdout).toContain("CONFLICT");
 
 			// Check rebase state
-			const gitCtx = await findGitDir(bash.fs, "/repo");
+			const gitCtx = await findRepo(bash.fs, "/repo");
 			const state = await readRebaseState(gitCtx!);
 			expect(state).not.toBeNull();
 			// Both commits are in done (state is advanced before each pick attempt,

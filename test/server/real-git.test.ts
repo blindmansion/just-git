@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { findGitDir } from "../../src/lib/repo.ts";
+import { findRepo } from "../../src/lib/repo.ts";
 import type { GitContext } from "../../src/lib/types.ts";
 import {
 	envAt,
@@ -43,7 +43,7 @@ describe("server with real git client", () => {
 		await serverBash.exec("git tag v1.0");
 		await serverBash.exec("git branch feature");
 
-		const ctx = await findGitDir(serverFs, "/repo");
+		const ctx = await findRepo(serverFs, "/repo");
 		if (!ctx) throw new Error("failed to find git dir");
 		serverRepo = ctx;
 

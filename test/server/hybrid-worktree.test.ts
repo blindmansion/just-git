@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { findGitDir } from "../../src/lib/repo.ts";
+import { findRepo } from "../../src/lib/repo.ts";
 import { resolveRef } from "../../src/lib/refs.ts";
 import { readCommit } from "../../src/lib/object-db.ts";
 import { flattenTree } from "../../src/lib/tree-ops.ts";
@@ -42,7 +42,7 @@ describe("hybrid worktree (VFS + SQLite stores)", () => {
 		await seedBash.exec("git add .");
 		await seedBash.exec('git commit -m "initial commit"', { env: envAt(1000000000) });
 
-		const seedCtx = await findGitDir(seedFs, "/repo");
+		const seedCtx = await findRepo(seedFs, "/repo");
 		if (!seedCtx) throw new Error("failed to find seed repo");
 		const pushGit = createGit({ resolveRemote: () => repo });
 		const pushBash = new Bash({ fs: seedFs, cwd: "/repo", customCommands: [pushGit] });

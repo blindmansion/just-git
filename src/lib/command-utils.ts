@@ -7,7 +7,7 @@ import { serializeCommit } from "./objects/commit.ts";
 import { relative } from "./path.ts";
 import { logRef } from "./reflog.ts";
 import { advanceBranchRef, readHead, resolveHead, resolveRef } from "./refs.ts";
-import { findGitDir } from "./repo.ts";
+import { findRepo } from "./repo.ts";
 import { resolveRevision } from "./rev-parse.ts";
 import type { Commit, GitContext, Identity, Index, ObjectId } from "./types.ts";
 import { applyWorktreeOps, mergeAbort } from "./unpack-trees.ts";
@@ -43,7 +43,7 @@ export async function requireGitContext(
 	cwd: string,
 	ext?: GitExtensions,
 ): Promise<GitContext | CommandResult> {
-	const ctx = await findGitDir(fs, cwd);
+	const ctx = await findRepo(fs, cwd);
 	if (!ctx) return NOT_A_GIT_REPO;
 	if (!ext) return ctx;
 	return { ...ctx, ...ext };

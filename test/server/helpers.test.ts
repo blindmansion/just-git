@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { findGitDir } from "../../src/lib/repo.ts";
+import { findRepo } from "../../src/lib/repo.ts";
 import type { GitRepo, Identity } from "../../src/lib/types.ts";
 import {
 	checkoutTo,
@@ -60,7 +60,7 @@ async function setupWithCommits(): Promise<{
 	await bash.exec("git add .");
 	await bash.exec('git commit -m "initial"', { env: envAt(1000000000) });
 
-	const ctx = await findGitDir(fs, "/repo");
+	const ctx = await findRepo(fs, "/repo");
 	if (!ctx) throw new Error("failed to find git dir");
 
 	const initialHash = await getRefHash(ctx, "HEAD");

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { findGitDir } from "../../src/lib/repo.ts";
+import { findRepo } from "../../src/lib/repo.ts";
 import type { GitContext } from "../../src/lib/types.ts";
 import { SqliteStorage } from "../../src/server/sqlite-storage.ts";
 import { envAt, createServerClient, startServer } from "./util.ts";
@@ -25,7 +25,7 @@ describe("concurrent push safety (VFS-backed server)", () => {
 		await bash.exec("git add .");
 		await bash.exec('git commit -m "initial"', { env: envAt(1000000000) });
 
-		const ctx = await findGitDir(serverFs, "/repo");
+		const ctx = await findRepo(serverFs, "/repo");
 		if (!ctx) throw new Error("failed to find git dir");
 		serverRepo = ctx;
 
@@ -116,7 +116,7 @@ describe("concurrent push safety (SQLite-backed server)", () => {
 		await seedBash.exec("git add .");
 		await seedBash.exec('git commit -m "initial"', { env: envAt(1000000000) });
 
-		const seedCtx = await findGitDir(seedFs, "/repo");
+		const seedCtx = await findRepo(seedFs, "/repo");
 		if (!seedCtx) throw new Error("failed to set up seed repo");
 
 		const seedGitForPush = createGit({

@@ -1,5 +1,5 @@
 import { readConfig } from "../config.ts";
-import { findGitDir } from "../repo.ts";
+import { findRepo } from "../repo.ts";
 import type { GitContext, GitRepo } from "../types.ts";
 import type { NetworkPolicy } from "../../hooks.ts";
 import { type HttpAuth, LocalTransport, SmartHttpTransport, type Transport } from "./transport.ts";
@@ -133,7 +133,7 @@ export async function resolveRemoteTransport(
 
 	const remoteRepo: GitRepo | null =
 		(ctx.resolveRemote ? await ctx.resolveRemote(remote.url) : null) ??
-		(await findGitDir(ctx.fs, remote.url));
+		(await findRepo(ctx.fs, remote.url));
 	if (!remoteRepo) return null;
 
 	return {

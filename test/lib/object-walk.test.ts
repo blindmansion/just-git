@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resolveHead } from "../../src/lib/refs.ts";
-import { findGitDir } from "../../src/lib/repo.ts";
+import { findRepo } from "../../src/lib/repo.ts";
 import {
 	collectEnumeration,
 	enumerateObjects,
@@ -24,7 +24,7 @@ describe("enumerateObjects (with haves)", () => {
 		await bash.exec("git add .");
 		await bash.exec('git commit -m "first"');
 
-		const ctx = (await findGitDir(bash.fs, "/repo"))!;
+		const ctx = (await findRepo(bash.fs, "/repo"))!;
 		const firstCommit = (await resolveHead(ctx))!;
 
 		await bash.exec("echo 'new content' > /repo/file2.txt");
@@ -50,7 +50,7 @@ describe("enumerateObjects (with haves)", () => {
 		await bash.exec("git add .");
 		await bash.exec('git commit -m "initial"');
 
-		const ctx = (await findGitDir(bash.fs, "/repo"))!;
+		const ctx = (await findRepo(bash.fs, "/repo"))!;
 		const head = (await resolveHead(ctx))!;
 
 		const { count } = await enumerateObjects(ctx, [head], [head]);
@@ -62,7 +62,7 @@ describe("enumerateObjects (with haves)", () => {
 		await bash.exec("git add .");
 		await bash.exec('git commit -m "first"');
 
-		const ctx = (await findGitDir(bash.fs, "/repo"))!;
+		const ctx = (await findRepo(bash.fs, "/repo"))!;
 		const head = (await resolveHead(ctx))!;
 
 		const result = await enumerateObjects(ctx, [head], []);
@@ -78,7 +78,7 @@ describe("enumerateObjectsWithContent", () => {
 		await bash.exec("git add .");
 		await bash.exec('git commit -m "initial"');
 
-		const ctx = (await findGitDir(bash.fs, "/repo"))!;
+		const ctx = (await findRepo(bash.fs, "/repo"))!;
 		const head = (await resolveHead(ctx))!;
 
 		const { count, objects } = await enumerateObjectsWithContent(ctx, [head], []);
@@ -106,7 +106,7 @@ describe("enumerateObjectsWithContent", () => {
 		await bash.exec("git add .");
 		await bash.exec('git commit -m "multi"');
 
-		const ctx = (await findGitDir(bash.fs, "/repo"))!;
+		const ctx = (await findRepo(bash.fs, "/repo"))!;
 		const head = (await resolveHead(ctx))!;
 
 		const withoutContent = await enumerateObjects(ctx, [head], []);

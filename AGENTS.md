@@ -41,7 +41,7 @@ const bash = new Bash({ cwd: "/repo", customCommands: [git] });
 - `disabled` — `GitCommandName[]` of subcommands to block. Disabled commands return unknown-command errors.
 - `identity` — `IdentityOverride` with `name`, `email`, optional `locked`. When `locked: true`, overrides env vars (`GIT_AUTHOR_NAME`, etc.); when unlocked (default), acts as fallback when env vars and git config are absent.
 - `credentials` — `CredentialProvider` callback `(url) => HttpAuth | null`. Provides auth for Smart HTTP transport. Takes precedence over `GIT_HTTP_BEARER_TOKEN`/`GIT_HTTP_USER` env vars.
-- `resolveRemote` — `RemoteResolver` callback `(url) => GitRepo | null`. Resolves non-HTTP remote URLs to a `GitRepo`, enabling cross-VFS transport. Called before local filesystem lookup. Return null to fall back to `findGitDir` on the local VFS. Enables multi-agent setups where each agent has its own isolated filesystem but can clone/fetch/push between repos on different VFS instances via `LocalTransport`. Also enables resolving to server-backed repos (e.g. `SqliteStorage`) for hybrid in-process/server scenarios.
+- `resolveRemote` — `RemoteResolver` callback `(url) => GitRepo | null`. Resolves non-HTTP remote URLs to a `GitRepo`, enabling cross-VFS transport. Called before local filesystem lookup. Return null to fall back to `findRepo` on the local VFS. Enables multi-agent setups where each agent has its own isolated filesystem but can clone/fetch/push between repos on different VFS instances via `LocalTransport`. Also enables resolving to server-backed repos (e.g. `SqliteStorage`) for hybrid in-process/server scenarios.
 
 **Hooks** (`GitHooks` interface — config-at-construction, named callbacks):
 
@@ -126,7 +126,7 @@ interface GitContext {
 }
 ```
 
-Obtain via `findGitDir(ctx.fs, ctx.cwd)` from `lib/repo.ts`, or `initRepository` for `git init`.
+Obtain via `findRepo(ctx.fs, ctx.cwd)` from `lib/repo.ts`, or `initRepository` for `git init`.
 
 ### Object storage
 
@@ -213,7 +213,7 @@ Re-exports `createGit`, `Git`, `GitOptions`, `GitCommandName`, `GitExtensions`, 
 | `lib/objects/`                 | Parse/serialize by type (tree, commit, tag)                                                                                     |
 | `lib/refs.ts`                  | Reference management: read, resolve, update, delete, list                                                                       |
 | `lib/index.ts`                 | Staging area (index): read/write, add/remove entries                                                                            |
-| `lib/repo.ts`                  | Repository discovery (`findGitDir`) and `initRepository`                                                                        |
+| `lib/repo.ts`                  | Repository discovery (`findRepo`) and `initRepository`                                                                          |
 | `lib/config.ts`                | Git config (INI format): get/set/unset values                                                                                   |
 | `lib/identity.ts`              | Author/committer resolution from env vars and config                                                                            |
 | `lib/tree-ops.ts`              | `buildTreeFromIndex`, `flattenTree`, `diffTrees`                                                                                |

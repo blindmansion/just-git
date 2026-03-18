@@ -8,7 +8,7 @@ import { readCommit } from "../lib/object-db.ts";
 import { basename, resolve } from "../lib/path.ts";
 import { appendReflog, ZERO_HASH } from "../lib/reflog.ts";
 import { createSymbolicRef, updateRef } from "../lib/refs.ts";
-import { findGitDir, initRepository } from "../lib/repo.ts";
+import { findRepo, initRepository } from "../lib/repo.ts";
 import { createTransportForUrl } from "../lib/transport/remote.ts";
 import type { Transport } from "../lib/transport/transport.ts";
 import { flattenTree } from "../lib/tree-ops.ts";
@@ -78,7 +78,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 					sourceRepo = await ext.resolveRemote(sourcePath);
 				}
 				if (!sourceRepo) {
-					sourceRepo = await findGitDir(ctx.fs, sourcePath);
+					sourceRepo = await findRepo(ctx.fs, sourcePath);
 				}
 				if (!sourceRepo) {
 					return fatal(`repository '${repository}' does not exist`);

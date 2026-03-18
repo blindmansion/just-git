@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { findGitDir } from "../../src/lib/repo.ts";
+import { findRepo } from "../../src/lib/repo.ts";
 import { createGitServer } from "../../src/server/handler.ts";
 import {
 	encodePktLine,
@@ -22,7 +22,7 @@ async function setupRepo() {
 	await bash.exec("git add .");
 	await bash.exec('git commit -m "init"', { env: envAt(1000000000) });
 
-	const ctx = await findGitDir(fs, "/repo");
+	const ctx = await findRepo(fs, "/repo");
 	if (!ctx) throw new Error("no git dir");
 	return ctx;
 }

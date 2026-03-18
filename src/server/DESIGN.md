@@ -352,7 +352,7 @@ await bash.exec("git diff HEAD~1"); // works
 await bash.exec("git add ."); // fails: "read-only"
 ```
 
-When `GitOptions.objectStore` / `GitOptions.refStore` are provided, they override the filesystem-backed stores that `findGitDir` constructs, so git commands read objects and refs from the shared backend.
+When `GitOptions.objectStore` / `GitOptions.refStore` are provided, they override the filesystem-backed stores that `findRepo` constructs, so git commands read objects and refs from the shared backend.
 
 ### Write-capable agent (resolveRemote + clone)
 

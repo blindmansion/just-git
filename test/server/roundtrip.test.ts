@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { findGitDir } from "../../src/lib/repo.ts";
+import { findRepo } from "../../src/lib/repo.ts";
 import type { GitContext } from "../../src/lib/types.ts";
 import { createGitServer } from "../../src/server/handler.ts";
 import { envAt, createServerClient, startServer } from "./util.ts";
@@ -39,7 +39,7 @@ describe("server roundtrip", () => {
 
 		await serverBash.exec("git branch feature");
 
-		const ctx = await findGitDir(serverFs, "/repo");
+		const ctx = await findRepo(serverFs, "/repo");
 		if (!ctx) throw new Error("failed to find git dir");
 		serverRepo = ctx;
 

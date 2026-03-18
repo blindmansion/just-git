@@ -14,7 +14,7 @@
  */
 
 import { Bash, InMemoryFs } from "just-bash";
-import { createGit, findGitDir } from "../src/index.ts";
+import { createGit, findRepo } from "../src/index.ts";
 
 async function run() {
 	// ── Step 1: Origin on its own VFS ─────────────────────────────
@@ -34,7 +34,7 @@ async function run() {
 	await originBash.exec("git add .");
 	await originBash.exec('git commit -m "initial commit"');
 
-	const originCtx = await findGitDir(originFs, "/repo");
+	const originCtx = await findRepo(originFs, "/repo");
 	if (!originCtx) throw new Error("origin setup failed");
 
 	console.log("=== Origin bootstrapped on VFS-1 ===\n");

@@ -7,7 +7,7 @@
 
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../src";
-import { findGitDir } from "../src/lib/repo.ts";
+import { findRepo } from "../src/lib/repo.ts";
 import { createGitServer } from "../src/server/handler.ts";
 
 const ENV = {
@@ -32,7 +32,7 @@ await serverBash.exec("git add .");
 await serverBash.exec('git commit -m "initial commit"', { env: ENV });
 await serverBash.exec("git tag v0.1.0");
 
-const repo = await findGitDir(serverFs, "/repo");
+const repo = await findRepo(serverFs, "/repo");
 if (!repo) throw new Error("repo not found");
 
 console.log("  Server repo initialized with 1 commit and tag v0.1.0\n");

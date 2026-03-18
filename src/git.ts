@@ -84,13 +84,13 @@ export interface GitOptions {
 	 */
 	resolveRemote?: RemoteResolver;
 	/**
-	 * Override the object store discovered by `findGitDir`.
+	 * Override the object store discovered by `findRepo`.
 	 * When set, all object reads/writes bypass the VFS `.git/objects/`
 	 * and go through this store instead (e.g. SQLite-backed).
 	 */
 	objectStore?: ObjectStore;
 	/**
-	 * Override the ref store discovered by `findGitDir`.
+	 * Override the ref store discovered by `findRepo`.
 	 * When set, all ref reads/writes bypass the VFS `.git/refs/`
 	 * and go through this store instead (e.g. SQLite-backed).
 	 */
