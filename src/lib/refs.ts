@@ -27,6 +27,8 @@ const MAX_SYMREF_DEPTH = 10;
  * under `.git/`, with `packed-refs` as fallback for reads and listings.
  */
 export class FileSystemRefStore implements RefStore {
+	private casLocks = new Map<string, Promise<boolean>>();
+
 	constructor(
 		private fs: FileSystem,
 		private gitDir: string,
@@ -93,6 +95,26 @@ export class FileSystemRefStore implements RefStore {
 	}
 
 	async compareAndSwapRef(
+		name: string,
+		expectedOldHash: string | null,
+		newRef: Ref | null,
+	): Promise<boolean> {
+		const prev = this.casLocks.get(name) ?? Promise.resolve(false);
+		const result = prev.then(
+			() => this.compareAndSwapUnsafe(name, expectedOldHash, newRef),
+			() => this.compareAndSwapUnsafe(name, expectedOldHash, newRef),
+		);
+		this.casLocks.set(name, result);
+		try {
+			return await result;
+		} finally {
+			if (this.casLocks.get(name) === result) {
+				this.casLocks.delete(name);
+			}
+		}
+	}
+
+	private async compareAndSwapUnsafe(
 		name: string,
 		expectedOldHash: string | null,
 		newRef: Ref | null,
