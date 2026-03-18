@@ -100,21 +100,12 @@ speed, but it would scale poorly for repos with 100k+ objects.
 The `ObjectCache` helps for commits/trees on re-reads, but every object
 is read at least once, and blobs are never cached.
 
-### 4. `inflateWithSize` binary search in pack reader
+### 4. ~~`inflateWithSize` binary search in pack reader~~ — fixed
 
-`readPack()` in `lib/pack/packfile.ts` needs to know how many
-compressed bytes each entry consumed. Since `inflate()` doesn't report
-bytes consumed, it binary-searches by repeatedly inflating truncated
-slices:
+~~`readPack()` used O(N × log(compressed)) inflate calls per entry.~~
 
-```
-inflate(full remaining buffer)
-binary search [2 .. remaining.length]:
-    inflate(slice[0..mid])  →  correct size?  →  narrow
-```
-
-For the initial push of 4 336 objects, this means O(N × log(compressed))
-inflate calls — explaining the 398 ms `readPack` time.
+Fixed: single-pass inflate via `inflateSync(data, { info: true })`.
+See "Implemented optimizations → B" above.
 
 ### 5. No thin pack support
 
@@ -264,12 +255,50 @@ delta computation anyway, so this mostly helps storage, not serving.
 
 ---
 
-## Priority matrix
+## Implemented optimizations
+
+### A. Pack cache — done
+
+Added `PackCache` in `operations.ts`, keyed on `(repoPath, sorted wants)`
+for full-clone requests (0 haves). Integrated into the handler via
+`GitServerConfig.packCache`. Defaults to 256 MB limit.
+
+**Impact (cannoli):** 5 parallel clones wall time dropped from ~8.5 s to
+~2.1 s (cache hit serves the pack in <1 ms).
+
+### B. Single-pass inflate — done
+
+Replaced the binary-search `inflateWithSize` in `lib/pack/packfile.ts`
+with `inflateSync(data, { info: true })` via the `inflateWithConsumed`
+extension to the `ZlibProvider` in `lib/pack/zlib.ts`. One inflate call
+per entry instead of ~13.
+
+**Platform portability:** `{ info: true }` is supported on all server-side
+runtimes (Bun, Node.js, Deno, Cloudflare Workers with `nodejs_compat`).
+Feature-detected at startup; browser environments fall back to the
+binary search.
+
+**Impact (cannoli, 4 336 objects):**
+
+| Metric | Before | After | Speedup |
+|---|---|---|---|
+| `readPack` | 398 ms | 56 ms | **7.1×** |
+| Initial push total | 502 ms | 153 ms | **3.3×** |
+
+**Impact (SolidJS, 18 804 objects):**
+
+| Metric | After |
+|---|---|
+| `readPack` | 396 ms |
+| SQLite insert | 211 ms |
+| Initial push total | 730 ms |
+
+---
+
+## Remaining optimizations
 
 | Fix | Impact | Effort | Notes |
 |---|---|---|---|
-| A. Pack cache | ★★★★★ | Medium | Eliminates redundant work |
-| B. Fix inflateWithSize | ★★★★ | Low | Single-pass inflate |
 | C. Streaming response | ★★★★ | Medium | TTFB + memory |
 | D. Configurable deltas | ★★★ | Low | Quick win for LAN use |
 | E. Batch object reads | ★★★ | Medium | Scales to large repos |

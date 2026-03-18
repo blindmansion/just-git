@@ -1,7 +1,7 @@
 import { hexAt, hexToBytes } from "../hex.ts";
 import { createHasher } from "../sha1.ts";
 import type { ObjectId, ObjectType, RawObject } from "../types.ts";
-import { deflate, inflate } from "./zlib.ts";
+import { deflate, inflate, inflateWithConsumed } from "./zlib.ts";
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -579,25 +579,34 @@ function readSizeEncoding(data: Uint8Array, pos: number): { value: number; newPo
  * Inflate zlib-compressed data where we don't know the compressed
  * length in advance (entries are packed back-to-back).
  *
- * We use an incremental approach: try inflating with increasing
- * windows until we get a valid result matching the expected size.
+ * When the platform supports it (node:zlib with `{ info: true }`),
+ * this is a single inflate call that reports bytes consumed directly.
+ * Otherwise falls back to a binary search over truncated slices.
  */
 async function inflateWithSize(
 	data: Uint8Array,
 	offset: number,
 	expectedSize: number,
 ): Promise<{ result: Uint8Array; bytesConsumed: number }> {
-	// Fast path: try the whole remaining buffer. If the inflated size
-	// matches expectations, binary search for the exact compressed length.
 	const remaining = data.subarray(offset);
+
+	if (inflateWithConsumed) {
+		const { result, bytesConsumed } = await inflateWithConsumed(remaining);
+		if (result.byteLength !== expectedSize) {
+			throw new Error(
+				`Inflate size mismatch: got ${result.byteLength}, expected ${expectedSize}`,
+			);
+		}
+		return { result, bytesConsumed };
+	}
+
+	// Fallback: inflate the whole remaining buffer, then binary search
+	// for the exact compressed length (platforms without consumption metadata).
 	const full = await inflate(remaining);
 	if (full.byteLength !== expectedSize) {
 		throw new Error(`Inflate size mismatch: got ${full.byteLength}, expected ${expectedSize}`);
 	}
 
-	// Binary search for the minimum compressed length that produces
-	// the same output. Zlib streams are self-terminating, but inflate()
-	// typically ignores trailing data, so we need to find the boundary.
 	let lo = 2; // minimum zlib stream is 2 bytes (header + empty)
 	let hi = remaining.byteLength;
 	while (lo < hi) {
