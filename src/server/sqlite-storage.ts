@@ -1,4 +1,3 @@
-import type { Database, Statement } from "bun:sqlite";
 import { ObjectCache } from "../lib/object-cache.ts";
 import { envelope } from "../lib/object-store.ts";
 import { readPack } from "../lib/pack/packfile.ts";
@@ -13,6 +12,21 @@ import type {
 	RefStore,
 } from "../lib/types.ts";
 import type { GitRepo } from "../lib/types.ts";
+
+// ── SQLite driver interface ─────────────────────────────────────────
+// Minimal interface covering bun:sqlite and better-sqlite3.
+
+export interface SqliteStatement {
+	run(...params: any[]): void;
+	get(...params: any[]): any;
+	all(...params: any[]): any[];
+}
+
+export interface SqliteDatabase {
+	run(sql: string): void;
+	prepare(sql: string): SqliteStatement;
+	transaction<F extends (...args: any[]) => any>(fn: F): (...args: Parameters<F>) => ReturnType<F>;
+}
 
 // ── Schema ──────────────────────────────────────────────────────────
 
@@ -38,21 +52,21 @@ CREATE TABLE IF NOT EXISTS git_refs (
 // ── Prepared statement cache ────────────────────────────────────────
 
 interface Statements {
-	objInsert: Statement;
-	objRead: Statement;
-	objExists: Statement;
-	objPrefix: Statement;
-	objDeleteAll: Statement;
+	objInsert: SqliteStatement;
+	objRead: SqliteStatement;
+	objExists: SqliteStatement;
+	objPrefix: SqliteStatement;
+	objDeleteAll: SqliteStatement;
 
-	refRead: Statement;
-	refWrite: Statement;
-	refDelete: Statement;
-	refList: Statement;
-	refListAll: Statement;
-	refDeleteAll: Statement;
+	refRead: SqliteStatement;
+	refWrite: SqliteStatement;
+	refDelete: SqliteStatement;
+	refList: SqliteStatement;
+	refListAll: SqliteStatement;
+	refDeleteAll: SqliteStatement;
 }
 
-function prepareStatements(db: Database): Statements {
+function prepareStatements(db: SqliteDatabase): Statements {
 	return {
 		objInsert: db.prepare(
 			"INSERT OR IGNORE INTO git_objects (repo_id, hash, type, content) VALUES (?, ?, ?, ?)",
@@ -92,11 +106,13 @@ function prepareStatements(db: Database): Statements {
  * ```
  */
 export class SqliteStorage {
-	private db: Database;
+	private db: SqliteDatabase;
 	private stmts: Statements;
-	private ingestTx: ReturnType<Database["transaction"]>;
+	private ingestTx: (
+		rows: Array<{ repoId: string; hash: string; type: string; content: Uint8Array }>,
+	) => void;
 
-	constructor(db: Database) {
+	constructor(db: SqliteDatabase) {
 		this.db = db;
 		db.run(SCHEMA);
 		this.stmts = prepareStatements(db);
@@ -131,7 +147,9 @@ class SqliteObjectStore implements ObjectStore {
 
 	constructor(
 		private stmts: Statements,
-		private ingestTx: ReturnType<Database["transaction"]>,
+		private ingestTx: (
+			rows: Array<{ repoId: string; hash: string; type: string; content: Uint8Array }>,
+		) => void,
 		private repoId: string,
 	) {
 		this.cache = new ObjectCache();
@@ -207,7 +225,7 @@ class SqliteRefStore implements RefStore {
 
 	constructor(
 		private stmts: Statements,
-		db: Database,
+		db: SqliteDatabase,
 		private repoId: string,
 	) {
 		const s = stmts;

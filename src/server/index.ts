@@ -29,4 +29,4 @@ export type {
 export { createStandardHooks, type StandardHooksConfig } from "./presets.ts";
 
 // Storage
-export { SqliteStorage } from "./sqlite-storage.ts";
+export { SqliteStorage, type SqliteDatabase, type SqliteStatement } from "./sqlite-storage.ts";

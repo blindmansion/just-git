@@ -1,4 +1,4 @@
-import type { Database, Statement } from "bun:sqlite";
+import type { SqliteDatabase, SqliteStatement } from "../server/sqlite-storage.ts";
 import type {
 	CreatePullRequestOptions,
 	ListPullRequestsFilter,
@@ -42,25 +42,25 @@ CREATE TABLE IF NOT EXISTS platform_pull_requests (
 // ── Prepared statements ─────────────────────────────────────────────
 
 interface Statements {
-	repoInsert: Statement;
-	repoGet: Statement;
-	repoList: Statement;
-	repoDelete: Statement;
+	repoInsert: SqliteStatement;
+	repoGet: SqliteStatement;
+	repoList: SqliteStatement;
+	repoDelete: SqliteStatement;
 
-	prInsert: Statement;
-	prGet: Statement;
-	prListAll: Statement;
-	prListByState: Statement;
-	prNextNumber: Statement;
-	prUpdate: Statement;
-	prSetState: Statement;
-	prSetMerged: Statement;
-	prUpdateHead: Statement;
-	prOpenByHeadRef: Statement;
-	prDeleteByRepo: Statement;
+	prInsert: SqliteStatement;
+	prGet: SqliteStatement;
+	prListAll: SqliteStatement;
+	prListByState: SqliteStatement;
+	prNextNumber: SqliteStatement;
+	prUpdate: SqliteStatement;
+	prSetState: SqliteStatement;
+	prSetMerged: SqliteStatement;
+	prUpdateHead: SqliteStatement;
+	prOpenByHeadRef: SqliteStatement;
+	prDeleteByRepo: SqliteStatement;
 }
 
-function prepareStatements(db: Database): Statements {
+function prepareStatements(db: SqliteDatabase): Statements {
 	return {
 		repoInsert: db.prepare("INSERT INTO platform_repos (id, default_branch) VALUES (?, ?)"),
 		repoGet: db.prepare("SELECT id, default_branch, created_at FROM platform_repos WHERE id = ?"),
@@ -196,8 +196,8 @@ function toPullRequest(row: PRRow): PullRequest {
 export class PlatformDb {
 	private stmts: Statements;
 
-	constructor(private db: Database) {
-		db.exec(SCHEMA);
+	constructor(private db: SqliteDatabase) {
+		db.run(SCHEMA);
 		this.stmts = prepareStatements(db);
 	}
 
