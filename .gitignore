@@ -35,3 +35,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Sandbox (bun sandbox)
 .sandbox
+
+# Third-party reference docs
+docs/
