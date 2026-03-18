@@ -137,4 +137,34 @@ describe("git fetch", () => {
 		expect(result.exitCode).toBe(128);
 		expect(result.stderr).toContain("not a git repository");
 	});
+
+	test("fetch --all fetches from all configured remotes", async () => {
+		const bash = await setupClonePair();
+
+		// Add a second remote pointing at a different repo
+		await bash.exec("git init --bare /remote2");
+		await bash.exec(
+			"cd /remote2 && git config receive.denyCurrentBranch ignore",
+		);
+		// Push current local state to remote2 so it has a main branch
+		await bash.exec("git remote add upstream /remote2", { cwd: "/local" });
+		await bash.exec("git push upstream main", { cwd: "/local" });
+
+		// Add new commits on each remote
+		await bash.exec(
+			"cd /remote && echo 'origin-update' > o.txt && git add . && git commit -m 'origin update'",
+		);
+
+		const result = await bash.exec("git fetch --all", { cwd: "/local" });
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain("From /remote");
+		expect(result.stderr).toContain("From /remote2");
+	});
+
+	test("fetch --all errors when remote name also given", async () => {
+		const bash = await setupClonePair();
+		const result = await bash.exec("git fetch --all origin", { cwd: "/local" });
+		expect(result.exitCode).toBe(128);
+		expect(result.stderr).toContain("does not take a remote argument");
+	});
 });
