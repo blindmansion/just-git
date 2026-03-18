@@ -17,13 +17,13 @@ Baseline measurements from stress-testing the SQLite-backed Git server
 
 Full clone of the entire repo (0 haves):
 
-| Phase | Time | % |
-|---|---|---|
-| Object enumeration | ~97 ms | 6 % |
-| Delta computation | ~1 400 ms | **85 %** |
-| Pack writing (deflate) | ~112 ms | 7 % |
-| Protocol + HTTP | ~30 ms | 2 % |
-| **Total** | **~1 650 ms** | |
+| Phase                  | Time          | %        |
+| ---------------------- | ------------- | -------- |
+| Object enumeration     | ~97 ms        | 6 %      |
+| Delta computation      | ~1 400 ms     | **85 %** |
+| Pack writing (deflate) | ~112 ms       | 7 %      |
+| Protocol + HTTP        | ~30 ms        | 2 %      |
+| **Total**              | **~1 650 ms** |          |
 
 Output pack: 2 610 KB (from 43 MB raw), 2 660 deltas out of 4 378 objects.
 
@@ -32,27 +32,27 @@ Every clone recomputes deltas from scratch — identical work repeated 5×.
 
 ### Receive-pack (push)
 
-| Operation | Time |
-|---|---|
+| Operation                                   | Time   |
+| ------------------------------------------- | ------ |
 | Initial push (4 336 objects, 1 653 KB pack) | 502 ms |
-| → readPack (parse + inflate) | 398 ms |
-| → SQLite batch insert | 35 ms |
-| Incremental push (150 objects, 14 KB) | 8 ms |
-| Tag-only push (56 refs, 47 objects) | 5 ms |
+| → readPack (parse + inflate)                | 398 ms |
+| → SQLite batch insert                       | 35 ms  |
+| Incremental push (150 objects, 14 KB)       | 8 ms   |
+| Tag-only push (56 refs, 47 objects)         | 5 ms   |
 
 ### End-to-end summary
 
-| Operation | Time |
-|---|---|
-| git clone (from GitHub) | 545 ms |
-| git push (initial, single branch) | 502 ms |
-| git push --all (all branches) | 25 ms |
-| git push --tags | 52 ms |
-| git clone (from server) | 2 130 ms |
-| 5 parallel clones (wall) | 8 460 ms |
-| push 50 incremental commits | 60 ms |
-| clone second repo (60 objects) | 80 ms |
-| git fetch --all (catch up) | 39 ms |
+| Operation                         | Time     |
+| --------------------------------- | -------- |
+| git clone (from GitHub)           | 545 ms   |
+| git push (initial, single branch) | 502 ms   |
+| git push --all (all branches)     | 25 ms    |
+| git push --tags                   | 52 ms    |
+| git clone (from server)           | 2 130 ms |
+| 5 parallel clones (wall)          | 8 460 ms |
+| push 50 incremental commits       | 60 ms    |
+| clone second repo (60 objects)    | 80 ms    |
+| git fetch --all (catch up)        | 39 ms    |
 
 ---
 
@@ -63,6 +63,7 @@ Every clone recomputes deltas from scratch — identical work repeated 5×.
 `findBestDeltas()` in `lib/pack/delta.ts` is the dominant cost.
 
 For each of N objects with a sliding window of W (default 10):
+
 - Builds a Rabin fingerprint index of the object's content.
 - Tries up to W preceding same-type objects as delta bases via
   `createDelta()`, which does a full rolling-hash scan of the target.
@@ -118,6 +119,7 @@ transfer size for incremental fetches.
 ### 6. Protocol v1 only
 
 The server implements Smart HTTP Protocol v1. Protocol v2 would add:
+
 - **Ref filtering** (`ls-refs`): clients request only matching refs
   instead of receiving all 72.
 - **Stateless fetch**: better suited for HTTP/2 and streaming.
@@ -169,6 +171,7 @@ Progress messages can be sent on sideband band-2 during delta
 computation.
 
 Expected impact:
+
 - Time-to-first-byte drops from ~1 650 ms to ~100 ms.
 - Peak memory drops from ~50 MB to ~1-2 MB (one object at a time).
 - Total throughput unchanged, but perceived latency improves
@@ -204,6 +207,7 @@ serving, the bandwidth trade-off is almost always worth it.
 
 Replace the recursive per-object graph walk with batch SQL queries.
 Options:
+
 - Load all objects for a repo in a single query and walk in-memory.
   For the cannoli repo that's 43 MB — feasible for moderate repos.
 - Use `WHERE hash IN (...)` batches: walk one level of the graph, batch
@@ -222,6 +226,7 @@ those hashes as delta bases (without including them in the pack). The
 pack is "thin" — it references objects the client already owns.
 
 Requires:
+
 - Building delta indices for have-side objects.
 - Marking those bases as available-but-not-sent.
 - Signaling `thin-pack` capability in the advertisement.
@@ -280,28 +285,28 @@ binary search.
 
 **Impact (cannoli, 4 336 objects):**
 
-| Metric | Before | After | Speedup |
-|---|---|---|---|
-| `readPack` | 398 ms | 56 ms | **7.1×** |
+| Metric             | Before | After  | Speedup  |
+| ------------------ | ------ | ------ | -------- |
+| `readPack`         | 398 ms | 56 ms  | **7.1×** |
 | Initial push total | 502 ms | 153 ms | **3.3×** |
 
 **Impact (SolidJS, 18 804 objects):**
 
-| Metric | After |
-|---|---|
-| `readPack` | 396 ms |
-| SQLite insert | 211 ms |
+| Metric             | After  |
+| ------------------ | ------ |
+| `readPack`         | 396 ms |
+| SQLite insert      | 211 ms |
 | Initial push total | 730 ms |
 
 ---
 
 ## Remaining optimizations
 
-| Fix | Impact | Effort | Notes |
-|---|---|---|---|
-| C. Streaming response | ★★★★ | Medium | TTFB + memory |
-| D. Configurable deltas | ★★★ | Low | Quick win for LAN use |
-| E. Batch object reads | ★★★ | Medium | Scales to large repos |
-| F. Thin packs | ★★★ | Medium | Incremental fetch size |
-| G. Protocol v2 | ★★ | Medium | Compatibility |
-| H. Compressed storage | ★ | Low | Storage only |
+| Fix                    | Impact | Effort | Notes                  |
+| ---------------------- | ------ | ------ | ---------------------- |
+| C. Streaming response  | ★★★★   | Medium | TTFB + memory          |
+| D. Configurable deltas | ★★★    | Low    | Quick win for LAN use  |
+| E. Batch object reads  | ★★★    | Medium | Scales to large repos  |
+| F. Thin packs          | ★★★    | Medium | Incremental fetch size |
+| G. Protocol v2         | ★★     | Medium | Compatibility          |
+| H. Compressed storage  | ★      | Low    | Storage only           |

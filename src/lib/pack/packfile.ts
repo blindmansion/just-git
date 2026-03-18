@@ -593,9 +593,7 @@ async function inflateWithSize(
 	if (inflateWithConsumed) {
 		const { result, bytesConsumed } = await inflateWithConsumed(remaining);
 		if (result.byteLength !== expectedSize) {
-			throw new Error(
-				`Inflate size mismatch: got ${result.byteLength}, expected ${expectedSize}`,
-			);
+			throw new Error(`Inflate size mismatch: got ${result.byteLength}, expected ${expectedSize}`);
 		}
 		return { result, bytesConsumed };
 	}

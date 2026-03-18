@@ -36,9 +36,7 @@ export function createGitServer(config: GitServerConfig): GitServer {
 	const { resolveRepo, hooks, basePath } = config;
 
 	const packCache =
-		config.packCache === false
-			? undefined
-			: new PackCache(config.packCache?.maxBytes);
+		config.packCache === false ? undefined : new PackCache(config.packCache?.maxBytes);
 
 	return {
 		async fetch(req: Request): Promise<Response> {
@@ -94,33 +92,33 @@ export function createGitServer(config: GitServerConfig): GitServer {
 					});
 				}
 
-			// ── git-upload-pack ─────────────────────────────────
-			if (pathname.endsWith("/git-upload-pack") && req.method === "POST") {
-				const repoPath = extractRepoPath(pathname, "/git-upload-pack");
-				const repoOrResponse = await resolveRepo(repoPath, req);
-				if (repoOrResponse instanceof Response) return repoOrResponse;
-				if (!repoOrResponse) return new Response("Not Found", { status: 404 });
-				const repo = repoOrResponse;
+				// ── git-upload-pack ─────────────────────────────────
+				if (pathname.endsWith("/git-upload-pack") && req.method === "POST") {
+					const repoPath = extractRepoPath(pathname, "/git-upload-pack");
+					const repoOrResponse = await resolveRepo(repoPath, req);
+					if (repoOrResponse instanceof Response) return repoOrResponse;
+					if (!repoOrResponse) return new Response("Not Found", { status: 404 });
+					const repo = repoOrResponse;
 
-				const body = await readRequestBody(req);
-				const responseBody = await handleUploadPack(repo, body, {
-					cache: packCache,
-					cacheKey: repoPath,
-				});
-				return new Response(responseBody, {
-					headers: { "Content-Type": "application/x-git-upload-pack-result" },
-				});
-			}
+					const body = await readRequestBody(req);
+					const responseBody = await handleUploadPack(repo, body, {
+						cache: packCache,
+						cacheKey: repoPath,
+					});
+					return new Response(responseBody, {
+						headers: { "Content-Type": "application/x-git-upload-pack-result" },
+					});
+				}
 
-			// ── git-receive-pack ────────────────────────────────
-			if (pathname.endsWith("/git-receive-pack") && req.method === "POST") {
-				const repoPath = extractRepoPath(pathname, "/git-receive-pack");
-				const repoOrResponse = await resolveRepo(repoPath, req);
-				if (repoOrResponse instanceof Response) return repoOrResponse;
-				if (!repoOrResponse) return new Response("Not Found", { status: 404 });
-				const repo = repoOrResponse;
+				// ── git-receive-pack ────────────────────────────────
+				if (pathname.endsWith("/git-receive-pack") && req.method === "POST") {
+					const repoPath = extractRepoPath(pathname, "/git-receive-pack");
+					const repoOrResponse = await resolveRepo(repoPath, req);
+					if (repoOrResponse instanceof Response) return repoOrResponse;
+					if (!repoOrResponse) return new Response("Not Found", { status: 404 });
+					const repo = repoOrResponse;
 
-				const body = await readRequestBody(req);
+					const body = await readRequestBody(req);
 					const { updates, unpackOk, capabilities } = await ingestReceivePack(repo, body);
 
 					const useSideband = capabilities.includes("side-band-64k");
@@ -230,11 +228,11 @@ export function createGitServer(config: GitServerConfig): GitServer {
 					});
 				}
 
-			return new Response("Not Found", { status: 404 });
-		} catch (err) {
-			console.error("  [server] Internal error:", err);
-			return new Response("Internal Server Error", { status: 500 });
-		}
+				return new Response("Not Found", { status: 404 });
+			} catch (err) {
+				console.error("  [server] Internal error:", err);
+				return new Response("Internal Server Error", { status: 500 });
+			}
 		},
 	};
 }

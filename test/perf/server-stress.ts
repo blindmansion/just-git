@@ -24,7 +24,15 @@
  */
 
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import {
+	mkdtempSync,
+	rmSync,
+	readdirSync,
+	statSync,
+	readFileSync,
+	writeFileSync,
+	mkdirSync,
+} from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { SqliteStorage } from "../../src/server/sqlite-storage.ts";
@@ -57,7 +65,11 @@ function dirSize(dir: string): { files: number; bytes: number } {
 	return { files, bytes };
 }
 
-async function git(cmd: string, cwd: string, env?: Record<string, string>): Promise<{
+async function git(
+	cmd: string,
+	cwd: string,
+	env?: Record<string, string>,
+): Promise<{
 	stdout: string;
 	stderr: string;
 	exitCode: number;
@@ -109,7 +121,6 @@ db.run("PRAGMA journal_mode = WAL");
 const storage = new SqliteStorage(db);
 
 let pushCount = 0;
-let objectsPushed = 0;
 
 const server = createGitServer({
 	resolveRepo: async (repoPath) => {
@@ -144,7 +155,11 @@ try {
 	const sourceDir = join(tmpBase, "source");
 	const r1 = await git(`git clone ${SOURCE_REPO} ${sourceDir}`, tmpBase);
 	const sourceStats = dirSize(sourceDir);
-	record("git clone (from GitHub)", r1.ms, `${sourceStats.files} files, ${(sourceStats.bytes / 1024 / 1024).toFixed(1)} MB`);
+	record(
+		"git clone (from GitHub)",
+		r1.ms,
+		`${sourceStats.files} files, ${(sourceStats.bytes / 1024 / 1024).toFixed(1)} MB`,
+	);
 
 	const sourceLog = await git("git log --oneline", sourceDir);
 	const commitCount = sourceLog.stdout.trim().split("\n").length;
@@ -180,7 +195,11 @@ try {
 		console.log(`    stderr: ${r3.stderr.slice(0, 500)}`);
 	}
 	const cloneStats = r3.exitCode === 0 ? dirSize(cloneDir) : { files: 0, bytes: 0 };
-	record("git clone (from server)", r3.ms, `${cloneStats.files} files, ${(cloneStats.bytes / 1024 / 1024).toFixed(1)} MB`);
+	record(
+		"git clone (from server)",
+		r3.ms,
+		`${cloneStats.files} files, ${(cloneStats.bytes / 1024 / 1024).toFixed(1)} MB`,
+	);
 
 	// ── 4. Verify integrity ──────────────────────────────────────────
 
@@ -191,18 +210,30 @@ try {
 	const headsMatch = sourceHead === cloneHead;
 	console.log(`  HEAD match: ${headsMatch ? "✓" : "✗"} (${sourceHead.slice(0, 12)})`);
 
-	const sourceTree = (await git(`git ls-tree -r --name-only ${mainBranch}`, sourceDir)).stdout.trim();
+	const sourceTree = (
+		await git(`git ls-tree -r --name-only ${mainBranch}`, sourceDir)
+	).stdout.trim();
 	const cloneTree = (await git(`git ls-tree -r --name-only ${mainBranch}`, cloneDir)).stdout.trim();
 	const treesMatch = sourceTree === cloneTree;
 	console.log(`  Tree match: ${treesMatch ? "✓" : "✗"} (${sourceTree.split("\n").length} files)`);
 
-	const srcLocalBranches = (await git("git branch", sourceDir)).stdout.trim().split("\n")
-		.map(b => b.replace(/^\*?\s+/, "").trim()).filter(Boolean).sort();
-	const clnRemoteBranches = (await git("git branch -r", cloneDir)).stdout.trim().split("\n")
-		.map(b => b.trim()).filter(b => !b.includes("->"))
-		.map(b => b.replace(/^[^/]+\//, "")).sort();
+	const srcLocalBranches = (await git("git branch", sourceDir)).stdout
+		.trim()
+		.split("\n")
+		.map((b) => b.replace(/^\*?\s+/, "").trim())
+		.filter(Boolean)
+		.sort();
+	const clnRemoteBranches = (await git("git branch -r", cloneDir)).stdout
+		.trim()
+		.split("\n")
+		.map((b) => b.trim())
+		.filter((b) => !b.includes("->"))
+		.map((b) => b.replace(/^[^/]+\//, ""))
+		.sort();
 	const branchesMatch = JSON.stringify(srcLocalBranches) === JSON.stringify(clnRemoteBranches);
-	console.log(`  Branches:   ${branchesMatch ? "✓" : "✗"} (${srcLocalBranches.length} local → ${clnRemoteBranches.length} remote)`);
+	console.log(
+		`  Branches:   ${branchesMatch ? "✓" : "✗"} (${srcLocalBranches.length} local → ${clnRemoteBranches.length} remote)`,
+	);
 
 	if (!headsMatch || !treesMatch) {
 		console.log("\n  ⚠ INTEGRITY CHECK FAILED");
@@ -270,8 +301,11 @@ try {
 	const t7_1 = performance.now();
 
 	const avgClone = cloneTimes.reduce((s, t) => s + t, 0) / cloneTimes.length;
-	record(`${parallelCount} parallel clones`, t7_1 - t7_0,
-		`avg ${fmt(avgClone)} each, wall ${fmt(t7_1 - t7_0)}`);
+	record(
+		`${parallelCount} parallel clones`,
+		t7_1 - t7_0,
+		`avg ${fmt(avgClone)} each, wall ${fmt(t7_1 - t7_0)}`,
+	);
 
 	const parallelHeadResults = await Promise.all(
 		Array.from({ length: parallelCount }, (_, i) => {
@@ -301,8 +335,9 @@ try {
 	const t8_gen0 = performance.now();
 	for (const { name, kb } of fileSizes) {
 		const lines = Math.ceil((kb * 1024) / 80);
-		const content = Array.from({ length: lines }, (_, i) =>
-			`line ${i.toString().padStart(8, "0")} ${"x".repeat(60)} ${name}\n`
+		const content = Array.from(
+			{ length: lines },
+			(_, i) => `line ${i.toString().padStart(8, "0")} ${"x".repeat(60)} ${name}\n`,
 		).join("");
 		await Bun.write(join(bigDir, name), content);
 	}
@@ -316,7 +351,10 @@ try {
 	record(`push ${totalKB} KB of content`, r8push.ms);
 
 	const bigCloneDir = join(tmpBase, "bigfiles-clone");
-	const r8clone = await git(`git clone -b big-files ${BASE_URL}/stress-repo ${bigCloneDir}`, tmpBase);
+	const r8clone = await git(
+		`git clone -b big-files ${BASE_URL}/stress-repo ${bigCloneDir}`,
+		tmpBase,
+	);
 	record(`clone back (with large files)`, r8clone.ms);
 
 	for (const { name, kb } of fileSizes) {
@@ -356,7 +394,9 @@ try {
 	const repo1Check = join(tmpBase, "repo1-verify");
 	await git(`git clone ${BASE_URL}/stress-repo ${repo1Check}`, tmpBase);
 	const repo1Head = (await git(`git rev-parse ${mainBranch}`, repo1Check)).stdout.trim();
-	console.log(`    First repo HEAD still: ${repo1Head.slice(0, 12)} (unchanged: ${repo1Head === sourceHead ? "✓" : "✗"})`);
+	console.log(
+		`    First repo HEAD still: ${repo1Head.slice(0, 12)} (unchanged: ${repo1Head === sourceHead ? "✓" : "✗"})`,
+	);
 
 	// ── 10. Fetch after many pushes ──────────────────────────────────
 
@@ -376,28 +416,38 @@ try {
 	console.log("\n── Database stats ──────────────────────────────────────\n");
 
 	const objCount = db.query("SELECT COUNT(*) as c FROM git_objects").get() as { c: number };
-	const objSize = db.query("SELECT SUM(LENGTH(content)) as s FROM git_objects").get() as { s: number };
+	const objSize = db.query("SELECT SUM(LENGTH(content)) as s FROM git_objects").get() as {
+		s: number;
+	};
 	const refCount = db.query("SELECT COUNT(*) as c FROM git_refs").get() as { c: number };
-	const repoCount = db.query("SELECT COUNT(DISTINCT repo_id) as c FROM git_objects").get() as { c: number };
+	const repoCount = db.query("SELECT COUNT(DISTINCT repo_id) as c FROM git_objects").get() as {
+		c: number;
+	};
 
 	console.log(`  Repos:           ${repoCount.c}`);
 	console.log(`  Objects:         ${objCount.c}`);
 	console.log(`  Object data:     ${(objSize.s / 1024 / 1024).toFixed(1)} MB`);
 	console.log(`  Refs:            ${refCount.c}`);
 
-	const perRepo = db.query(
-		"SELECT repo_id, COUNT(*) as c, SUM(LENGTH(content)) as s FROM git_objects GROUP BY repo_id"
-	).all() as Array<{ repo_id: string; c: number; s: number }>;
+	const perRepo = db
+		.query(
+			"SELECT repo_id, COUNT(*) as c, SUM(LENGTH(content)) as s FROM git_objects GROUP BY repo_id",
+		)
+		.all() as Array<{ repo_id: string; c: number; s: number }>;
 	for (const r of perRepo) {
 		console.log(`    ${r.repo_id}: ${r.c} objects, ${(r.s / 1024 / 1024).toFixed(1)} MB`);
 	}
 
-	const typeBreakdown = db.query(
-		"SELECT type, COUNT(*) as c, SUM(LENGTH(content)) as s FROM git_objects WHERE repo_id = 'stress-repo' GROUP BY type ORDER BY s DESC"
-	).all() as Array<{ type: string; c: number; s: number }>;
+	const typeBreakdown = db
+		.query(
+			"SELECT type, COUNT(*) as c, SUM(LENGTH(content)) as s FROM git_objects WHERE repo_id = 'stress-repo' GROUP BY type ORDER BY s DESC",
+		)
+		.all() as Array<{ type: string; c: number; s: number }>;
 	console.log(`\n  Object breakdown (stress-repo):`);
 	for (const t of typeBreakdown) {
-		console.log(`    ${t.type.padEnd(8)} ${String(t.c).padStart(6)} objects  ${((t.s / 1024 / 1024)).toFixed(1).padStart(8)} MB`);
+		console.log(
+			`    ${t.type.padEnd(8)} ${String(t.c).padStart(6)} objects  ${(t.s / 1024 / 1024).toFixed(1).padStart(8)} MB`,
+		);
 	}
 
 	if (DB_PATH !== ":memory:") {
@@ -420,7 +470,6 @@ try {
 	const totalMs = results.reduce((s, r) => s + r.ms, 0);
 	console.log(`\n  ${"TOTAL".padEnd(maxLabel + 2)} ${fmt(totalMs).padStart(10)}`);
 	console.log();
-
 } finally {
 	srv.stop(true);
 	try {

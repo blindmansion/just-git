@@ -221,9 +221,7 @@ export async function handleUploadPack(
 
 	// Check pack cache (only for full clones — no haves)
 	const cacheKey =
-		options?.cache && options.cacheKey
-			? PackCache.key(options.cacheKey, wants, haves)
-			: null;
+		options?.cache && options.cacheKey ? PackCache.key(options.cacheKey, wants, haves) : null;
 
 	if (cacheKey && options?.cache) {
 		const cached = options.cache.get(cacheKey);
@@ -357,9 +355,7 @@ export async function ingestReceivePack(
 	}
 
 	const t1 = performance.now();
-	console.log(
-		`  [receive-pack] ${commands.length} ref(s), total ${(t1 - t0).toFixed(0)}ms`,
-	);
+	console.log(`  [receive-pack] ${commands.length} ref(s), total ${(t1 - t0).toFixed(0)}ms`);
 
 	return { updates, unpackOk, capabilities };
 }
