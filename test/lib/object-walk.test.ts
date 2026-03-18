@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { resolveHead } from "../../src/lib/refs.ts";
 import { findGitDir } from "../../src/lib/repo.ts";
-import { enumerateObjects } from "../../src/lib/transport/object-walk.ts";
+import {
+	collectEnumeration,
+	enumerateObjects,
+	enumerateObjectsWithContent,
+} from "../../src/lib/transport/object-walk.ts";
 import { TEST_ENV as ENV } from "../fixtures";
 import { createTestBash } from "../util";
 
@@ -29,17 +33,16 @@ describe("enumerateObjects (with haves)", () => {
 
 		const secondCommit = (await resolveHead(ctx))!;
 
-		// Only objects in second commit but not reachable from first
-		const objects = await enumerateObjects(ctx, [secondCommit], [firstCommit]);
+		const { count, objects } = await enumerateObjects(ctx, [secondCommit], [firstCommit]);
+		const collected = await collectEnumeration({ count, objects });
 
-		// Should get: 1 new commit + 1 new tree + 1 new blob
-		// (README.md blob is shared and should be excluded via tree reachability)
-		const commits = objects.filter((o) => o.type === "commit");
+		expect(count).toBe(collected.length);
+
+		const commits = collected.filter((o) => o.type === "commit");
 		expect(commits).toHaveLength(1);
 		expect(commits[0]!.hash).toBe(secondCommit);
 
-		// Should NOT include the first commit
-		expect(objects.find((o) => o.hash === firstCommit)).toBeUndefined();
+		expect(collected.find((o) => o.hash === firstCommit)).toBeUndefined();
 	});
 
 	test("returns empty when wants are subset of haves", async () => {
@@ -50,7 +53,64 @@ describe("enumerateObjects (with haves)", () => {
 		const ctx = (await findGitDir(bash.fs, "/repo"))!;
 		const head = (await resolveHead(ctx))!;
 
-		const objects = await enumerateObjects(ctx, [head], [head]);
-		expect(objects).toHaveLength(0);
+		const { count } = await enumerateObjects(ctx, [head], [head]);
+		expect(count).toBe(0);
+	});
+
+	test("count matches iterated length", async () => {
+		const bash = await setupRepo();
+		await bash.exec("git add .");
+		await bash.exec('git commit -m "first"');
+
+		const ctx = (await findGitDir(bash.fs, "/repo"))!;
+		const head = (await resolveHead(ctx))!;
+
+		const result = await enumerateObjects(ctx, [head], []);
+		const collected = await collectEnumeration(result);
+		expect(result.count).toBe(collected.length);
+		expect(collected.length).toBeGreaterThan(0);
+	});
+});
+
+describe("enumerateObjectsWithContent", () => {
+	test("yields objects with content lazily", async () => {
+		const bash = await setupRepo();
+		await bash.exec("git add .");
+		await bash.exec('git commit -m "initial"');
+
+		const ctx = (await findGitDir(bash.fs, "/repo"))!;
+		const head = (await resolveHead(ctx))!;
+
+		const { count, objects } = await enumerateObjectsWithContent(ctx, [head], []);
+		expect(count).toBeGreaterThan(0);
+
+		const collected = [];
+		for await (const obj of objects) {
+			expect(obj.content).toBeInstanceOf(Uint8Array);
+			expect(obj.content.byteLength).toBeGreaterThanOrEqual(0);
+			collected.push(obj);
+		}
+
+		expect(collected.length).toBe(count);
+
+		const blob = collected.find((o) => o.type === "blob");
+		expect(blob).toBeDefined();
+		expect(new TextDecoder().decode(blob!.content)).toBe("# Hello");
+	});
+
+	test("count matches enumerateObjects count", async () => {
+		const bash = await setupRepo({
+			"/repo/a.txt": "file a",
+			"/repo/b.txt": "file b",
+		});
+		await bash.exec("git add .");
+		await bash.exec('git commit -m "multi"');
+
+		const ctx = (await findGitDir(bash.fs, "/repo"))!;
+		const head = (await resolveHead(ctx))!;
+
+		const withoutContent = await enumerateObjects(ctx, [head], []);
+		const withContent = await enumerateObjectsWithContent(ctx, [head], []);
+		expect(withContent.count).toBe(withoutContent.count);
 	});
 });

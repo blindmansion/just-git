@@ -8,9 +8,14 @@
 import { ZERO_HASH } from "../lib/hex.ts";
 import { isAncestor } from "../lib/merge.ts";
 import { parseTag } from "../lib/objects/tag.ts";
-import type { PackInput } from "../lib/pack/packfile.ts";
-import { writePack } from "../lib/pack/packfile.ts";
-import { enumerateObjectsWithContent } from "../lib/transport/object-walk.ts";
+import { findBestDeltas } from "../lib/pack/delta.ts";
+import type { DeltaPackInput } from "../lib/pack/packfile.ts";
+import { writePackDeltified } from "../lib/pack/packfile.ts";
+import {
+	collectEnumeration,
+	enumerateObjectsWithContent,
+	type WalkObjectWithContent,
+} from "../lib/transport/object-walk.ts";
 import type { GitRepo } from "../lib/types.ts";
 import {
 	type AdvertisedRef,
@@ -120,19 +125,16 @@ export async function handleUploadPack(
 		if (commonHashes.length === 0) commonHashes = undefined;
 	}
 
-	const objects = await enumerateObjectsWithContent(repo, wants, haves);
+	const enumResult = await enumerateObjectsWithContent(repo, wants, haves);
 
-	if (objects.length === 0) {
+	if (enumResult.count === 0) {
 		return buildUploadPackResponse(new Uint8Array(0), useSideband, commonHashes);
 	}
 
-	const packInputs: PackInput[] = objects.map((obj) => ({
-		type: obj.type,
-		content: obj.content,
-	}));
+	const collected: WalkObjectWithContent[] = await collectEnumeration(enumResult);
+	const sentHashes = new Set(collected.map((o) => o.hash));
 
 	if (capabilities.includes("include-tag")) {
-		const sentHashes = new Set(objects.map((obj) => obj.hash));
 		const tagRefs = await repo.refStore.listRefs("refs/tags");
 		for (const tagRef of tagRefs) {
 			if (sentHashes.has(tagRef.hash)) continue;
@@ -141,8 +143,9 @@ export async function handleUploadPack(
 				if (obj.type === "tag") {
 					const tag = parseTag(obj.content);
 					if (sentHashes.has(tag.object)) {
-						packInputs.push({ type: "tag", content: obj.content });
-						sentHashes.add(tagRef.hash);
+						const tagHash = tagRef.hash;
+						collected.push({ hash: tagHash, type: "tag", content: obj.content });
+						sentHashes.add(tagHash);
 					}
 				}
 			} catch {
@@ -151,7 +154,16 @@ export async function handleUploadPack(
 		}
 	}
 
-	const packData = await writePack(packInputs);
+	const deltas = findBestDeltas(collected);
+	const inputs: DeltaPackInput[] = deltas.map((r) => ({
+		hash: r.hash,
+		type: r.type,
+		content: r.content,
+		delta: r.delta,
+		deltaBaseHash: r.deltaBase,
+	}));
+
+	const { data: packData } = await writePackDeltified(inputs);
 
 	return buildUploadPackResponse(packData, useSideband, commonHashes);
 }

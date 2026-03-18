@@ -169,6 +169,12 @@ export interface ObjectStore {
 	ingestPack(packData: Uint8Array): Promise<number>;
 	/** Return all object hashes matching a hex prefix (for short hash resolution). */
 	findByPrefix(prefix: string): Promise<ObjectId[]>;
+	/**
+	 * Signal that pack files on disk have changed externally (e.g. after
+	 * repack or gc). Implementations should discard cached pack state
+	 * and re-scan on the next read.
+	 */
+	invalidatePacks?(): void;
 }
 
 // ── Repository context ──────────────────────────────────────────────

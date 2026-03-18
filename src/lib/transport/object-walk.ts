@@ -6,66 +6,108 @@ import type { GitRepo, ObjectId, ObjectType } from "../types.ts";
 
 // ── Types ────────────────────────────────────────────────────────────
 
-interface WalkObject {
+export interface WalkObject {
 	hash: ObjectId;
 	type: ObjectType;
 }
 
-interface WalkObjectWithContent {
+export interface WalkObjectWithContent {
 	hash: ObjectId;
 	type: ObjectType;
 	content: Uint8Array;
+}
+
+/**
+ * Result of an object enumeration. Contains the count of discovered
+ * objects and a lazily-evaluated async iterable that yields them.
+ *
+ * `objects` can be consumed exactly once. Callers that need multiple
+ * passes should collect into an array first.
+ */
+export interface EnumerationResult<T> {
+	count: number;
+	objects: AsyncIterable<T>;
 }
 
 // ── Public API ───────────────────────────────────────────────────────
 
 /**
  * Collect all objects reachable from `want` hashes but NOT reachable
- * from `have` hashes. Returns the set of object IDs that need to be
- * transferred.
+ * from `have` hashes. Returns the set of object IDs (with types) that
+ * need to be transferred.
  *
- * This is the core of pack negotiation: given what the receiver wants
- * and what it already has, determine the minimal set of objects to send.
+ * The full set is discovered before yielding so that `count` is exact.
+ * Each `WalkObject` is lightweight (hash + type only), so the internal
+ * array is small even for large repos.
  */
 export async function enumerateObjects(
 	ctx: GitRepo,
 	wants: ObjectId[],
 	haves: ObjectId[],
-): Promise<WalkObject[]> {
-	return enumerateMissing(ctx, wants, haves, false) as Promise<WalkObject[]>;
-}
-
-/**
- * Like `enumerateObjects`, but retains each object's raw content in the
- * result so callers (e.g. repack) avoid a second read pass.
- */
-export async function enumerateObjectsWithContent(
-	ctx: GitRepo,
-	wants: ObjectId[],
-	haves: ObjectId[],
-): Promise<WalkObjectWithContent[]> {
-	return enumerateMissing(ctx, wants, haves, true) as Promise<WalkObjectWithContent[]>;
-}
-
-async function enumerateMissing(
-	ctx: GitRepo,
-	wants: ObjectId[],
-	haves: ObjectId[],
-	includeContent: boolean,
-): Promise<(WalkObject | WalkObjectWithContent)[]> {
+): Promise<EnumerationResult<WalkObject>> {
 	const haveSet = new Set<ObjectId>();
 	for (const hash of haves) {
 		await walkReachable(ctx, hash, haveSet);
 	}
 
-	const result: (WalkObject | WalkObjectWithContent)[] = [];
+	const result: WalkObject[] = [];
 	const visited = new Set<ObjectId>();
-
 	for (const hash of wants) {
-		await collectMissing(ctx, hash, haveSet, visited, result, includeContent);
+		await collectMissing(ctx, hash, haveSet, visited, result);
 	}
 
-	return result;
+	return {
+		count: result.length,
+		objects: yieldArray(result),
+	};
+}
+
+/**
+ * Like `enumerateObjects`, but each yielded object includes its raw
+ * content bytes. Content is read lazily during iteration — only one
+ * object's content is in memory at a time (from the consumer's
+ * perspective).
+ *
+ * Internally, the graph walk runs first to discover all hashes (needed
+ * for the count). Content is then read on demand during iteration.
+ */
+export async function enumerateObjectsWithContent(
+	ctx: GitRepo,
+	wants: ObjectId[],
+	haves: ObjectId[],
+): Promise<EnumerationResult<WalkObjectWithContent>> {
+	const { count, objects } = await enumerateObjects(ctx, wants, haves);
+
+	return {
+		count,
+		objects: readContentLazily(ctx, objects),
+	};
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+async function* yieldArray<T>(items: T[]): AsyncIterable<T> {
+	for (const item of items) yield item;
+}
+
+async function* readContentLazily(
+	ctx: GitRepo,
+	objects: AsyncIterable<WalkObject>,
+): AsyncIterable<WalkObjectWithContent> {
+	for await (const obj of objects) {
+		const raw = await readObject(ctx, obj.hash);
+		yield { hash: obj.hash, type: obj.type, content: raw.content };
+	}
+}
+
+/**
+ * Convenience: collect an `EnumerationResult` into a plain array.
+ * Useful for callers that need the full list (e.g. delta computation).
+ */
+export async function collectEnumeration<T>(result: EnumerationResult<T>): Promise<T[]> {
+	const items: T[] = [];
+	for await (const item of result.objects) items.push(item);
+	return items;
 }
 
 // ── Internal ─────────────────────────────────────────────────────────
@@ -111,45 +153,39 @@ async function walkReachable(ctx: GitRepo, hash: ObjectId, visited: Set<ObjectId
  * Walk from `hash`, collecting objects that are NOT in `haveSet`.
  * Stops traversal when hitting an object in haveSet (everything
  * below it is assumed to be already known).
- *
- * When `includeContent` is true, each result entry retains the raw
- * object bytes so callers avoid a second read pass.
  */
 async function collectMissing(
 	ctx: GitRepo,
 	hash: ObjectId,
 	haveSet: Set<ObjectId>,
 	visited: Set<ObjectId>,
-	result: (WalkObject | WalkObjectWithContent)[],
-	includeContent: boolean,
+	result: WalkObject[],
 ): Promise<void> {
 	if (visited.has(hash) || haveSet.has(hash)) return;
 	visited.add(hash);
 
 	const raw = await readObject(ctx, hash);
-	result.push(
-		includeContent ? { hash, type: raw.type, content: raw.content } : { hash, type: raw.type },
-	);
+	result.push({ hash, type: raw.type });
 
 	switch (raw.type) {
 		case "commit": {
 			const commit = parseCommit(raw.content);
-			await collectMissing(ctx, commit.tree, haveSet, visited, result, includeContent);
+			await collectMissing(ctx, commit.tree, haveSet, visited, result);
 			for (const parent of commit.parents) {
-				await collectMissing(ctx, parent, haveSet, visited, result, includeContent);
+				await collectMissing(ctx, parent, haveSet, visited, result);
 			}
 			break;
 		}
 		case "tree": {
 			const tree = parseTree(raw.content);
 			for (const entry of tree.entries) {
-				await collectMissing(ctx, entry.hash, haveSet, visited, result, includeContent);
+				await collectMissing(ctx, entry.hash, haveSet, visited, result);
 			}
 			break;
 		}
 		case "tag": {
 			const tag = parseTag(raw.content);
-			await collectMissing(ctx, tag.object, haveSet, visited, result, includeContent);
+			await collectMissing(ctx, tag.object, haveSet, visited, result);
 			break;
 		}
 		case "blob":

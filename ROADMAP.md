@@ -17,13 +17,15 @@ Three workstreams, ordered by dependency. Each phase produces shippable, testabl
 - Add a bounded object cache to `PackedObjectStore` / `object-db` to avoid re-inflating the same hash repeatedly during walks
 - Lazy pack discovery in `PackedObjectStore` — load `.pack`/`.idx` on demand rather than all at once
 
-**Detailed plan**: [PHASE1.md](PHASE1.md)
+**Detailed plan and results**: [PHASE1.md](PHASE1.md)
+
+**Status**: Complete. All transport paths use delta-compressed packs. Object cache is type-aware (trees/commits only) with FIFO eviction. Lazy pack discovery defers `.pack` loading. `ObjectStore.invalidatePacks()` keeps state consistent after repack/gc. VFS perf improved 5–14% across oracle profiles with no regressions. Step 4 (streaming pack ingestion) was cancelled — delta resolution and batch store writes limit the practical memory savings.
 
 ## Phase 2: Server API
 
 **Goal**: Build the hook model and ergonomic API layer described in [`src/server/DESIGN.md`](src/server/DESIGN.md). This is the primary product-facing work — it turns the server from a protocol implementation into a programmable platform.
 
-**Why second**: `RepoHandle` is a thin facade over `GitRepo`-accepting lib functions — its design is stable regardless of internal memory changes. But the *operations* it exposes (tree diffs, commit walks, object reads) should be efficient before users write hooks against them. Phase 1 ensures that a hook calling `repo.diffTrees()` on a large push doesn't flatten two full trees into memory.
+**Why second**: `RepoHandle` is a thin facade over `GitRepo`-accepting lib functions — its design is stable regardless of internal memory changes. But the _operations_ it exposes (tree diffs, commit walks, object reads) should be efficient before users write hooks against them. Phase 1 ensures that a hook calling `repo.diffTrees()` on a large push doesn't flatten two full trees into memory.
 
 **What changes**:
 
@@ -35,6 +37,13 @@ Three workstreams, ordered by dependency. Each phase produces shippable, testabl
 
 **Depends on**: Phase 1 (streaming pipeline, object cache). The API design itself is independent, but the performance characteristics matter for user experience.
 
+**Phase 1 findings relevant to Phase 2**:
+
+- `findBestDeltas` currently needs the full object list in memory for windowed comparison. For server hooks that inspect push content, this means the objects are available as an array — `RepoHandle` or pre-receive hooks can expose this directly rather than re-reading.
+- The object cache is tuned for trees/commits (skips blobs). Server hooks doing blob-heavy operations (e.g. scanning file content in pre-receive) will go through the store uncached. Consider whether `RepoHandle.readBlob()` should offer an optional content cache for hook use cases.
+- `invalidatePacks()` must be called by any server-side operation that rewrites packs. The pre/post-receive hook lifecycle should account for this — if a hook triggers gc/repack, downstream operations need consistent object store state.
+- Perf test script `test/perf/large-repo.ts` clones real repos and exercises hot paths. Useful for validating Phase 2 API performance on real data.
+
 ## Phase 3: Protocol v2 and further optimization
 
 **Goal**: Implement Git protocol v2 for both client and server, and address remaining memory patterns for large-repo support.
@@ -44,17 +53,21 @@ Three workstreams, ordered by dependency. Each phase produces shippable, testabl
 **What changes**:
 
 Protocol v2:
+
 - v2 capability advertisement and `ls-refs` / `fetch` command framing (client and server)
 - More efficient negotiation — server-side ref filtering, no capability line on first want
 - Thin-pack support — server sends packs with delta bases the client already has (requires the streaming pack writer to know the have set)
 
 Remaining optimizations:
+
 - Tree operation streaming — incremental traversal for `diffTrees` and `unpack-trees` instead of full `flattenTreeToMap`
 - Index partial loading — avoid materializing the full entry array for read-only queries
 - HTTP fetch response streaming — process pack data as it arrives instead of `await res.arrayBuffer()`
-- Lazy pack discovery improvements — evict packs under memory pressure
+- Streaming pack ingestion — deferred from Phase 1. Could reduce memory during large pushes if delta resolution is reworked to stream base lookups. Lower priority than the items above.
+- Object walk async overhead — the recursive `walkReachable` / `collectMissing` pattern does one `await readObject()` per object. On solid.js (22K objects), this is ~2s of wall time dominated by microtask scheduling. A batched or synchronous walk for VFS-backed stores could cut this significantly.
 
 Lib/server boundary:
+
 - Audit functions that require `GitContext` but could accept `GitRepo`. Widen signatures where safe
 - Ensure new streaming interfaces work identically for `PackedObjectStore` (VFS) and `SqliteStorage` (server)
 

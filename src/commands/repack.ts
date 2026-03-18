@@ -6,7 +6,7 @@ import { findBestDeltas } from "../lib/pack/delta.ts";
 import { buildPackIndexFromMeta, PackIndex } from "../lib/pack/pack-index.ts";
 import { type DeltaPackInput, writePackDeltified } from "../lib/pack/packfile.ts";
 import { join } from "../lib/path.ts";
-import { enumerateObjectsWithContent } from "../lib/transport/object-walk.ts";
+import { collectEnumeration, enumerateObjectsWithContent } from "../lib/transport/object-walk.ts";
 import type { GitContext, ObjectId, ObjectType } from "../lib/types.ts";
 import { type Command, f } from "../parse/index.ts";
 
@@ -35,12 +35,10 @@ async function enumerateLooseOnlyFromTips(
 	}
 
 	if (packedHashes.size === 0) {
-		// No packs — all reachable objects are loose
-		return enumerateObjectsWithContent(gitCtx, tips, []);
+		return collectEnumeration(await enumerateObjectsWithContent(gitCtx, tips, []));
 	}
 
-	// Walk from tips, but only include objects NOT in any pack
-	const all = await enumerateObjectsWithContent(gitCtx, tips, []);
+	const all = await collectEnumeration(await enumerateObjectsWithContent(gitCtx, tips, []));
 	return all.filter((obj) => !packedHashes.has(obj.hash));
 }
 
@@ -74,7 +72,7 @@ export async function repackFromTips(options: RepackOptions): Promise<RepackResu
 	if (tips.length === 0) return null;
 
 	const walkObjects = options.all
-		? await enumerateObjectsWithContent(gitCtx, tips, [])
+		? await collectEnumeration(await enumerateObjectsWithContent(gitCtx, tips, []))
 		: await enumerateLooseOnlyFromTips(gitCtx, tips);
 	if (walkObjects.length === 0) return null;
 
@@ -111,6 +109,9 @@ export async function repackFromTips(options: RepackOptions): Promise<RepackResu
 	await fs.writeFile(idxPath, idxData);
 
 	const packedHashes = new Set(results.map((r) => r.hash));
+
+	// Pack files changed on disk — tell the object store to re-discover
+	gitCtx.objectStore.invalidatePacks?.();
 
 	if (cleanup) {
 		const packFiles = await fs.readdir(packDir);

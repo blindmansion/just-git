@@ -377,7 +377,6 @@ export function applyDelta(base: Uint8Array, delta: Uint8Array): Uint8Array {
 export async function writePack(objects: PackInput[]): Promise<Uint8Array> {
 	const chunks: Uint8Array[] = [];
 
-	// Header
 	const header = new Uint8Array(12);
 	const hView = new DataView(header.buffer);
 	hView.setUint32(0, PACK_SIGNATURE);
@@ -385,37 +384,14 @@ export async function writePack(objects: PackInput[]): Promise<Uint8Array> {
 	hView.setUint32(8, objects.length);
 	chunks.push(header);
 
-	// Object entries
 	for (const obj of objects) {
 		const typeNum = NUM_BY_TYPE[obj.type];
 		const compressed = await deflate(obj.content);
-
-		// Type/size header
-		const objHeader = encodeTypeSize(typeNum, obj.content.byteLength);
-		chunks.push(objHeader);
+		chunks.push(encodeTypeSize(typeNum, obj.content.byteLength));
 		chunks.push(compressed);
 	}
 
-	// Compute total size and concatenate
-	let totalSize = 0;
-	for (const c of chunks) totalSize += c.byteLength;
-	totalSize += 20; // SHA-1 trailer
-
-	const result = new Uint8Array(totalSize);
-	let offset = 0;
-	for (const c of chunks) {
-		result.set(c, offset);
-		offset += c.byteLength;
-	}
-
-	// SHA-1 trailer over everything before it
-	const hasher = createHasher();
-	hasher.update(result.subarray(0, offset));
-	const checksum = await hasher.hex();
-	const checksumBytes = hexToBytes(checksum);
-	result.set(checksumBytes, offset);
-
-	return result;
+	return finalizePack(chunks);
 }
 
 /**
@@ -427,7 +403,6 @@ export async function writePackDeltified(objects: DeltaPackInput[]): Promise<Pac
 	const chunks: Uint8Array[] = [];
 	const offsets = new Map<ObjectId, number>();
 
-	// Header
 	const header = new Uint8Array(12);
 	const hView = new DataView(header.buffer);
 	hView.setUint32(0, PACK_SIGNATURE);
@@ -444,14 +419,12 @@ export async function writePackDeltified(objects: DeltaPackInput[]): Promise<Pac
 		const baseOffset = obj.delta && obj.deltaBaseHash ? offsets.get(obj.deltaBaseHash) : undefined;
 
 		if (obj.delta && baseOffset !== undefined) {
-			// OFS_DELTA entry
 			const objHeader = encodeTypeSize(OBJ_OFS_DELTA, obj.delta.byteLength);
 			const ofsBytes = encodeOfsOffset(currentOffset - baseOffset);
 			const compressed = await deflate(obj.delta);
 			chunks.push(objHeader, ofsBytes, compressed);
 			currentOffset += objHeader.byteLength + ofsBytes.byteLength + compressed.byteLength;
 		} else {
-			// Base-type entry
 			const typeNum = NUM_BY_TYPE[obj.type];
 			const objHeader = encodeTypeSize(typeNum, obj.content.byteLength);
 			const compressed = await deflate(obj.content);
@@ -466,6 +439,94 @@ export async function writePackDeltified(objects: DeltaPackInput[]): Promise<Pac
 		});
 	}
 
+	return { data: await finalizePack(chunks), entries: entryMetas };
+}
+
+// ── Streaming pack writers ───────────────────────────────────────────
+
+/**
+ * Streaming variant of `writePack`. Accepts a pre-counted object count
+ * and an async iterable of objects. Each object is deflated and written
+ * as it arrives — the iterable doesn't need to be fully materialized.
+ */
+export async function writePackStream(
+	count: number,
+	objects: AsyncIterable<PackInput>,
+): Promise<Uint8Array> {
+	const chunks: Uint8Array[] = [];
+
+	const header = new Uint8Array(12);
+	const hView = new DataView(header.buffer);
+	hView.setUint32(0, PACK_SIGNATURE);
+	hView.setUint32(4, PACK_VERSION);
+	hView.setUint32(8, count);
+	chunks.push(header);
+
+	for await (const obj of objects) {
+		const typeNum = NUM_BY_TYPE[obj.type];
+		const compressed = await deflate(obj.content);
+		chunks.push(encodeTypeSize(typeNum, obj.content.byteLength));
+		chunks.push(compressed);
+	}
+
+	return finalizePack(chunks);
+}
+
+/**
+ * Streaming variant of `writePackDeltified`. Accepts a pre-counted
+ * object count and an async iterable. Objects must be ordered so that
+ * delta bases appear before their dependents.
+ */
+export async function writePackDeltifiedStream(
+	count: number,
+	objects: AsyncIterable<DeltaPackInput>,
+): Promise<PackWriteResult> {
+	const chunks: Uint8Array[] = [];
+	const offsets = new Map<ObjectId, number>();
+
+	const header = new Uint8Array(12);
+	const hView = new DataView(header.buffer);
+	hView.setUint32(0, PACK_SIGNATURE);
+	hView.setUint32(4, PACK_VERSION);
+	hView.setUint32(8, count);
+	chunks.push(header);
+	let currentOffset = 12;
+	const entryMetas: PackEntryMeta[] = [];
+
+	for await (const obj of objects) {
+		const entryStart = currentOffset;
+		offsets.set(obj.hash, currentOffset);
+
+		const baseOffset = obj.delta && obj.deltaBaseHash ? offsets.get(obj.deltaBaseHash) : undefined;
+
+		if (obj.delta && baseOffset !== undefined) {
+			const objHeader = encodeTypeSize(OBJ_OFS_DELTA, obj.delta.byteLength);
+			const ofsBytes = encodeOfsOffset(currentOffset - baseOffset);
+			const compressed = await deflate(obj.delta);
+			chunks.push(objHeader, ofsBytes, compressed);
+			currentOffset += objHeader.byteLength + ofsBytes.byteLength + compressed.byteLength;
+		} else {
+			const typeNum = NUM_BY_TYPE[obj.type];
+			const objHeader = encodeTypeSize(typeNum, obj.content.byteLength);
+			const compressed = await deflate(obj.content);
+			chunks.push(objHeader, compressed);
+			currentOffset += objHeader.byteLength + compressed.byteLength;
+		}
+
+		entryMetas.push({
+			hash: obj.hash,
+			offset: entryStart,
+			nextOffset: currentOffset,
+		});
+	}
+
+	return { data: await finalizePack(chunks), entries: entryMetas };
+}
+
+/**
+ * Concatenate chunks, append the SHA-1 trailer, return the final pack.
+ */
+async function finalizePack(chunks: Uint8Array[]): Promise<Uint8Array> {
 	let totalSize = 0;
 	for (const c of chunks) totalSize += c.byteLength;
 	totalSize += 20;
@@ -482,7 +543,7 @@ export async function writePackDeltified(objects: DeltaPackInput[]): Promise<Pac
 	const checksum = await hasher.hex();
 	result.set(hexToBytes(checksum), offset);
 
-	return { data: result, entries: entryMetas };
+	return result;
 }
 
 // ── Encoding helpers ─────────────────────────────────────────────────

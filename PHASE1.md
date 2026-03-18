@@ -52,7 +52,7 @@ Challenge: the pack header requires the object count upfront (bytes 8–11). Two
 
 Recommendation: pre-counted. `enumerateObjectsWithContentStream` can return `{ count: number, objects: AsyncIterable<...> }` since it builds the full visited set in the have-walk phase before yielding.
 
-For `writePackDeltified`, the delta window needs to see recent objects for base selection. This already works with the current `findBestDeltas` approach — the delta computation happens before pack writing. The streaming change here is about not requiring all *pack entries* in memory at once, not about streaming the delta search.
+For `writePackDeltified`, the delta window needs to see recent objects for base selection. This already works with the current `findBestDeltas` approach — the delta computation happens before pack writing. The streaming change here is about not requiring all _pack entries_ in memory at once, not about streaming the delta search.
 
 **Tests**: Round-trip test — stream-write a pack, read it back with `readPack`, verify all objects match. Compare output byte-for-byte with the array-based `writePack` for the same inputs.
 
@@ -73,7 +73,7 @@ The `writePackDeltified` path needs `DeltaPackInput[]` with hash, type, content,
 2. Run `findBestDeltas` over the collected objects to compute delta instructions
 3. Write pack with `writePackDeltified`
 
-Note: `findBestDeltas` currently needs the full object list to do windowed comparison. This is acceptable — delta computation is inherently batch. The streaming win is in the *write* phase (not holding both the input array and the output pack simultaneously).
+Note: `findBestDeltas` currently needs the full object list to do windowed comparison. This is acceptable — delta computation is inherently batch. The streaming win is in the _write_ phase (not holding both the input array and the output pack simultaneously).
 
 For the server path, this means `handleUploadPack` will produce significantly smaller packs. For `LocalTransport`, the benefit is smaller pack files stored on the receiving side.
 
@@ -96,7 +96,7 @@ Challenge: OFS_DELTA entries reference earlier entries by byte offset. The curre
 
 `PackedObjectStore.ingestPack` and `SqliteStorage.ingestPack` would consume the iterator, writing objects one at a time instead of materializing the full entry list.
 
-The `buildPackIndex` path still needs all entries for index construction (it needs offsets and CRC32 for every entry). This can use the streaming reader internally but must retain the metadata. The actual object *content* doesn't need to be kept after hashing and CRC computation.
+The `buildPackIndex` path still needs all entries for index construction (it needs offsets and CRC32 for every entry). This can use the streaming reader internally but must retain the metadata. The actual object _content_ doesn't need to be kept after hashing and CRC computation.
 
 **Tests**: Ingest a pack via streaming, verify all objects are readable. Compare with batch ingestion results.
 
@@ -148,7 +148,7 @@ The object cache (5) before streaming ingestion (4) is because the cache improve
 - **Protocol v2 wire format** — Phase 3. The streaming infrastructure built here enables it, but the wire format change is separate.
 - **Tree operation streaming** (`diffTrees`, `flattenTree`) — Phase 3. These are memory-heavy but not on the transfer hot path.
 - **Index partial loading** — Phase 3. Only matters for very large worktrees.
-- **HTTP response streaming** — Phase 3. The client's `await res.arrayBuffer()` is a problem for large fetches, but the server side (which we control) benefits from streaming pack *generation* (steps 1–3) without needing to stream the HTTP response itself.
+- **HTTP response streaming** — Phase 3. The client's `await res.arrayBuffer()` is a problem for large fetches, but the server side (which we control) benefits from streaming pack _generation_ (steps 1–3) without needing to stream the HTTP response itself.
 - **Thin-pack support** — Phase 3. Requires the pack writer to reference objects not in the pack (REF_DELTA with external bases). Delta compression within the pack (OFS_DELTA, step 3) is the higher-value change.
 
 ## Validation
@@ -157,3 +157,75 @@ The object cache (5) before streaming ingestion (4) is because the cache improve
 - Server roundtrip tests confirm interop with real git for the HTTP path
 - Profiling baselines are recorded in [BASELINE.md](BASELINE.md). Re-run after Phase 1 to verify no regressions for the VFS path and measure improvements.
 - `bun test` for unit tests — rewrite any that break due to interface changes
+
+## Results
+
+Phase 1 is complete. All steps executed except step 4 (streaming pack ingestion), which was cancelled after analysis showed minimal practical benefit.
+
+### What shipped
+
+**Steps 1–3 (streaming + deltified transport):**
+
+- `enumerateObjects` and `enumerateObjectsWithContent` now return `EnumerationResult<T>` with `{ count, objects: AsyncIterable<T> }`. Content is read lazily during iteration. A `collectEnumeration` helper converts to array when callers need the full list (e.g. for `findBestDeltas`).
+- `writePackStream` and `writePackDeltifiedStream` accept `(count, AsyncIterable<PackInput>)` for incremental pack building.
+- All transport paths (`LocalTransport.fetch`, `LocalTransport.push`, `SmartHttpTransport.push`, server `handleUploadPack`) now produce delta-compressed packs via `findBestDeltas` + `writePackDeltified`. A shared `buildDeltifiedPack` helper in `transport.ts` encapsulates the enumerate → deltify → pack flow.
+
+**Step 4 (streaming pack ingestion) — cancelled:**
+
+Delta resolution inherently requires base objects in memory for OFS_DELTA chains. `PackedObjectStore` retains packs as whole units on disk (not individual objects), and `SqliteObjectStore` wraps inserts in batch transactions. The memory savings from streaming ingestion would be marginal. Skipping this avoided complexity without sacrificing the goals.
+
+**Step 5 (object cache):**
+
+`ObjectCache` in `src/lib/object-cache.ts`, integrated into both `PackedObjectStore` and `SqliteObjectStore`. Initial implementation used byte-bounded LRU. Post-Phase 1 profiling revealed cache thrashing on larger repos (see below), leading to a revised design:
+
+- **Type-aware**: only caches `tree`, `commit`, and `tag` objects. Blobs are skipped entirely — they are large, rarely re-read within a single operation, and would thrash smaller objects out of cache.
+- **FIFO eviction** instead of LRU: avoids the `Map.delete` + `Map.set` bookkeeping on every cache hit that made LRU a net-negative on VFS backends where reads are already cheap.
+- Default 16 MB budget. With blob-skipping, this comfortably holds all trees and commits for repos up to ~50K objects (cannoli: 2559 entries in 843 KB; solid.js: 13,464 entries in 4.8 MB).
+
+**Step 6 (lazy pack discovery):**
+
+`PackedObjectStore.doDiscover` now loads only `.idx` files (creating `PackIndex` objects) and defers loading `.pack` data until an object from that pack is actually read. `PackReader` constructor accepts a pre-parsed `PackIndex`. A `PackSlot` interface tracks per-pack state (name, index, optional reader). `ensureReader` loads pack data on demand.
+
+### Additional fixes
+
+**`ObjectStore.invalidatePacks()`**: After `git repack` or `git gc` rewrites pack files, the object store's cached discovery state becomes stale. Added `invalidatePacks()` to the `ObjectStore` interface (optional method). `PackedObjectStore` implements it by clearing `packs`, `loadedPackNames`, `discoverPromise`, and the object cache. `repackFromTips` calls it after writing new packs. Without this, reads after repack could fail with "object not found".
+
+### Performance vs baseline (VFS)
+
+Measured on the same oracle datasets and machine as [BASELINE.md](BASELINE.md). Perf test script: `test/perf/large-repo.ts`.
+
+**Oracle profiles (wall time):**
+
+| Dataset                           | Baseline | Post Phase 1 | Change   |
+| --------------------------------- | -------- | ------------ | -------- |
+| core-test (5 traces, 1738 steps)  | 2.2s     | 1.9s         | **-14%** |
+| core3 trace 1 (1665 steps)        | 3.9s     | 3.7s         | **-5%**  |
+| kitchen6 (10 traces, 12007 steps) | 17.1s    | 16.2s        | **-5%**  |
+
+**Per-command highlights:**
+
+| Command         | Baseline mean | Post Phase 1 mean | Change               |
+| --------------- | ------------- | ----------------- | -------------------- |
+| git rebase      | 4.33ms        | 3.56ms            | **-18%** (core-test) |
+| git cherry-pick | 1.99ms        | 1.76ms            | **-11%** (core-test) |
+| git add         | 0.93ms        | 0.80ms            | **-14%** (core-test) |
+| git gc          | 117ms         | 117ms             | same (kitchen6)      |
+
+No regressions. gc/repack delta compression CPU cost is offset by cache improvements in other operations. Repo size growth is identical to baseline (expected — size depends on walk content, not the transfer pipeline).
+
+**Large repo test (solid.js, 22,799 objects):**
+
+| Operation                               | Time  |
+| --------------------------------------- | ----- |
+| git clone (HTTP)                        | 4.4s  |
+| Full object enumeration                 | 3.9s  |
+| git rebase (20 commits on real history) | 57ms  |
+| git repack -a -d                        | 11.5s |
+| git blame (single file)                 | 137ms |
+
+### Lessons learned
+
+- **Cache type awareness matters more than cache size.** The initial 16 MB LRU cache thrashed on repos > 4K objects because blobs crowded out trees/commits. The fix (skip blobs, FIFO eviction) reduced cache memory from 16 MB to < 5 MB while increasing the entry count from 1,535 to 13,464 on solid.js.
+- **VFS reads are cheap enough that cache overhead can exceed savings.** LRU promotion (`Map.delete` + `Map.set` on every hit) was measurably expensive at scale. FIFO avoids this. For SQLite/real-FS backends the calculus is different — even a thrashing cache saves expensive I/O.
+- **Streaming pack ingestion has diminishing returns.** Delta resolution requires holding base content in memory, and both object store implementations already buffer writes (VFS in memory, SQLite in transactions). The streaming enumeration and pack _writing_ steps provide the bulk of the memory benefit.
+- **Pack file rewrites require store invalidation.** Any operation that externally modifies `.git/objects/pack/` (repack, gc) must signal the object store to discard cached state. The `invalidatePacks()` method provides this.

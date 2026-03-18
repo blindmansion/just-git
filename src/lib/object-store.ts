@@ -1,6 +1,7 @@
 import type { FileSystem } from "../fs.ts";
 import { bytesToHex } from "./hex.ts";
-import { buildPackIndex } from "./pack/pack-index.ts";
+import { ObjectCache } from "./object-cache.ts";
+import { buildPackIndex, PackIndex } from "./pack/pack-index.ts";
 import { PackReader } from "./pack/pack-reader.ts";
 import { deflate, inflate } from "./pack/zlib.ts";
 import { join } from "./path.ts";
@@ -58,19 +59,35 @@ function objectPath(gitDir: string, hash: ObjectId): string {
 // ── PackedObjectStore ────────────────────────────────────────────────
 
 /**
+ * A discovered pack — index loaded eagerly, pack data loaded on demand.
+ */
+interface PackSlot {
+	name: string;
+	index: PackIndex;
+	reader: PackReader | null;
+}
+
+/**
  * Git object storage: compressed loose objects for new writes, with
- * retained packfiles from fetch/clone. Reads check loose first,
- * then fall back to pack indices.
+ * retained packfiles from fetch/clone. Pack indices are loaded eagerly
+ * during discovery for fast hash lookups; pack data is loaded lazily
+ * on first read from each pack.
  */
 export class PackedObjectStore implements ObjectStore {
-	private packs: PackReader[] = [];
+	private packs: PackSlot[] = [];
 	private loadedPackNames = new Set<string>();
 	private discoverPromise: Promise<void> | null = null;
+	private cache: ObjectCache;
+	private packDir: string;
 
 	constructor(
 		private fs: FileSystem,
 		private gitDir: string,
-	) {}
+		cacheMaxBytes?: number,
+	) {
+		this.cache = new ObjectCache(cacheMaxBytes);
+		this.packDir = join(gitDir, "objects", "pack");
+	}
 
 	async write(type: ObjectType, content: Uint8Array): Promise<ObjectId> {
 		const data = envelope(type, content);
@@ -89,25 +106,38 @@ export class PackedObjectStore implements ObjectStore {
 	}
 
 	async read(hash: ObjectId): Promise<RawObject> {
+		const cached = this.cache.get(hash);
+		if (cached) return cached;
+
 		const path = objectPath(this.gitDir, hash);
 		if (await this.fs.exists(path)) {
 			const compressed = await this.fs.readFileBuffer(path);
 			const data = await inflate(compressed);
-			return parseEnvelope(hash, data);
+			const obj = parseEnvelope(hash, data);
+			this.cache.set(hash, obj);
+			return obj;
 		}
+
 		await this.discover();
-		for (const pack of this.packs) {
-			const obj = await pack.readObject(hash);
-			if (obj) return obj;
+
+		for (const slot of this.packs) {
+			if (!slot.index.has(hash)) continue;
+			const reader = await this.ensureReader(slot);
+			const obj = await reader.readObject(hash);
+			if (obj) {
+				this.cache.set(hash, obj);
+				return obj;
+			}
 		}
+
 		throw new Error(`object ${hash} not found`);
 	}
 
 	async exists(hash: ObjectId): Promise<boolean> {
 		if (await this.fs.exists(objectPath(this.gitDir, hash))) return true;
 		await this.discover();
-		for (const pack of this.packs) {
-			if (pack.hasObject(hash)) return true;
+		for (const slot of this.packs) {
+			if (slot.index.has(hash)) return true;
 		}
 		return false;
 	}
@@ -121,20 +151,31 @@ export class PackedObjectStore implements ObjectStore {
 		const checksumBytes = packData.subarray(packData.byteLength - 20);
 		const packHash = bytesToHex(checksumBytes);
 
-		const packDir = join(this.gitDir, "objects", "pack");
-		await this.fs.mkdir(packDir, { recursive: true });
+		await this.fs.mkdir(this.packDir, { recursive: true });
 
 		const packName = `pack-${packHash}`;
-		const packPath = join(packDir, `${packName}.pack`);
+		const packPath = join(this.packDir, `${packName}.pack`);
 		await this.fs.writeFile(packPath, packData);
 
 		const idxData = await buildPackIndex(packData);
-		const idxPath = join(packDir, `${packName}.idx`);
+		const idxPath = join(this.packDir, `${packName}.idx`);
 		await this.fs.writeFile(idxPath, idxData);
 
 		this.loadedPackNames.add(packName);
-		this.packs.push(new PackReader(packData, idxData));
+		const index = new PackIndex(idxData);
+		this.packs.push({
+			name: packName,
+			index,
+			reader: new PackReader(packData, index),
+		});
 		return numObjects;
+	}
+
+	invalidatePacks(): void {
+		this.packs = [];
+		this.loadedPackNames.clear();
+		this.discoverPromise = null;
+		this.cache.clear();
 	}
 
 	async findByPrefix(prefix: string): Promise<ObjectId[]> {
@@ -155,8 +196,8 @@ export class PackedObjectStore implements ObjectStore {
 		}
 
 		await this.discover();
-		for (const pack of this.packs) {
-			for (const hash of pack.findByPrefix(prefix)) {
+		for (const slot of this.packs) {
+			for (const hash of slot.index.findByPrefix(prefix)) {
 				if (!matches.includes(hash)) {
 					matches.push(hash);
 				}
@@ -164,6 +205,15 @@ export class PackedObjectStore implements ObjectStore {
 		}
 
 		return matches;
+	}
+
+	/** Load the pack data for a slot on demand. */
+	private async ensureReader(slot: PackSlot): Promise<PackReader> {
+		if (slot.reader) return slot.reader;
+		const packPath = join(this.packDir, `${slot.name}.pack`);
+		const packBuf = await this.fs.readFileBuffer(packPath);
+		slot.reader = new PackReader(packBuf, slot.index);
+		return slot.reader;
 	}
 
 	/** Scan `.git/objects/pack/` for existing pack/idx pairs. */
@@ -175,23 +225,23 @@ export class PackedObjectStore implements ObjectStore {
 	}
 
 	private async doDiscover(): Promise<void> {
-		const packDir = join(this.gitDir, "objects", "pack");
-		if (!(await this.fs.exists(packDir))) return;
+		if (!(await this.fs.exists(this.packDir))) return;
 
-		const files = await this.fs.readdir(packDir);
+		const files = await this.fs.readdir(this.packDir);
 		for (const f of files) {
 			if (!f.endsWith(".idx")) continue;
 			const base = f.slice(0, -4);
 			if (this.loadedPackNames.has(base)) continue;
-			const packPath = join(packDir, `${base}.pack`);
+			const packPath = join(this.packDir, `${base}.pack`);
 			if (!(await this.fs.exists(packPath))) continue;
 
-			const [idxBuf, packBuf] = await Promise.all([
-				this.fs.readFileBuffer(join(packDir, f)),
-				this.fs.readFileBuffer(packPath),
-			]);
+			const idxBuf = await this.fs.readFileBuffer(join(this.packDir, f));
 			this.loadedPackNames.add(base);
-			this.packs.push(new PackReader(packBuf, idxBuf));
+			this.packs.push({
+				name: base,
+				index: new PackIndex(idxBuf),
+				reader: null,
+			});
 		}
 	}
 }

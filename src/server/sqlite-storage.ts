@@ -1,4 +1,5 @@
 import type { Database, Statement } from "bun:sqlite";
+import { ObjectCache } from "../lib/object-cache.ts";
 import { envelope } from "../lib/object-store.ts";
 import { readPack } from "../lib/pack/packfile.ts";
 import { sha1 } from "../lib/sha1.ts";
@@ -126,11 +127,15 @@ export class SqliteStorage {
 // ── SqliteObjectStore ───────────────────────────────────────────────
 
 class SqliteObjectStore implements ObjectStore {
+	private cache: ObjectCache;
+
 	constructor(
 		private stmts: Statements,
 		private ingestTx: ReturnType<Database["transaction"]>,
 		private repoId: string,
-	) {}
+	) {
+		this.cache = new ObjectCache();
+	}
 
 	async write(type: ObjectType, content: Uint8Array): Promise<ObjectId> {
 		const data = envelope(type, content);
@@ -140,6 +145,9 @@ class SqliteObjectStore implements ObjectStore {
 	}
 
 	async read(hash: ObjectId): Promise<RawObject> {
+		const cached = this.cache.get(hash);
+		if (cached) return cached;
+
 		const row = this.stmts.objRead.get(this.repoId, hash) as {
 			type: string;
 			content: Uint8Array;
@@ -147,10 +155,12 @@ class SqliteObjectStore implements ObjectStore {
 		if (!row) {
 			throw new Error(`object ${hash} not found`);
 		}
-		return {
+		const obj: RawObject = {
 			type: row.type as ObjectType,
 			content: new Uint8Array(row.content),
 		};
+		this.cache.set(hash, obj);
+		return obj;
 	}
 
 	async exists(hash: ObjectId): Promise<boolean> {

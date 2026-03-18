@@ -1,12 +1,13 @@
 import type { FetchFunction } from "../../hooks.ts";
 import { ZERO_HASH } from "../hex.ts";
 import { isAncestor } from "../merge.ts";
-import { ingestPackData, readObject } from "../object-db.ts";
-import type { PackInput } from "../pack/packfile.ts";
-import { writePack } from "../pack/packfile.ts";
+import { ingestPackData } from "../object-db.ts";
+import { findBestDeltas } from "../pack/delta.ts";
+import type { DeltaPackInput } from "../pack/packfile.ts";
+import { writePackDeltified } from "../pack/packfile.ts";
 import { listRefs, readHead, resolveRef, updateRef } from "../refs.ts";
 import type { GitContext, GitRepo, ObjectId } from "../types.ts";
-import { enumerateObjects } from "./object-walk.ts";
+import { collectEnumeration, enumerateObjectsWithContent } from "./object-walk.ts";
 import {
 	discoverRefs,
 	fetchPack,
@@ -149,21 +150,12 @@ export class LocalTransport implements Transport {
 			return { remoteRefs, objectCount: 0 };
 		}
 
-		// On the remote side: enumerate objects to send
-		const toSend = await enumerateObjects(this.remote, wants, haves);
-
-		if (toSend.length === 0) {
+		const packData = await buildDeltifiedPack(this.remote, wants, haves);
+		if (!packData) {
 			return { remoteRefs, objectCount: 0 };
 		}
 
-		const packInputs: PackInput[] = [];
-		for (const obj of toSend) {
-			const raw = await readObject(this.remote, obj.hash);
-			packInputs.push({ type: raw.type, content: raw.content });
-		}
-		const packData = await writePack(packInputs);
 		const objectCount = await ingestPackData(this.local, packData);
-
 		return { remoteRefs, objectCount };
 	}
 
@@ -190,15 +182,8 @@ export class LocalTransport implements Transport {
 		}
 
 		if (allWants.length > 0) {
-			const toSend = await enumerateObjects(this.local, allWants, allHaves);
-
-			if (toSend.length > 0) {
-				const packInputs: PackInput[] = [];
-				for (const obj of toSend) {
-					const raw = await readObject(this.local, obj.hash);
-					packInputs.push({ type: raw.type, content: raw.content });
-				}
-				const packData = await writePack(packInputs);
+			const packData = await buildDeltifiedPack(this.local, allWants, allHaves);
+			if (packData) {
 				await ingestPackData(this.remote, packData);
 			}
 		}
@@ -365,13 +350,7 @@ export class SmartHttpTransport implements Transport {
 
 		let packData: Uint8Array | null = null;
 		if (hasNonDelete) {
-			const toSend = await enumerateObjects(this.local, allWants, allHaves);
-			const packInputs: PackInput[] = [];
-			for (const obj of toSend) {
-				const raw = await readObject(this.local, obj.hash);
-				packInputs.push({ type: raw.type, content: raw.content });
-			}
-			packData = await writePack(packInputs);
+			packData = (await buildDeltifiedPack(this.local, allWants, allHaves)) ?? null;
 		}
 
 		const result = await pushPack(this.url, commands, packData, pushCaps, this.auth, this.fetchFn);
@@ -390,3 +369,32 @@ export class SmartHttpTransport implements Transport {
 }
 
 export type { HttpAuth } from "./smart-http.ts";
+
+// ── Shared helpers ───────────────────────────────────────────────────
+
+/**
+ * Enumerate objects reachable from wants but not haves, run delta
+ * compression, and produce a deltified packfile. Returns null if
+ * there are no objects to send.
+ */
+async function buildDeltifiedPack(
+	ctx: GitRepo,
+	wants: ObjectId[],
+	haves: ObjectId[],
+): Promise<Uint8Array | undefined> {
+	const enumResult = await enumerateObjectsWithContent(ctx, wants, haves);
+	if (enumResult.count === 0) return undefined;
+
+	const objects = await collectEnumeration(enumResult);
+	const deltas = findBestDeltas(objects);
+	const inputs: DeltaPackInput[] = deltas.map((r) => ({
+		hash: r.hash,
+		type: r.type,
+		content: r.content,
+		delta: r.delta,
+		deltaBaseHash: r.deltaBase,
+	}));
+
+	const { data } = await writePackDeltified(inputs);
+	return data;
+}

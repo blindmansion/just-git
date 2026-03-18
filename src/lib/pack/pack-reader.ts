@@ -24,9 +24,9 @@ export class PackReader {
 
 	constructor(
 		private data: Uint8Array,
-		idxData: Uint8Array,
+		idx: Uint8Array | PackIndex,
 	) {
-		this.index = new PackIndex(idxData);
+		this.index = idx instanceof PackIndex ? idx : new PackIndex(idx);
 	}
 
 	hasObject(hash: ObjectId): boolean {
