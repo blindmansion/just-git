@@ -58,10 +58,13 @@ export {
 	readCommit,
 	readFileAtCommit,
 	resolveRef,
+	writeBlob,
+	writeTree,
 	type CommitEntry,
 	type CreateCommitOptions,
 	type MergeConflict,
 	type MergeTreesResult,
+	type TreeEntryInput,
 } from "./helpers.ts";
 
 // Presets

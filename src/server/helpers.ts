@@ -20,6 +20,7 @@ import {
 	writeObject,
 } from "../lib/object-db.ts";
 import { serializeCommit } from "../lib/objects/commit.ts";
+import { serializeTree } from "../lib/objects/tree.ts";
 import { resolveRef as _resolveRef, listRefs } from "../lib/refs.ts";
 import { diffTrees as _diffTrees, flattenTree as _flattenTree } from "../lib/tree-ops.ts";
 import type { FlatTreeEntry } from "../lib/tree-ops.ts";
@@ -205,6 +206,42 @@ export async function createCommit(repo: GitRepo, options: CreateCommitOptions):
 		message: options.message,
 	});
 	return writeObject(repo, "commit", content);
+}
+
+// ── Tree construction ───────────────────────────────────────────────
+
+export interface TreeEntryInput {
+	name: string;
+	hash: string;
+	mode?: string;
+}
+
+/**
+ * Build a tree object from a flat list of entries and write it to the
+ * object store. Entries default to mode "100644" (regular file).
+ *
+ * For creating blobs to reference in the tree, write content directly
+ * via `repo.objectStore.write("blob", content)`.
+ */
+export async function writeTree(repo: GitRepo, entries: TreeEntryInput[]): Promise<string> {
+	const sorted = [...entries].sort((a, b) => a.name.localeCompare(b.name));
+	const content = serializeTree({
+		type: "tree",
+		entries: sorted.map((e) => ({
+			mode: e.mode ?? "100644",
+			name: e.name,
+			hash: e.hash,
+		})),
+	});
+	return writeObject(repo, "tree", content);
+}
+
+/**
+ * Write a UTF-8 string as a blob to the object store.
+ * Returns the blob's hash.
+ */
+export async function writeBlob(repo: GitRepo, content: string): Promise<string> {
+	return writeObject(repo, "blob", new TextEncoder().encode(content));
 }
 
 // ── File read at commit ─────────────────────────────────────────────
