@@ -104,6 +104,8 @@ export function createGitServer(config: GitServerConfig): GitServer {
 					const responseBody = await handleUploadPack(repo, body, {
 						cache: packCache,
 						cacheKey: repoPath,
+						noDelta: config.packOptions?.noDelta,
+						deltaWindow: config.packOptions?.deltaWindow,
 					});
 					return new Response(responseBody, {
 						headers: { "Content-Type": "application/x-git-upload-pack-result" },

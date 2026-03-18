@@ -34,6 +34,16 @@ export interface GitServerConfig {
 	 * Set to `false` to disable. Default: enabled with 256 MB limit.
 	 */
 	packCache?: false | { maxBytes?: number };
+
+	/**
+	 * Control delta compression and streaming for upload-pack responses.
+	 */
+	packOptions?: {
+		/** Skip delta compression entirely. Larger packs, much faster generation. */
+		noDelta?: boolean;
+		/** Delta window size (default 10). Smaller = faster, worse compression ratio. */
+		deltaWindow?: number;
+	};
 }
 
 export interface GitServer {

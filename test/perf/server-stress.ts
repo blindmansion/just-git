@@ -122,6 +122,9 @@ const storage = new SqliteStorage(db);
 
 let pushCount = 0;
 
+const NO_DELTA = process.env.NO_DELTA === "1";
+if (NO_DELTA) console.log("  mode:       no-delta (streaming)\n");
+
 const server = createGitServer({
 	resolveRepo: async (repoPath) => {
 		const repo = storage.repo(repoPath);
@@ -131,6 +134,7 @@ const server = createGitServer({
 		}
 		return repo;
 	},
+	packOptions: NO_DELTA ? { noDelta: true } : undefined,
 	hooks: {
 		postReceive: async (event) => {
 			pushCount++;

@@ -74,19 +74,16 @@ For 4 678 objects that's up to ~47 000 delta computations.
 The result is **recomputed from scratch on every request**. Parallel
 clones do identical work independently.
 
-### 2. No response streaming
+### 2. ~~No response streaming~~ — fixed (no-delta path)
 
-`handleUploadPack()` returns a `Uint8Array` — the entire pack is
-materialized in memory before a single byte is sent. The handler wraps
-it in sideband pkt-lines and returns a fully-buffered `Response`.
+~~`handleUploadPack()` returns a `Uint8Array` — the entire pack is
+materialized in memory before a single byte is sent.~~
 
-The client sees zero bytes until all ~1 650 ms of server-side processing
-finishes. Real git servers stream pack data progressively via
-sideband-64k, allowing the client to start receiving objects while the
-server is still compressing later entries.
-
-Memory impact: all object contents (~43 MB) + deltas + compressed pack
-(~2.6 MB) + sideband-wrapped response all live in memory simultaneously.
+Fixed for the no-delta path: `handleUploadPack` returns a
+`ReadableStream` that pipes objects through `writePackStreaming` and
+`buildUploadPackResponseStreaming`. The deltified path remains buffered
+(delta computation requires all objects upfront).
+See "Implemented optimizations → C + D" below.
 
 ### 3. Object walk — per-object SQLite queries
 
@@ -159,49 +156,11 @@ compressed stream ended.
 Expected impact: `readPack` for the initial push drops from ~398 ms to
 ~50-100 ms (single inflate pass per entry instead of ~13 per entry).
 
-### C. Streaming response (high impact, moderate effort)
+### ~~C. Streaming response~~ — implemented
 
-Return a `ReadableStream` from the handler instead of `Uint8Array`.
-Stream the NAK/ACK preamble, then emit sideband pkt-line chunks as
-objects are compressed.
+### ~~D. Configurable delta compression~~ — implemented
 
-The pack header (object count) is known after enumeration, so the
-stream can start with the header and emit entries progressively.
-Progress messages can be sent on sideband band-2 during delta
-computation.
-
-Expected impact:
-
-- Time-to-first-byte drops from ~1 650 ms to ~100 ms.
-- Peak memory drops from ~50 MB to ~1-2 MB (one object at a time).
-- Total throughput unchanged, but perceived latency improves
-  dramatically.
-
-Requires changing the return type of `handleUploadPack()` and the
-handler's `Response` construction. The commented-out streaming pack
-writers in `packfile.ts` (lines 445-505) are a starting point.
-
-### D. Configurable delta compression (moderate impact, low effort)
-
-Add a server config option to control delta behavior:
-
-```ts
-interface GitServerConfig {
-  // ...
-  packOptions?: {
-    /** Skip delta compression entirely. Larger packs, much faster. */
-    noDelta?: boolean;
-    /** Delta window size (default 10). Smaller = faster, worse ratio. */
-    deltaWindow?: number;
-    /** Max objects before disabling deltas automatically. */
-    deltaThreshold?: number;
-  };
-}
-```
-
-With `noDelta: true`, the cannoli clone would produce a ~5 MB pack
-(vs 2.6 MB) but in ~200 ms instead of ~1 650 ms. For localhost or LAN
-serving, the bandwidth trade-off is almost always worth it.
+See "Implemented optimizations → C + D" below.
 
 ### E. Batch object reads (moderate impact, moderate effort)
 
@@ -298,15 +257,57 @@ binary search.
 | SQLite insert      | 211 ms |
 | Initial push total | 730 ms |
 
+### C + D. Streaming response + configurable deltas — done
+
+Added `GitServerConfig.packOptions` with `noDelta` and `deltaWindow` fields.
+When `noDelta: true`, upload-pack skips delta computation entirely and
+returns a `ReadableStream` that pipes objects through a true streaming
+pack writer (`writePackStreaming` in `packfile.ts`) and streaming sideband
+wrapper (`buildUploadPackResponseStreaming` in `protocol.ts`).
+
+The streaming path reads object content lazily from the store — only one
+object is in memory at a time from the pack writer's perspective.
+
+When deltas are enabled (the default), the existing fully-buffered path
+with `findBestDeltas` + `writePackDeltified` is used unchanged. The pack
+cache continues to work for both modes (cache hits return the buffered
+pack instantly regardless of delta config).
+
+**Impact (cannoli, 4 678 objects):**
+
+| Metric                 | Deltas (before) | No-delta streaming | Speedup     |
+| ---------------------- | --------------- | ------------------ | ----------- |
+| Clone from server      | 1.96 s          | 672 ms             | **2.9×**    |
+| Server-side enumerate  | 88 ms           | 74 ms              | —           |
+| Server-side delta      | 1 593 ms        | 0 ms               | —           |
+| Clone with large files | 2.66 s          | 690 ms             | **3.9×**    |
+| Pack size              | 2.6 MB          | 12.3 MB            | 4.7× larger |
+
+**Trade-offs:**
+
+- Pack size is ~4.7× larger without deltas (no OFS_DELTA compression).
+  For localhost/LAN serving this is negligible; for WAN, deltas are
+  still preferred.
+- 5 parallel clones are slightly slower without the pack cache (each
+  clone streams independently vs cache hits with deltas). Enable
+  `packCache` alongside `noDelta` if repeated identical clones are
+  expected.
+
 ---
 
-## Remaining optimizations
+## Future optimizations (deferred)
 
-| Fix                    | Impact | Effort | Notes                  |
-| ---------------------- | ------ | ------ | ---------------------- |
-| C. Streaming response  | ★★★★   | Medium | TTFB + memory          |
-| D. Configurable deltas | ★★★    | Low    | Quick win for LAN use  |
-| E. Batch object reads  | ★★★    | Medium | Scales to large repos  |
-| F. Thin packs          | ★★★    | Medium | Incremental fetch size |
-| G. Protocol v2         | ★★     | Medium | Compatibility          |
-| H. Compressed storage  | ★      | Low    | Storage only           |
+Not urgent — current numbers are serviceable for the target use case
+(sandbox/agent environments, localhost/LAN). Revisit when real usage
+data points to a specific bottleneck.
+
+| Fix                   | Impact | Effort | When it matters                                       |
+| --------------------- | ------ | ------ | ----------------------------------------------------- |
+| E. Batch object reads | ★★★    | Medium | Repos with 50k+ objects; enumeration is 74-97ms today |
+| F. Thin packs         | ★★★    | Medium | Frequent incremental fetches of large repos           |
+| G. Protocol v2        | ★★     | Medium | Repos with 1000s of refs, or partial clone support    |
+| H. Compressed storage | ★      | Low    | Disk-backed SQLite with large object stores           |
+
+Protocol v1 remains fully supported by all Git clients and servers.
+No deprecation timeline exists. v2 is a feature for scale and partial
+clone, not a compatibility requirement.

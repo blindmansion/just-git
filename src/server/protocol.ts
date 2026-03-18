@@ -172,6 +172,47 @@ export function buildUploadPackResponse(
 	return concatPktLines(...parts);
 }
 
+/**
+ * Streaming variant of `buildUploadPackResponse`. Yields the NAK/ACK
+ * preamble first, then wraps each incoming pack chunk in sideband-64k
+ * pkt-lines and yields them incrementally.
+ */
+export async function* buildUploadPackResponseStreaming(
+	packChunks: AsyncIterable<Uint8Array>,
+	useSideband: boolean,
+	commonHashes?: string[],
+): AsyncGenerator<Uint8Array> {
+	// Preamble: ACK/NAK lines
+	const preamble: Uint8Array[] = [];
+	if (commonHashes && commonHashes.length > 0) {
+		for (const hash of commonHashes) {
+			preamble.push(encodePktLine(`ACK ${hash} common\n`));
+		}
+		const lastCommon = commonHashes[commonHashes.length - 1];
+		preamble.push(encodePktLine(`ACK ${lastCommon} ready\n`));
+		preamble.push(encodePktLine(`ACK ${lastCommon}\n`));
+	} else {
+		preamble.push(encodePktLine("NAK\n"));
+	}
+	yield concatPktLines(...preamble);
+
+	if (useSideband) {
+		for await (const chunk of packChunks) {
+			let offset = 0;
+			while (offset < chunk.byteLength) {
+				const chunkSize = Math.min(SIDEBAND_MAX_PAYLOAD, chunk.byteLength - offset);
+				yield encodeSidebandPacket(1, chunk.subarray(offset, offset + chunkSize));
+				offset += chunkSize;
+			}
+		}
+		yield flushPkt();
+	} else {
+		for await (const chunk of packChunks) {
+			yield chunk;
+		}
+	}
+}
+
 // ── Receive-pack request parsing ────────────────────────────────────
 
 interface PushCommand {

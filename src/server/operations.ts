@@ -10,18 +10,20 @@ import { ZERO_HASH } from "../lib/hex.ts";
 import { isAncestor } from "../lib/merge.ts";
 import { parseTag } from "../lib/objects/tag.ts";
 import { findBestDeltas } from "../lib/pack/delta.ts";
-import type { DeltaPackInput } from "../lib/pack/packfile.ts";
-import { writePackDeltified } from "../lib/pack/packfile.ts";
+import type { DeltaPackInput, PackInput } from "../lib/pack/packfile.ts";
+import { writePackDeltified, writePackStreaming } from "../lib/pack/packfile.ts";
 import {
 	collectEnumeration,
+	enumerateObjects,
 	enumerateObjectsWithContent,
 	type WalkObjectWithContent,
 } from "../lib/transport/object-walk.ts";
-import type { GitRepo } from "../lib/types.ts";
+import type { GitRepo, ObjectId } from "../lib/types.ts";
 import {
 	type AdvertisedRef,
 	buildRefAdvertisement,
 	buildUploadPackResponse,
+	buildUploadPackResponseStreaming,
 	parseReceivePackRequest,
 	parseUploadPackRequest,
 } from "./protocol.ts";
@@ -187,17 +189,23 @@ export interface UploadPackOptions {
 	cache?: PackCache;
 	/** Repo path used as part of the cache key. Required when cache is set. */
 	cacheKey?: string;
+	/** Skip delta compression — faster pack generation, larger output. */
+	noDelta?: boolean;
+	/** Delta window size (default 10). Ignored when noDelta is true. */
+	deltaWindow?: number;
 }
 
 /**
  * Handle a `POST /git-upload-pack` request.
- * Parses wants/haves, enumerates objects, builds a packfile, returns the response.
+ *
+ * Returns `Uint8Array` for buffered responses (cache hits, deltified packs)
+ * or `ReadableStream<Uint8Array>` for streaming no-delta responses.
  */
 export async function handleUploadPack(
 	repo: GitRepo,
 	requestBody: Uint8Array,
 	options?: UploadPackOptions,
-): Promise<Uint8Array> {
+): Promise<Uint8Array | ReadableStream<Uint8Array>> {
 	const t0 = performance.now();
 	const { wants, haves, capabilities } = parseUploadPackRequest(requestBody);
 
@@ -233,6 +241,132 @@ export async function handleUploadPack(
 		}
 	}
 
+	if (options?.noDelta) {
+		return handleUploadPackStreaming(
+			repo,
+			wants,
+			haves,
+			capabilities,
+			useSideband,
+			commonHashes,
+			t0,
+		);
+	}
+
+	return handleUploadPackBuffered(
+		repo,
+		wants,
+		haves,
+		capabilities,
+		useSideband,
+		commonHashes,
+		options,
+		cacheKey,
+		t0,
+	);
+}
+
+/**
+ * Streaming upload-pack: enumerates objects, reads content lazily, and
+ * streams undeltified pack entries to the client as they're produced.
+ */
+async function handleUploadPackStreaming(
+	repo: GitRepo,
+	wants: string[],
+	haves: string[],
+	capabilities: string[],
+	useSideband: boolean,
+	commonHashes: string[] | undefined,
+	t0: number,
+): Promise<ReadableStream<Uint8Array>> {
+	const tEnum0 = performance.now();
+
+	// Lightweight enumeration: hash + type only, no content read yet
+	const { count, objects: walkObjects } = await enumerateObjects(repo, wants, haves);
+
+	if (count === 0) {
+		const empty = buildUploadPackResponse(new Uint8Array(0), useSideband, commonHashes);
+		return new ReadableStream({
+			start(controller) {
+				controller.enqueue(empty);
+				controller.close();
+			},
+		});
+	}
+
+	// Collect the walk results (cheap — just hash+type structs)
+	const walkList: { hash: ObjectId; type: string }[] = [];
+	for await (const obj of walkObjects) walkList.push(obj);
+	const tEnum1 = performance.now();
+
+	// include-tag: find tag objects whose targets are in the pack
+	const sentHashes = new Set(walkList.map((o) => o.hash));
+	const extraTags: WalkObjectWithContent[] = [];
+
+	if (capabilities.includes("include-tag")) {
+		const tagRefs = await repo.refStore.listRefs("refs/tags");
+		for (const tagRef of tagRefs) {
+			if (sentHashes.has(tagRef.hash)) continue;
+			try {
+				const obj = await repo.objectStore.read(tagRef.hash);
+				if (obj.type === "tag") {
+					const tag = parseTag(obj.content);
+					if (sentHashes.has(tag.object)) {
+						extraTags.push({ hash: tagRef.hash, type: "tag", content: obj.content });
+					}
+				}
+			} catch {
+				// Tag object missing or unreadable; skip
+			}
+		}
+	}
+
+	const totalCount = walkList.length + extraTags.length;
+	console.log(
+		`  [upload-pack] streaming ${totalCount} objects (no deltas) | enumerate ${(tEnum1 - tEnum0).toFixed(0)}ms, setup ${(performance.now() - t0).toFixed(0)}ms`,
+	);
+
+	// Build a lazy iterable that reads content on demand
+	async function* streamObjects(): AsyncGenerator<PackInput> {
+		for (const obj of walkList) {
+			const raw = await repo.objectStore.read(obj.hash);
+			yield { type: raw.type, content: raw.content };
+		}
+		for (const tag of extraTags) {
+			yield { type: tag.type, content: tag.content };
+		}
+	}
+
+	const packChunks = writePackStreaming(totalCount, streamObjects());
+	const responseChunks = buildUploadPackResponseStreaming(packChunks, useSideband, commonHashes);
+
+	return new ReadableStream({
+		async pull(controller) {
+			const { value, done } = await responseChunks.next();
+			if (done) {
+				controller.close();
+			} else {
+				controller.enqueue(value);
+			}
+		},
+	});
+}
+
+/**
+ * Buffered upload-pack: collects all objects, computes deltas (unless noDelta),
+ * and returns the full response as a Uint8Array.
+ */
+async function handleUploadPackBuffered(
+	repo: GitRepo,
+	wants: string[],
+	haves: string[],
+	capabilities: string[],
+	useSideband: boolean,
+	commonHashes: string[] | undefined,
+	options: UploadPackOptions | undefined,
+	cacheKey: string | null,
+	t0: number,
+): Promise<Uint8Array> {
 	const tEnum0 = performance.now();
 	const enumResult = await enumerateObjectsWithContent(repo, wants, haves);
 
@@ -254,9 +388,8 @@ export async function handleUploadPack(
 				if (obj.type === "tag") {
 					const tag = parseTag(obj.content);
 					if (sentHashes.has(tag.object)) {
-						const tagHash = tagRef.hash;
-						collected.push({ hash: tagHash, type: "tag", content: obj.content });
-						sentHashes.add(tagHash);
+						collected.push({ hash: tagRef.hash, type: "tag", content: obj.content });
+						sentHashes.add(tagRef.hash);
 					}
 				}
 			} catch {
@@ -266,7 +399,8 @@ export async function handleUploadPack(
 	}
 
 	const tDelta0 = performance.now();
-	const deltas = findBestDeltas(collected);
+	const windowOpt = options?.deltaWindow ? { window: options.deltaWindow } : undefined;
+	const deltas = findBestDeltas(collected, windowOpt);
 	const tDelta1 = performance.now();
 
 	const inputs: DeltaPackInput[] = deltas.map((r) => ({
