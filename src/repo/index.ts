@@ -22,7 +22,7 @@ export {
 	writeBlob,
 	writeTree,
 	type CheckoutToResult,
-	type CommitEntry,
+	type CommitInfo,
 	type CreateCommitOptions,
 	type CreateWorktreeOptions,
 	type MergeConflict,

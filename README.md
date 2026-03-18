@@ -118,6 +118,40 @@ const git = createGit({
 
 Available pre-hooks: `preCommit`, `commitMsg`, `mergeMsg`, `preMergeCommit`, `preCheckout`, `prePush`, `preFetch`, `preClone`, `prePull`, `preRebase`, `preReset`, `preClean`, `preRm`, `preCherryPick`, `preRevert`, `preStash`. Available post-hooks: `postCommit`, `postMerge`, `postCheckout`, `postPush`, `postFetch`, `postClone`, `postPull`, `postReset`, `postClean`, `postRm`, `postCherryPick`, `postRevert`, `postStash`. Low-level events: `onRefUpdate`, `onRefDelete`, `onObjectWrite`. Command-level: `beforeCommand`, `afterCommand`.
 
+## Repo module
+
+`just-git/repo` provides a high-level API for working with repositories programmatically — reading commits, diffing trees, creating objects, and merging — without going through command execution. This is what you use inside hooks (all hook payloads include `repo: GitRepo`) and anywhere else you need direct repo access.
+
+```ts
+import {
+  readCommit,
+  readFileAtCommit,
+  getChangedFiles,
+  resolveRef,
+  listBranches,
+  diffTrees,
+  flattenTree,
+  createCommit,
+  writeBlob,
+  writeTree,
+  mergeTrees,
+  checkoutTo,
+  readonlyRepo,
+} from "just-git/repo";
+
+// Read a file at a specific commit
+const content = await readFileAtCommit(repo, commitHash, "src/index.ts");
+
+// Diff two commits
+const changes = await getChangedFiles(repo, parentHash, commitHash);
+
+// Merge two branches at the tree level (no worktree needed)
+const result = await mergeTrees(repo, oursCommit, theirsCommit);
+if (!result.clean) console.log("conflicts:", result.conflicts);
+```
+
+Also re-exports `PackedObjectStore` and `FileSystemRefStore` for custom storage backends, and `readonlyRepo()` to wrap a repo so all write operations throw.
+
 ## Multi-agent collaboration
 
 Multiple agents can work on clones of the same repository in the same process, each with full VFS isolation. The `resolveRemote` option maps remote URLs to `GitRepo` instances (any object/ref store — VFS-backed, SQLite, etc.), so clone/fetch/push/pull cross VFS boundaries without any network or shared filesystem.
@@ -170,6 +204,43 @@ await bob.exec("git clone /origin /repo");
 Concurrent pushes to the same remote are automatically serialized — if two agents push simultaneously, one succeeds and the other gets a proper non-fast-forward rejection, just like real git.
 
 See [`examples/multi-agent.ts`](examples/multi-agent.ts) for a full working example with a coordinator agent that merges feature branches.
+
+## Server
+
+`just-git/server` is an embeddable Git Smart HTTP server. Any standard git client can clone, fetch, and push. Uses web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime.
+
+```ts
+import { createGitServer, SqliteStorage } from "just-git/server";
+import { getChangedFiles } from "just-git/repo";
+import { Database } from "bun:sqlite";
+
+const storage = new SqliteStorage(new Database("repos.sqlite"));
+
+const server = createGitServer({
+  resolveRepo: async (repoPath) => storage.repo(repoPath),
+  hooks: {
+    preReceive: async ({ updates }) => {
+      for (const u of updates) {
+        if (u.ref === "refs/heads/main" && !u.isFF) {
+          return { reject: true, message: "no force-push to main" };
+        }
+      }
+    },
+    postReceive: async ({ repo, updates }) => {
+      for (const u of updates) {
+        const files = await getChangedFiles(repo, u.oldHash, u.newHash);
+        console.log(`${u.ref}: ${files.length} files changed`);
+      }
+    },
+  },
+});
+
+Bun.serve({ fetch: server.fetch });
+```
+
+`SqliteStorage` persists repos in SQLite without a filesystem — works with `bun:sqlite`, `better-sqlite3`, or any compatible driver. Repos backed by `SqliteStorage` work with both the server (external HTTP) and `resolveRemote` (in-process), with CAS-protected ref updates ensuring correctness regardless of write path.
+
+See [SERVER.md](SERVER.md) for the full API: hooks, `createStandardHooks`, `SqliteStorage`, configuration, and deployment patterns. See [`src/platform/`](src/platform/) for a reference implementation that builds GitHub-like functionality (repos, pull requests, merge strategies) on top of these primitives.
 
 ## Command coverage
 

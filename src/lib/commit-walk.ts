@@ -5,7 +5,7 @@ import type { Commit, GitRepo, ObjectId } from "./types.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
 
-export interface CommitEntry {
+interface CommitEntry {
 	hash: ObjectId;
 	commit: Commit;
 }

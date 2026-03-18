@@ -17,6 +17,8 @@ export interface StandardHooksConfig {
 	denyNonFastForward?: boolean;
 	/** Reject all ref deletions globally. */
 	denyDeletes?: boolean;
+	/** Reject deletion and overwrite of tags. Tags are treated as immutable. */
+	denyDeleteTags?: boolean;
 	/** Return false to reject the entire push (e.g. check Authorization header). */
 	authorize?: (request: Request) => boolean | Promise<boolean>;
 	/** Called after refs are updated. */
@@ -35,6 +37,7 @@ export function createStandardHooks(config: StandardHooksConfig): ServerHooks {
 		protectedBranches = [],
 		denyNonFastForward = false,
 		denyDeletes = false,
+		denyDeleteTags = false,
 		authorize,
 		onPush,
 	} = config;
@@ -68,10 +71,18 @@ export function createStandardHooks(config: StandardHooksConfig): ServerHooks {
 		};
 	}
 
-	if (denyNonFastForward || denyDeletes) {
+	if (denyNonFastForward || denyDeletes || denyDeleteTags) {
 		hooks.update = async (event: UpdateEvent): Promise<void | Rejection> => {
 			if (denyDeletes && event.update.isDelete) {
 				return { reject: true, message: "ref deletion denied" };
+			}
+			if (denyDeleteTags && event.update.ref.startsWith("refs/tags/")) {
+				if (event.update.isDelete) {
+					return { reject: true, message: "tag deletion denied" };
+				}
+				if (!event.update.isCreate) {
+					return { reject: true, message: "tag overwrite denied" };
+				}
 			}
 			if (
 				denyNonFastForward &&

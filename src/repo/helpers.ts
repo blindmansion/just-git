@@ -5,7 +5,6 @@
  * and equally useful outside the server for direct repo inspection.
  */
 
-import type { CommitEntry } from "../lib/commit-walk.ts";
 import { walkCommits } from "../lib/commit-walk.ts";
 import {
 	findAllMergeBases as _findMergeBases,
@@ -43,8 +42,16 @@ import type {
 } from "../lib/types.ts";
 import type { FileSystem } from "../fs.ts";
 
-export type { CommitEntry } from "../lib/commit-walk.ts";
 export type { MergeConflict } from "../lib/merge.ts";
+
+export interface CommitInfo {
+	hash: string;
+	message: string;
+	tree: string;
+	parents: string[];
+	author: Identity;
+	committer: Identity;
+}
 
 /**
  * Walk commits introduced by a ref update (newHash excluding oldHash).
@@ -54,9 +61,18 @@ export async function* getNewCommits(
 	repo: GitRepo,
 	oldHash: string | null,
 	newHash: string,
-): AsyncGenerator<CommitEntry> {
+): AsyncGenerator<CommitInfo> {
 	const exclude = oldHash ? [oldHash] : [];
-	yield* walkCommits(repo, newHash, { exclude });
+	for await (const entry of walkCommits(repo, newHash, { exclude })) {
+		yield {
+			hash: entry.hash,
+			message: entry.commit.message,
+			tree: entry.commit.tree,
+			parents: entry.commit.parents,
+			author: entry.commit.author,
+			committer: entry.commit.committer,
+		};
+	}
 }
 
 /**

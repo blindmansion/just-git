@@ -8,10 +8,12 @@ import {
 	checkoutTo,
 	createCommit,
 	findMergeBases,
+	getNewCommits,
 	mergeTrees,
 	mergeTreesFromTreeHashes,
 	readCommit,
 	readFileAtCommit,
+	resolveRef,
 	writeBlob,
 	writeTree,
 } from "../../src/repo/helpers.ts";
@@ -741,5 +743,94 @@ describe("checkoutTo", () => {
 		} finally {
 			bunServer.stop(true);
 		}
+	});
+});
+
+describe("getNewCommits", () => {
+	test("yields CommitInfo with flattened fields", async () => {
+		const fs = new InMemoryFs();
+		const git = createGit();
+		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+
+		await bash.exec("git init");
+		await bash.writeFile("/repo/a.txt", "a");
+		await bash.exec("git add .");
+		await bash.exec('git commit -m "first"', { env: envAt(1000000000) });
+
+		await bash.writeFile("/repo/b.txt", "b");
+		await bash.exec("git add .");
+		await bash.exec('git commit -m "second"', { env: envAt(1000000100) });
+
+		await bash.writeFile("/repo/c.txt", "c");
+		await bash.exec("git add .");
+		await bash.exec('git commit -m "third"', { env: envAt(1000000200) });
+
+		const repo = await findRepo(fs, "/repo");
+		expect(repo).not.toBeNull();
+
+		const head = await resolveRef(repo!, "HEAD");
+		expect(head).not.toBeNull();
+
+		const headCommit = await readCommit(repo!, head!);
+		const parent = headCommit.parents[0]!;
+		const parentCommit = await readCommit(repo!, parent);
+		const grandparent = parentCommit.parents[0]!;
+
+		// Get commits from grandparent to head (should yield "third" and "second")
+		const commits = [];
+		for await (const c of getNewCommits(repo!, grandparent, head!)) {
+			commits.push(c);
+		}
+
+		expect(commits.length).toBe(2);
+
+		// Verify flattened shape: hash, message, tree, parents, author, committer at top level
+		for (const c of commits) {
+			expect(typeof c.hash).toBe("string");
+			expect(c.hash).toMatch(/^[0-9a-f]{40}$/);
+			expect(typeof c.message).toBe("string");
+			expect(typeof c.tree).toBe("string");
+			expect(Array.isArray(c.parents)).toBe(true);
+			expect(c.author).toBeDefined();
+			expect(c.author.name).toBe("Test");
+			expect(c.committer).toBeDefined();
+			expect(c.committer.name).toBe("Test");
+			// No nested .commit property
+			expect((c as any).commit).toBeUndefined();
+		}
+
+		// Check messages (newest first from walk)
+		const messages = commits.map((c) => c.message.trim());
+		expect(messages).toContain("third");
+		expect(messages).toContain("second");
+		expect(messages).not.toContain("first");
+	});
+
+	test("null oldHash walks all ancestors", async () => {
+		const fs = new InMemoryFs();
+		const git = createGit();
+		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+
+		await bash.exec("git init");
+		await bash.writeFile("/repo/a.txt", "a");
+		await bash.exec("git add .");
+		await bash.exec('git commit -m "root"', { env: envAt(1000000000) });
+
+		await bash.writeFile("/repo/b.txt", "b");
+		await bash.exec("git add .");
+		await bash.exec('git commit -m "child"', { env: envAt(1000000100) });
+
+		const repo = await findRepo(fs, "/repo");
+		const head = await resolveRef(repo!, "HEAD");
+
+		const commits = [];
+		for await (const c of getNewCommits(repo!, null, head!)) {
+			commits.push(c);
+		}
+
+		expect(commits.length).toBe(2);
+		const messages = commits.map((c) => c.message.trim());
+		expect(messages).toContain("root");
+		expect(messages).toContain("child");
 	});
 });
