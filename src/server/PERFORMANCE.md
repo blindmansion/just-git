@@ -103,10 +103,11 @@ with `inflateSync(data, { info: true })` via the `inflateWithConsumed`
 extension to the `ZlibProvider` in `lib/pack/zlib.ts`. One inflate call
 per entry instead of ~13.
 
-**Platform portability:** `{ info: true }` is supported on all server-side
-runtimes (Bun, Node.js, Deno, Cloudflare Workers with `nodejs_compat`).
-Feature-detected at startup; browser environments fall back to the
-binary search.
+**Platform portability:** `{ info: true }` is supported on Bun, Node.js,
+and Deno. Cloudflare Workers (`nodejs_compat`) supports `deflateSync`/
+`inflateSync` but does not implement the `{ info: true }` option, so
+Workers falls back to the binary search (~13 inflate calls per entry).
+Feature-detected at startup; browser environments also use the fallback.
 
 **Impact (cannoli, 4 336 objects):**
 
