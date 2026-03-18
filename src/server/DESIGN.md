@@ -209,24 +209,28 @@ interface RefUpdate {
 
 interface PreReceiveEvent {
   repo: GitRepo;
+  repoPath: string; // path from resolveRepo (e.g. "my-org/my-repo")
   updates: readonly RefUpdate[];
   request: Request;
 }
 
 interface UpdateEvent {
   repo: GitRepo;
+  repoPath: string;
   update: RefUpdate;
   request: Request;
 }
 
 interface PostReceiveEvent {
   repo: GitRepo;
+  repoPath: string;
   updates: readonly RefUpdate[]; // only successfully applied updates
   request: Request;
 }
 
 interface AdvertiseRefsEvent {
   repo: GitRepo;
+  repoPath: string;
   refs: RefAdvertisement[];
   service: "git-upload-pack" | "git-receive-pack";
   request: Request;
@@ -335,12 +339,6 @@ Most hooks only need the inspection tier. The working copy tier is an escape hat
 
 ## Known gaps
 
-### No early HTTP error from `resolveRepo`
-
-`resolveRepo` returns `GitRepo | null`. Returning `null` produces a 404, but there's no way to return a custom HTTP status or headers. This matters for auth: git clients expect a 401 with a `WWW-Authenticate` header on the `info/refs` response to trigger credential prompting. Currently, auth rejection has to happen inside `preReceive` (which is too late for fetch-side auth) or `advertiseRefs` (which can filter refs but can't change the HTTP response status).
-
-A future option: allow `resolveRepo` to return a `Response` directly as an escape hatch. Something like `GitRepo | Response | null` — if it returns a `Response`, the handler sends it as-is. This keeps the common case clean (return a repo or null) while enabling platform-level HTTP semantics when needed.
-
 ### No concurrent push safety
 
 `handleReceivePack` applies ref updates with bare `writeRef` — no compare-and-swap. Two concurrent pushes to the same ref can race. The `RefStore` interface needs a conditional update primitive:
@@ -353,7 +351,5 @@ The SQLite implementation would use `UPDATE ... WHERE hash = ?`. The filesystem 
 
 ## Future work
 
-- **`resolveRepo` escape hatch** — allow returning a `Response` for custom HTTP errors (401, 403 with specific headers).
 - **Ref CAS** — add `compareAndSwapRef` to `RefStore` and use it during ref application.
-- **`checkout()` helper** — compose a `GitContext` from a `GitRepo` + temp VFS, populate the worktree from a ref. Enables full git operations inside hooks.
 - **Additional presets** — review/merge-request tracking, CI integration, audit logging.

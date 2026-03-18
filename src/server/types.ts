@@ -75,24 +75,28 @@ export interface RefUpdate {
 
 export interface PreReceiveEvent {
 	repo: GitRepo;
+	repoPath: string;
 	updates: readonly RefUpdate[];
 	request: Request;
 }
 
 export interface UpdateEvent {
 	repo: GitRepo;
+	repoPath: string;
 	update: RefUpdate;
 	request: Request;
 }
 
 export interface PostReceiveEvent {
 	repo: GitRepo;
+	repoPath: string;
 	updates: readonly RefUpdate[];
 	request: Request;
 }
 
 export interface AdvertiseRefsEvent {
 	repo: GitRepo;
+	repoPath: string;
 	refs: RefAdvertisement[];
 	service: "git-upload-pack" | "git-receive-pack";
 	request: Request;

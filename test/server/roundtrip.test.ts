@@ -254,14 +254,14 @@ describe("server roundtrip", () => {
 		expect(after).toBeNull();
 	});
 
-	test("postReceive hook is called", async () => {
-		const pushEvents: Array<{ refCount: number }> = [];
+	test("postReceive hook is called with repoPath", async () => {
+		const pushEvents: Array<{ refCount: number; repoPath: string }> = [];
 
 		const hookedServer = createGitServer({
 			resolveRepo: async () => serverRepo,
 			hooks: {
 				postReceive: async (event) => {
-					pushEvents.push({ refCount: event.updates.length });
+					pushEvents.push({ refCount: event.updates.length, repoPath: event.repoPath });
 				},
 			},
 		});
@@ -295,6 +295,52 @@ describe("server roundtrip", () => {
 
 			expect(pushEvents.length).toBe(1);
 			expect(pushEvents[0]!.refCount).toBe(1);
+			expect(pushEvents[0]!.repoPath).toBe("myrepo");
+		} finally {
+			hookedSrv.stop();
+		}
+	});
+
+	test("preReceive hook receives repoPath", async () => {
+		let capturedRepoPath: string | undefined;
+
+		const hookedServer = createGitServer({
+			resolveRepo: async () => serverRepo,
+			hooks: {
+				preReceive: async (event) => {
+					capturedRepoPath = event.repoPath;
+				},
+			},
+		});
+
+		const hookedSrv = Bun.serve({
+			fetch: hookedServer.fetch,
+			port: 0,
+		});
+
+		try {
+			const clientFs = new InMemoryFs();
+			const git = createGit();
+			const client = new Bash({
+				fs: clientFs,
+				cwd: "/",
+				customCommands: [git],
+			});
+
+			await client.exec(`git clone http://localhost:${hookedSrv.port}/myrepo /local`, {
+				env: envAt(1000001000),
+			});
+
+			await client.writeFile("/local/repopath-test.txt", "test");
+			await client.exec("git add .", { cwd: "/local" });
+			await client.exec('git commit -m "repopath test"', {
+				cwd: "/local",
+				env: envAt(1000001100),
+			});
+
+			await client.exec("git push origin main", { cwd: "/local" });
+
+			expect(capturedRepoPath).toBe("myrepo");
 		} finally {
 			hookedSrv.stop();
 		}

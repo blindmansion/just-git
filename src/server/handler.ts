@@ -12,7 +12,14 @@ import {
 	ingestReceivePack,
 } from "./operations.ts";
 import { buildReportStatus } from "./protocol.ts";
-import type { GitServerConfig, GitServer, Rejection, RefUpdate } from "./types.ts";
+import type {
+	GitServerConfig,
+	GitServer,
+	Rejection,
+	RefUpdate,
+	ServerHooks,
+	RefAdvertisement,
+} from "./types.ts";
 
 /**
  * Create a Git Smart HTTP server handler.
@@ -64,6 +71,7 @@ export function createGitServer(config: GitServerConfig): GitServer {
 					if (hooks?.advertiseRefs) {
 						const filtered = await hooks.advertiseRefs({
 							repo,
+							repoPath,
 							refs: allRefs,
 							service,
 							request: req,
@@ -127,7 +135,7 @@ export function createGitServer(config: GitServerConfig): GitServer {
 
 					// Pre-receive hook: abort entire push on rejection
 					if (hooks?.preReceive) {
-						const result = await hooks.preReceive({ repo, updates, request: req });
+						const result = await hooks.preReceive({ repo, repoPath, updates, request: req });
 						if (isRejection(result)) {
 							if (useReportStatus) {
 								const msg = result.message ?? "pre-receive hook declined";
@@ -152,7 +160,7 @@ export function createGitServer(config: GitServerConfig): GitServer {
 
 					for (const update of updates) {
 						if (hooks?.update) {
-							const result = await hooks.update({ repo, update, request: req });
+							const result = await hooks.update({ repo, repoPath, update, request: req });
 							if (isRejection(result)) {
 								results.push({
 									ref: update.ref,
@@ -186,7 +194,7 @@ export function createGitServer(config: GitServerConfig): GitServer {
 					// Post-receive hook (fire-and-forget, only for successful updates)
 					if (hooks?.postReceive && applied.length > 0) {
 						try {
-							await hooks.postReceive({ repo, updates: applied, request: req });
+							await hooks.postReceive({ repo, repoPath, updates: applied, request: req });
 						} catch {
 							// Post-receive errors don't affect the response
 						}
@@ -228,4 +236,70 @@ function extractRepoPath(pathname: string, suffix: string): string {
 
 function isRejection(value: void | Rejection | undefined): value is Rejection {
 	return value != null && typeof value === "object" && "reject" in value && value.reject === true;
+}
+
+/**
+ * Compose multiple hook sets into a single `ServerHooks` object.
+ *
+ * - **Pre-hooks** (`preReceive`, `update`): run in order, short-circuit
+ *   on the first `Rejection`.
+ * - **Post-hooks** (`postReceive`): run all in order. Each is individually
+ *   try/caught so one failure doesn't prevent the rest from running.
+ * - **Filter hooks** (`advertiseRefs`): chain — each hook receives the
+ *   refs returned by the previous one. Returning void passes through
+ *   unchanged.
+ */
+export function composeHooks(...hookSets: (ServerHooks | undefined)[]): ServerHooks {
+	const sets = hookSets.filter((h): h is ServerHooks => h != null);
+	if (sets.length === 0) return {};
+	if (sets.length === 1) return sets[0]!;
+
+	const composed: ServerHooks = {};
+
+	const preReceiveHandlers = sets.filter((s) => s.preReceive).map((s) => s.preReceive!);
+	if (preReceiveHandlers.length > 0) {
+		composed.preReceive = async (event) => {
+			for (const handler of preReceiveHandlers) {
+				const result = await handler(event);
+				if (isRejection(result)) return result;
+			}
+		};
+	}
+
+	const updateHandlers = sets.filter((s) => s.update).map((s) => s.update!);
+	if (updateHandlers.length > 0) {
+		composed.update = async (event) => {
+			for (const handler of updateHandlers) {
+				const result = await handler(event);
+				if (isRejection(result)) return result;
+			}
+		};
+	}
+
+	const postReceiveHandlers = sets.filter((s) => s.postReceive).map((s) => s.postReceive!);
+	if (postReceiveHandlers.length > 0) {
+		composed.postReceive = async (event) => {
+			for (const handler of postReceiveHandlers) {
+				try {
+					await handler(event);
+				} catch {
+					// fire-and-forget: one handler failing doesn't block the rest
+				}
+			}
+		};
+	}
+
+	const advertiseRefsHandlers = sets.filter((s) => s.advertiseRefs).map((s) => s.advertiseRefs!);
+	if (advertiseRefsHandlers.length > 0) {
+		composed.advertiseRefs = async (event) => {
+			let refs: RefAdvertisement[] = event.refs;
+			for (const handler of advertiseRefsHandlers) {
+				const result = await handler({ ...event, refs });
+				if (result) refs = result;
+			}
+			return refs;
+		};
+	}
+
+	return composed;
 }

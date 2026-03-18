@@ -1,5 +1,5 @@
 // Layer 2: HTTP handler
-export { createGitServer } from "./handler.ts";
+export { createGitServer, composeHooks } from "./handler.ts";
 
 // Layer 1: Operations (building blocks)
 export {

@@ -1,16 +1,14 @@
 import type { Database } from "bun:sqlite";
 import type { GitRepo, Identity } from "../lib/types.ts";
+import type { Rejection } from "../server/types.ts";
+
+export type { Rejection };
 
 // ── Configuration ───────────────────────────────────────────────────
 
 export interface PlatformConfig {
 	database: Database;
 	on?: PlatformCallbacks;
-}
-
-export interface Rejection {
-	reject: true;
-	message?: string;
 }
 
 export interface PlatformCallbacks {

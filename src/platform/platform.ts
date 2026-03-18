@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
-import type { GitRepo, ObjectStore } from "../lib/types.ts";
-import { createGitServer } from "../server/handler.ts";
+import type { GitRepo } from "../lib/types.ts";
+import { composeHooks, createGitServer } from "../server/handler.ts";
 import { resolveRef } from "../server/helpers.ts";
 import { SqliteStorage } from "../server/sqlite-storage.ts";
 import type { GitServer, GitServerConfig, ServerHooks } from "../server/types.ts";
@@ -209,7 +209,6 @@ export class Platform {
 	}): GitServer {
 		const platform = this;
 		const authorize = options?.authorize;
-		const repoIdByStore = new WeakMap<ObjectStore, string>();
 
 		const config: GitServerConfig = {
 			resolveRepo: async (repoPath: string, request: Request) => {
@@ -219,66 +218,60 @@ export class Platform {
 					const denied = await authorize(request, repoPath);
 					if (denied) return denied;
 				}
-				const repo = platform.storage.repo(repoPath);
-				repoIdByStore.set(repo.objectStore, repoPath);
-				return repo;
+				return platform.storage.repo(repoPath);
 			},
 
-			hooks: {
-				...options?.hooks,
+			hooks: composeHooks(
+				{
+					async postReceive(event) {
+						const repoId = event.repoPath;
 
-				async postReceive(event) {
-					const repoId = repoIdByStore.get(event.repo.objectStore);
-					if (!repoId) return;
+						for (const update of event.updates) {
+							if (!update.ref.startsWith("refs/heads/")) continue;
+							const branch = update.ref.slice("refs/heads/".length);
 
-					for (const update of event.updates) {
-						if (!update.ref.startsWith("refs/heads/")) continue;
-						const branch = update.ref.slice("refs/heads/".length);
-
-						if (platform.callbacks.onPush) {
-							try {
-								await platform.callbacks.onPush({
-									repo: event.repo,
-									repoId,
-									ref: update.ref,
-									oldHash: update.oldHash,
-									newHash: update.newHash,
-								});
-							} catch {
-								// fire-and-forget
-							}
-						}
-
-						const openPRs = platform.platformDb.findOpenPRsByHeadRef(repoId, branch);
-						for (const pr of openPRs) {
-							const previousHeadSha = pr.headSha;
-							platform.platformDb.updateHeadSha(repoId, pr.number, update.newHash);
-							await event.repo.refStore.writeRef(`refs/pull/${pr.number}/head`, {
-								type: "direct",
-								hash: update.newHash,
-							});
-
-							if (platform.callbacks.onPullRequestUpdated) {
-								const updated = platform.platformDb.getPullRequest(repoId, pr.number)!;
+							if (platform.callbacks.onPush) {
 								try {
-									await platform.callbacks.onPullRequestUpdated({
+									await platform.callbacks.onPush({
 										repo: event.repo,
 										repoId,
-										pr: updated,
-										previousHeadSha,
+										ref: update.ref,
+										oldHash: update.oldHash,
+										newHash: update.newHash,
 									});
 								} catch {
 									// fire-and-forget
 								}
 							}
-						}
-					}
 
-					if (options?.hooks?.postReceive) {
-						await options.hooks.postReceive(event);
-					}
+							const openPRs = platform.platformDb.findOpenPRsByHeadRef(repoId, branch);
+							for (const pr of openPRs) {
+								const previousHeadSha = pr.headSha;
+								platform.platformDb.updateHeadSha(repoId, pr.number, update.newHash);
+								await event.repo.refStore.writeRef(`refs/pull/${pr.number}/head`, {
+									type: "direct",
+									hash: update.newHash,
+								});
+
+								if (platform.callbacks.onPullRequestUpdated) {
+									const updated = platform.platformDb.getPullRequest(repoId, pr.number)!;
+									try {
+										await platform.callbacks.onPullRequestUpdated({
+											repo: event.repo,
+											repoId,
+											pr: updated,
+											previousHeadSha,
+										});
+									} catch {
+										// fire-and-forget
+									}
+								}
+							}
+						}
+					},
 				},
-			},
+				options?.hooks,
+			),
 
 			basePath: options?.basePath,
 		};
