@@ -206,7 +206,6 @@ export async function handleUploadPack(
 	requestBody: Uint8Array,
 	options?: UploadPackOptions,
 ): Promise<Uint8Array | ReadableStream<Uint8Array>> {
-	const t0 = performance.now();
 	const { wants, haves, capabilities } = parseUploadPackRequest(requestBody);
 
 	if (wants.length === 0) {
@@ -234,23 +233,12 @@ export async function handleUploadPack(
 	if (cacheKey && options?.cache) {
 		const cached = options.cache.get(cacheKey);
 		if (cached) {
-			console.log(
-				`  [upload-pack] cache hit: ${cached.objectCount} objects, ${(cached.packData.byteLength / 1024).toFixed(0)} KB pack | ${(performance.now() - t0).toFixed(0)}ms`,
-			);
 			return buildUploadPackResponse(cached.packData, useSideband, commonHashes);
 		}
 	}
 
 	if (options?.noDelta) {
-		return handleUploadPackStreaming(
-			repo,
-			wants,
-			haves,
-			capabilities,
-			useSideband,
-			commonHashes,
-			t0,
-		);
+		return handleUploadPackStreaming(repo, wants, haves, capabilities, useSideband, commonHashes);
 	}
 
 	return handleUploadPackBuffered(
@@ -262,7 +250,6 @@ export async function handleUploadPack(
 		commonHashes,
 		options,
 		cacheKey,
-		t0,
 	);
 }
 
@@ -277,11 +264,7 @@ async function handleUploadPackStreaming(
 	capabilities: string[],
 	useSideband: boolean,
 	commonHashes: string[] | undefined,
-	t0: number,
 ): Promise<ReadableStream<Uint8Array>> {
-	const tEnum0 = performance.now();
-
-	// Lightweight enumeration: hash + type only, no content read yet
 	const { count, objects: walkObjects } = await enumerateObjects(repo, wants, haves);
 
 	if (count === 0) {
@@ -294,10 +277,8 @@ async function handleUploadPackStreaming(
 		});
 	}
 
-	// Collect the walk results (cheap — just hash+type structs)
 	const walkList: { hash: ObjectId; type: string }[] = [];
 	for await (const obj of walkObjects) walkList.push(obj);
-	const tEnum1 = performance.now();
 
 	// include-tag: find tag objects whose targets are in the pack
 	const sentHashes = new Set(walkList.map((o) => o.hash));
@@ -322,11 +303,6 @@ async function handleUploadPackStreaming(
 	}
 
 	const totalCount = walkList.length + extraTags.length;
-	console.log(
-		`  [upload-pack] streaming ${totalCount} objects (no deltas) | enumerate ${(tEnum1 - tEnum0).toFixed(0)}ms, setup ${(performance.now() - t0).toFixed(0)}ms`,
-	);
-
-	// Build a lazy iterable that reads content on demand
 	async function* streamObjects(): AsyncGenerator<PackInput> {
 		for (const obj of walkList) {
 			const raw = await repo.objectStore.read(obj.hash);
@@ -365,9 +341,7 @@ async function handleUploadPackBuffered(
 	commonHashes: string[] | undefined,
 	options: UploadPackOptions | undefined,
 	cacheKey: string | null,
-	t0: number,
 ): Promise<Uint8Array> {
-	const tEnum0 = performance.now();
 	const enumResult = await enumerateObjectsWithContent(repo, wants, haves);
 
 	if (enumResult.count === 0) {
@@ -375,7 +349,6 @@ async function handleUploadPackBuffered(
 	}
 
 	const collected: WalkObjectWithContent[] = await collectEnumeration(enumResult);
-	const tEnum1 = performance.now();
 
 	const sentHashes = new Set(collected.map((o) => o.hash));
 
@@ -398,10 +371,8 @@ async function handleUploadPackBuffered(
 		}
 	}
 
-	const tDelta0 = performance.now();
 	const windowOpt = options?.deltaWindow ? { window: options.deltaWindow } : undefined;
 	const deltas = findBestDeltas(collected, windowOpt);
-	const tDelta1 = performance.now();
 
 	const inputs: DeltaPackInput[] = deltas.map((r) => ({
 		hash: r.hash,
@@ -411,17 +382,10 @@ async function handleUploadPackBuffered(
 		deltaBaseHash: r.deltaBase,
 	}));
 
-	const tPack0 = performance.now();
 	const { data: packData } = await writePackDeltified(inputs);
-	const tPack1 = performance.now();
-
-	const totalBytes = collected.reduce((s, o) => s + o.content.byteLength, 0);
-	const deltaCount = deltas.filter((d) => d.delta).length;
-	console.log(
-		`  [upload-pack] ${collected.length} objects (${(totalBytes / 1024).toFixed(0)} KB raw, ${deltaCount} deltas) → ${(packData.byteLength / 1024).toFixed(0)} KB pack | enumerate ${(tEnum1 - tEnum0).toFixed(0)}ms, delta ${(tDelta1 - tDelta0).toFixed(0)}ms, pack ${(tPack1 - tPack0).toFixed(0)}ms, total ${(tPack1 - t0).toFixed(0)}ms`,
-	);
 
 	if (cacheKey && options?.cache) {
+		const deltaCount = deltas.filter((d) => d.delta).length;
 		options.cache.set(cacheKey, { packData, objectCount: collected.length, deltaCount });
 	}
 
@@ -445,21 +409,13 @@ export async function ingestReceivePack(
 	repo: GitRepo,
 	requestBody: Uint8Array,
 ): Promise<ReceivePackResult> {
-	const t0 = performance.now();
 	const { commands, packData, capabilities } = parseReceivePackRequest(requestBody);
 
 	let unpackOk = true;
-	let objectCount = 0;
 	if (packData.byteLength > 0) {
 		try {
-			const tIngest0 = performance.now();
-			objectCount = await repo.objectStore.ingestPack(packData);
-			const tIngest1 = performance.now();
-			console.log(
-				`  [receive-pack] ingested ${objectCount} objects from ${(packData.byteLength / 1024).toFixed(0)} KB pack in ${(tIngest1 - tIngest0).toFixed(0)}ms`,
-			);
-		} catch (e) {
-			console.log(`  [receive-pack] ingest failed: ${e instanceof Error ? e.message : e}`);
+			await repo.objectStore.ingestPack(packData);
+		} catch {
 			unpackOk = false;
 		}
 	}
@@ -487,9 +443,6 @@ export async function ingestReceivePack(
 			isDelete,
 		});
 	}
-
-	const t1 = performance.now();
-	console.log(`  [receive-pack] ${commands.length} ref(s), total ${(t1 - t0).toFixed(0)}ms`);
 
 	return { updates, unpackOk, capabilities };
 }

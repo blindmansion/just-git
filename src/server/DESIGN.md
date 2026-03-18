@@ -51,18 +51,15 @@ The just-git server lets push handlers read commits, diff trees, inspect files, 
 
 The Smart HTTP protocol surface is small and well-specified. The three endpoints (`info/refs`, `git-upload-pack`, `git-receive-pack`) with protocol v1 are sufficient for any standard git client to clone, fetch, and push.
 
-Features not yet implemented that generally don't matter for the target use case:
+Features not implemented that generally don't matter for the target use case:
 
-| Feature                                     | Matters for agents?                                   |
-| ------------------------------------------- | ----------------------------------------------------- |
-| Protocol v2                                 | No — v1 works, clients fall back                      |
-| Shallow clones (`--depth`)                  | Rarely — agent repos are small                        |
-| Partial clones (`--filter`)                 | No                                                    |
-| SSH transport                               | No — bearer token auth over HTTP is better for agents |
-| LFS                                         | Unlikely for now                                      |
-| Delta compression in server-generated packs | Performance optimization, not correctness             |
-
-Concurrent push safety (ref CAS) is the one gap that matters for production use.
+| Feature                     | Matters for agents?                                   |
+| --------------------------- | ----------------------------------------------------- |
+| Protocol v2                 | No — v1 works, clients fall back                      |
+| Shallow clones (`--depth`)  | Rarely — agent repos are small                        |
+| Partial clones (`--filter`) | No                                                    |
+| SSH transport               | No — bearer token auth over HTTP is better for agents |
+| LFS                         | Unlikely for now                                      |
 
 ## Architecture
 
@@ -109,9 +106,9 @@ upload-pack:    handleUploadPack → Response
 receive-pack:   ingestReceivePack → preReceive hook → per-ref update hook → apply refs → postReceive hook → Response
 ```
 
-**Helpers** (`helpers.ts`)
+**Repo helpers** (`just-git/repo`)
 
-Standalone functions for working with `GitRepo` directly. Thin wrappers over lib/ primitives that are useful inside hooks and outside the server entirely:
+Standalone functions for working with `GitRepo` directly, exported from `just-git/repo` (not the server module). Thin wrappers over lib/ primitives useful inside hooks and outside the server:
 
 - `getNewCommits` — walk commits introduced by a ref update
 - `getChangedFiles` — diff trees between two commits
@@ -413,7 +410,7 @@ Required on all `RefStore` implementations. Returns `false` when the ref's curre
 | `LocalTransport.push`       | `oldHash` from `advertiseRefs`     | Concurrent resolveRemote pushes |
 | `Platform.mergePullRequest` | `baseSha` read before merge        | Push racing with PR merge       |
 
-All three paths can target the same backing store (e.g. the same SQLite database). CAS at the `RefStore` level ensures correctness regardless of which code path performs the write. The previous `WeakMap<object, Mutex>` in `LocalTransport` was removed — it keyed on JS object identity and couldn't coordinate across different `GitRepo` instances from `SqliteStorage.repo()`.
+All three paths can target the same backing store (e.g. the same SQLite database). CAS at the `RefStore` level ensures correctness regardless of which code path performs the write.
 
 ### Behavior on CAS failure
 
