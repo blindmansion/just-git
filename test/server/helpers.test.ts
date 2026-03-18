@@ -14,7 +14,7 @@ import {
 	readFileAtCommit,
 	writeBlob,
 	writeTree,
-} from "../../src/server/helpers.ts";
+} from "../../src/repo/helpers.ts";
 import { SqliteStorage } from "../../src/server/sqlite-storage.ts";
 
 const TEST_ENV = {

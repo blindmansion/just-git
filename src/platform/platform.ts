@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { GitRepo } from "../lib/types.ts";
 import { composeHooks, createGitServer } from "../server/handler.ts";
-import { resolveRef } from "../server/helpers.ts";
+import { resolveRef } from "../repo/helpers.ts";
 import { SqliteStorage } from "../server/sqlite-storage.ts";
 import type { GitServer, GitServerConfig, ServerHooks } from "../server/types.ts";
 import { executeMerge, MergeError } from "./pull-requests.ts";

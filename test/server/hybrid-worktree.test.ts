@@ -7,7 +7,7 @@ import { resolveRef } from "../../src/lib/refs.ts";
 import { readCommit } from "../../src/lib/object-db.ts";
 import { flattenTree } from "../../src/lib/tree-ops.ts";
 import { SqliteStorage } from "../../src/server/sqlite-storage.ts";
-import { createWorktree, readonlyRepo } from "../../src/server/helpers.ts";
+import { createWorktree, readonlyRepo } from "../../src/repo/helpers.ts";
 
 const TEST_ENV = {
 	GIT_AUTHOR_NAME: "Test",

@@ -1,7 +1,7 @@
-// Layer 2: HTTP handler
+// HTTP handler
 export { createGitServer, composeHooks } from "./handler.ts";
 
-// Layer 1: Operations (building blocks)
+// Server operations (used internally by handler, exposed for custom transports)
 export {
 	buildRefAdvertisementBytes,
 	collectRefs,
@@ -10,21 +10,6 @@ export {
 	type ReceivePackResult,
 	type RefsData,
 } from "./operations.ts";
-
-// Layer 1: Protocol primitives
-export {
-	buildRefAdvertisement,
-	buildReportStatus,
-	buildUploadPackResponse,
-	encodeSidebandPacket,
-	parseReceivePackRequest,
-	parseUploadPackRequest,
-	type AdvertisedRef,
-	type PushCommand,
-	type ReceivePackRequest,
-	type RefResult,
-	type UploadPackRequest,
-} from "./protocol.ts";
 
 // Types
 export type {
@@ -40,46 +25,8 @@ export type {
 	UpdateEvent,
 } from "./types.ts";
 
-// Helpers
-export {
-	checkoutTo,
-	createCommit,
-	createWorktree,
-	diffTrees,
-	findMergeBases,
-	flattenTree,
-	getChangedFiles,
-	getNewCommits,
-	isAncestor,
-	listBranches,
-	listTags,
-	mergeTrees,
-	mergeTreesFromTreeHashes,
-	readBlob,
-	readBlobText,
-	readCommit,
-	readFileAtCommit,
-	readonlyRepo,
-	resolveRef,
-	writeBlob,
-	writeTree,
-	type CheckoutToResult,
-	type CommitEntry,
-	type CreateCommitOptions,
-	type CreateWorktreeOptions,
-	type MergeConflict,
-	type MergeTreesResult,
-	type TreeEntryInput,
-	type WorktreeResult,
-} from "./helpers.ts";
-
 // Presets
 export { createStandardHooks, type StandardHooksConfig } from "./presets.ts";
 
-// Storage implementations
-export { PackedObjectStore } from "../lib/object-store.ts";
-export { FileSystemRefStore } from "../lib/refs.ts";
+// Storage
 export { SqliteStorage } from "./sqlite-storage.ts";
-
-// Re-exported lib types needed by helpers
-export type { Identity, GitRepo } from "../lib/types.ts";

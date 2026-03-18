@@ -243,7 +243,7 @@ interface Rejection {
 ### Standalone helpers
 
 ```typescript
-import { getNewCommits, getChangedFiles, readCommit } from "just-git/server";
+import { getNewCommits, getChangedFiles, readCommit } from "just-git/repo";
 
 // Inside a postReceive hook:
 postReceive: async (event) => {

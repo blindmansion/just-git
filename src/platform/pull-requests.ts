@@ -1,5 +1,5 @@
 import type { GitRepo, Identity } from "../lib/types.ts";
-import { createCommit, isAncestor, mergeTrees, resolveRef } from "../server/helpers.ts";
+import { createCommit, isAncestor, mergeTrees, resolveRef } from "../repo/helpers.ts";
 import type { MergeResult, MergeStrategy } from "./types.ts";
 
 export class MergeError extends Error {

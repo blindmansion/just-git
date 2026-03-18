@@ -18,7 +18,7 @@ import {
 	resolveRef,
 	writeBlob,
 	writeTree,
-} from "../../src/server/helpers.ts";
+} from "../../src/repo/helpers.ts";
 
 const TEST_IDENTITY: Identity = {
 	name: "Test",
