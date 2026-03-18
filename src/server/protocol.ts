@@ -71,7 +71,7 @@ export function buildRefAdvertisement(
 
 // ── Upload-pack request parsing ─────────────────────────────────────
 
-export interface UploadPackRequest {
+interface UploadPackRequest {
 	wants: string[];
 	haves: string[];
 	capabilities: string[];
@@ -174,13 +174,13 @@ export function buildUploadPackResponse(
 
 // ── Receive-pack request parsing ────────────────────────────────────
 
-export interface PushCommand {
+interface PushCommand {
 	oldHash: string;
 	newHash: string;
 	refName: string;
 }
 
-export interface ReceivePackRequest {
+interface ReceivePackRequest {
 	commands: PushCommand[];
 	packData: Uint8Array;
 	capabilities: string[];
@@ -253,7 +253,7 @@ export function parseReceivePackRequest(body: Uint8Array): ReceivePackRequest {
 
 // ── Report-status response building ─────────────────────────────────
 
-export interface RefResult {
+interface RefResult {
 	name: string;
 	ok: boolean;
 	error?: string;
@@ -305,7 +305,7 @@ export function buildReportStatus(
 /**
  * Encode data into a sideband pkt-line: `[4-byte hex len][band byte][payload]`.
  */
-export function encodeSidebandPacket(band: number, data: Uint8Array): Uint8Array {
+function encodeSidebandPacket(band: number, data: Uint8Array): Uint8Array {
 	const payload = new Uint8Array(1 + data.byteLength);
 	payload[0] = band;
 	payload.set(data, 1);

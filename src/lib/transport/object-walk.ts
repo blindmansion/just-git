@@ -6,7 +6,7 @@ import type { GitRepo, ObjectId, ObjectType } from "../types.ts";
 
 // ── Types ────────────────────────────────────────────────────────────
 
-export interface WalkObject {
+interface WalkObject {
 	hash: ObjectId;
 	type: ObjectType;
 }
@@ -24,7 +24,7 @@ export interface WalkObjectWithContent {
  * `objects` can be consumed exactly once. Callers that need multiple
  * passes should collect into an array first.
  */
-export interface EnumerationResult<T> {
+interface EnumerationResult<T> {
 	count: number;
 	objects: AsyncIterable<T>;
 }

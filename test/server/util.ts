@@ -3,14 +3,12 @@ import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createGit } from "../../src/index.ts";
-import { findGitDir } from "../../src/lib/repo.ts";
-import type { GitContext } from "../../src/lib/types.ts";
 import { createGitServer } from "../../src/server/handler.ts";
 import type { GitServerConfig } from "../../src/server/types.ts";
 
-// ── Test env (server-specific, same author/committer names) ─────────
+// ── Test env ────────────────────────────────────────────────────────
 
-export const SERVER_TEST_ENV = {
+const SERVER_TEST_ENV = {
 	GIT_AUTHOR_NAME: "Test",
 	GIT_AUTHOR_EMAIL: "test@test.com",
 	GIT_COMMITTER_NAME: "Test",
@@ -67,32 +65,6 @@ export async function realGit(
 		proc.exited,
 	]);
 	return { stdout, stderr, exitCode };
-}
-
-// ── VFS server repo setup ───────────────────────────────────────────
-
-export async function setupVfsServerRepo(
-	files: Record<string, string> = {
-		"/repo/README.md": "# Hello World",
-		"/repo/src/main.ts": 'console.log("hello");',
-	},
-) {
-	const serverFs = new InMemoryFs();
-	const git = createGit();
-	const serverBash = new Bash({ fs: serverFs, cwd: "/repo", customCommands: [git] });
-
-	for (const [path, content] of Object.entries(files)) {
-		await serverBash.writeFile(path, content);
-	}
-
-	await serverBash.exec("git init");
-	await serverBash.exec("git add .");
-	await serverBash.exec('git commit -m "initial commit"', { env: envAt(1000000000) });
-
-	const ctx = await findGitDir(serverFs, "/repo");
-	if (!ctx) throw new Error("failed to find git dir");
-
-	return { serverFs, serverBash, serverRepo: ctx as GitContext };
 }
 
 // ── HTTP server wrapper ─────────────────────────────────────────────

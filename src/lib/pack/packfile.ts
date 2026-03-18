@@ -442,86 +442,67 @@ export async function writePackDeltified(objects: DeltaPackInput[]): Promise<Pac
 	return { data: await finalizePack(chunks), entries: entryMetas };
 }
 
-// ── Streaming pack writers ───────────────────────────────────────────
-
-/**
- * Streaming variant of `writePack`. Accepts a pre-counted object count
- * and an async iterable of objects. Each object is deflated and written
- * as it arrives — the iterable doesn't need to be fully materialized.
- */
-export async function writePackStream(
-	count: number,
-	objects: AsyncIterable<PackInput>,
-): Promise<Uint8Array> {
-	const chunks: Uint8Array[] = [];
-
-	const header = new Uint8Array(12);
-	const hView = new DataView(header.buffer);
-	hView.setUint32(0, PACK_SIGNATURE);
-	hView.setUint32(4, PACK_VERSION);
-	hView.setUint32(8, count);
-	chunks.push(header);
-
-	for await (const obj of objects) {
-		const typeNum = NUM_BY_TYPE[obj.type];
-		const compressed = await deflate(obj.content);
-		chunks.push(encodeTypeSize(typeNum, obj.content.byteLength));
-		chunks.push(compressed);
-	}
-
-	return finalizePack(chunks);
-}
-
-/**
- * Streaming variant of `writePackDeltified`. Accepts a pre-counted
- * object count and an async iterable. Objects must be ordered so that
- * delta bases appear before their dependents.
- */
-export async function writePackDeltifiedStream(
-	count: number,
-	objects: AsyncIterable<DeltaPackInput>,
-): Promise<PackWriteResult> {
-	const chunks: Uint8Array[] = [];
-	const offsets = new Map<ObjectId, number>();
-
-	const header = new Uint8Array(12);
-	const hView = new DataView(header.buffer);
-	hView.setUint32(0, PACK_SIGNATURE);
-	hView.setUint32(4, PACK_VERSION);
-	hView.setUint32(8, count);
-	chunks.push(header);
-	let currentOffset = 12;
-	const entryMetas: PackEntryMeta[] = [];
-
-	for await (const obj of objects) {
-		const entryStart = currentOffset;
-		offsets.set(obj.hash, currentOffset);
-
-		const baseOffset = obj.delta && obj.deltaBaseHash ? offsets.get(obj.deltaBaseHash) : undefined;
-
-		if (obj.delta && baseOffset !== undefined) {
-			const objHeader = encodeTypeSize(OBJ_OFS_DELTA, obj.delta.byteLength);
-			const ofsBytes = encodeOfsOffset(currentOffset - baseOffset);
-			const compressed = await deflate(obj.delta);
-			chunks.push(objHeader, ofsBytes, compressed);
-			currentOffset += objHeader.byteLength + ofsBytes.byteLength + compressed.byteLength;
-		} else {
-			const typeNum = NUM_BY_TYPE[obj.type];
-			const objHeader = encodeTypeSize(typeNum, obj.content.byteLength);
-			const compressed = await deflate(obj.content);
-			chunks.push(objHeader, compressed);
-			currentOffset += objHeader.byteLength + compressed.byteLength;
-		}
-
-		entryMetas.push({
-			hash: obj.hash,
-			offset: entryStart,
-			nextOffset: currentOffset,
-		});
-	}
-
-	return { data: await finalizePack(chunks), entries: entryMetas };
-}
+// ── Streaming pack writers (commented out — not yet used) ────────────
+//
+// Streaming variants of writePack/writePackDeltified that accept
+// AsyncIterable<PackInput> instead of arrays. Useful when you need
+// backpressure-aware pack generation without materializing all objects.
+//
+// export async function writePackStream(
+// 	count: number,
+// 	objects: AsyncIterable<PackInput>,
+// ): Promise<Uint8Array> {
+// 	const chunks: Uint8Array[] = [];
+// 	const header = new Uint8Array(12);
+// 	const hView = new DataView(header.buffer);
+// 	hView.setUint32(0, PACK_SIGNATURE);
+// 	hView.setUint32(4, PACK_VERSION);
+// 	hView.setUint32(8, count);
+// 	chunks.push(header);
+// 	for await (const obj of objects) {
+// 		const typeNum = NUM_BY_TYPE[obj.type];
+// 		const compressed = await deflate(obj.content);
+// 		chunks.push(encodeTypeSize(typeNum, obj.content.byteLength));
+// 		chunks.push(compressed);
+// 	}
+// 	return finalizePack(chunks);
+// }
+//
+// export async function writePackDeltifiedStream(
+// 	count: number,
+// 	objects: AsyncIterable<DeltaPackInput>,
+// ): Promise<PackWriteResult> {
+// 	const chunks: Uint8Array[] = [];
+// 	const offsets = new Map<ObjectId, number>();
+// 	const header = new Uint8Array(12);
+// 	const hView = new DataView(header.buffer);
+// 	hView.setUint32(0, PACK_SIGNATURE);
+// 	hView.setUint32(4, PACK_VERSION);
+// 	hView.setUint32(8, count);
+// 	chunks.push(header);
+// 	let currentOffset = 12;
+// 	const entryMetas: PackEntryMeta[] = [];
+// 	for await (const obj of objects) {
+// 		const entryStart = currentOffset;
+// 		offsets.set(obj.hash, currentOffset);
+// 		const baseOffset = obj.delta && obj.deltaBaseHash ? offsets.get(obj.deltaBaseHash) : undefined;
+// 		if (obj.delta && baseOffset !== undefined) {
+// 			const objHeader = encodeTypeSize(OBJ_OFS_DELTA, obj.delta.byteLength);
+// 			const ofsBytes = encodeOfsOffset(currentOffset - baseOffset);
+// 			const compressed = await deflate(obj.delta);
+// 			chunks.push(objHeader, ofsBytes, compressed);
+// 			currentOffset += objHeader.byteLength + ofsBytes.byteLength + compressed.byteLength;
+// 		} else {
+// 			const typeNum = NUM_BY_TYPE[obj.type];
+// 			const objHeader = encodeTypeSize(typeNum, obj.content.byteLength);
+// 			const compressed = await deflate(obj.content);
+// 			chunks.push(objHeader, compressed);
+// 			currentOffset += objHeader.byteLength + compressed.byteLength;
+// 		}
+// 		entryMetas.push({ hash: obj.hash, offset: entryStart, nextOffset: currentOffset });
+// 	}
+// 	return { data: await finalizePack(chunks), entries: entryMetas };
+// }
 
 /**
  * Concatenate chunks, append the SHA-1 trailer, return the final pack.

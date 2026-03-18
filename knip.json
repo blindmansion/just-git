@@ -8,6 +8,6 @@
 		"test/random/bench.ts",
 		"test/random/stats.ts"
 	],
-	"project": ["src/**/*.ts", "test/**/*.ts"],
+	"project": ["src/**/*.ts", "!src/platform/**", "test/**/*.ts"],
 	"bun": false
 }
