@@ -13,6 +13,7 @@ import {
 	type MergeConflict,
 } from "../lib/merge.ts";
 import { mergeOrtRecursive, mergeOrtNonRecursive } from "../lib/merge-ort.ts";
+import { buildIndex, defaultStat, writeIndex } from "../lib/index.ts";
 import {
 	readBlobBytes,
 	readBlobContent,
@@ -26,7 +27,20 @@ import { resolveRef as _resolveRef, listRefs } from "../lib/refs.ts";
 import { isSymlinkMode } from "../lib/symlink.ts";
 import { diffTrees as _diffTrees, flattenTree as _flattenTree } from "../lib/tree-ops.ts";
 import type { FlatTreeEntry } from "../lib/tree-ops.ts";
-import type { Commit, GitRepo, Identity, RefEntry, TreeDiffEntry } from "../lib/types.ts";
+import type {
+	Commit,
+	GitContext,
+	GitRepo,
+	Identity,
+	ObjectId,
+	ObjectStore,
+	ObjectType,
+	RawObject,
+	Ref,
+	RefEntry,
+	RefStore,
+	TreeDiffEntry,
+} from "../lib/types.ts";
 import type { FileSystem } from "../fs.ts";
 
 export type { CommitEntry } from "../lib/commit-walk.ts";
@@ -330,4 +344,190 @@ export async function checkoutTo(
 	}
 
 	return { commitHash, treeHash: commit.tree, filesWritten };
+}
+
+// ── Create worktree context ─────────────────────────────────────────
+
+export interface CreateWorktreeOptions {
+	/** Ref name or commit hash to check out (default: "HEAD"). */
+	ref?: string;
+	/** Root of the working tree on the VFS (default: "/"). */
+	workTree?: string;
+	/** Path to the `.git` directory on the VFS (default: `<workTree>/.git`). */
+	gitDir?: string;
+}
+
+export interface WorktreeResult {
+	ctx: GitContext;
+	commitHash: string;
+	treeHash: string;
+	filesWritten: number;
+}
+
+/**
+ * Create a full `GitContext` backed by a repo's abstract stores.
+ *
+ * Populates the worktree and index on the provided filesystem from
+ * a commit, then returns a `GitContext` whose `objectStore` and
+ * `refStore` point at the repo's backing stores (e.g. SQLite) while
+ * worktree, index, config, and reflog live on the VFS.
+ *
+ * The returned context can be used directly with lib/ functions.
+ * To use it with `createGit()` + `Bash`, pass the repo's stores
+ * through `GitOptions.objectStore` / `GitOptions.refStore` so that
+ * command handlers use the shared stores instead of the VFS:
+ *
+ * ```ts
+ * const repo = storage.repo("my-repo");
+ * const fs = new InMemoryFs();
+ * const { ctx } = await createWorktree(repo, fs);
+ * const git = createGit({
+ *   objectStore: repo.objectStore,
+ *   refStore: repo.refStore,
+ * });
+ * const bash = new Bash({ fs, cwd: ctx.workTree!, customCommands: [git] });
+ * ```
+ */
+export async function createWorktree(
+	repo: GitRepo,
+	fs: FileSystem,
+	options?: CreateWorktreeOptions,
+): Promise<WorktreeResult> {
+	const workTree = options?.workTree ?? "/";
+	const gitDir = options?.gitDir ?? join(workTree, ".git");
+	const ref = options?.ref ?? "HEAD";
+
+	await fs.mkdir(gitDir, { recursive: true });
+
+	let commitHash = await _resolveRef(repo, ref);
+	if (!commitHash) {
+		if (HEX40.test(ref) && (await repo.objectStore.exists(ref))) {
+			commitHash = ref;
+		} else {
+			throw new Error(`ref or commit '${ref}' not found`);
+		}
+	}
+
+	const commit = await _readCommit(repo, commitHash);
+	const entries = await _flattenTree(repo, commit.tree);
+
+	const ctx: GitContext = {
+		...repo,
+		fs,
+		gitDir,
+		workTree,
+	};
+
+	const createdDirs = new Set<string>();
+	let filesWritten = 0;
+
+	for (const entry of entries) {
+		const fullPath = join(workTree, entry.path);
+		const dir = dirname(fullPath);
+
+		if (dir !== workTree && !createdDirs.has(dir)) {
+			await fs.mkdir(dir, { recursive: true });
+			createdDirs.add(dir);
+		}
+
+		if (isSymlinkMode(entry.mode)) {
+			const target = await readBlobContent(repo, entry.hash);
+			if (fs.symlink) {
+				await fs.symlink(target, fullPath);
+			} else {
+				await fs.writeFile(fullPath, target);
+			}
+		} else {
+			const content = await readBlobBytes(repo, entry.hash);
+			await fs.writeFile(fullPath, content);
+		}
+		filesWritten++;
+	}
+
+	const index = buildIndex(
+		entries.map((e) => ({
+			path: e.path,
+			mode: parseInt(e.mode, 8),
+			hash: e.hash,
+			stage: 0,
+			stat: defaultStat(),
+		})),
+	);
+	await writeIndex(ctx, index);
+
+	return { ctx, commitHash, treeHash: commit.tree, filesWritten };
+}
+
+// ── Read-only repo wrapper ──────────────────────────────────────────
+
+class ReadonlyObjectStore implements ObjectStore {
+	constructor(private inner: ObjectStore) {}
+
+	read(hash: ObjectId): Promise<RawObject> {
+		return this.inner.read(hash);
+	}
+	write(_type: ObjectType, _content: Uint8Array): Promise<ObjectId> {
+		throw new Error("cannot write: object store is read-only");
+	}
+	exists(hash: ObjectId): Promise<boolean> {
+		return this.inner.exists(hash);
+	}
+	ingestPack(_packData: Uint8Array): Promise<number> {
+		throw new Error("cannot ingest pack: object store is read-only");
+	}
+	findByPrefix(prefix: string): Promise<ObjectId[]> {
+		return this.inner.findByPrefix(prefix);
+	}
+}
+
+class ReadonlyRefStore implements RefStore {
+	constructor(private inner: RefStore) {}
+
+	readRef(name: string): Promise<Ref | null> {
+		return this.inner.readRef(name);
+	}
+	writeRef(_name: string, _ref: Ref): Promise<void> {
+		throw new Error("cannot write ref: ref store is read-only");
+	}
+	deleteRef(_name: string): Promise<void> {
+		throw new Error("cannot delete ref: ref store is read-only");
+	}
+	listRefs(prefix?: string): Promise<RefEntry[]> {
+		return this.inner.listRefs(prefix);
+	}
+	compareAndSwapRef(
+		_name: string,
+		_expectedOldHash: string | null,
+		_newRef: Ref | null,
+	): Promise<boolean> {
+		throw new Error("cannot update ref: ref store is read-only");
+	}
+}
+
+/**
+ * Wrap a `GitRepo` so all write operations throw.
+ *
+ * Read operations (readRef, read, exists, listRefs, findByPrefix)
+ * pass through to the underlying stores. Write operations (write,
+ * writeRef, deleteRef, ingestPack, compareAndSwapRef) throw with
+ * a descriptive error.
+ *
+ * Use with `createWorktree` and/or `GitOptions.objectStore` /
+ * `GitOptions.refStore` to enforce read-only access:
+ *
+ * ```ts
+ * const ro = readonlyRepo(storage.repo("my-repo"));
+ * const { ctx } = await createWorktree(ro, fs, { workTree: "/repo" });
+ * const git = createGit({
+ *   objectStore: ro.objectStore,
+ *   refStore: ro.refStore,
+ * });
+ * ```
+ */
+export function readonlyRepo(repo: GitRepo): GitRepo {
+	return {
+		objectStore: new ReadonlyObjectStore(repo.objectStore),
+		refStore: new ReadonlyRefStore(repo.refStore),
+		hooks: repo.hooks,
+	};
 }

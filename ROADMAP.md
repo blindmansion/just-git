@@ -32,8 +32,8 @@ Three workstreams, ordered by dependency. Each phase produces shippable, testabl
 - `RepoHandle` — ergonomic object wrapping the `GitRepo`-accepting lib functions (`readCommit`, `readBlob`, `diffTrees`, `flattenTree`, `log`, `resolveRef`, `listRefs`, `isAncestor`, `findMergeBases`)
 - Pre-receive hook — fires after pack ingestion, before ref updates. Receives `RepoHandle` + push commands. Can accept/reject per-ref
 - Post-receive with `RepoHandle` — replaces the current `onPush` callback
-- `checkout()` helper — compose a `GitContext` from a `GitRepo` + temp VFS, populate worktree from a ref. Enables full git CLI operations inside hooks
-- Ref CAS — `compareAndSwapRef` on `RefStore`, used by `handleReceivePack`. Needed for concurrent push safety and once hooks can write refs
+- ~~`checkout()` helper~~ — done: `createWorktree()` in `server/helpers.ts`
+- ~~Ref CAS~~ — done: `compareAndSwapRef` on `RefStore`, used by `handleReceivePack` and `LocalTransport.push`
 
 **Depends on**: Phase 1 (streaming pipeline, object cache). The API design itself is independent, but the performance characteristics matter for user experience.
 

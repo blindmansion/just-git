@@ -60,7 +60,7 @@ async function run() {
 	const coordinator = createAgent("Coordinator", "coord@agents.dev");
 
 	for (const agent of [alice, bob, coordinator]) {
-		const result = await agent.bash.exec("git clone /origin /repo", { cwd: "/" });
+		const result = await agent.bash.exec("git clone /origin /repo");
 		console.log(`${agent.name} cloned (isolated VFS): ${result.stderr.trim()}`);
 	}
 	console.log();

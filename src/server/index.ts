@@ -44,6 +44,7 @@ export type {
 export {
 	checkoutTo,
 	createCommit,
+	createWorktree,
 	diffTrees,
 	findMergeBases,
 	flattenTree,
@@ -58,15 +59,18 @@ export {
 	readBlobText,
 	readCommit,
 	readFileAtCommit,
+	readonlyRepo,
 	resolveRef,
 	writeBlob,
 	writeTree,
 	type CheckoutToResult,
 	type CommitEntry,
 	type CreateCommitOptions,
+	type CreateWorktreeOptions,
 	type MergeConflict,
 	type MergeTreesResult,
 	type TreeEntryInput,
+	type WorktreeResult,
 } from "./helpers.ts";
 
 // Presets

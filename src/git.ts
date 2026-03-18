@@ -12,7 +12,7 @@ import {
 	type Middleware,
 	type NetworkPolicy,
 } from "./hooks.ts";
-import type { RemoteResolver } from "./lib/types.ts";
+import type { ObjectStore, RefStore, RemoteResolver } from "./lib/types.ts";
 
 /** Options for subcommand execution (mirrors just-bash's CommandExecOptions). */
 export interface CommandExecOptions {
@@ -85,6 +85,18 @@ export interface GitOptions {
 	 * Return null to fall back to local filesystem resolution.
 	 */
 	resolveRemote?: RemoteResolver;
+	/**
+	 * Override the object store discovered by `findGitDir`.
+	 * When set, all object reads/writes bypass the VFS `.git/objects/`
+	 * and go through this store instead (e.g. SQLite-backed).
+	 */
+	objectStore?: ObjectStore;
+	/**
+	 * Override the ref store discovered by `findGitDir`.
+	 * When set, all ref reads/writes bypass the VFS `.git/refs/`
+	 * and go through this store instead (e.g. SQLite-backed).
+	 */
+	refStore?: RefStore;
 }
 
 /**
@@ -98,6 +110,8 @@ export interface GitExtensions {
 	fetchFn?: FetchFunction;
 	networkPolicy?: NetworkPolicy | false;
 	resolveRemote?: RemoteResolver;
+	objectStore?: ObjectStore;
+	refStore?: RefStore;
 }
 
 export class Git {
@@ -117,6 +131,8 @@ export class Git {
 			fetchFn: typeof network === "object" ? network.fetch : undefined,
 			networkPolicy: network,
 			resolveRemote: options?.resolveRemote,
+			...(options?.objectStore ? { objectStore: options.objectStore } : {}),
+			...(options?.refStore ? { refStore: options.refStore } : {}),
 		};
 		if (options?.disabled?.length) {
 			const blocked = new Set<string>(options.disabled);

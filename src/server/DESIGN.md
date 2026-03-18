@@ -15,17 +15,15 @@ The server is a sub-export of just-git (`just-git/server`), not a separate packa
 
 ### Relationship to `resolveRemote`
 
-`resolveRemote` already handles in-process, cross-VFS git transport. Multiple isolated VFS agents can clone/fetch/push between each other with zero HTTP overhead. For agents collaborating within a single process, `resolveRemote` is simpler and faster.
+`resolveRemote` handles in-process git transport. An agent's `git clone/fetch/push` resolves the remote URL via a callback that returns a `GitRepo` — which can be another agent's VFS-backed repo, a `SqliteStorage.repo()`, or any `ObjectStore + RefStore` pair. Zero HTTP overhead, full CAS-protected push semantics.
 
-The server module adds three things `resolveRemote` can't do:
+The server module adds two things `resolveRemote` can't do:
 
 1. **Real git client access.** A human (or external tool) can `git clone http://your-server/repo`. VS Code, GitHub Desktop, the `git` CLI — anything that speaks git — can interact with server-hosted repos. `resolveRemote` is a closed system; only just-git clients can participate.
 
 2. **Crossing process/network boundaries.** `resolveRemote` requires `GitRepo` instances in the same process (passing object references). The server works over HTTP across machines or deployments.
 
-3. **Decoupled storage backends.** `resolveRemote` requires a VFS with a `.git` directory structure. The server's `GitRepo` is `ObjectStore + RefStore` — backed by SQLite, Postgres, Turso, S3, or anything else. No VFS needed for persistence.
-
-They're complementary: `resolveRemote` for agent-to-agent within a process, the server for persistence and external access.
+They're complementary. Both can target the same backing stores (e.g. the same SQLite database via `SqliteStorage`). An agent can `resolveRemote` push to a `SqliteStorage.repo()` that the server also serves over HTTP. CAS at the `RefStore` level ensures correctness regardless of which path performs the write.
 
 ## Target use case
 
@@ -306,37 +304,84 @@ Objects are ingested before hooks fire (step 2) so hooks can inspect pushed cont
 
 Beyond read-only inspection via helpers, some hook use cases require a full working tree — running tests against pushed code, having an agent inspect or modify files, running git CLI operations.
 
-### How it works
+### Three tiers of hook capability
 
-The `GitRepo` / `GitContext` type split makes this compositional. A `GitContext` is just a `GitRepo` plus filesystem parts:
+| Tier               | API                                  | VFS needed | Concurrent-safe | Use cases                                |
+| ------------------ | ------------------------------------ | ---------- | --------------- | ---------------------------------------- |
+| **Inspection**     | Standalone helpers                   | No         | Yes             | Read commits, diff trees, check ancestry |
+| **Read-only tree** | `checkoutTo()` or `createWorktree()` | Yes        | Yes             | Lint, test, inspect files at a commit    |
+| **Write-capable**  | `resolveRemote` + clone + push       | Yes        | Yes (CAS)       | Agent edits files, commits, pushes back  |
+
+Most hooks only need the inspection tier. The read-only tree tier populates a VFS from a commit for file-level access. The write-capable tier gives an agent a full isolated git environment with CAS-protected pushes.
+
+### Inspection (no VFS)
+
+Standalone helpers operate directly on the `GitRepo` — no filesystem needed.
 
 ```typescript
-import { InMemoryFs } from "just-bash";
-
-async function checkout(repo: GitRepo, ref?: string): Promise<GitContext> {
-  const fs = new InMemoryFs();
-  const ctx: GitContext = {
-    ...repo, // objectStore, refStore — shared references
-    fs,
-    gitDir: "/.git",
-    workTree: "/",
-  };
-  // init .git directory structure in the VFS
-  // resolve ref (or HEAD), read tree, populate worktree + index
-  return ctx;
-}
+preReceive: async ({ repo, updates }) => {
+  for (const update of updates) {
+    const files = await getChangedFiles(repo, update.oldHash, update.newHash);
+    const commit = await readCommit(repo, update.newHash);
+    const content = await readFileAtCommit(repo, update.newHash, "package.json");
+    // enforce policies, validate, etc.
+  }
+};
 ```
 
-The key property is that `objectStore` and `refStore` are **shared references** — the working copy reads from and writes to the same backing store as the server. No copying.
+### Read-only tree (lightweight VFS)
 
-### Two tiers of hook capability
+`checkoutTo()` writes worktree files to a VFS without any `.git` structure — just the files. `createWorktree()` additionally builds a git index and `.git` scaffold, enabling git commands like `status`, `log`, `diff`, and `show`.
 
-| Tier             | API                         | VFS needed      | Use cases                                                                      |
-| ---------------- | --------------------------- | --------------- | ------------------------------------------------------------------------------ |
-| **Inspection**   | Standalone helpers          | No              | Read commits, diff trees, read file contents, check ancestry, enforce policies |
-| **Working copy** | `checkout()` → `GitContext` | Yes (in-memory) | Run tests, execute scripts, run git CLI commands, agent file inspection        |
+Wrap the repo with `readonlyRepo()` to enforce read-only access — any write operation (`git add`, `git commit`, `git checkout -b`, etc.) will fail with a clear error instead of silently modifying the shared store.
 
-Most hooks only need the inspection tier. The working copy tier is an escape hatch for heavier operations.
+```typescript
+// checkoutTo — just the files
+const fs = new InMemoryFs();
+await checkoutTo(repo, "refs/heads/main", fs, "/workspace");
+const pkg = await fs.readFile("/workspace/package.json");
+
+// createWorktree — files + index + .git scaffold, enforced read-only
+const ro = readonlyRepo(repo);
+const fs = new InMemoryFs();
+const { ctx } = await createWorktree(ro, fs, { workTree: "/repo" });
+const git = createGit({
+  objectStore: ro.objectStore,
+  refStore: ro.refStore,
+});
+const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+await bash.exec("git log --oneline"); // works
+await bash.exec("git diff HEAD~1"); // works
+await bash.exec("git add ."); // fails: "read-only"
+```
+
+When `GitOptions.objectStore` / `GitOptions.refStore` are provided, they override the filesystem-backed stores that `findGitDir` constructs, so git commands read objects and refs from the shared backend.
+
+### Write-capable agent (resolveRemote + clone)
+
+For agents that need to commit and have those commits safely land in the shared store, the recommended approach is `resolveRemote` — the agent clones into an isolated VFS repo and pushes back. The push goes through `LocalTransport`, which uses `compareAndSwapRef` for concurrent safety.
+
+```typescript
+postReceive: async ({ repo, repoPath }) => {
+  const git = createGit({
+    resolveRemote: () => repo,
+    identity: { name: "Agent", email: "agent@ci.dev" },
+  });
+  const fs = new InMemoryFs();
+  const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+
+  await bash.exec(`git clone local://${repoPath} /repo`);
+  await bash.exec("git checkout -b fix/auto-format");
+  // ... edit files, git add, git commit ...
+  await bash.exec("git push origin fix/auto-format");
+};
+```
+
+The `resolveRemote` callback returns the `GitRepo` for any non-HTTP remote URL. The URL scheme is arbitrary — `local://`, `repo://`, or any non-HTTP string — it's just a key the callback receives. The clone copies objects into the VFS (temporary in-memory duplication), and the push transfers them back with CAS protection.
+
+**Why not write directly?** `createWorktree` with store overrides lets an agent commit directly to the shared store without cloning or pushing. This is simpler but bypasses CAS — `git commit` uses unconditional `writeRef`, so a concurrent HTTP push could race with the agent's ref update. The resolveRemote + clone approach avoids this entirely: the agent works in isolation and the push is the single serialization point, protected by `compareAndSwapRef`.
+
+Direct store access via `createWorktree` is safe for single-writer scenarios (pre-receive hooks where the push blocks until the hook returns, or background tasks with no concurrent pushes to the same branch).
 
 ## Concurrent push safety
 
