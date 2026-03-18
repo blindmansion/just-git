@@ -31,7 +31,15 @@ import { detectRenames, type RenamePair } from "./rename-detection.ts";
 import { isSymlinkMode } from "./symlink.ts";
 import { buildTreeFromIndex, type FlatTreeEntry, flattenTreeToMap } from "./tree-ops.ts";
 import { checkoutEntry } from "./worktree.ts";
-import type { GitContext, Identity, Index, IndexEntry, ObjectId, TreeDiffEntry } from "./types.ts";
+import type {
+	GitContext,
+	GitRepo,
+	Identity,
+	Index,
+	IndexEntry,
+	ObjectId,
+	TreeDiffEntry,
+} from "./types.ts";
 import {
 	applyWorktreeOps,
 	onewayMerge,
@@ -118,7 +126,7 @@ interface SortableMsg {
  * stage-0 entries of the result, so the result tree is self-contained.
  */
 export async function mergeOrtNonRecursive(
-	ctx: GitContext,
+	ctx: GitRepo,
 	baseTree: ObjectId | null,
 	oursTree: ObjectId,
 	theirsTree: ObjectId,
@@ -153,7 +161,7 @@ export async function mergeOrtNonRecursive(
  * This replaces findRecursiveMergeBaseTree + mergeTrees.
  */
 export async function mergeOrtRecursive(
-	ctx: GitContext,
+	ctx: GitRepo,
 	oursHash: ObjectId,
 	theirsHash: ObjectId,
 	labels?: MergeLabels,
@@ -202,7 +210,7 @@ export async function mergeOrtRecursive(
 // ── Phase 1: Collect merge info ─────────────────────────────────────
 
 async function collectMergeInfo(
-	ctx: GitContext,
+	ctx: GitRepo,
 	baseTree: ObjectId | null,
 	oursTree: ObjectId,
 	theirsTree: ObjectId,
@@ -338,7 +346,7 @@ interface RenameOutput {
 }
 
 async function detectAndProcessRenames(
-	ctx: GitContext,
+	ctx: GitRepo,
 	paths: Map<string, ConflictInfo>,
 	baseMap: Map<string, FlatTreeEntry>,
 	oursMap: Map<string, FlatTreeEntry>,
@@ -1149,7 +1157,7 @@ function dirnamePath(path: string): string {
 
 /** Handle rename + add/add target collision. */
 async function handleRenameAddAdd(
-	ctx: GitContext,
+	ctx: GitRepo,
 	output: RenameOutput,
 	targetPath: string,
 	basePath: string,
@@ -1244,7 +1252,7 @@ async function handleRenameAddAdd(
  * @param markerSize Optional marker size override (default 7; use 8 for nested/collision markers).
  */
 async function mergeRenameContent(
-	ctx: GitContext,
+	ctx: GitRepo,
 	base: FlatTreeEntry,
 	ours: FlatTreeEntry,
 	theirs: FlatTreeEntry,
@@ -1301,7 +1309,7 @@ async function mergeRenameContent(
  * Used for Phase 2 worktree blobs when rename handling produces add/add conflicts.
  */
 async function writeAddAddMarkers(
-	ctx: GitContext,
+	ctx: GitRepo,
 	oursHash: ObjectId,
 	theirsHash: ObjectId,
 	_mode: string,
@@ -1329,7 +1337,7 @@ function makeEntryFromHash(path: string, mode: string, hash: ObjectId, stage = 0
 // ── Phase 3: Process entries ────────────────────────────────────────
 
 async function processEntries(
-	ctx: GitContext,
+	ctx: GitRepo,
 	paths: Map<string, ConflictInfo>,
 	labels: MergeLabels | undefined,
 	renameOutput: RenameOutput,
@@ -1389,7 +1397,7 @@ async function processEntries(
 }
 
 async function processEntry(
-	ctx: GitContext,
+	ctx: GitRepo,
 	ci: ConflictInfo,
 	labels: MergeLabels | undefined,
 	entries: IndexEntry[],
@@ -1596,7 +1604,7 @@ async function processEntry(
 const MAX_MERGE_CALL_DEPTH = 200;
 
 async function computeRecursiveMergeBase(
-	ctx: GitContext,
+	ctx: GitRepo,
 	_oursHash: ObjectId,
 	_theirsHash: ObjectId,
 	bases: ObjectId[],
@@ -1671,7 +1679,7 @@ async function computeRecursiveMergeBase(
  * For delete-modify conflicts, git uses the BASE version (stage 1).
  */
 async function resolveVirtualBaseConflicts(
-	ctx: GitContext,
+	ctx: GitRepo,
 	result: MergeTreeResult,
 	callDepth: number,
 ): Promise<ObjectId> {
@@ -1798,7 +1806,7 @@ async function resolveVirtualBaseConflicts(
 // ── Helpers ─────────────────────────────────────────────────────────
 
 /** Reconstruct merged text from diff3 sentinel-annotated lines and write as a blob. */
-async function writeCleanMergeBlob(ctx: GitContext, sentinelLines: string[]): Promise<ObjectId> {
+async function writeCleanMergeBlob(ctx: GitRepo, sentinelLines: string[]): Promise<ObjectId> {
 	const lines = sentinelLines.map(stripSentinel);
 	if (lines.length === 0) {
 		return writeObject(ctx, "blob", encoder.encode(""));

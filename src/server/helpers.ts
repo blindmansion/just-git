@@ -7,14 +7,26 @@
 
 import type { CommitEntry } from "../lib/commit-walk.ts";
 import { walkCommits } from "../lib/commit-walk.ts";
-import { isAncestor as _isAncestor } from "../lib/merge.ts";
-import { readBlobBytes, readBlobContent, readCommit as _readCommit } from "../lib/object-db.ts";
+import {
+	findAllMergeBases as _findMergeBases,
+	isAncestor as _isAncestor,
+	type MergeConflict,
+} from "../lib/merge.ts";
+import { mergeOrtRecursive, mergeOrtNonRecursive } from "../lib/merge-ort.ts";
+import {
+	readBlobBytes,
+	readBlobContent,
+	readCommit as _readCommit,
+	writeObject,
+} from "../lib/object-db.ts";
+import { serializeCommit } from "../lib/objects/commit.ts";
 import { resolveRef as _resolveRef, listRefs } from "../lib/refs.ts";
 import { diffTrees as _diffTrees, flattenTree as _flattenTree } from "../lib/tree-ops.ts";
 import type { FlatTreeEntry } from "../lib/tree-ops.ts";
-import type { Commit, GitRepo, RefEntry, TreeDiffEntry } from "../lib/types.ts";
+import type { Commit, GitRepo, Identity, RefEntry, TreeDiffEntry } from "../lib/types.ts";
 
 export type { CommitEntry } from "../lib/commit-walk.ts";
+export type { MergeConflict } from "../lib/merge.ts";
 
 /**
  * Walk commits introduced by a ref update (newHash excluding oldHash).
@@ -90,4 +102,125 @@ export async function diffTrees(
 	treeB: string | null,
 ): Promise<TreeDiffEntry[]> {
 	return _diffTrees(repo, treeA, treeB);
+}
+
+export async function findMergeBases(
+	repo: GitRepo,
+	commitA: string,
+	commitB: string,
+): Promise<string[]> {
+	return _findMergeBases(repo, commitA, commitB);
+}
+
+// ── Tree-level merge ────────────────────────────────────────────────
+
+export interface MergeTreesResult {
+	treeHash: string;
+	clean: boolean;
+	conflicts: MergeConflict[];
+	messages: string[];
+}
+
+/**
+ * Three-way tree merge using merge-ort. Operates purely on the object
+ * store — no filesystem or worktree needed.
+ *
+ * Takes two commit hashes, finds their merge base(s) automatically
+ * (handling criss-cross merges via recursive base merging), and produces
+ * a result tree with conflict-marker blobs embedded for any conflicts.
+ *
+ * Use `mergeTreesFromTreeHashes` if you already have tree hashes and a
+ * known base tree.
+ */
+export async function mergeTrees(
+	repo: GitRepo,
+	oursCommit: string,
+	theirsCommit: string,
+	labels?: { ours?: string; theirs?: string },
+): Promise<MergeTreesResult> {
+	const mergeLabels = labels
+		? { a: labels.ours ?? "ours", b: labels.theirs ?? "theirs" }
+		: undefined;
+
+	const result = await mergeOrtRecursive(repo, oursCommit, theirsCommit, mergeLabels);
+
+	return {
+		treeHash: result.resultTree,
+		clean: result.conflicts.length === 0,
+		conflicts: result.conflicts,
+		messages: result.messages,
+	};
+}
+
+/**
+ * Three-way tree merge from raw tree hashes. Useful when you already
+ * have the base/ours/theirs trees and don't want automatic merge-base
+ * computation.
+ */
+export async function mergeTreesFromTreeHashes(
+	repo: GitRepo,
+	baseTree: string | null,
+	oursTree: string,
+	theirsTree: string,
+	labels?: { ours?: string; theirs?: string },
+): Promise<MergeTreesResult> {
+	const mergeLabels = labels
+		? { a: labels.ours ?? "ours", b: labels.theirs ?? "theirs" }
+		: undefined;
+
+	const result = await mergeOrtNonRecursive(repo, baseTree, oursTree, theirsTree, mergeLabels);
+
+	return {
+		treeHash: result.resultTree,
+		clean: result.conflicts.length === 0,
+		conflicts: result.conflicts,
+		messages: result.messages,
+	};
+}
+
+// ── Commit creation ─────────────────────────────────────────────────
+
+export interface CreateCommitOptions {
+	tree: string;
+	parents: string[];
+	author: Identity;
+	committer: Identity;
+	message: string;
+}
+
+/**
+ * Create a commit object directly in the object store.
+ * Returns the new commit's hash.
+ *
+ * This does not update any refs — call `repo.refStore.writeRef()`
+ * separately to advance a branch.
+ */
+export async function createCommit(repo: GitRepo, options: CreateCommitOptions): Promise<string> {
+	const content = serializeCommit({
+		type: "commit",
+		tree: options.tree,
+		parents: options.parents,
+		author: options.author,
+		committer: options.committer,
+		message: options.message,
+	});
+	return writeObject(repo, "commit", content);
+}
+
+// ── File read at commit ─────────────────────────────────────────────
+
+/**
+ * Read a file's content at a specific commit.
+ * Returns null if the file doesn't exist at that commit.
+ */
+export async function readFileAtCommit(
+	repo: GitRepo,
+	commitHash: string,
+	filePath: string,
+): Promise<string | null> {
+	const commit = await _readCommit(repo, commitHash);
+	const entries = await _flattenTree(repo, commit.tree);
+	const entry = entries.find((e) => e.path === filePath);
+	if (!entry) return null;
+	return readBlobContent(repo, entry.hash);
 }

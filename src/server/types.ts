@@ -5,9 +5,17 @@ import type { GitRepo } from "../lib/types.ts";
 export interface GitServerConfig {
 	/**
 	 * Resolve an incoming request path to a repository.
-	 * Return null to 404.
+	 *
+	 * Return values:
+	 * - `GitRepo` — use this repo for the request
+	 * - `null` — respond with 404
+	 * - `Response` — send this response as-is (useful for 401/403 with
+	 *   custom headers like `WWW-Authenticate`)
 	 */
-	resolveRepo: (repoPath: string, request: Request) => GitRepo | null | Promise<GitRepo | null>;
+	resolveRepo: (
+		repoPath: string,
+		request: Request,
+	) => GitRepo | Response | null | Promise<GitRepo | Response | null>;
 
 	/** Server-side hooks. All optional. */
 	hooks?: ServerHooks;

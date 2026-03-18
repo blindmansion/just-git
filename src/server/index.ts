@@ -42,18 +42,26 @@ export type {
 
 // Helpers
 export {
+	createCommit,
 	diffTrees,
+	findMergeBases,
 	flattenTree,
 	getChangedFiles,
 	getNewCommits,
 	isAncestor,
 	listBranches,
 	listTags,
+	mergeTrees,
+	mergeTreesFromTreeHashes,
 	readBlob,
 	readBlobText,
 	readCommit,
+	readFileAtCommit,
 	resolveRef,
 	type CommitEntry,
+	type CreateCommitOptions,
+	type MergeConflict,
+	type MergeTreesResult,
 } from "./helpers.ts";
 
 // Presets
@@ -63,3 +71,6 @@ export { createStandardHooks, type StandardHooksConfig } from "./presets.ts";
 export { PackedObjectStore } from "../lib/object-store.ts";
 export { FileSystemRefStore } from "../lib/refs.ts";
 export { SqliteStorage } from "./sqlite-storage.ts";
+
+// Re-exported lib types needed by helpers
+export type { Identity, GitRepo } from "../lib/types.ts";

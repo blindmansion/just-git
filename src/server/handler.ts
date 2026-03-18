@@ -53,8 +53,10 @@ export function createGitServer(config: GitServerConfig): GitServer {
 					}
 
 					const repoPath = extractRepoPath(pathname, "/info/refs");
-					const repo = await resolveRepo(repoPath, req);
-					if (!repo) return new Response("Not Found", { status: 404 });
+					const repoOrResponse = await resolveRepo(repoPath, req);
+					if (repoOrResponse instanceof Response) return repoOrResponse;
+					if (!repoOrResponse) return new Response("Not Found", { status: 404 });
+					const repo = repoOrResponse;
 
 					const { refs: allRefs, headTarget } = await collectRefs(repo);
 
@@ -81,8 +83,10 @@ export function createGitServer(config: GitServerConfig): GitServer {
 				// ── git-upload-pack ─────────────────────────────────
 				if (pathname.endsWith("/git-upload-pack") && req.method === "POST") {
 					const repoPath = extractRepoPath(pathname, "/git-upload-pack");
-					const repo = await resolveRepo(repoPath, req);
-					if (!repo) return new Response("Not Found", { status: 404 });
+					const repoOrResponse = await resolveRepo(repoPath, req);
+					if (repoOrResponse instanceof Response) return repoOrResponse;
+					if (!repoOrResponse) return new Response("Not Found", { status: 404 });
+					const repo = repoOrResponse;
 
 					const body = new Uint8Array(await req.arrayBuffer());
 					const responseBody = await handleUploadPack(repo, body);
@@ -94,8 +98,10 @@ export function createGitServer(config: GitServerConfig): GitServer {
 				// ── git-receive-pack ────────────────────────────────
 				if (pathname.endsWith("/git-receive-pack") && req.method === "POST") {
 					const repoPath = extractRepoPath(pathname, "/git-receive-pack");
-					const repo = await resolveRepo(repoPath, req);
-					if (!repo) return new Response("Not Found", { status: 404 });
+					const repoOrResponse = await resolveRepo(repoPath, req);
+					if (repoOrResponse instanceof Response) return repoOrResponse;
+					if (!repoOrResponse) return new Response("Not Found", { status: 404 });
+					const repo = repoOrResponse;
 
 					const body = new Uint8Array(await req.arrayBuffer());
 					const { updates, unpackOk, capabilities } = await ingestReceivePack(repo, body);
