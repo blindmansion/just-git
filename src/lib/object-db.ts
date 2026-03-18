@@ -24,7 +24,7 @@ export async function writeObject(
 	content: Uint8Array,
 ): Promise<ObjectId> {
 	const hash = await ctx.objectStore.write(type, content);
-	ctx.hooks?.emit("object:write", { type, hash });
+	ctx.hooks?.onObjectWrite?.({ repo: ctx, type, hash });
 	return hash;
 }
 

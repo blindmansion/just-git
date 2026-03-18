@@ -338,7 +338,8 @@ async function switchCreateBranch(
 		await writeConfig(gitCtx, config);
 	}
 
-	await ext?.hooks?.emitPost("post-checkout", {
+	await ext?.hooks?.postCheckout?.({
+		repo: gitCtx,
 		prevHead: currentHash,
 		newHead: targetHash,
 		isBranchCheckout: true,
@@ -451,7 +452,8 @@ async function switchOrphanBranch(
 	await clearDetachPoint(gitCtx);
 	const opWarning = await clearOperationState(gitCtx);
 
-	await ext?.hooks?.emitPost("post-checkout", {
+	await ext?.hooks?.postCheckout?.({
+		repo: gitCtx,
 		prevHead,
 		newHead: ZERO_HASH,
 		isBranchCheckout: true,

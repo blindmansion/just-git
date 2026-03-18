@@ -46,6 +46,7 @@ await bash.exec("git log --oneline");
 | `credentials`   | `(url) => HttpAuth \| null` callback for Smart HTTP transport auth.                                                                                                                                                                                |
 | `disabled`      | `GitCommandName[]` of subcommands to block (e.g. `["push", "rebase"]`).                                                                                                                                                                            |
 | `network`       | `{ allowed?: string[], fetch?: FetchFunction }` to restrict HTTP access and/or provide a custom `fetch`. `allowed` accepts hostnames (`"github.com"`) or URL prefixes (`"https://github.com/myorg/"`). Set to `false` to block all network access. |
+| `hooks`         | `GitHooks` config object with named callback properties. See [Hooks](#hooks).                                                                                                                                                                      |
 | `resolveRemote` | `(url) => GitRepo \| null` callback for cross-VFS remote resolution. See [Multi-agent collaboration](#multi-agent-collaboration).                                                                                                                  |
 
 ```ts
@@ -57,72 +58,65 @@ const git = createGit({
 });
 ```
 
-## Middleware
-
-Middleware wraps every `git <subcommand>` invocation. Each middleware receives a `CommandEvent` and a `next()` function. Call `next()` to proceed, or return an `ExecResult` to short-circuit. Middlewares compose in registration order (first registered = outermost). `git.use()` returns an unsubscribe function.
-
-```ts
-// Audit log — record every command the agent runs
-git.use(async (event, next) => {
-  const result = await next();
-  auditLog.push({ command: `git ${event.command}`, exitCode: result.exitCode });
-  return result;
-});
-
-// Gate pushes on human approval
-git.use(async (event, next) => {
-  if (event.command === "push" && !(await getHumanApproval(event.rawArgs))) {
-    return { stdout: "", stderr: "Push blocked — awaiting approval.\n", exitCode: 1 };
-  }
-  return next();
-});
-
-// Block commits that add large files (uses event.fs to read the worktree)
-git.use(async (event, next) => {
-  if (event.command === "add") {
-    for (const path of event.rawArgs.filter((a) => !a.startsWith("-"))) {
-      const resolved = path.startsWith("/") ? path : `${event.cwd}/${path}`;
-      const stat = await event.fs.stat(resolved).catch(() => null);
-      if (stat && stat.size > 5_000_000) {
-        return { stdout: "", stderr: `Blocked: ${path} exceeds 5 MB\n`, exitCode: 1 };
-      }
-    }
-  }
-  return next();
-});
-```
-
 ## Hooks
 
-Hooks fire at specific points inside command execution (after middleware, inside operation logic). Register with `git.on(event, handler)`, which returns an unsubscribe function.
+Hooks fire at specific points inside command execution. Specified as a `GitHooks` config object at construction time. All hook event payloads include `repo: GitRepo`, providing access to the [repo module helpers](src/repo/) inside hooks.
 
-Pre-hooks can abort the operation by returning `{ abort: true, message? }`. Post-hooks are observational — return value is ignored.
+Pre-hooks can reject the operation by returning `{ reject: true, message? }`. Post-hooks are observational — return value is ignored.
 
 ```ts
-// Block secrets from being committed
-git.on("pre-commit", (event) => {
-  const forbidden = event.index.entries.filter((e) => /\.(env|pem|key)$/.test(e.path));
-  if (forbidden.length) {
-    return { abort: true, message: `Blocked: ${forbidden.map((e) => e.path).join(", ")}` };
-  }
-});
+import { createGit, type GitHooks } from "just-git";
+import { getChangedFiles } from "just-git/repo";
 
-// Enforce conventional commit messages
-git.on("commit-msg", (event) => {
-  if (!/^(feat|fix|docs|refactor|test|chore)(\(.+\))?:/.test(event.message)) {
-    return { abort: true, message: "Commit message must follow conventional commits format" };
-  }
-});
+const git = createGit({
+  hooks: {
+    // Block secrets from being committed
+    preCommit: ({ index }) => {
+      const forbidden = index.entries.filter((e) => /\.(env|pem|key)$/.test(e.path));
+      if (forbidden.length) {
+        return { reject: true, message: `Blocked: ${forbidden.map((e) => e.path).join(", ")}` };
+      }
+    },
 
-// Feed agent activity to your UI or orchestration layer
-git.on("post-commit", (event) => {
-  onAgentCommit({ hash: event.hash, branch: event.branch, message: event.message });
+    // Enforce conventional commit messages
+    commitMsg: (event) => {
+      if (!/^(feat|fix|docs|refactor|test|chore)(\(.+\))?:/.test(event.message)) {
+        return { reject: true, message: "Commit message must follow conventional commits format" };
+      }
+    },
+
+    // Feed agent activity to your UI — with changed file list
+    postCommit: async ({ repo, hash, branch, parents }) => {
+      const files = await getChangedFiles(repo, parents[0] ?? null, hash);
+      onAgentCommit({ hash, branch, changedFiles: files });
+    },
+
+    // Audit log — record every command
+    afterCommand: ({ command, args, result }) => {
+      auditLog.push({ command: `git ${command}`, exitCode: result.exitCode });
+    },
+
+    // Gate pushes on human approval
+    beforeCommand: async ({ command }) => {
+      if (command === "push" && !(await getHumanApproval())) {
+        return { reject: true, message: "Push blocked — awaiting approval." };
+      }
+    },
+  },
 });
 ```
 
-Available pre-hooks: `pre-commit`, `commit-msg`, `merge-msg`, `pre-merge-commit`, `pre-checkout`, `pre-push`, `pre-fetch`, `pre-clone`, `pre-pull`, `pre-rebase`, `pre-reset`, `pre-clean`, `pre-rm`, `pre-cherry-pick`, `pre-revert`, `pre-stash`. Available post-hooks: `post-commit`, `post-merge`, `post-checkout`, `post-push`, `post-fetch`, `post-clone`, `post-pull`, `post-reset`, `post-clean`, `post-rm`, `post-cherry-pick`, `post-revert`, `post-stash`. Low-level events: `ref:update`, `ref:delete`, `object:write`.
+Use `composeGitHooks()` to combine multiple hook sets:
 
-See [HOOKS.md](HOOKS.md) for full payload types and the `CommandEvent` shape.
+```ts
+import { createGit, composeGitHooks } from "just-git";
+
+const git = createGit({
+  hooks: composeGitHooks(auditHooks, policyHooks, loggingHooks),
+});
+```
+
+Available pre-hooks: `preCommit`, `commitMsg`, `mergeMsg`, `preMergeCommit`, `preCheckout`, `prePush`, `preFetch`, `preClone`, `prePull`, `preRebase`, `preReset`, `preClean`, `preRm`, `preCherryPick`, `preRevert`, `preStash`. Available post-hooks: `postCommit`, `postMerge`, `postCheckout`, `postPush`, `postFetch`, `postClone`, `postPull`, `postReset`, `postClean`, `postRm`, `postCherryPick`, `postRevert`, `postStash`. Low-level events: `onRefUpdate`, `onRefDelete`, `onObjectWrite`. Command-level: `beforeCommand`, `afterCommand`.
 
 ## Multi-agent collaboration
 

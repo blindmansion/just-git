@@ -1,5 +1,6 @@
 import type { GitExtensions } from "../git.ts";
-import { fatal } from "../lib/command-utils.ts";
+import { isRejection } from "../hooks.ts";
+import { err, fatal } from "../lib/command-utils.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
 import { getReflogIdentity } from "../lib/identity.ts";
 import { buildIndex, defaultStat, writeIndex } from "../lib/index.ts";
@@ -46,17 +47,13 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 				targetName = base;
 			}
 			const targetPath = resolve(ctx.cwd, targetName);
-			if (ext?.hooks) {
-				const abort = await ext.hooks.emitPre("pre-clone", {
-					repository,
-					targetPath,
-					bare: args.bare,
-					branch: branchOpt ?? null,
-				});
-				if (abort) {
-					return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-				}
-			}
+			const rej = await ext?.hooks?.preClone?.({
+				repository,
+				targetPath,
+				bare: args.bare,
+				branch: branchOpt ?? null,
+			});
+			if (isRejection(rej)) return err(rej.message ?? "");
 
 			// Check if target already exists and is non-empty
 			if (await ctx.fs.exists(targetPath)) {
@@ -132,7 +129,8 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			const remoteRefs = await transport.advertiseRefs();
 
 			if (remoteRefs.length === 0) {
-				await ext?.hooks?.emitPost("post-clone", {
+				await ext?.hooks?.postClone?.({
+					repo: baseCtx,
 					repository,
 					targetPath,
 					bare: args.bare,
@@ -227,7 +225,8 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 				if (defaultBranch) {
 					await createSymbolicRef(newCtx, "HEAD", `refs/heads/${defaultBranch}`);
 				}
-				await ext?.hooks?.emitPost("post-clone", {
+				await ext?.hooks?.postClone?.({
+					repo: newCtx,
 					repository,
 					targetPath,
 					bare: args.bare,
@@ -297,7 +296,8 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 				stderr: `Cloning into '${targetName}'...\n`,
 				exitCode: 0,
 			};
-			await ext?.hooks?.emitPost("post-clone", {
+			await ext?.hooks?.postClone?.({
+				repo: newCtx,
 				repository,
 				targetPath,
 				bare: args.bare,

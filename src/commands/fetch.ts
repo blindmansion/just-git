@@ -1,4 +1,5 @@
 import type { GitExtensions } from "../git.ts";
+import { isRejection } from "../hooks.ts";
 import { abbreviateHash, fatal, isCommandError, requireGitContext } from "../lib/command-utils.ts";
 import { getReflogIdentity } from "../lib/identity.ts";
 import { join } from "../lib/path.ts";
@@ -50,17 +51,16 @@ export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 			} else {
 				fetchSpecs = [parseRefspec(config.fetchRefspec)];
 			}
-			if (ext?.hooks) {
-				const abort = await ext.hooks.emitPre("pre-fetch", {
-					remote: remoteName,
-					url: config.url,
-					refspecs: fetchSpecs.map((s) => `${s.src}:${s.dst}`),
-					prune: args.prune,
-					tags: args.tags,
-				});
-				if (abort) {
-					return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-				}
+			const preFetchRej = await ext?.hooks?.preFetch?.({
+				repo: gitCtx,
+				remote: remoteName,
+				url: config.url,
+				refspecs: fetchSpecs.map((s) => `${s.src}:${s.dst}`),
+				prune: args.prune,
+				tags: args.tags,
+			});
+			if (isRejection(preFetchRej)) {
+				return { stdout: "", stderr: preFetchRej.message ?? "", exitCode: 1 };
 			}
 
 			// Get remote refs
@@ -227,7 +227,8 @@ export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 				stderr: stderr.join(""),
 				exitCode: 0,
 			};
-			await ext?.hooks?.emitPost("post-fetch", {
+			await ext?.hooks?.postFetch?.({
+				repo: gitCtx,
 				remote: remoteName,
 				url: config.url,
 				refsUpdated: refUpdates.length,

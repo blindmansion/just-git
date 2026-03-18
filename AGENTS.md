@@ -12,23 +12,24 @@ Git implementation running inside the just-bash virtual shell. All commands oper
 
 ### Operator API (`src/git.ts`, `src/hooks.ts`)
 
-`createGit(options?)` returns a `Git` instance — the top-level entry point for sandbox operators. Provides hooks, middleware, identity/credential overrides, and command restriction without touching internals.
+`createGit(options?)` returns a `Git` instance — the top-level entry point for sandbox operators. Provides hooks, identity/credential overrides, and command restriction without touching internals.
 
 ```ts
 const git = createGit({
   identity: { name: "Agent", email: "agent@sandbox.dev", locked: true },
   disabled: ["push", "rebase", "remote", "clone", "fetch", "pull"],
   credentials: async (url) => ({ type: "bearer", token: "..." }),
-});
-
-git.on("pre-commit", (event) => {
-  /* inspect index, abort if needed */
-});
-git.on("post-commit", (event) => {
-  /* audit log */
-});
-git.use(async (event, next) => {
-  /* timing, allowlists, transforms */
+  hooks: {
+    preCommit: ({ repo, index }) => {
+      /* inspect index, reject if needed */
+    },
+    postCommit: ({ repo, hash, branch }) => {
+      /* audit log */
+    },
+    beforeCommand: ({ command, fs, cwd }) => {
+      /* block commands, inspect args */
+    },
+  },
 });
 
 const bash = new Bash({ cwd: "/repo", customCommands: [git] });
@@ -36,59 +37,70 @@ const bash = new Bash({ cwd: "/repo", customCommands: [git] });
 
 **`GitOptions`:**
 
-- `disabled` — `GitCommandName[]` of subcommands to exclude from registration. Disabled commands return unknown-command errors.
+- `hooks` — `GitHooks` config object with named callback properties. All hooks are optional. Specified at construction time. Use `composeGitHooks(...hookSets)` to combine multiple hook sets.
+- `disabled` — `GitCommandName[]` of subcommands to block. Disabled commands return unknown-command errors.
 - `identity` — `IdentityOverride` with `name`, `email`, optional `locked`. When `locked: true`, overrides env vars (`GIT_AUTHOR_NAME`, etc.); when unlocked (default), acts as fallback when env vars and git config are absent.
 - `credentials` — `CredentialProvider` callback `(url) => HttpAuth | null`. Provides auth for Smart HTTP transport. Takes precedence over `GIT_HTTP_BEARER_TOKEN`/`GIT_HTTP_USER` env vars.
 - `resolveRemote` — `RemoteResolver` callback `(url) => GitRepo | null`. Resolves non-HTTP remote URLs to a `GitRepo`, enabling cross-VFS transport. Called before local filesystem lookup. Return null to fall back to `findGitDir` on the local VFS. Enables multi-agent setups where each agent has its own isolated filesystem but can clone/fetch/push between repos on different VFS instances via `LocalTransport`. Also enables resolving to server-backed repos (e.g. `SqliteStorage`) for hybrid in-process/server scenarios.
 
-**Hooks** (`git.on(event, handler)` → unsubscribe function):
+**Hooks** (`GitHooks` interface — config-at-construction, named callbacks):
 
-Pre-hooks can abort operations by returning `{ abort: true, message?: string }`:
+All hook event payloads include `repo: GitRepo`, giving access to the repo module helpers (`getChangedFiles`, `readCommit`, `readFileAtCommit`, etc.) inside hooks.
 
-- `pre-commit` — `{ index, treeHash }`. Fires before commit is created.
-- `commit-msg` — `{ message }` (mutable). Fires after pre-commit, before commit write.
-- `merge-msg` — `{ message, treeHash, headHash, theirsHash }` (mutable message). Fires before merge commit.
-- `pre-merge-commit` — `{ mergeMessage, treeHash, headHash, theirsHash }`. Fires before three-way merge commit.
-- `pre-checkout` — `{ target, mode }`. `mode` is `"switch" | "detach" | "create-branch" | "paths"`.
-- `pre-push` — `{ remote, url, refs[] }`. Fires before object transfer.
-- `pre-fetch` — `{ remote, url, refspecs, prune, tags }`. Fires before fetch.
-- `pre-clone` — `{ repository, targetPath, bare, branch }`. Fires before clone.
-- `pre-pull` — `{ remote, branch }`. Fires before pull.
-- `pre-rebase` — `{ upstream, branch }`. Fires before rebase begins.
-- `pre-reset` — `{ mode, target }`. `mode` is `"soft" | "mixed" | "hard" | "paths"`.
-- `pre-clean` — `{ dryRun, force, removeDirs, removeIgnored, onlyIgnored }`.
-- `pre-rm` — `{ paths, cached, recursive, force }`.
-- `pre-cherry-pick` — `{ mode, commit }`. `mode` is `"pick" | "continue" | "abort"`.
-- `pre-revert` — `{ mode, commit }`. `mode` is `"revert" | "continue" | "abort"`.
-- `pre-stash` — `{ action, ref }`. `action` is `"push" | "pop" | "apply" | ...`.
+Pre-hooks can reject operations by returning `{ reject: true, message?: string }` (`Rejection`):
+
+- `preCommit` — `{ repo, index, treeHash }`. Fires before commit is created.
+- `commitMsg` — `{ repo, message }` (mutable message). Fires after preCommit, before commit write.
+- `mergeMsg` — `{ repo, message, treeHash, headHash, theirsHash }` (mutable message). Fires before merge commit.
+- `preMergeCommit` — `{ repo, mergeMessage, treeHash, headHash, theirsHash }`. Fires before three-way merge commit.
+- `preCheckout` — `{ repo, target, mode }`. `mode` is `"switch" | "detach" | "create-branch" | "paths"`.
+- `prePush` — `{ repo, remote, url, refs[] }`. Fires before object transfer.
+- `preFetch` — `{ repo, remote, url, refspecs, prune, tags }`. Fires before fetch.
+- `preClone` — `{ repo?, repository, targetPath, bare, branch }`. Fires before clone. `repo` is optional (repo doesn't exist yet).
+- `prePull` — `{ repo, remote, branch }`. Fires before pull.
+- `preRebase` — `{ repo, upstream, branch }`. Fires before rebase begins.
+- `preReset` — `{ repo, mode, target }`. `mode` is `"soft" | "mixed" | "hard" | "paths"`.
+- `preClean` — `{ repo, dryRun, force, removeDirs, removeIgnored, onlyIgnored }`.
+- `preRm` — `{ repo, paths, cached, recursive, force }`.
+- `preCherryPick` — `{ repo, mode, commit }`. `mode` is `"pick" | "continue" | "abort"`.
+- `preRevert` — `{ repo, mode, commit }`. `mode` is `"revert" | "continue" | "abort"`.
+- `preStash` — `{ repo, action, ref }`. `action` is `"push" | "pop" | "apply" | ...`.
 
 Post-hooks are fire-and-forget (return value ignored):
 
-- `post-commit` — `{ hash, message, branch, parents, author }`.
-- `post-merge` — `{ headHash, theirsHash, strategy, commitHash }`. `strategy` is `"fast-forward"` or `"three-way"`.
-- `post-checkout` — `{ prevHead, newHead, isBranchCheckout }`.
-- `post-push` — same payload as `pre-push`.
-- `post-fetch` — `{ remote, url, refsUpdated }`.
-- `post-clone` — `{ repository, targetPath, bare, branch }`.
-- `post-pull` — `{ remote, branch, strategy, commitHash }`.
-- `post-reset` — `{ mode, targetHash }`.
-- `post-clean` — `{ removed, dryRun }`.
-- `post-rm` — `{ removedPaths, cached }`.
-- `post-cherry-pick` — `{ mode, commitHash, hadConflicts }`.
-- `post-revert` — `{ mode, commitHash, hadConflicts }`.
-- `post-stash` — `{ action, ok }`.
+- `postCommit` — `{ repo, hash, message, branch, parents, author }`.
+- `postMerge` — `{ repo, headHash, theirsHash, strategy, commitHash }`. `strategy` is `"fast-forward"` or `"three-way"`.
+- `postCheckout` — `{ repo, prevHead, newHead, isBranchCheckout }`.
+- `postPush` — same payload as `prePush`.
+- `postFetch` — `{ repo, remote, url, refsUpdated }`.
+- `postClone` — `{ repo, repository, targetPath, bare, branch }`.
+- `postPull` — `{ repo, remote, branch, strategy, commitHash }`.
+- `postReset` — `{ repo, mode, targetHash }`.
+- `postClean` — `{ repo, removed, dryRun }`.
+- `postRm` — `{ repo, removedPaths, cached }`.
+- `postCherryPick` — `{ repo, mode, commitHash, hadConflicts }`.
+- `postRevert` — `{ repo, mode, commitHash, hadConflicts }`.
+- `postStash` — `{ repo, action, ok }`.
 
-Low-level events (fire-and-forget, no abort):
+Low-level events (synchronous, fire-and-forget):
 
-- `ref:update` — receives `{ ref, oldHash, newHash }`. Fires on any ref write.
-- `ref:delete` — receives `{ ref, oldHash }`. Fires on ref deletion.
-- `object:write` — receives `{ type, hash }`. Fires on every object written to the store.
+- `onRefUpdate` — `{ repo, ref, oldHash, newHash }`. Fires on any ref write.
+- `onRefDelete` — `{ repo, ref, oldHash }`. Fires on ref deletion.
+- `onObjectWrite` — `{ repo, type, hash }`. Fires on every object written to the store.
 
-**Middleware** (`git.use(fn)` → unsubscribe function):
+Command-level hooks:
 
-Wraps every `git <subcommand>` invocation. Receives `(event, next)` where `event` is a `CommandEvent` containing the execution context: `{ command, rawArgs, fs, cwd, env, stdin, exec?, signal? }`. Call `next()` to proceed; return an `ExecResult` to short-circuit. Middlewares compose in registration order (first registered runs outermost).
+- `beforeCommand` — `{ command, args, fs, cwd, env }`. Can return `Rejection` to block execution.
+- `afterCommand` — `{ command, args, result }`. Fire-and-forget.
 
-**`GitExtensions`** — internal bundle threaded into command handlers via closures. Contains `hooks?: HookEmitter`, `credentialProvider?`, `identityOverride?`, `fetchFn?`, `networkPolicy?`, `resolveRemote?`. Command handlers access these to emit events, resolve identity/credentials, and resolve cross-VFS remotes.
+**`composeGitHooks(...hookSets)`** — combines multiple `GitHooks` objects:
+
+- Pre-hooks chain in order, short-circuit on first `Rejection`.
+- Post-hooks chain in order, individually try/caught.
+- Low-level events chain in order, individually try/caught.
+- Mutable message hooks (`commitMsg`, `mergeMsg`) chain, passing the mutated message through.
+
+**`GitExtensions`** — internal bundle threaded into command handlers via closures. Contains `hooks?: GitHooks`, `credentialProvider?`, `identityOverride?`, `fetchFn?`, `networkPolicy?`, `resolveRemote?`. Command handlers access these to call hooks, resolve identity/credentials, and resolve cross-VFS remotes.
 
 ### Commands
 
@@ -166,29 +178,29 @@ See [FILE_REFERENCE.md](FILE_REFERENCE.md) for exported functions, types, and cl
 
 ### `src/index.ts` — Package exports
 
-Re-exports `createGitCommand` (low-level), `createGit`, `Git`, `GitOptions`, `GitCommandName`, `GitExtensions`, `HookEmitter`, and all hook event/type interfaces from `src/git.ts` and `src/hooks.ts`.
+Re-exports `createGit`, `Git`, `GitOptions`, `GitCommandName`, `GitExtensions`, `GitHooks`, `Rejection`, `isRejection`, `composeGitHooks`, and all hook event/type interfaces from `src/git.ts` and `src/hooks.ts`.
 
 ### `src/git.ts` — Git class and factory
 
 - `createGit(options?)` → `Git` — factory function
-- `Git` class — holds `HookEmitter`, middleware stack, `GitExtensions`, disabled command set. Directly satisfies just-bash `Command` interface (pass `git` into `customCommands` without wrapping)
-- `Git.on(event, handler)` → unsubscribe — delegates to `HookEmitter`
-- `Git.use(middleware)` → unsubscribe — registers command middleware
+- `Git` class — accepts `GitHooks` via `GitOptions.hooks`, implements `disabled` as pre-dispatch check, wires `beforeCommand`/`afterCommand`. Directly satisfies just-bash `Command` interface (pass `git` into `customCommands` without wrapping)
 - `Git.name` — always `"git"`, satisfies just-bash `Command` interface
-- `Git.execute(args, ctx)` — runs the git command with middleware wrapping; satisfies just-bash `Command` interface
+- `Git.execute(args, ctx)` — runs the git command; satisfies just-bash `Command` interface
 
-**Types:** `GitOptions`, `GitCommandName`, `GitExtensions`, `CommandContext`, `CommandExecOptions`, `RemoteResolver`.
+**Types:** `GitOptions`, `GitCommandName`, `GitExtensions`, `CommandContext`, `CommandExecOptions`.
 
-### `src/hooks.ts` — Hooks, middleware, and event types
+### `src/hooks.ts` — Hooks, rejection protocol, and event types
 
-- `HookEmitter` class — typed event emitter with `on(event, handler)` → unsubscribe, `emitPre(event, data)` → `AbortResult | null`, `emit(event, data)` (fire-and-forget)
+- `GitHooks` interface — config object with named callback properties for all pre/post hooks, low-level events, and command-level hooks
+- `Rejection` interface — `{ reject: true, message? }`. Unified rejection protocol shared with server module
+- `isRejection(value)` — type guard for `Rejection`
+- `composeGitHooks(...hookSets)` — combines multiple `GitHooks` objects with proper chaining semantics
 - `CredentialProvider` type — `(url: string) => HttpAuth | null | Promise<HttpAuth | null>`
-- `RemoteResolver` type — `(url: string) => GitContext | null | Promise<GitContext | null>`. Resolves remote URLs to GitContexts on potentially different VFS instances.
 - `IdentityOverride` interface — `{ name, email, locked? }`
-- `CommandEvent` interface — `{ command, rawArgs, fs, cwd, env, stdin, exec?, signal? }` for middleware.
-- `Middleware` type — `(event: CommandEvent, next: () => Promise<ExecResult>) => ExecResult | Promise<ExecResult>`
+- `BeforeCommandEvent` interface — `{ command, args, fs, cwd, env }` for command-level interception
+- `AfterCommandEvent` interface — `{ command, args, result }` for post-command observation
 
-**Event types:** `PreCommitEvent`, `CommitMsgEvent`, `MergeMsgEvent`, `PostCommitEvent`, `PreMergeCommitEvent`, `PostMergeEvent`, `PreCheckoutEvent`, `PostCheckoutEvent`, `PrePushEvent`, `PostPushEvent`, `PreFetchEvent`, `PostFetchEvent`, `PreCloneEvent`, `PostCloneEvent`, `PrePullEvent`, `PostPullEvent`, `PreRebaseEvent`, `PreResetEvent`, `PostResetEvent`, `PreCleanEvent`, `PostCleanEvent`, `PreRmEvent`, `PostRmEvent`, `PreCherryPickEvent`, `PostCherryPickEvent`, `PreRevertEvent`, `PostRevertEvent`, `PreStashEvent`, `PostStashEvent`, `RefUpdateEvent`, `RefDeleteEvent`, `ObjectWriteEvent`. Map: `HookEventMap`.
+**Event types:** `PreCommitEvent`, `CommitMsgEvent`, `MergeMsgEvent`, `PostCommitEvent`, `PreMergeCommitEvent`, `PostMergeEvent`, `PreCheckoutEvent`, `PostCheckoutEvent`, `PrePushEvent`, `PostPushEvent`, `PreFetchEvent`, `PostFetchEvent`, `PreCloneEvent`, `PostCloneEvent`, `PrePullEvent`, `PostPullEvent`, `PreRebaseEvent`, `PreResetEvent`, `PostResetEvent`, `PreCleanEvent`, `PostCleanEvent`, `PreRmEvent`, `PostRmEvent`, `PreCherryPickEvent`, `PostCherryPickEvent`, `PreRevertEvent`, `PostRevertEvent`, `PreStashEvent`, `PostStashEvent`, `RefUpdateEvent`, `RefDeleteEvent`, `ObjectWriteEvent`. All event payloads include `repo: GitRepo`.
 
 ### Lib modules
 

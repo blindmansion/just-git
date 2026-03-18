@@ -8,17 +8,15 @@ export type {
 } from "./git";
 export { createGit, Git } from "./git";
 export type {
-	AbortResult,
-	CommandEvent,
+	AfterCommandEvent,
+	BeforeCommandEvent,
 	CommitMsgEvent,
 	CredentialProvider,
 	ExecResult,
 	FetchFunction,
-	HookEventMap,
-	HookHandler,
+	GitHooks,
 	IdentityOverride,
 	MergeMsgEvent,
-	Middleware,
 	NetworkPolicy,
 	ObjectWriteEvent,
 	PostCheckoutEvent,
@@ -50,7 +48,9 @@ export type {
 	PreStashEvent,
 	RefDeleteEvent,
 	RefUpdateEvent,
+	Rejection,
 } from "./hooks";
+export { composeGitHooks, isRejection } from "./hooks";
 export type {
 	GitContext,
 	GitRepo,

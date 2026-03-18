@@ -2,7 +2,7 @@ import type { FileSystem } from "../fs.ts";
 import type {
 	CredentialProvider,
 	FetchFunction,
-	HookEmitter,
+	GitHooks,
 	IdentityOverride,
 	NetworkPolicy,
 } from "../hooks.ts";
@@ -204,8 +204,8 @@ export interface ObjectStore {
 export interface GitRepo {
 	objectStore: ObjectStore;
 	refStore: RefStore;
-	/** Hook emitter for operation hooks and low-level events. */
-	hooks?: HookEmitter;
+	/** Hook callbacks for operation hooks and low-level events. */
+	hooks?: GitHooks;
 }
 
 /**

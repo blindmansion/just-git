@@ -1,4 +1,5 @@
 import type { GitExtensions } from "../git.ts";
+import { isRejection } from "../hooks.ts";
 import {
 	abbreviateHash,
 	ensureTrailingNewline,
@@ -56,18 +57,18 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 
 			// ── --abort path ──────────────────────────────────────────
 			if (args.abort) {
-				if (ext?.hooks) {
-					const abort = await ext.hooks.emitPre("pre-revert", {
-						mode: "abort",
-						commit: null,
-					});
-					if (abort) {
-						return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-					}
+				const preRvAbortRej = await ext?.hooks?.preRevert?.({
+					repo: gitCtx,
+					mode: "abort",
+					commit: null,
+				});
+				if (isRejection(preRvAbortRej)) {
+					return { stdout: "", stderr: preRvAbortRej.message ?? "", exitCode: 1 };
 				}
 				const result = await handleAbort(gitCtx, ctx.env);
 				if (result.exitCode === 0) {
-					await ext?.hooks?.emitPost("post-revert", {
+					await ext?.hooks?.postRevert?.({
+						repo: gitCtx,
 						mode: "abort",
 						commitHash: null,
 						hadConflicts: false,
@@ -78,18 +79,18 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 
 			// ── --continue path ───────────────────────────────────────
 			if (args.continue) {
-				if (ext?.hooks) {
-					const abort = await ext.hooks.emitPre("pre-revert", {
-						mode: "continue",
-						commit: null,
-					});
-					if (abort) {
-						return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-					}
+				const preRvContinueRej = await ext?.hooks?.preRevert?.({
+					repo: gitCtx,
+					mode: "continue",
+					commit: null,
+				});
+				if (isRejection(preRvContinueRej)) {
+					return { stdout: "", stderr: preRvContinueRej.message ?? "", exitCode: 1 };
 				}
 				const result = await handleContinue(gitCtx, ctx.env);
 				if (result.exitCode === 0) {
-					await ext?.hooks?.emitPost("post-revert", {
+					await ext?.hooks?.postRevert?.({
+						repo: gitCtx,
 						mode: "continue",
 						commitHash: null,
 						hadConflicts: false,
@@ -102,14 +103,13 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 			if (!commitRef) {
 				return fatal("you must specify a commit to revert");
 			}
-			if (ext?.hooks) {
-				const abort = await ext.hooks.emitPre("pre-revert", {
-					mode: "revert",
-					commit: commitRef,
-				});
-				if (abort) {
-					return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-				}
+			const preRvRevertRej = await ext?.hooks?.preRevert?.({
+				repo: gitCtx,
+				mode: "revert",
+				commit: commitRef,
+			});
+			if (isRejection(preRvRevertRej)) {
+				return { stdout: "", stderr: preRvRevertRej.message ?? "", exitCode: 1 };
 			}
 
 			const revertResult = await requireCommit(gitCtx, commitRef);
@@ -225,7 +225,8 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				await writeStateFile(gitCtx, "MERGE_MSG", revertMessage);
 
 				const mergeOutput = result.messages.join("\n");
-				await ext?.hooks?.emitPost("post-revert", {
+				await ext?.hooks?.postRevert?.({
+					repo: gitCtx,
 					mode: "revert",
 					commitHash: null,
 					hadConflicts: true,
@@ -298,7 +299,8 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 
 			const header = formatCommitOneLiner(branchName, commitHash, revertMessage);
 			const mergeMessages = result.messages.length > 0 ? `${result.messages.join("\n")}\n` : "";
-			await ext?.hooks?.emitPost("post-revert", {
+			await ext?.hooks?.postRevert?.({
+				repo: gitCtx,
 				mode: "revert",
 				commitHash,
 				hadConflicts: false,

@@ -1,93 +1,92 @@
-# Hooks and middleware reference
+# Hooks reference
 
-Full reference for `just-git` hooks, middleware, and low-level events. See the [README](README.md) for usage examples.
+Full reference for `just-git` hooks and event types. See the [README](README.md) for usage examples.
 
-## Middleware
+## GitHooks interface
 
-Middleware wraps every `git <subcommand>` invocation. Register with `git.use(fn)`, which returns an unsubscribe function. Middlewares compose in registration order (first registered = outermost).
+All hooks are specified as named callback properties on a `GitHooks` config object, passed at construction time via `createGit({ hooks: { ... } })`. All event payloads include `repo: GitRepo`, giving hooks access to the [repo module helpers](src/repo/) for inspecting repository state.
 
-Each middleware receives a `CommandEvent` and a `next()` function. Call `next()` to proceed, or return an `ExecResult` to short-circuit.
+## Rejection protocol
 
-### `CommandEvent`
+Pre-hooks can reject operations by returning `{ reject: true, message?: string }` (the `Rejection` type). Use `isRejection(value)` as a type guard.
 
-```ts
-interface CommandEvent {
-  command: string; // subcommand name ("commit", "push", etc.)
-  rawArgs: string[]; // arguments after the subcommand
-  fs: FileSystem; // virtual filesystem
-  cwd: string; // current working directory
-  env: Map<string, string>;
-  stdin: string;
-  exec?: (cmd: string) => Promise<ExecResult>;
-  signal?: AbortSignal;
-}
-```
+## Composing hooks
 
-### `ExecResult`
+Use `composeGitHooks(...hookSets)` to combine multiple `GitHooks` objects:
+
+- **Pre-hooks**: chain in order, short-circuit on first `Rejection`
+- **Post-hooks**: chain in order, individually try/caught
+- **Low-level events**: chain in order, individually try/caught
+- **Mutable message hooks** (`commitMsg`, `mergeMsg`): chain, passing the mutated message through
 
 ```ts
-interface ExecResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
+import { createGit, composeGitHooks } from "just-git";
+
+const git = createGit({
+  hooks: composeGitHooks(auditHooks, policyHooks, loggingHooks),
+});
 ```
 
-## Hooks
+## Pre-hooks
 
-Register with `git.on(event, handler)`, which returns an unsubscribe function. Hooks fire at specific points inside command execution, after middleware.
+Pre-hooks can reject the operation by returning `{ reject: true, message?: string }`.
 
-### Pre-hooks
+| Hook             | Payload                                                           | Type                  |
+| ---------------- | ----------------------------------------------------------------- | --------------------- |
+| `preCommit`      | `{ repo, index, treeHash }`                                       | `PreCommitEvent`      |
+| `commitMsg`      | `{ repo, message }` (mutable message)                             | `CommitMsgEvent`      |
+| `mergeMsg`       | `{ repo, message, treeHash, headHash, theirsHash }` (mutable msg) | `MergeMsgEvent`       |
+| `preMergeCommit` | `{ repo, mergeMessage, treeHash, headHash, theirsHash }`          | `PreMergeCommitEvent` |
+| `preCheckout`    | `{ repo, target, mode }`                                          | `PreCheckoutEvent`    |
+| `prePush`        | `{ repo, remote, url, refs[] }`                                   | `PrePushEvent`        |
+| `preFetch`       | `{ repo, remote, url, refspecs, prune, tags }`                    | `PreFetchEvent`       |
+| `preClone`       | `{ repo?, repository, targetPath, bare, branch }`                 | `PreCloneEvent`       |
+| `prePull`        | `{ repo, remote, branch }`                                        | `PrePullEvent`        |
+| `preRebase`      | `{ repo, upstream, branch }`                                      | `PreRebaseEvent`      |
+| `preReset`       | `{ repo, mode, target }`                                          | `PreResetEvent`       |
+| `preClean`       | `{ repo, dryRun, force, removeDirs, removeIgnored, onlyIgnored }` | `PreCleanEvent`       |
+| `preRm`          | `{ repo, paths, cached, recursive, force }`                       | `PreRmEvent`          |
+| `preCherryPick`  | `{ repo, mode, commit }`                                          | `PreCherryPickEvent`  |
+| `preRevert`      | `{ repo, mode, commit }`                                          | `PreRevertEvent`      |
+| `preStash`       | `{ repo, action, ref }`                                           | `PreStashEvent`       |
 
-Pre-hooks can abort the operation by returning `{ abort: true, message?: string }`.
+## Post-hooks
 
-| Hook               | Payload                                                         | Type                  |
-| ------------------ | --------------------------------------------------------------- | --------------------- |
-| `pre-commit`       | `{ index, treeHash }`                                           | `PreCommitEvent`      |
-| `commit-msg`       | `{ message }` (mutable)                                         | `CommitMsgEvent`      |
-| `merge-msg`        | `{ message, treeHash, headHash, theirsHash }` (mutable message) | `MergeMsgEvent`       |
-| `pre-merge-commit` | `{ mergeMessage, treeHash, headHash, theirsHash }`              | `PreMergeCommitEvent` |
-| `pre-checkout`     | `{ target, mode }`                                              | `PreCheckoutEvent`    |
-| `pre-push`         | `{ remote, url, refs[] }`                                       | `PrePushEvent`        |
-| `pre-fetch`        | `{ remote, url, refspecs, prune, tags }`                        | `PreFetchEvent`       |
-| `pre-clone`        | `{ repository, targetPath, bare, branch }`                      | `PreCloneEvent`       |
-| `pre-pull`         | `{ remote, branch }`                                            | `PrePullEvent`        |
-| `pre-rebase`       | `{ upstream, branch }`                                          | `PreRebaseEvent`      |
-| `pre-reset`        | `{ mode, target }`                                              | `PreResetEvent`       |
-| `pre-clean`        | `{ dryRun, force, removeDirs, removeIgnored, onlyIgnored }`     | `PreCleanEvent`       |
-| `pre-rm`           | `{ paths, cached, recursive, force }`                           | `PreRmEvent`          |
-| `pre-cherry-pick`  | `{ mode, commit }`                                              | `PreCherryPickEvent`  |
-| `pre-revert`       | `{ mode, commit }`                                              | `PreRevertEvent`      |
-| `pre-stash`        | `{ action, ref }`                                               | `PreStashEvent`       |
+Post-hooks are observational — return value is ignored.
 
-### Post-hooks
+| Hook             | Payload                                                | Type                  |
+| ---------------- | ------------------------------------------------------ | --------------------- |
+| `postCommit`     | `{ repo, hash, message, branch, parents, author }`     | `PostCommitEvent`     |
+| `postMerge`      | `{ repo, headHash, theirsHash, strategy, commitHash }` | `PostMergeEvent`      |
+| `postCheckout`   | `{ repo, prevHead, newHead, isBranchCheckout }`        | `PostCheckoutEvent`   |
+| `postPush`       | same payload as `prePush`                              | `PostPushEvent`       |
+| `postFetch`      | `{ repo, remote, url, refsUpdated }`                   | `PostFetchEvent`      |
+| `postClone`      | `{ repo, repository, targetPath, bare, branch }`       | `PostCloneEvent`      |
+| `postPull`       | `{ repo, remote, branch, strategy, commitHash }`       | `PostPullEvent`       |
+| `postReset`      | `{ repo, mode, targetHash }`                           | `PostResetEvent`      |
+| `postClean`      | `{ repo, removed, dryRun }`                            | `PostCleanEvent`      |
+| `postRm`         | `{ repo, removedPaths, cached }`                       | `PostRmEvent`         |
+| `postCherryPick` | `{ repo, mode, commitHash, hadConflicts }`             | `PostCherryPickEvent` |
+| `postRevert`     | `{ repo, mode, commitHash, hadConflicts }`             | `PostRevertEvent`     |
+| `postStash`      | `{ repo, action, ok }`                                 | `PostStashEvent`      |
 
-Post-hooks are observational — return value is ignored. Handlers are awaited in registration order.
+## Low-level events
 
-| Hook               | Payload                                          | Type                  |
-| ------------------ | ------------------------------------------------ | --------------------- |
-| `post-commit`      | `{ hash, message, branch, parents, author }`     | `PostCommitEvent`     |
-| `post-merge`       | `{ headHash, theirsHash, strategy, commitHash }` | `PostMergeEvent`      |
-| `post-checkout`    | `{ prevHead, newHead, isBranchCheckout }`        | `PostCheckoutEvent`   |
-| `post-push`        | same payload as `pre-push`                       | `PostPushEvent`       |
-| `post-fetch`       | `{ remote, url, refsUpdated }`                   | `PostFetchEvent`      |
-| `post-clone`       | `{ repository, targetPath, bare, branch }`       | `PostCloneEvent`      |
-| `post-pull`        | `{ remote, branch, strategy, commitHash }`       | `PostPullEvent`       |
-| `post-reset`       | `{ mode, targetHash }`                           | `PostResetEvent`      |
-| `post-clean`       | `{ removed, dryRun }`                            | `PostCleanEvent`      |
-| `post-rm`          | `{ removedPaths, cached }`                       | `PostRmEvent`         |
-| `post-cherry-pick` | `{ mode, commitHash, hadConflicts }`             | `PostCherryPickEvent` |
-| `post-revert`      | `{ mode, commitHash, hadConflicts }`             | `PostRevertEvent`     |
-| `post-stash`       | `{ action, ok }`                                 | `PostStashEvent`      |
+Synchronous, fire-and-forget events emitted on every object/ref write. Return value is ignored.
 
-### Low-level events
+| Event           | Payload                           | Type               |
+| --------------- | --------------------------------- | ------------------ |
+| `onRefUpdate`   | `{ repo, ref, oldHash, newHash }` | `RefUpdateEvent`   |
+| `onRefDelete`   | `{ repo, ref, oldHash }`          | `RefDeleteEvent`   |
+| `onObjectWrite` | `{ repo, type, hash }`            | `ObjectWriteEvent` |
 
-Fire-and-forget events emitted on every object/ref write. Handler errors are caught and forwarded to `hooks.onError` (no-op by default). Return value is ignored.
+## Command-level hooks
 
-| Event          | Payload                     | Type               |
-| -------------- | --------------------------- | ------------------ |
-| `ref:update`   | `{ ref, oldHash, newHash }` | `RefUpdateEvent`   |
-| `ref:delete`   | `{ ref, oldHash }`          | `RefDeleteEvent`   |
-| `object:write` | `{ type, hash }`            | `ObjectWriteEvent` |
+Command-level hooks fire before/after every `git <subcommand>` invocation.
+
+| Hook            | Payload                           | Can reject? | Type                 |
+| --------------- | --------------------------------- | ----------- | -------------------- |
+| `beforeCommand` | `{ command, args, fs, cwd, env }` | Yes         | `BeforeCommandEvent` |
+| `afterCommand`  | `{ command, args, result }`       | No          | `AfterCommandEvent`  |
 
 All event types are exported from `just-git` for TypeScript consumers.

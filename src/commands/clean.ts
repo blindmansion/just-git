@@ -1,4 +1,5 @@
 import type { GitExtensions } from "../git.ts";
+import { isRejection } from "../hooks.ts";
 import {
 	fatal,
 	getCwdPrefix,
@@ -55,17 +56,16 @@ export function registerCleanCommand(parent: Command, ext?: GitExtensions) {
 			const removeDirs = args.directories;
 			const removeIgnored = args.removeIgnored;
 			const onlyIgnored = args.onlyIgnored;
-			if (ext?.hooks) {
-				const abort = await ext.hooks.emitPre("pre-clean", {
-					dryRun,
-					force,
-					removeDirs,
-					removeIgnored,
-					onlyIgnored,
-				});
-				if (abort) {
-					return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-				}
+			const preCleanRej = await ext?.hooks?.preClean?.({
+				repo: gitCtx,
+				dryRun,
+				force,
+				removeDirs,
+				removeIgnored,
+				onlyIgnored,
+			});
+			if (isRejection(preCleanRej)) {
+				return { stdout: "", stderr: preCleanRej.message ?? "", exitCode: 1 };
 			}
 
 			// Real git requires -f unless clean.requireForce is false
@@ -131,7 +131,8 @@ export function registerCleanCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			const stdout = lines.length > 0 ? `${lines.join("\n")}\n` : "";
-			await ext?.hooks?.emitPost("post-clean", {
+			await ext?.hooks?.postClean?.({
+				repo: gitCtx,
 				removed: filtered.map((c) => c.path),
 				dryRun,
 			});

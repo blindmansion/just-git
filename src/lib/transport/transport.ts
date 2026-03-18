@@ -186,12 +186,14 @@ export class LocalTransport implements Transport {
 
 				if (this.remote.hooks) {
 					if (isDelete && update.oldHash) {
-						this.remote.hooks.emit("ref:delete", {
+						this.remote.hooks.onRefDelete?.({
+							repo: this.remote,
 							ref: update.name,
 							oldHash: update.oldHash,
 						});
 					} else if (!isDelete) {
-						this.remote.hooks.emit("ref:update", {
+						this.remote.hooks.onRefUpdate?.({
+							repo: this.remote,
 							ref: update.name,
 							oldHash: update.oldHash,
 							newHash: update.newHash,

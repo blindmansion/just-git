@@ -1,4 +1,5 @@
 import type { GitExtensions } from "../git.ts";
+import { isRejection } from "../hooks.ts";
 import {
 	clearOperationState,
 	detachHeadCore,
@@ -200,7 +201,8 @@ async function createOrphanBranch(
 	await clearDetachPoint(gitCtx);
 	const opWarning = await clearOperationState(gitCtx);
 
-	await ext?.hooks?.emitPost("post-checkout", {
+	await ext?.hooks?.postCheckout?.({
+		repo: gitCtx,
 		prevHead,
 		newHead: ZERO_HASH,
 		isBranchCheckout: true,
@@ -228,15 +230,12 @@ async function createAndSwitch(
 	ext?: GitExtensions,
 	force = false,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-	if (ext?.hooks) {
-		const abort = await ext.hooks.emitPre("pre-checkout", {
-			target: branchName,
-			mode: "create-branch",
-		});
-		if (abort) {
-			return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-		}
-	}
+	const rej = await ext?.hooks?.preCheckout?.({
+		repo: gitCtx,
+		target: branchName,
+		mode: "create-branch",
+	});
+	if (isRejection(rej)) return err(rej.message ?? "");
 	const head = await readHead(gitCtx);
 	const headHash = await resolveHead(gitCtx);
 
@@ -280,7 +279,8 @@ async function createAndSwitch(
 		`checkout: moving from ${fromName} to ${branchName}`,
 	);
 
-	await ext?.hooks?.emitPost("post-checkout", {
+	await ext?.hooks?.postCheckout?.({
+		repo: gitCtx,
 		prevHead: headHash,
 		newHead: headHash ?? ZERO_HASH,
 		isBranchCheckout: true,
@@ -321,15 +321,12 @@ async function switchBranch(
 	env: Map<string, string>,
 	ext?: GitExtensions,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-	if (ext?.hooks) {
-		const abort = await ext.hooks.emitPre("pre-checkout", {
-			target: branchName,
-			mode: "switch",
-		});
-		if (abort) {
-			return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-		}
-	}
+	const rej = await ext?.hooks?.preCheckout?.({
+		repo: gitCtx,
+		target: branchName,
+		mode: "switch",
+	});
+	if (isRejection(rej)) return err(rej.message ?? "");
 	return switchBranchCore(gitCtx, branchName, refName, targetHash, env, ext);
 }
 
@@ -343,15 +340,12 @@ async function detachHead(
 	env: Map<string, string>,
 	ext?: GitExtensions,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-	if (ext?.hooks) {
-		const abort = await ext.hooks.emitPre("pre-checkout", {
-			target,
-			mode: "detach",
-		});
-		if (abort) {
-			return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-		}
-	}
+	const rej = await ext?.hooks?.preCheckout?.({
+		repo: gitCtx,
+		target,
+		mode: "detach",
+	});
+	if (isRejection(rej)) return err(rej.message ?? "");
 	return detachHeadCore(gitCtx, targetHash, env, ext, {
 		detachAdviceTarget: target,
 	});

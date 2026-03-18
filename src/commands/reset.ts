@@ -1,4 +1,5 @@
 import type { GitExtensions } from "../git.ts";
+import { isRejection } from "../hooks.ts";
 import {
 	abbreviateHash,
 	ambiguousArgError,
@@ -112,13 +113,13 @@ async function resetPaths(
 	commitRef?: string,
 	ext?: GitExtensions,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-	if (ext?.hooks) {
-		const abort = await ext.hooks.emitPre("pre-reset", {
-			mode: "paths",
-			target: commitRef ?? null,
-		});
-		if (abort) return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-	}
+	const preResetRej = await ext?.hooks?.preReset?.({
+		repo: gitCtx,
+		mode: "paths",
+		target: commitRef ?? null,
+	});
+	if (isRejection(preResetRej))
+		return { stdout: "", stderr: preResetRej.message ?? "", exitCode: 1 };
 	// Resolve the tree to restore from
 	let treeHash: ObjectId | null = null;
 	if (commitRef) {
@@ -199,7 +200,8 @@ async function resetPaths(
 		stderr: "",
 		exitCode: 0,
 	};
-	await ext?.hooks?.emitPost("post-reset", {
+	await ext?.hooks?.postReset?.({
+		repo: gitCtx,
 		mode: "paths",
 		targetHash: null,
 	});
@@ -261,13 +263,13 @@ async function resetToCommit(
 	env: Map<string, string>,
 	ext?: GitExtensions,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-	if (ext?.hooks) {
-		const abort = await ext.hooks.emitPre("pre-reset", {
-			mode,
-			target: commitRef,
-		});
-		if (abort) return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-	}
+	const preResetRej = await ext?.hooks?.preReset?.({
+		repo: gitCtx,
+		mode,
+		target: commitRef,
+	});
+	if (isRejection(preResetRej))
+		return { stdout: "", stderr: preResetRej.message ?? "", exitCode: 1 };
 	const rawTarget = await resolveRevision(gitCtx, commitRef);
 	if (!rawTarget) {
 		return ambiguousArgError(commitRef);
@@ -327,7 +329,8 @@ async function resetToCommit(
 
 		const resetOutput = await formatUnstagedAfterReset(gitCtx, index);
 		if (resetOutput) {
-			await ext?.hooks?.emitPost("post-reset", {
+			await ext?.hooks?.postReset?.({
+				repo: gitCtx,
 				mode,
 				targetHash,
 			});
@@ -351,7 +354,8 @@ async function resetToCommit(
 		mode === "hard"
 			? `HEAD is now at ${abbreviateHash(targetHash)} ${firstLine(targetCommit.message)}\n`
 			: "";
-	await ext?.hooks?.emitPost("post-reset", {
+	await ext?.hooks?.postReset?.({
+		repo: gitCtx,
 		mode,
 		targetHash,
 	});

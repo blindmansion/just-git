@@ -1,16 +1,13 @@
 import { createGitCommand } from "./commands/git.ts";
 import type { FileSystem } from "./fs.ts";
 import {
-	type CommandEvent,
 	type CredentialProvider,
 	type ExecResult,
 	type FetchFunction,
-	HookEmitter,
-	type HookEventMap,
-	type HookHandler,
+	type GitHooks,
 	type IdentityOverride,
-	type Middleware,
 	type NetworkPolicy,
+	isRejection,
 } from "./hooks.ts";
 import type { ObjectStore, RefStore, RemoteResolver } from "./lib/types.ts";
 
@@ -74,6 +71,7 @@ export type GitCommandName =
 	| "bisect";
 
 export interface GitOptions {
+	hooks?: GitHooks;
 	credentials?: CredentialProvider;
 	identity?: IdentityOverride;
 	disabled?: GitCommandName[];
@@ -104,7 +102,7 @@ export interface GitOptions {
  * via closures and merged onto GitContext after discovery.
  */
 export interface GitExtensions {
-	hooks?: HookEmitter;
+	hooks?: GitHooks;
 	credentialProvider?: CredentialProvider;
 	identityOverride?: IdentityOverride;
 	fetchFn?: FetchFunction;
@@ -116,16 +114,16 @@ export interface GitExtensions {
 
 export class Git {
 	readonly name = "git";
-	readonly hooks: HookEmitter;
-	private middlewares: Middleware[] = [];
-	private extensions: GitExtensions;
+	private blocked: Set<string> | null;
+	private hooks: GitHooks | undefined;
 	private inner: { execute: (args: string[], ctx: CommandContext) => Promise<ExecResult> };
 
 	constructor(options?: GitOptions) {
-		this.hooks = new HookEmitter();
+		this.hooks = options?.hooks;
+		this.blocked = options?.disabled?.length ? new Set<string>(options.disabled) : null;
 		const network = options?.network;
-		this.extensions = {
-			hooks: this.hooks,
+		const extensions: GitExtensions = {
+			hooks: options?.hooks,
 			credentialProvider: options?.credentials,
 			identityOverride: options?.identity,
 			fetchFn: typeof network === "object" ? network.fetch : undefined,
@@ -134,62 +132,49 @@ export class Git {
 			...(options?.objectStore ? { objectStore: options.objectStore } : {}),
 			...(options?.refStore ? { refStore: options.refStore } : {}),
 		};
-		if (options?.disabled?.length) {
-			const blocked = new Set<string>(options.disabled);
-			this.use(async (event, next) => {
-				if (event.command && blocked.has(event.command)) {
-					return {
-						stdout: "",
-						stderr: `git: '${event.command}' is not available in this environment\n`,
-						exitCode: 1,
-					};
-				}
-				return next();
-			});
-		}
-		this.inner = createGitCommand(this.extensions).toCommand();
-	}
-
-	on<E extends keyof HookEventMap>(event: E, handler: HookHandler<E>): () => void {
-		return this.hooks.on(event, handler);
-	}
-
-	use(middleware: Middleware): () => void {
-		this.middlewares.push(middleware);
-		return () => {
-			const idx = this.middlewares.indexOf(middleware);
-			if (idx !== -1) this.middlewares.splice(idx, 1);
-		};
+		this.inner = createGitCommand(extensions).toCommand();
 	}
 
 	execute = async (args: string[], ctx: CommandContext): Promise<ExecResult> => {
-		const event: CommandEvent = {
-			command: args[0],
-			rawArgs: args.slice(1),
-			fs: ctx.fs,
-			cwd: ctx.cwd,
-			env: ctx.env,
-			stdin: ctx.stdin,
-			exec: ctx.exec,
-			signal: ctx.signal,
-		};
-		return this.runMiddleware(event, () => this.inner.execute(args, ctx));
+		const command = args[0] ?? "";
+
+		if (this.blocked?.has(command)) {
+			return {
+				stdout: "",
+				stderr: `git: '${command}' is not available in this environment\n`,
+				exitCode: 1,
+			};
+		}
+
+		if (this.hooks?.beforeCommand) {
+			const rej = await this.hooks.beforeCommand({
+				command,
+				args: args.slice(1),
+				fs: ctx.fs,
+				cwd: ctx.cwd,
+				env: ctx.env,
+			});
+			if (isRejection(rej)) {
+				return {
+					stdout: "",
+					stderr: rej.message ?? "",
+					exitCode: 1,
+				};
+			}
+		}
+
+		const result = await this.inner.execute(args, ctx);
+
+		if (this.hooks?.afterCommand) {
+			await this.hooks.afterCommand({
+				command,
+				args: args.slice(1),
+				result,
+			});
+		}
+
+		return result;
 	};
-
-	private async runMiddleware(
-		event: CommandEvent,
-		innerFn: () => Promise<ExecResult>,
-	): Promise<ExecResult> {
-		if (this.middlewares.length === 0) return innerFn();
-
-		let index = 0;
-		const chain = async (): Promise<ExecResult> => {
-			if (index >= this.middlewares.length) return innerFn();
-			const mw = this.middlewares[index++] as Middleware;
-			return mw(event, chain);
-		};
-		return chain();
-	}
 }
 
 export function createGit(options?: GitOptions): Git {

@@ -272,11 +272,7 @@ export async function resolveHead(ctx: GitRepo): Promise<ObjectId | null> {
 export async function updateRef(ctx: GitRepo, name: string, hash: ObjectId): Promise<void> {
 	const oldHash = ctx.hooks ? await resolveRef(ctx, name) : null;
 	await ctx.refStore.writeRef(name, { type: "direct", hash });
-	ctx.hooks?.emit("ref:update", {
-		ref: name,
-		oldHash,
-		newHash: hash,
-	});
+	ctx.hooks?.onRefUpdate?.({ repo: ctx, ref: name, oldHash, newHash: hash });
 }
 
 /** Write a symbolic ref (a file containing `ref: <target>`). */
@@ -290,7 +286,7 @@ export async function deleteRef(ctx: GitContext, name: string): Promise<void> {
 	await ctx.refStore.deleteRef(name);
 	await deleteReflog(ctx, name);
 	if (ctx.hooks && oldHash) {
-		ctx.hooks.emit("ref:delete", { ref: name, oldHash });
+		ctx.hooks.onRefDelete?.({ repo: ctx, ref: name, oldHash });
 	}
 }
 

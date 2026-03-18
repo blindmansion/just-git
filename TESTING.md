@@ -67,7 +67,7 @@ These are documented in detail in the [oracle README](test/oracle/README.md).
 
 ## Unit and integration tests
 
-Beyond oracle testing, `bun test` runs focused unit and integration tests covering individual commands, edge cases, hooks, middleware, transport, and internal data structures. These are faster to run and easier to debug than oracle traces, but cover less of the interaction surface.
+Beyond oracle testing, `bun test` runs focused unit and integration tests covering individual commands, edge cases, hooks, transport, and internal data structures. These are faster to run and easier to debug than oracle traces, but cover less of the interaction surface.
 
 ## Interop tests
 

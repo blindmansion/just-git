@@ -6,7 +6,7 @@ export interface ExecResult {
 	exitCode: number;
 }
 
-import type { Identity, Index, ObjectId, ObjectType } from "./lib/types.ts";
+import type { GitRepo, Identity, Index, ObjectId, ObjectType } from "./lib/types.ts";
 
 // ── Credential & Identity overrides ─────────────────────────────────
 
@@ -36,18 +36,37 @@ export interface NetworkPolicy {
 	fetch?: FetchFunction;
 }
 
+// ── Rejection protocol ──────────────────────────────────────────────
+
+export interface Rejection {
+	reject: true;
+	message?: string;
+}
+
+export function isRejection(value: unknown): value is Rejection {
+	return (
+		value != null &&
+		typeof value === "object" &&
+		"reject" in value &&
+		(value as Rejection).reject === true
+	);
+}
+
 // ── Hook event payloads ─────────────────────────────────────────────
 
 export interface PreCommitEvent {
+	readonly repo: GitRepo;
 	readonly index: Index;
 	readonly treeHash: ObjectId;
 }
 
 export interface CommitMsgEvent {
+	readonly repo: GitRepo;
 	message: string;
 }
 
 export interface MergeMsgEvent {
+	readonly repo: GitRepo;
 	message: string;
 	readonly treeHash: ObjectId;
 	readonly headHash: ObjectId;
@@ -55,6 +74,7 @@ export interface MergeMsgEvent {
 }
 
 export interface PostCommitEvent {
+	readonly repo: GitRepo;
 	readonly hash: ObjectId;
 	readonly message: string;
 	readonly branch: string | null;
@@ -63,6 +83,7 @@ export interface PostCommitEvent {
 }
 
 export interface PreMergeCommitEvent {
+	readonly repo: GitRepo;
 	readonly mergeMessage: string;
 	readonly treeHash: ObjectId;
 	readonly headHash: ObjectId;
@@ -70,6 +91,7 @@ export interface PreMergeCommitEvent {
 }
 
 export interface PostMergeEvent {
+	readonly repo: GitRepo;
 	readonly headHash: ObjectId;
 	readonly theirsHash: ObjectId;
 	readonly strategy: "fast-forward" | "three-way";
@@ -77,12 +99,14 @@ export interface PostMergeEvent {
 }
 
 export interface PostCheckoutEvent {
+	readonly repo: GitRepo;
 	readonly prevHead: ObjectId | null;
 	readonly newHead: ObjectId;
 	readonly isBranchCheckout: boolean;
 }
 
 export interface PrePushEvent {
+	readonly repo: GitRepo;
 	readonly remote: string;
 	readonly url: string;
 	readonly refs: ReadonlyArray<{
@@ -98,16 +122,19 @@ export interface PrePushEvent {
 export type PostPushEvent = PrePushEvent;
 
 export interface PreRebaseEvent {
+	readonly repo: GitRepo;
 	readonly upstream: string;
 	readonly branch: string | null;
 }
 
 export interface PreCheckoutEvent {
+	readonly repo: GitRepo;
 	readonly target: string;
 	readonly mode: "switch" | "detach" | "create-branch" | "paths";
 }
 
 export interface PreFetchEvent {
+	readonly repo: GitRepo;
 	readonly remote: string;
 	readonly url: string;
 	readonly refspecs: readonly string[];
@@ -116,12 +143,14 @@ export interface PreFetchEvent {
 }
 
 export interface PostFetchEvent {
+	readonly repo: GitRepo;
 	readonly remote: string;
 	readonly url: string;
 	readonly refsUpdated: number;
 }
 
 export interface PreCloneEvent {
+	readonly repo?: GitRepo;
 	readonly repository: string;
 	readonly targetPath: string;
 	readonly bare: boolean;
@@ -129,6 +158,7 @@ export interface PreCloneEvent {
 }
 
 export interface PostCloneEvent {
+	readonly repo: GitRepo;
 	readonly repository: string;
 	readonly targetPath: string;
 	readonly bare: boolean;
@@ -136,11 +166,13 @@ export interface PostCloneEvent {
 }
 
 export interface PrePullEvent {
+	readonly repo: GitRepo;
 	readonly remote: string;
 	readonly branch: string | null;
 }
 
 export interface PostPullEvent {
+	readonly repo: GitRepo;
 	readonly remote: string;
 	readonly branch: string | null;
 	readonly strategy: "up-to-date" | "fast-forward" | "three-way";
@@ -148,16 +180,19 @@ export interface PostPullEvent {
 }
 
 export interface PreResetEvent {
+	readonly repo: GitRepo;
 	readonly mode: "soft" | "mixed" | "hard" | "paths";
 	readonly target: string | null;
 }
 
 export interface PostResetEvent {
+	readonly repo: GitRepo;
 	readonly mode: "soft" | "mixed" | "hard" | "paths";
 	readonly targetHash: ObjectId | null;
 }
 
 export interface PreCleanEvent {
+	readonly repo: GitRepo;
 	readonly dryRun: boolean;
 	readonly force: boolean;
 	readonly removeDirs: boolean;
@@ -166,11 +201,13 @@ export interface PreCleanEvent {
 }
 
 export interface PostCleanEvent {
+	readonly repo: GitRepo;
 	readonly removed: readonly string[];
 	readonly dryRun: boolean;
 }
 
 export interface PreRmEvent {
+	readonly repo: GitRepo;
 	readonly paths: readonly string[];
 	readonly cached: boolean;
 	readonly recursive: boolean;
@@ -178,226 +215,232 @@ export interface PreRmEvent {
 }
 
 export interface PostRmEvent {
+	readonly repo: GitRepo;
 	readonly removedPaths: readonly string[];
 	readonly cached: boolean;
 }
 
 export interface PreCherryPickEvent {
+	readonly repo: GitRepo;
 	readonly mode: "pick" | "continue" | "abort";
 	readonly commit: string | null;
 }
 
 export interface PostCherryPickEvent {
+	readonly repo: GitRepo;
 	readonly mode: "pick" | "continue" | "abort";
 	readonly commitHash: ObjectId | null;
 	readonly hadConflicts: boolean;
 }
 
 export interface PreRevertEvent {
+	readonly repo: GitRepo;
 	readonly mode: "revert" | "continue" | "abort";
 	readonly commit: string | null;
 }
 
 export interface PostRevertEvent {
+	readonly repo: GitRepo;
 	readonly mode: "revert" | "continue" | "abort";
 	readonly commitHash: ObjectId | null;
 	readonly hadConflicts: boolean;
 }
 
 export interface PreStashEvent {
+	readonly repo: GitRepo;
 	readonly action: "push" | "pop" | "apply" | "list" | "drop" | "show" | "clear";
 	readonly ref: string | null;
 }
 
 export interface PostStashEvent {
+	readonly repo: GitRepo;
 	readonly action: "push" | "pop" | "apply" | "list" | "drop" | "show" | "clear";
 	readonly ok: boolean;
 }
 
 export interface RefUpdateEvent {
+	readonly repo: GitRepo;
 	readonly ref: string;
 	readonly oldHash: ObjectId | null;
 	readonly newHash: ObjectId;
 }
 
 export interface RefDeleteEvent {
+	readonly repo: GitRepo;
 	readonly ref: string;
 	readonly oldHash: ObjectId | null;
 }
 
 export interface ObjectWriteEvent {
+	readonly repo: GitRepo;
 	readonly type: ObjectType;
 	readonly hash: ObjectId;
 }
 
-// ── Event map ───────────────────────────────────────────────────────
+// ── Command-level events ────────────────────────────────────────────
 
-export interface HookEventMap {
-	"pre-commit": PreCommitEvent;
-	"commit-msg": CommitMsgEvent;
-	"merge-msg": MergeMsgEvent;
-	"post-commit": PostCommitEvent;
-	"pre-merge-commit": PreMergeCommitEvent;
-	"post-merge": PostMergeEvent;
-	"pre-checkout": PreCheckoutEvent;
-	"post-checkout": PostCheckoutEvent;
-	"pre-push": PrePushEvent;
-	"post-push": PostPushEvent;
-	"pre-fetch": PreFetchEvent;
-	"post-fetch": PostFetchEvent;
-	"pre-clone": PreCloneEvent;
-	"post-clone": PostCloneEvent;
-	"pre-pull": PrePullEvent;
-	"post-pull": PostPullEvent;
-	"pre-rebase": PreRebaseEvent;
-	"pre-reset": PreResetEvent;
-	"post-reset": PostResetEvent;
-	"pre-clean": PreCleanEvent;
-	"post-clean": PostCleanEvent;
-	"pre-rm": PreRmEvent;
-	"post-rm": PostRmEvent;
-	"pre-cherry-pick": PreCherryPickEvent;
-	"post-cherry-pick": PostCherryPickEvent;
-	"pre-revert": PreRevertEvent;
-	"post-revert": PostRevertEvent;
-	"pre-stash": PreStashEvent;
-	"post-stash": PostStashEvent;
-	"ref:update": RefUpdateEvent;
-	"ref:delete": RefDeleteEvent;
-	"object:write": ObjectWriteEvent;
-}
-
-type PreHookName =
-	| "pre-commit"
-	| "commit-msg"
-	| "merge-msg"
-	| "pre-merge-commit"
-	| "pre-checkout"
-	| "pre-push"
-	| "pre-fetch"
-	| "pre-clone"
-	| "pre-pull"
-	| "pre-rebase"
-	| "pre-reset"
-	| "pre-clean"
-	| "pre-rm"
-	| "pre-cherry-pick"
-	| "pre-revert"
-	| "pre-stash";
-
-export interface AbortResult {
-	abort: true;
-	message?: string;
-}
-
-export type PreHookHandler<E extends PreHookName> = (
-	event: HookEventMap[E],
-) => void | AbortResult | Promise<void | AbortResult>;
-
-export type PostHookHandler<E extends keyof HookEventMap> = (
-	event: HookEventMap[E],
-) => void | Promise<void>;
-
-export type HookHandler<E extends keyof HookEventMap> = E extends PreHookName
-	? PreHookHandler<E>
-	: PostHookHandler<E>;
-
-// ── Command middleware ──────────────────────────────────────────────
-
-import type { CommandExecOptions } from "./git.ts";
 import type { FileSystem } from "./fs.ts";
 
-export interface CommandEvent {
-	/** The git subcommand being invoked (e.g. "commit", "push"). */
-	command: string | undefined;
-	/** Arguments after the subcommand. */
-	rawArgs: string[];
-	/** Virtual filesystem — same instance custom commands receive from just-bash. */
-	fs: FileSystem;
-	/** Current working directory. */
-	cwd: string;
-	/** Environment variables. */
-	env: Map<string, string>;
-	/** Standard input content. */
-	stdin: string;
-	/** Execute a subcommand in the shell. Available when running via just-bash. */
-	exec?: (command: string, options: CommandExecOptions) => Promise<ExecResult>;
-	/** Abort signal for cooperative cancellation. */
-	signal?: AbortSignal;
+export interface BeforeCommandEvent {
+	readonly command: string;
+	readonly args: string[];
+	readonly fs: FileSystem;
+	readonly cwd: string;
+	readonly env: Map<string, string>;
 }
 
-export type Middleware = (
-	event: CommandEvent,
-	next: () => Promise<ExecResult>,
-) => ExecResult | Promise<ExecResult>;
+export interface AfterCommandEvent {
+	readonly command: string;
+	readonly args: string[];
+	readonly result: ExecResult;
+}
 
-// ── HookEmitter ─────────────────────────────────────────────────────
+// ── GitHooks interface ──────────────────────────────────────────────
 
-type AnyHandler = (event: unknown) => unknown;
+type PreHookReturn = void | Rejection | Promise<void | Rejection>;
+type PostHookReturn = void | Promise<void>;
 
-export class HookEmitter {
-	private listeners = new Map<string, AnyHandler[]>();
-	onError: (error: unknown) => void = () => {};
+export interface GitHooks {
+	preCommit?: (event: PreCommitEvent) => PreHookReturn;
+	commitMsg?: (event: CommitMsgEvent) => PreHookReturn;
+	mergeMsg?: (event: MergeMsgEvent) => PreHookReturn;
+	preMergeCommit?: (event: PreMergeCommitEvent) => PreHookReturn;
+	preCheckout?: (event: PreCheckoutEvent) => PreHookReturn;
+	prePush?: (event: PrePushEvent) => PreHookReturn;
+	preFetch?: (event: PreFetchEvent) => PreHookReturn;
+	preClone?: (event: PreCloneEvent) => PreHookReturn;
+	prePull?: (event: PrePullEvent) => PreHookReturn;
+	preRebase?: (event: PreRebaseEvent) => PreHookReturn;
+	preReset?: (event: PreResetEvent) => PreHookReturn;
+	preClean?: (event: PreCleanEvent) => PreHookReturn;
+	preRm?: (event: PreRmEvent) => PreHookReturn;
+	preCherryPick?: (event: PreCherryPickEvent) => PreHookReturn;
+	preRevert?: (event: PreRevertEvent) => PreHookReturn;
+	preStash?: (event: PreStashEvent) => PreHookReturn;
 
-	on<E extends keyof HookEventMap>(event: E, handler: HookHandler<E>): () => void {
-		const key = event as string;
-		let list = this.listeners.get(key);
-		if (!list) {
-			list = [];
-			this.listeners.set(key, list);
-		}
-		const h = handler as AnyHandler;
-		list.push(h);
-		return () => {
-			const arr = this.listeners.get(key);
-			if (arr) {
-				const idx = arr.indexOf(h);
-				if (idx !== -1) arr.splice(idx, 1);
-			}
-		};
-	}
+	postCommit?: (event: PostCommitEvent) => PostHookReturn;
+	postMerge?: (event: PostMergeEvent) => PostHookReturn;
+	postCheckout?: (event: PostCheckoutEvent) => PostHookReturn;
+	postPush?: (event: PostPushEvent) => PostHookReturn;
+	postFetch?: (event: PostFetchEvent) => PostHookReturn;
+	postClone?: (event: PostCloneEvent) => PostHookReturn;
+	postPull?: (event: PostPullEvent) => PostHookReturn;
+	postReset?: (event: PostResetEvent) => PostHookReturn;
+	postClean?: (event: PostCleanEvent) => PostHookReturn;
+	postRm?: (event: PostRmEvent) => PostHookReturn;
+	postCherryPick?: (event: PostCherryPickEvent) => PostHookReturn;
+	postRevert?: (event: PostRevertEvent) => PostHookReturn;
+	postStash?: (event: PostStashEvent) => PostHookReturn;
 
-	/**
-	 * Emit a pre-hook event. Returns an AbortResult if any handler aborts,
-	 * or null if all handlers allow the operation to proceed.
-	 */
-	async emitPre<E extends PreHookName>(
-		event: E,
-		data: HookEventMap[E],
-	): Promise<AbortResult | null> {
-		const list = this.listeners.get(event as string);
-		if (!list || list.length === 0) return null;
-		for (const handler of list) {
-			const result = await handler(data);
-			if (result && typeof result === "object" && "abort" in result) {
-				return result as AbortResult;
-			}
-		}
-		return null;
-	}
+	onRefUpdate?: (event: RefUpdateEvent) => void;
+	onRefDelete?: (event: RefDeleteEvent) => void;
+	onObjectWrite?: (event: ObjectWriteEvent) => void;
 
-	/** Emit a post-hook event and await all handlers in order. */
-	async emitPost<E extends keyof HookEventMap>(event: E, data: HookEventMap[E]): Promise<void> {
-		const list = this.listeners.get(event as string);
-		if (!list || list.length === 0) return;
-		for (const handler of list) {
-			await handler(data);
-		}
-	}
+	beforeCommand?: (event: BeforeCommandEvent) => PreHookReturn;
+	afterCommand?: (event: AfterCommandEvent) => PostHookReturn;
+}
 
-	/** Emit low-level events (synchronous, fire-and-forget). */
-	emit<E extends keyof HookEventMap>(event: E, data: HookEventMap[E]): void {
-		const list = this.listeners.get(event as string);
-		if (!list || list.length === 0) return;
-		for (const handler of list) {
-			try {
-				const result = handler(data);
-				if (result && typeof result === "object" && "then" in result) {
-					(result as Promise<unknown>).catch(this.onError);
+// ── composeGitHooks ─────────────────────────────────────────────────
+
+const PRE_HOOK_KEYS: (keyof GitHooks)[] = [
+	"preCommit",
+	"preMergeCommit",
+	"preCheckout",
+	"prePush",
+	"preFetch",
+	"preClone",
+	"prePull",
+	"preRebase",
+	"preReset",
+	"preClean",
+	"preRm",
+	"preCherryPick",
+	"preRevert",
+	"preStash",
+	"beforeCommand",
+];
+
+const MUTABLE_MSG_KEYS: (keyof GitHooks)[] = ["commitMsg", "mergeMsg"];
+
+const POST_HOOK_KEYS: (keyof GitHooks)[] = [
+	"postCommit",
+	"postMerge",
+	"postCheckout",
+	"postPush",
+	"postFetch",
+	"postClone",
+	"postPull",
+	"postReset",
+	"postClean",
+	"postRm",
+	"postCherryPick",
+	"postRevert",
+	"postStash",
+	"afterCommand",
+];
+
+const LOW_LEVEL_KEYS: (keyof GitHooks)[] = ["onRefUpdate", "onRefDelete", "onObjectWrite"];
+
+export function composeGitHooks(...hookSets: (GitHooks | undefined)[]): GitHooks {
+	const sets = hookSets.filter((h): h is GitHooks => h != null);
+	if (sets.length === 0) return {};
+	if (sets.length === 1) return sets[0]!;
+
+	const composed: GitHooks = {};
+
+	for (const key of PRE_HOOK_KEYS) {
+		const handlers = sets.filter((s) => s[key]).map((s) => s[key]!);
+		if (handlers.length > 0) {
+			(composed as Record<string, unknown>)[key] = async (event: unknown) => {
+				for (const handler of handlers) {
+					const result = await (handler as (e: unknown) => PreHookReturn)(event);
+					if (isRejection(result)) return result;
 				}
-			} catch (e) {
-				this.onError(e);
-			}
+			};
 		}
 	}
+
+	for (const key of MUTABLE_MSG_KEYS) {
+		const handlers = sets.filter((s) => s[key]).map((s) => s[key]!);
+		if (handlers.length > 0) {
+			(composed as Record<string, unknown>)[key] = async (event: unknown) => {
+				for (const handler of handlers) {
+					const result = await (handler as (e: unknown) => PreHookReturn)(event);
+					if (isRejection(result)) return result;
+				}
+			};
+		}
+	}
+
+	for (const key of POST_HOOK_KEYS) {
+		const handlers = sets.filter((s) => s[key]).map((s) => s[key]!);
+		if (handlers.length > 0) {
+			(composed as Record<string, unknown>)[key] = async (event: unknown) => {
+				for (const handler of handlers) {
+					try {
+						await (handler as (e: unknown) => PostHookReturn)(event);
+					} catch {
+						// fire-and-forget: one handler failing doesn't block the rest
+					}
+				}
+			};
+		}
+	}
+
+	for (const key of LOW_LEVEL_KEYS) {
+		const handlers = sets.filter((s) => s[key]).map((s) => s[key]!);
+		if (handlers.length > 0) {
+			(composed as Record<string, unknown>)[key] = (event: unknown) => {
+				for (const handler of handlers) {
+					try {
+						(handler as (e: unknown) => void)(event);
+					} catch {
+						// fire-and-forget
+					}
+				}
+			};
+		}
+	}
+
+	return composed;
 }

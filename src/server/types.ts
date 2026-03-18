@@ -1,4 +1,5 @@
 import type { GitRepo } from "../lib/types.ts";
+import type { Rejection } from "../hooks.ts";
 
 // ── Server config ───────────────────────────────────────────────────
 
@@ -129,7 +130,4 @@ export interface RefAdvertisement {
 	hash: string;
 }
 
-export interface Rejection {
-	reject: true;
-	message?: string;
-}
+export type { Rejection };

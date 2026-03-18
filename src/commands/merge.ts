@@ -1,4 +1,5 @@
 import type { GitExtensions } from "../git.ts";
+import { isRejection } from "../hooks.ts";
 import {
 	abbreviateHash,
 	ensureTrailingNewline,
@@ -177,7 +178,8 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 						`merge ${branch}: Fast-forward${args.message ? " (no commit created; -m option ignored)" : ""}`,
 						head?.type === "symbolic",
 					);
-					await ext?.hooks?.emitPost("post-merge", {
+					await ext?.hooks?.postMerge?.({
+						repo: gitCtx,
 						headHash,
 						theirsHash,
 						strategy: "fast-forward",
@@ -260,19 +262,17 @@ async function handleThreeWayMerge(
 		await updateRef(gitCtx, "ORIG_HEAD", headHash);
 
 		let mergeMsg = customMessage ?? (await buildMergeMessage(gitCtx, branchName, currentBranch));
-		if (ext?.hooks) {
-			const msgEvent = {
-				message: mergeMsg,
-				treeHash: applyResult.mergedTreeHash,
-				headHash,
-				theirsHash,
-			};
-			const abort = await ext.hooks.emitPre("merge-msg", msgEvent);
-			if (abort) {
-				return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-			}
-			mergeMsg = msgEvent.message;
-		}
+		const msgEventConflict = {
+			repo: gitCtx,
+			message: mergeMsg,
+			treeHash: applyResult.mergedTreeHash,
+			headHash,
+			theirsHash,
+		};
+		const msgRejConflict = await ext?.hooks?.mergeMsg?.(msgEventConflict);
+		if (isRejection(msgRejConflict))
+			return { stdout: "", stderr: msgRejConflict.message ?? "", exitCode: 1 };
+		mergeMsg = msgEventConflict.message;
 		// Build conflict list from index entries with non-zero stages (same as Git)
 		const conflictPaths = getConflictedPaths({
 			version: 2,
@@ -305,32 +305,25 @@ async function handleThreeWayMerge(
 	if (isCommandError(committer)) return committer;
 
 	let mergeMsg = customMessage ?? (await buildMergeMessage(gitCtx, branchName, currentBranch));
-	if (ext?.hooks) {
-		const msgEvent = {
-			message: mergeMsg,
-			treeHash,
-			headHash,
-			theirsHash,
-		};
-		const abort = await ext.hooks.emitPre("merge-msg", msgEvent);
-		if (abort) {
-			return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-		}
-		mergeMsg = msgEvent.message;
-	}
+	const msgEvent = {
+		repo: gitCtx,
+		message: mergeMsg,
+		treeHash,
+		headHash,
+		theirsHash,
+	};
+	const msgRej = await ext?.hooks?.mergeMsg?.(msgEvent);
+	if (isRejection(msgRej)) return { stdout: "", stderr: msgRej.message ?? "", exitCode: 1 };
+	mergeMsg = msgEvent.message;
 
-	// pre-merge-commit hook
-	if (ext?.hooks) {
-		const abort = await ext.hooks.emitPre("pre-merge-commit", {
-			mergeMessage: mergeMsg,
-			treeHash,
-			headHash,
-			theirsHash,
-		});
-		if (abort) {
-			return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-		}
-	}
+	const mcRej = await ext?.hooks?.preMergeCommit?.({
+		repo: gitCtx,
+		mergeMessage: mergeMsg,
+		treeHash,
+		headHash,
+		theirsHash,
+	});
+	if (isRejection(mcRej)) return { stdout: "", stderr: mcRej.message ?? "", exitCode: 1 };
 
 	const commitHash = await writeCommitAndAdvance(
 		gitCtx,
@@ -352,7 +345,8 @@ async function handleThreeWayMerge(
 		head?.type === "symbolic",
 	);
 
-	await ext?.hooks?.emitPost("post-merge", {
+	await ext?.hooks?.postMerge?.({
+		repo: gitCtx,
 		headHash,
 		theirsHash,
 		strategy: "three-way",
@@ -530,31 +524,27 @@ async function handleContinue(
 
 	let message = ensureTrailingNewline(messageText);
 
-	if (ext?.hooks) {
-		const msgEvent = {
-			message,
-			treeHash,
-			headHash,
-			theirsHash: mergeHeadHash,
-		};
-		const abort = await ext.hooks.emitPre("merge-msg", msgEvent);
-		if (abort) {
-			return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-		}
-		message = msgEvent.message;
-	}
+	const msgEventContinue = {
+		repo: gitCtx,
+		message,
+		treeHash,
+		headHash,
+		theirsHash: mergeHeadHash,
+	};
+	const msgRejContinue = await ext?.hooks?.mergeMsg?.(msgEventContinue);
+	if (isRejection(msgRejContinue))
+		return { stdout: "", stderr: msgRejContinue.message ?? "", exitCode: 1 };
+	message = msgEventContinue.message;
 
-	if (ext?.hooks) {
-		const abort = await ext.hooks.emitPre("pre-merge-commit", {
-			mergeMessage: message,
-			treeHash,
-			headHash,
-			theirsHash: mergeHeadHash,
-		});
-		if (abort) {
-			return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-		}
-	}
+	const mcRejContinue = await ext?.hooks?.preMergeCommit?.({
+		repo: gitCtx,
+		mergeMessage: message,
+		treeHash,
+		headHash,
+		theirsHash: mergeHeadHash,
+	});
+	if (isRejection(mcRejContinue))
+		return { stdout: "", stderr: mcRejContinue.message ?? "", exitCode: 1 };
 
 	const commitHash = await writeCommitAndAdvance(
 		gitCtx,
@@ -579,7 +569,8 @@ async function handleContinue(
 		head?.type === "symbolic",
 	);
 
-	await ext?.hooks?.emitPost("post-merge", {
+	await ext?.hooks?.postMerge?.({
+		repo: gitCtx,
 		headHash,
 		theirsHash: mergeHeadHash,
 		strategy: "three-way",

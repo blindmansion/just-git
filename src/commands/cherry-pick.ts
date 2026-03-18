@@ -1,4 +1,5 @@
 import type { GitExtensions } from "../git.ts";
+import { isRejection } from "../hooks.ts";
 import {
 	abbreviateHash,
 	ensureTrailingNewline,
@@ -61,18 +62,18 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 
 			// ── --abort path ──────────────────────────────────────────
 			if (args.abort) {
-				if (ext?.hooks) {
-					const abort = await ext.hooks.emitPre("pre-cherry-pick", {
-						mode: "abort",
-						commit: null,
-					});
-					if (abort) {
-						return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-					}
+				const preCpAbortRej = await ext?.hooks?.preCherryPick?.({
+					repo: gitCtx,
+					mode: "abort",
+					commit: null,
+				});
+				if (isRejection(preCpAbortRej)) {
+					return { stdout: "", stderr: preCpAbortRej.message ?? "", exitCode: 1 };
 				}
 				const result = await handleAbort(gitCtx, ctx.env);
 				if (result.exitCode === 0) {
-					await ext?.hooks?.emitPost("post-cherry-pick", {
+					await ext?.hooks?.postCherryPick?.({
+						repo: gitCtx,
 						mode: "abort",
 						commitHash: null,
 						hadConflicts: false,
@@ -83,18 +84,18 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 
 			// ── --continue path ───────────────────────────────────────
 			if (args.continue) {
-				if (ext?.hooks) {
-					const abort = await ext.hooks.emitPre("pre-cherry-pick", {
-						mode: "continue",
-						commit: null,
-					});
-					if (abort) {
-						return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-					}
+				const preCpContinueRej = await ext?.hooks?.preCherryPick?.({
+					repo: gitCtx,
+					mode: "continue",
+					commit: null,
+				});
+				if (isRejection(preCpContinueRej)) {
+					return { stdout: "", stderr: preCpContinueRej.message ?? "", exitCode: 1 };
 				}
 				const result = await handleContinue(gitCtx, ctx.env);
 				if (result.exitCode === 0) {
-					await ext?.hooks?.emitPost("post-cherry-pick", {
+					await ext?.hooks?.postCherryPick?.({
+						repo: gitCtx,
 						mode: "continue",
 						commitHash: null,
 						hadConflicts: false,
@@ -112,14 +113,13 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 			if (!commitRef) {
 				return fatal("you must specify a commit to cherry-pick");
 			}
-			if (ext?.hooks) {
-				const abort = await ext.hooks.emitPre("pre-cherry-pick", {
-					mode: "pick",
-					commit: commitRef,
-				});
-				if (abort) {
-					return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-				}
+			const preCpPickRej = await ext?.hooks?.preCherryPick?.({
+				repo: gitCtx,
+				mode: "pick",
+				commit: commitRef,
+			});
+			if (isRejection(preCpPickRej)) {
+				return { stdout: "", stderr: preCpPickRej.message ?? "", exitCode: 1 };
 			}
 
 			// Resolve the commit to cherry-pick first (real git validates the
@@ -276,7 +276,8 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 			// ── Handle conflicts ──────────────────────────────────────
 			if (result.conflicts.length > 0) {
 				const mergeOutput = result.messages.join("\n");
-				await ext?.hooks?.emitPost("post-cherry-pick", {
+				await ext?.hooks?.postCherryPick?.({
+					repo: gitCtx,
 					mode: "pick",
 					commitHash: null,
 					hadConflicts: true,
@@ -364,7 +365,8 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 
 			const header = formatCommitOneLiner(branchName, commitHash, cherryPickMessage);
 			const mergeMessages = result.messages.length > 0 ? `${result.messages.join("\n")}\n` : "";
-			await ext?.hooks?.emitPost("post-cherry-pick", {
+			await ext?.hooks?.postCherryPick?.({
+				repo: gitCtx,
 				mode: "pick",
 				commitHash,
 				hadConflicts: false,

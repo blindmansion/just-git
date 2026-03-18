@@ -1,6 +1,6 @@
 import type { GitRepo, Identity } from "../lib/types.ts";
 import type { SqliteDatabase } from "../server/sqlite-storage.ts";
-import type { Rejection } from "../server/types.ts";
+import type { Rejection } from "../hooks.ts";
 
 export type { Rejection };
 

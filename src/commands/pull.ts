@@ -1,4 +1,5 @@
 import type { GitExtensions } from "../git.ts";
+import { isRejection } from "../hooks.ts";
 import {
 	err,
 	fatal,
@@ -92,14 +93,13 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 
 			const { transport, config } = resolved;
 			const pullBranch = remoteBranch ?? null;
-			if (ext?.hooks) {
-				const abort = await ext.hooks.emitPre("pre-pull", {
-					remote: remoteName,
-					branch: pullBranch,
-				});
-				if (abort) {
-					return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-				}
+			const prePullRej = await ext?.hooks?.prePull?.({
+				repo: gitCtx,
+				remote: remoteName,
+				branch: pullBranch,
+			});
+			if (isRejection(prePullRej)) {
+				return { stdout: "", stderr: prePullRej.message ?? "", exitCode: 1 };
 			}
 
 			// ── Fetch phase ──────────────────────────────────────────
@@ -190,7 +190,8 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			const theirsHash = fetchHeadHash;
 
 			if (headHash === theirsHash) {
-				await ext?.hooks?.emitPost("post-pull", {
+				await ext?.hooks?.postPull?.({
+					repo: gitCtx,
 					remote: remoteName,
 					branch: pullBranch,
 					strategy: "up-to-date",
@@ -211,7 +212,8 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			if (baseCommit === theirsHash) {
-				await ext?.hooks?.emitPost("post-pull", {
+				await ext?.hooks?.postPull?.({
+					repo: gitCtx,
 					remote: remoteName,
 					branch: pullBranch,
 					strategy: "up-to-date",
@@ -256,13 +258,15 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					});
 				}
 				if (ffResult.exitCode === 0) {
-					await ext?.hooks?.emitPost("post-merge", {
+					await ext?.hooks?.postMerge?.({
+						repo: gitCtx,
 						headHash,
 						theirsHash,
 						strategy: "fast-forward",
 						commitHash: null,
 					});
-					await ext?.hooks?.emitPost("post-pull", {
+					await ext?.hooks?.postPull?.({
+						repo: gitCtx,
 						remote: remoteName,
 						branch: pullBranch,
 						strategy: "fast-forward",
@@ -323,27 +327,27 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			if (isCommandError(committer)) return committer;
 
 			let mergeMsg = await buildMergeMessage(gitCtx, branchLabel, currentBranch);
-			if (ext?.hooks) {
-				const msgEvent = {
-					message: mergeMsg,
-					treeHash,
-					headHash,
-					theirsHash,
-				};
-				const abort = await ext.hooks.emitPre("merge-msg", msgEvent);
-				if (abort) {
-					return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-				}
-				mergeMsg = msgEvent.message;
-				const mergeAbort = await ext.hooks.emitPre("pre-merge-commit", {
-					mergeMessage: mergeMsg,
-					treeHash,
-					headHash,
-					theirsHash,
-				});
-				if (mergeAbort) {
-					return { stdout: "", stderr: mergeAbort.message ?? "", exitCode: 1 };
-				}
+			const msgEvent = {
+				repo: gitCtx,
+				message: mergeMsg,
+				treeHash,
+				headHash,
+				theirsHash,
+			};
+			const mergeMsgRej = await ext?.hooks?.mergeMsg?.(msgEvent);
+			if (isRejection(mergeMsgRej)) {
+				return { stdout: "", stderr: mergeMsgRej.message ?? "", exitCode: 1 };
+			}
+			mergeMsg = msgEvent.message;
+			const preMergeCommitRej = await ext?.hooks?.preMergeCommit?.({
+				repo: gitCtx,
+				mergeMessage: mergeMsg,
+				treeHash,
+				headHash,
+				theirsHash,
+			});
+			if (isRejection(preMergeCommitRej)) {
+				return { stdout: "", stderr: preMergeCommitRej.message ?? "", exitCode: 1 };
 			}
 			const commitHash = await writeCommitAndAdvance(
 				gitCtx,
@@ -354,13 +358,15 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				mergeMsg,
 			);
 
-			await ext?.hooks?.emitPost("post-merge", {
+			await ext?.hooks?.postMerge?.({
+				repo: gitCtx,
 				headHash,
 				theirsHash,
 				strategy: "three-way",
 				commitHash,
 			});
-			await ext?.hooks?.emitPost("post-pull", {
+			await ext?.hooks?.postPull?.({
+				repo: gitCtx,
 				remote: remoteName,
 				branch: pullBranch,
 				strategy: "three-way",

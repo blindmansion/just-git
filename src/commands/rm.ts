@@ -1,4 +1,5 @@
 import type { GitExtensions } from "../git.ts";
+import { isRejection } from "../hooks.ts";
 import {
 	err,
 	fatal,
@@ -44,16 +45,15 @@ export function registerRmCommand(parent: Command, ext?: GitExtensions) {
 			const cached = args.cached;
 			const recursive = args.recursive;
 			const force = args.force;
-			if (ext?.hooks) {
-				const abort = await ext.hooks.emitPre("pre-rm", {
-					paths,
-					cached,
-					recursive,
-					force,
-				});
-				if (abort) {
-					return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-				}
+			const preRmRej = await ext?.hooks?.preRm?.({
+				repo: gitCtx,
+				paths,
+				cached,
+				recursive,
+				force,
+			});
+			if (isRejection(preRmRej)) {
+				return { stdout: "", stderr: preRmRej.message ?? "", exitCode: 1 };
 			}
 
 			let index = await readIndex(gitCtx);
@@ -146,7 +146,8 @@ export function registerRmCommand(parent: Command, ext?: GitExtensions) {
 
 			await writeIndex(gitCtx, index);
 			const stdout = removedLines.length > 0 ? `${removedLines.join("\n")}\n` : "";
-			await ext?.hooks?.emitPost("post-rm", {
+			await ext?.hooks?.postRm?.({
+				repo: gitCtx,
 				removedPaths: entriesToRemove,
 				cached,
 			});

@@ -1,25 +1,34 @@
 import { describe, expect, test } from "bun:test";
+import { Bash } from "just-bash";
+import { createGit } from "../../src/git";
+import type { GitHooks } from "../../src/hooks";
 import { BASIC_REPO } from "../fixtures";
-import { createHookBash } from "./helpers";
+import { createHookBash, TEST_ENV } from "./helpers";
 
 describe("command lifecycle emissions", () => {
 	test("clone emits pre/post clone events", async () => {
-		const { bash, git } = createHookBash({
-			files: { "/origin/README.md": "# hi" },
+		let preTarget = "";
+		let postBranch: string | null = null;
+
+		const hooks: GitHooks = {
+			preClone: (event) => {
+				preTarget = event.targetPath;
+			},
+			postClone: (event) => {
+				postBranch = event.branch;
+			},
+		};
+
+		const git = createGit({ hooks });
+		const bash = new Bash({
 			cwd: "/origin",
+			files: { "/origin/README.md": "# hi" },
+			customCommands: [git],
+			env: TEST_ENV,
 		});
 		await bash.exec("git init");
 		await bash.exec("git add .");
 		await bash.exec('git commit -m "init"');
-
-		let preTarget = "";
-		let postBranch: string | null = null;
-		git.on("pre-clone", (event) => {
-			preTarget = event.targetPath;
-		});
-		git.on("post-clone", (event) => {
-			postBranch = event.branch;
-		});
 
 		const result = await bash.exec("git clone /origin /copy", { cwd: "/" });
 		expect(result.exitCode).toBe(0);
@@ -27,21 +36,26 @@ describe("command lifecycle emissions", () => {
 		expect(postBranch as unknown as string).toBe("main");
 	});
 
-	test("fetch emits pre-fetch and can abort", async () => {
-		const { bash, git } = createHookBash({
-			files: { "/remote/README.md": "# hello" },
+	test("fetch emits pre-fetch and can reject", async () => {
+		let seenRemote = "";
+		const hooks: GitHooks = {
+			preFetch: (event) => {
+				seenRemote = event.remote;
+				return { reject: true, message: "no fetch" };
+			},
+		};
+
+		const git = createGit({ hooks });
+		const bash = new Bash({
 			cwd: "/remote",
+			files: { "/remote/README.md": "# hello" },
+			customCommands: [git],
+			env: TEST_ENV,
 		});
 		await bash.exec("git init");
 		await bash.exec("git add .");
 		await bash.exec('git commit -m "init"');
 		await bash.exec("git clone /remote /local", { cwd: "/" });
-
-		let seenRemote = "";
-		git.on("pre-fetch", (event) => {
-			seenRemote = event.remote;
-			return { abort: true, message: "no fetch" };
-		});
 
 		const result = await bash.exec("git fetch origin", { cwd: "/local" });
 		expect(result.exitCode).toBe(1);
@@ -50,20 +64,22 @@ describe("command lifecycle emissions", () => {
 	});
 
 	test("reset emits pre/post reset", async () => {
-		const { bash, git } = createHookBash({ files: BASIC_REPO });
+		let mode = "";
+		let targetHash = "";
+		const hooks: GitHooks = {
+			preReset: (event) => {
+				mode = event.mode;
+			},
+			postReset: (event) => {
+				targetHash = event.targetHash ?? "";
+			},
+		};
+
+		const { bash } = createHookBash({ files: BASIC_REPO }, { hooks });
 		await bash.exec("git init");
 		await bash.exec("git add .");
 		await bash.exec('git commit -m "init"');
 		await bash.exec("echo 'x' >> /repo/README.md");
-
-		let mode = "";
-		let targetHash = "";
-		git.on("pre-reset", (event) => {
-			mode = event.mode;
-		});
-		git.on("post-reset", (event) => {
-			targetHash = event.targetHash ?? "";
-		});
 
 		const result = await bash.exec("git reset --hard HEAD");
 		expect(result.exitCode).toBe(0);
@@ -71,8 +87,15 @@ describe("command lifecycle emissions", () => {
 		expect(targetHash).toHaveLength(40);
 	});
 
-	test("clean/rm/stash/cherry-pick pre hooks can abort", async () => {
-		const { bash, git } = createHookBash({ files: BASIC_REPO });
+	test("clean/rm/stash/cherry-pick pre hooks can reject", async () => {
+		const hooks: GitHooks = {
+			preClean: () => ({ reject: true, message: "stop clean" }),
+			preRm: () => ({ reject: true, message: "stop rm" }),
+			preStash: () => ({ reject: true, message: "stop stash" }),
+			preCherryPick: () => ({ reject: true, message: "stop cherry-pick" }),
+		};
+
+		const { bash } = createHookBash({ files: BASIC_REPO }, { hooks });
 		await bash.exec("git init");
 		await bash.exec("git add .");
 		await bash.exec('git commit -m "init"');
@@ -85,14 +108,6 @@ describe("command lifecycle emissions", () => {
 		await bash.exec("git add feat.txt");
 		await bash.exec('git commit -m "feat"');
 		await bash.exec("git checkout main");
-
-		git.on("pre-clean", () => ({ abort: true, message: "stop clean" }));
-		git.on("pre-rm", () => ({ abort: true, message: "stop rm" }));
-		git.on("pre-stash", () => ({ abort: true, message: "stop stash" }));
-		git.on("pre-cherry-pick", () => ({
-			abort: true,
-			message: "stop cherry-pick",
-		}));
 
 		const clean = await bash.exec("git clean -f");
 		expect(clean.stderr).toBe("stop clean");

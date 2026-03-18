@@ -42,23 +42,22 @@ import { createGit } from "../src";
 	console.log("Disabled commands: blocked as expected");
 }
 
-// ── Middleware: audit log ───────────────────────────────────────────
+// ── beforeCommand: audit log ────────────────────────────────────────
 
 {
 	const auditLog: { command: string; args: readonly string[]; exitCode: number }[] = [];
 
 	const git = createGit({
 		identity: { name: "Alice", email: "alice@example.com" },
-	});
-
-	git.use(async (event, next) => {
-		const result = await next();
-		auditLog.push({
-			command: `git ${event.command}`,
-			args: event.rawArgs,
-			exitCode: result.exitCode,
-		});
-		return result;
+		hooks: {
+			afterCommand: ({ command, args, result }) => {
+				auditLog.push({
+					command: `git ${command}`,
+					args,
+					exitCode: result.exitCode,
+				});
+			},
+		},
 	});
 
 	const bash = new Bash({ cwd: "/repo", customCommands: [git] });
@@ -68,21 +67,21 @@ import { createGit } from "../src";
 	console.assert(auditLog.length === 2, "should have 2 audit entries");
 	console.assert(auditLog[0]?.command === "git init", "first should be init");
 	console.assert(auditLog[1]?.command === "git status", "second should be status");
-	console.log("Middleware audit log:", auditLog.map((e) => e.command).join(", "));
+	console.log("Audit log:", auditLog.map((e) => e.command).join(", "));
 }
 
-// ── Middleware: gate pushes ─────────────────────────────────────────
+// ── beforeCommand: gate pushes ──────────────────────────────────────
 
 {
 	const git = createGit({
 		identity: { name: "Alice", email: "alice@example.com" },
-	});
-
-	git.use(async (event, next) => {
-		if (event.command === "push") {
-			return { stdout: "", stderr: "Push blocked — awaiting approval.\n", exitCode: 1 };
-		}
-		return next();
+		hooks: {
+			beforeCommand: ({ command }) => {
+				if (command === "push") {
+					return { reject: true, message: "Push blocked — awaiting approval.\n" };
+				}
+			},
+		},
 	});
 
 	const bash = new Bash({ cwd: "/repo", customCommands: [git] });
@@ -90,27 +89,27 @@ import { createGit } from "../src";
 	const r = await bash.exec("git push origin main");
 	console.assert(r.exitCode === 1, "push should be blocked");
 	console.assert(r.stderr.includes("awaiting approval"), "should have approval message");
-	console.log("Middleware gate:", r.stderr.trim());
+	console.log("Gate push:", r.stderr.trim());
 }
 
-// ── Middleware: block large files (uses event.fs) ───────────────────
+// ── beforeCommand: block large files (uses event.fs) ────────────────
 
 {
 	const git = createGit({
 		identity: { name: "Alice", email: "alice@example.com" },
-	});
-
-	git.use(async (event, next) => {
-		if (event.command === "add") {
-			for (const path of event.rawArgs.filter((a) => !a.startsWith("-"))) {
-				const resolved = path.startsWith("/") ? path : `${event.cwd}/${path}`;
-				const stat = await event.fs.stat(resolved).catch(() => null);
-				if (stat && stat.size > 5_000_000) {
-					return { stdout: "", stderr: `Blocked: ${path} exceeds 5 MB\n`, exitCode: 1 };
+		hooks: {
+			beforeCommand: async ({ command, args, fs, cwd }) => {
+				if (command === "add") {
+					for (const path of args.filter((a) => !a.startsWith("-"))) {
+						const resolved = path.startsWith("/") ? path : `${cwd}/${path}`;
+						const stat = await fs.stat(resolved).catch(() => null);
+						if (stat && stat.size > 5_000_000) {
+							return { reject: true, message: `Blocked: ${path} exceeds 5 MB\n` };
+						}
+					}
 				}
-			}
-		}
-		return next();
+			},
+		},
 	});
 
 	const bash = new Bash({ cwd: "/repo", customCommands: [git] });
@@ -126,7 +125,7 @@ import { createGit } from "../src";
 	const blocked = await bash.exec("git add huge.bin");
 	console.assert(blocked.exitCode === 1, "large file should be blocked");
 	console.assert(blocked.stderr.includes("exceeds 5 MB"), "should mention size limit");
-	console.log("Middleware large file block:", blocked.stderr.trim());
+	console.log("Large file block:", blocked.stderr.trim());
 }
 
 // ── Pre-hook: block secrets ─────────────────────────────────────────
@@ -134,13 +133,14 @@ import { createGit } from "../src";
 {
 	const git = createGit({
 		identity: { name: "Alice", email: "alice@example.com" },
-	});
-
-	git.on("pre-commit", (event) => {
-		const forbidden = event.index.entries.filter((e) => /\.(env|pem|key)$/.test(e.path));
-		if (forbidden.length) {
-			return { abort: true, message: `Blocked: ${forbidden.map((e) => e.path).join(", ")}` };
-		}
+		hooks: {
+			preCommit: ({ index }) => {
+				const forbidden = index.entries.filter((e) => /\.(env|pem|key)$/.test(e.path));
+				if (forbidden.length) {
+					return { reject: true, message: `Blocked: ${forbidden.map((e) => e.path).join(", ")}` };
+				}
+			},
+		},
 	});
 
 	const bash = new Bash({ cwd: "/repo", customCommands: [git] });
@@ -158,12 +158,16 @@ import { createGit } from "../src";
 {
 	const git = createGit({
 		identity: { name: "Alice", email: "alice@example.com" },
-	});
-
-	git.on("commit-msg", (event) => {
-		if (!/^(feat|fix|docs|refactor|test|chore)(\(.+\))?:/.test(event.message)) {
-			return { abort: true, message: "Commit message must follow conventional commits format" };
-		}
+		hooks: {
+			commitMsg: (event) => {
+				if (!/^(feat|fix|docs|refactor|test|chore)(\(.+\))?:/.test(event.message)) {
+					return {
+						reject: true,
+						message: "Commit message must follow conventional commits format",
+					};
+				}
+			},
+		},
 	});
 
 	const bash = new Bash({ cwd: "/repo", customCommands: [git] });
@@ -186,10 +190,11 @@ import { createGit } from "../src";
 
 	const git = createGit({
 		identity: { name: "Alice", email: "alice@example.com" },
-	});
-
-	git.on("post-commit", (event) => {
-		commits.push({ hash: event.hash, branch: event.branch, message: event.message });
+		hooks: {
+			postCommit: (event) => {
+				commits.push({ hash: event.hash, branch: event.branch, message: event.message });
+			},
+		},
 	});
 
 	const bash = new Bash({ cwd: "/repo", customCommands: [git] });

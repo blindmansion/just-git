@@ -1,4 +1,5 @@
 import type { GitExtensions } from "../git.ts";
+import { isRejection } from "../hooks.ts";
 import {
 	abbreviateHash,
 	err,
@@ -152,23 +153,20 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			// pre-push hook
-			if (ext?.hooks) {
-				const abort = await ext.hooks.emitPre("pre-push", {
-					remote: remoteName,
-					url: config.url,
-					refs: updates.map((u) => ({
-						srcRef: u.newHash === ZERO_HASH ? null : u.name,
-						srcHash: u.newHash === ZERO_HASH ? null : u.newHash,
-						dstRef: u.name,
-						dstHash: u.oldHash,
-						force: !!u.ok,
-						delete: u.newHash === ZERO_HASH,
-					})),
-				});
-				if (abort) {
-					return err(abort.message ?? "");
-				}
-			}
+			const prePushRej = await ext?.hooks?.prePush?.({
+				repo: gitCtx,
+				remote: remoteName,
+				url: config.url,
+				refs: updates.map((u) => ({
+					srcRef: u.newHash === ZERO_HASH ? null : u.name,
+					srcHash: u.newHash === ZERO_HASH ? null : u.newHash,
+					dstRef: u.name,
+					dstHash: u.oldHash,
+					force: !!u.ok,
+					delete: u.newHash === ZERO_HASH,
+				})),
+			});
+			if (isRejection(prePushRej)) return err(prePushRej.message ?? "");
 
 			// Execute the push
 			const result = await transport.push(updates);
@@ -222,7 +220,8 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				exitCode: hasError ? 1 : 0,
 			};
 			if (!hasError) {
-				await ext?.hooks?.emitPost("post-push", {
+				await ext?.hooks?.postPush?.({
+					repo: gitCtx,
 					remote: remoteName,
 					url: config.url,
 					refs: updates.map((u) => ({

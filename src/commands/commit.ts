@@ -1,4 +1,5 @@
 import type { GitExtensions } from "../git.ts";
+import { isRejection } from "../hooks.ts";
 import {
 	ensureTrailingNewline,
 	err,
@@ -204,15 +205,8 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 			const treeHash = await buildTreeFromIndex(gitCtx, stage0Entries);
 
 			// pre-commit hook
-			if (ext?.hooks) {
-				const abort = await ext.hooks.emitPre("pre-commit", {
-					index,
-					treeHash,
-				});
-				if (abort) {
-					return err(abort.message ?? "");
-				}
-			}
+			const rej = await ext?.hooks?.preCommit?.({ repo: gitCtx, index, treeHash });
+			if (isRejection(rej)) return err(rej.message ?? "");
 
 			const allowEmpty = args.allowEmpty;
 
@@ -324,14 +318,10 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 			let message = ensureTrailingNewline(messageText);
 
 			// commit-msg hook
-			if (ext?.hooks) {
-				const msgEvent = { message };
-				const abort = await ext.hooks.emitPre("commit-msg", msgEvent);
-				if (abort) {
-					return err(abort.message ?? "");
-				}
-				message = msgEvent.message;
-			}
+			const msgEvent = { repo: gitCtx, message };
+			const msgRej = await ext?.hooks?.commitMsg?.(msgEvent);
+			if (isRejection(msgRej)) return err(msgRej.message ?? "");
+			message = msgEvent.message;
 
 			// Build parents list
 			let parents: string[];
@@ -414,7 +404,8 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 			await deleteStateFile(gitCtx, "SQUASH_MSG");
 
 			// post-commit hook
-			await ext?.hooks?.emitPost("post-commit", {
+			await ext?.hooks?.postCommit?.({
+				repo: gitCtx,
 				hash: commitHash,
 				message,
 				branch: head?.type === "symbolic" ? branchNameFromRef(head.target) : null,

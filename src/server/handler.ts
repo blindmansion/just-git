@@ -5,6 +5,7 @@
  * Cloudflare Workers, or any framework that speaks fetch API.
  */
 
+import { isRejection } from "../hooks.ts";
 import {
 	PackCache,
 	buildRefAdvertisementBytes,
@@ -16,7 +17,6 @@ import { buildReportStatus } from "./protocol.ts";
 import type {
 	GitServerConfig,
 	GitServer,
-	Rejection,
 	RefUpdate,
 	ServerHooks,
 	RefAdvertisement,
@@ -247,10 +247,6 @@ function extractRepoPath(pathname: string, suffix: string): string {
 		repoPath = repoPath.slice(1);
 	}
 	return repoPath;
-}
-
-function isRejection(value: void | Rejection | undefined): value is Rejection {
-	return value != null && typeof value === "object" && "reject" in value && value.reject === true;
 }
 
 async function readRequestBody(req: Request): Promise<Uint8Array> {

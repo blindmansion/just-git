@@ -1,4 +1,5 @@
 import type { GitExtensions } from "../git.ts";
+import { isRejection } from "../hooks.ts";
 import {
 	abbreviateHash,
 	type CommandResult,
@@ -425,14 +426,13 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			// pre-rebase hook
-			if (ext?.hooks) {
-				const abort = await ext.hooks.emitPre("pre-rebase", {
-					upstream: upstreamArg,
-					branch: head?.type === "symbolic" ? branchNameFromRef(head.target) : null,
-				});
-				if (abort) {
-					return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-				}
+			const preRebaseRej = await ext?.hooks?.preRebase?.({
+				repo: gitCtx,
+				upstream: upstreamArg,
+				branch: head?.type === "symbolic" ? branchNameFromRef(head.target) : null,
+			});
+			if (isRejection(preRebaseRej)) {
+				return { stdout: "", stderr: preRebaseRej.message ?? "", exitCode: 1 };
 			}
 
 			// ── Compute commit range ─────────────────────────────────

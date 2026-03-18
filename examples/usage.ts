@@ -1,12 +1,12 @@
 /**
  * Runnable example showing how a sandbox operator wires up
- * just-git with hooks, middleware, credentials, and identity.
+ * just-git with hooks, credentials, and identity.
  *
  * Run: bun examples/usage.ts
  */
 
 import { Bash, type BashExecResult } from "just-bash";
-import { createGit } from "../src";
+import { createGit, composeGitHooks } from "../src";
 
 const ENV = {
 	GIT_AUTHOR_NAME: "Test",
@@ -117,31 +117,30 @@ console.log(`  Without env vars: ${fb2Author?.trim()}`);
 console.log("\n═══ 5. Operation hooks ═══");
 
 {
-	const g = createGit();
+	const g = createGit({
+		hooks: {
+			preCommit: ({ index }) => {
+				const forbidden = index.entries.some((e) => e.path.includes(".env"));
+				if (forbidden) {
+					return { reject: true, message: "Cannot commit .env files" };
+				}
+			},
 
-	// Block commits containing .env files
-	g.on("pre-commit", (event) => {
-		const forbidden = event.index.entries.some((e) => e.path.includes(".env"));
-		if (forbidden) {
-			return { abort: true, message: "Cannot commit .env files" };
-		}
-	});
+			commitMsg: (event) => {
+				if (!event.message.match(/^(feat|fix|docs|chore|refactor):/)) {
+					return {
+						reject: true,
+						message: "Message must start with feat:/fix:/docs:/chore:/refactor:",
+					};
+				}
+			},
 
-	// Enforce conventional commits
-	g.on("commit-msg", (event) => {
-		if (!event.message.match(/^(feat|fix|docs|chore|refactor):/)) {
-			return {
-				abort: true,
-				message: "Message must start with feat:/fix:/docs:/chore:/refactor:",
-			};
-		}
-	});
-
-	// Log commits
-	g.on("post-commit", (event) => {
-		console.log(
-			`  [post-commit] ${event.hash.slice(0, 7)} on ${event.branch}: "${event.message.trim()}"`,
-		);
+			postCommit: (event) => {
+				console.log(
+					`  [post-commit] ${event.hash.slice(0, 7)} on ${event.branch}: "${event.message.trim()}"`,
+				);
+			},
+		},
 	});
 
 	const b = new Bash({
@@ -155,11 +154,11 @@ console.log("\n═══ 5. Operation hooks ═══");
 	await b.exec("echo 'x' > app.ts && git add .");
 	print("feat commit", await b.exec('git commit -m "feat: add app"'));
 
-	// Bad message → rejected by commit-msg hook
+	// Bad message → rejected by commitMsg hook
 	await b.exec("echo 'y' > lib.ts && git add .");
 	print("bad message", await b.exec('git commit -m "added lib"'));
 
-	// .env file → rejected by pre-commit hook
+	// .env file → rejected by preCommit hook
 	await b.exec("echo 'SECRET=x' > .env && git add .");
 	print(".env blocked", await b.exec('git commit -m "feat: add config"'));
 }
@@ -168,10 +167,12 @@ console.log("\n═══ 5. Operation hooks ═══");
 console.log("\n═══ 6. Commit message mutation ═══");
 
 {
-	const g = createGit();
-
-	g.on("commit-msg", (event) => {
-		event.message = `[auto-prefix] ${event.message}`;
+	const g = createGit({
+		hooks: {
+			commitMsg: (event) => {
+				event.message = `[auto-prefix] ${event.message}`;
+			},
+		},
 	});
 
 	const b = new Bash({
@@ -181,26 +182,28 @@ console.log("\n═══ 6. Commit message mutation ═══");
 	});
 	await b.exec("git init && echo 'x' > f.txt && git add .");
 	await b.exec('git commit -m "original message"');
-	const log = await b.exec("git log --oneline -1");
-	print("mutated log", log);
+	const log2 = await b.exec("git log --oneline -1");
+	print("mutated log", log2);
 }
 
 // ─── 7. Low-level events ───────────────────────────────────────────────────
 console.log("\n═══ 7. Low-level events ═══");
 
 {
-	const g = createGit();
 	const refs: string[] = [];
 	const objects: string[] = [];
 
-	g.on("ref:update", (event) => {
-		refs.push(
-			`${event.ref}: ${event.oldHash?.slice(0, 7) ?? "(new)"} → ${event.newHash.slice(0, 7)}`,
-		);
-	});
-
-	g.on("object:write", (event) => {
-		objects.push(`${event.type}:${event.hash.slice(0, 7)}`);
+	const g = createGit({
+		hooks: {
+			onRefUpdate: (event) => {
+				refs.push(
+					`${event.ref}: ${event.oldHash?.slice(0, 7) ?? "(new)"} → ${event.newHash.slice(0, 7)}`,
+				);
+			},
+			onObjectWrite: (event) => {
+				objects.push(`${event.type}:${event.hash.slice(0, 7)}`);
+			},
+		},
 	});
 
 	const b = new Bash({
@@ -214,61 +217,62 @@ console.log("\n═══ 7. Low-level events ═══");
 	console.log(`  Ref updates: ${refs.join(", ")}`);
 }
 
-// ─── 8. Command middleware ──────────────────────────────────────────────────
-console.log("\n═══ 8. Command middleware ═══");
+// ─── 8. beforeCommand / afterCommand hooks ──────────────────────────────────
+console.log("\n═══ 8. Command-level hooks ═══");
 
 {
-	const g = createGit();
-	const log: string[] = [];
+	const log3: string[] = [];
 
-	// Timing middleware
-	g.use(async (event, next) => {
-		const start = performance.now();
-		const result = await next();
-		const ms = (performance.now() - start).toFixed(2);
-		console.log(`  [timing] git ${event.command} → ${ms}ms`);
-		return result;
-	});
-
-	// Telemetry middleware
-	g.use(async (event, next) => {
-		const result = await next();
-		log.push(`git ${event.command} → exit ${result.exitCode}`);
-		return result;
+	const g = createGit({
+		hooks: {
+			beforeCommand: ({ command }) => {
+				console.log(`  [before] git ${command} starting`);
+			},
+			afterCommand: ({ command, result }) => {
+				log3.push(`git ${command} → exit ${result.exitCode}`);
+			},
+		},
 	});
 
 	const b = new Bash({ cwd: "/mw", env: ENV, customCommands: [g] });
 	await b.exec("git init");
 	await b.exec("echo 'x' > f.txt && git add . && git commit -m 'test'");
-	console.log(`  Telemetry: ${log.join(", ")}`);
+	console.log(`  Telemetry: ${log3.join(", ")}`);
 }
 
-// ─── 9. Dynamic hook management ────────────────────────────────────────────
-console.log("\n═══ 9. Dynamic hook management ═══");
+// ─── 9. composeGitHooks ─────────────────────────────────────────────────────
+console.log("\n═══ 9. composeGitHooks ═══");
 
 {
-	const g = createGit();
-	const commits: string[] = [];
+	const auditEntries: string[] = [];
+	const policyRejections: string[] = [];
 
-	const unsub = g.on("post-commit", (event) => {
-		commits.push(event.hash.slice(0, 7));
+	const auditHooks = {
+		postCommit: ({ hash, message }: { hash: string; message: string }) => {
+			auditEntries.push(`${hash.slice(0, 7)}: ${message.trim()}`);
+		},
+	};
+
+	const policyHooks = {
+		preCommit: ({ index }: { index: { entries: { path: string }[] } }) => {
+			if (index.entries.some((e) => e.path.endsWith(".env"))) {
+				policyRejections.push(".env blocked");
+				return { reject: true as const, message: "No .env files allowed" };
+			}
+		},
+	};
+
+	const g = createGit({
+		hooks: composeGitHooks(auditHooks, policyHooks),
 	});
 
-	const b = new Bash({
-		cwd: "/dynamic",
-		env: ENV,
-		customCommands: [g],
-	});
+	const b = new Bash({ cwd: "/compose", env: ENV, customCommands: [g] });
 	await b.exec("git init");
+	await b.exec("echo 'x' > app.ts && git add . && git commit -m 'good commit'");
+	await b.exec("echo 'SECRET' > .env && git add . && git commit -m 'bad commit'");
 
-	await b.exec("echo 'a' > a.txt && git add . && git commit -m 'first'");
-	console.log(`  After commit 1: captured = [${commits.join(", ")}]`);
-
-	// Unsubscribe — second commit won't be captured
-	unsub();
-
-	await b.exec("echo 'b' > b.txt && git add . && git commit -m 'second'");
-	console.log(`  After commit 2: captured = [${commits.join(", ")}] (unchanged — hook removed)`);
+	console.log(`  Audit entries: ${auditEntries.join(", ")}`);
+	console.log(`  Policy rejections: ${policyRejections.join(", ")}`);
 }
 
 // ─── 10. Combined: full sandbox setup ───────────────────────────────────────
@@ -281,30 +285,24 @@ console.log("\n═══ 10. Full sandbox ═══");
 	const g = createGit({
 		identity: { name: "Agent", email: "agent@sandbox.dev", locked: true },
 		disabled: ["rebase", "remote", "push", "fetch", "pull", "clone"],
-	});
-
-	g.on("pre-commit", (event) => {
-		const hasSecrets = event.index.entries.some(
-			(e) => e.path.endsWith(".env") || e.path.includes("credentials"),
-		);
-		if (hasSecrets) {
-			return {
-				abort: true,
-				message: "Blocked: secret files cannot be committed",
-			};
-		}
-	});
-
-	g.on("post-commit", (event) => {
-		auditLog.push(
-			`${event.hash.slice(0, 7)} by ${event.author.name} <${event.author.email}>: ${event.message}`,
-		);
-	});
-
-	g.use(async (event, next) => {
-		const result = await next();
-		telemetry.push(`git ${event.command} → exit ${result.exitCode}`);
-		return result;
+		hooks: {
+			preCommit: ({ index }) => {
+				const hasSecrets = index.entries.some(
+					(e) => e.path.endsWith(".env") || e.path.includes("credentials"),
+				);
+				if (hasSecrets) {
+					return { reject: true, message: "Blocked: secret files cannot be committed" };
+				}
+			},
+			postCommit: (event) => {
+				auditLog.push(
+					`${event.hash.slice(0, 7)} by ${event.author.name} <${event.author.email}>: ${event.message}`,
+				);
+			},
+			afterCommand: ({ command, result }) => {
+				telemetry.push(`git ${command} → exit ${result.exitCode}`);
+			},
+		},
 	});
 
 	const b = new Bash({
