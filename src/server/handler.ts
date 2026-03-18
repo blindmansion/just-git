@@ -6,6 +6,7 @@
  */
 
 import {
+	PackCache,
 	buildRefAdvertisementBytes,
 	collectRefs,
 	handleUploadPack,
@@ -33,6 +34,11 @@ import type {
  */
 export function createGitServer(config: GitServerConfig): GitServer {
 	const { resolveRepo, hooks, basePath } = config;
+
+	const packCache =
+		config.packCache === false
+			? undefined
+			: new PackCache(config.packCache?.maxBytes);
 
 	return {
 		async fetch(req: Request): Promise<Response> {
@@ -88,30 +94,33 @@ export function createGitServer(config: GitServerConfig): GitServer {
 					});
 				}
 
-				// ── git-upload-pack ─────────────────────────────────
-				if (pathname.endsWith("/git-upload-pack") && req.method === "POST") {
-					const repoPath = extractRepoPath(pathname, "/git-upload-pack");
-					const repoOrResponse = await resolveRepo(repoPath, req);
-					if (repoOrResponse instanceof Response) return repoOrResponse;
-					if (!repoOrResponse) return new Response("Not Found", { status: 404 });
-					const repo = repoOrResponse;
+			// ── git-upload-pack ─────────────────────────────────
+			if (pathname.endsWith("/git-upload-pack") && req.method === "POST") {
+				const repoPath = extractRepoPath(pathname, "/git-upload-pack");
+				const repoOrResponse = await resolveRepo(repoPath, req);
+				if (repoOrResponse instanceof Response) return repoOrResponse;
+				if (!repoOrResponse) return new Response("Not Found", { status: 404 });
+				const repo = repoOrResponse;
 
-					const body = new Uint8Array(await req.arrayBuffer());
-					const responseBody = await handleUploadPack(repo, body);
-					return new Response(responseBody, {
-						headers: { "Content-Type": "application/x-git-upload-pack-result" },
-					});
-				}
+				const body = await readRequestBody(req);
+				const responseBody = await handleUploadPack(repo, body, {
+					cache: packCache,
+					cacheKey: repoPath,
+				});
+				return new Response(responseBody, {
+					headers: { "Content-Type": "application/x-git-upload-pack-result" },
+				});
+			}
 
-				// ── git-receive-pack ────────────────────────────────
-				if (pathname.endsWith("/git-receive-pack") && req.method === "POST") {
-					const repoPath = extractRepoPath(pathname, "/git-receive-pack");
-					const repoOrResponse = await resolveRepo(repoPath, req);
-					if (repoOrResponse instanceof Response) return repoOrResponse;
-					if (!repoOrResponse) return new Response("Not Found", { status: 404 });
-					const repo = repoOrResponse;
+			// ── git-receive-pack ────────────────────────────────
+			if (pathname.endsWith("/git-receive-pack") && req.method === "POST") {
+				const repoPath = extractRepoPath(pathname, "/git-receive-pack");
+				const repoOrResponse = await resolveRepo(repoPath, req);
+				if (repoOrResponse instanceof Response) return repoOrResponse;
+				if (!repoOrResponse) return new Response("Not Found", { status: 404 });
+				const repo = repoOrResponse;
 
-					const body = new Uint8Array(await req.arrayBuffer());
+				const body = await readRequestBody(req);
 					const { updates, unpackOk, capabilities } = await ingestReceivePack(repo, body);
 
 					const useSideband = capabilities.includes("side-band-64k");
@@ -221,10 +230,11 @@ export function createGitServer(config: GitServerConfig): GitServer {
 					});
 				}
 
-				return new Response("Not Found", { status: 404 });
-			} catch {
-				return new Response("Internal Server Error", { status: 500 });
-			}
+			return new Response("Not Found", { status: 404 });
+		} catch (err) {
+			console.error("  [server] Internal error:", err);
+			return new Response("Internal Server Error", { status: 500 });
+		}
 		},
 	};
 }
@@ -241,6 +251,19 @@ function extractRepoPath(pathname: string, suffix: string): string {
 
 function isRejection(value: void | Rejection | undefined): value is Rejection {
 	return value != null && typeof value === "object" && "reject" in value && value.reject === true;
+}
+
+async function readRequestBody(req: Request): Promise<Uint8Array> {
+	const raw = new Uint8Array(await req.arrayBuffer());
+	const encoding = req.headers.get("content-encoding");
+	if (encoding === "gzip" || encoding === "x-gzip") {
+		const ds = new DecompressionStream("gzip");
+		const writer = ds.writable.getWriter();
+		writer.write(raw);
+		writer.close();
+		return new Uint8Array(await new Response(ds.readable).arrayBuffer());
+	}
+	return raw;
 }
 
 /**

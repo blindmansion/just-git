@@ -22,6 +22,18 @@ export interface GitServerConfig {
 
 	/** Base path prefix to strip from URLs (e.g. "/git"). */
 	basePath?: string;
+
+	/**
+	 * Cache generated packfiles for identical full-clone requests.
+	 *
+	 * When enabled, the server caches the computed pack data for each
+	 * (repo, wants) pair where no `have` lines are sent. Subsequent
+	 * clones of the same ref state are served from cache, skipping
+	 * object enumeration, delta computation, and compression.
+	 *
+	 * Set to `false` to disable. Default: enabled with 256 MB limit.
+	 */
+	packCache?: false | { maxBytes?: number };
 }
 
 export interface GitServer {

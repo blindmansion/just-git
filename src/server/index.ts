@@ -3,12 +3,14 @@ export { createGitServer, composeHooks } from "./handler.ts";
 
 // Server operations (used internally by handler, exposed for custom transports)
 export {
+	PackCache,
 	buildRefAdvertisementBytes,
 	collectRefs,
 	handleUploadPack,
 	ingestReceivePack,
 	type ReceivePackResult,
 	type RefsData,
+	type UploadPackOptions,
 } from "./operations.ts";
 
 // Types

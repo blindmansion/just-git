@@ -191,6 +191,7 @@ class SqliteObjectStore implements ObjectStore {
 		const numObjects = view.getUint32(8);
 		if (numObjects === 0) return 0;
 
+		const tParse0 = performance.now();
 		const entries = await readPack(packData, async (hash) => {
 			const row = this.stmts.objRead.get(this.repoId, hash) as {
 				type: string;
@@ -199,13 +200,25 @@ class SqliteObjectStore implements ObjectStore {
 			if (!row) return null;
 			return { type: row.type as ObjectType, content: new Uint8Array(row.content) };
 		});
+		const tParse1 = performance.now();
+
 		const rows = entries.map((entry) => ({
 			repoId: this.repoId,
 			hash: entry.hash,
 			type: entry.type,
 			content: entry.content,
 		}));
+
+		const totalBytes = rows.reduce((s, r) => s + r.content.byteLength, 0);
+
+		const tInsert0 = performance.now();
 		this.ingestTx(rows);
+		const tInsert1 = performance.now();
+
+		console.log(
+			`    [sqlite] readPack ${(tParse1 - tParse0).toFixed(0)}ms, insert ${entries.length} objects (${(totalBytes / 1024).toFixed(0)} KB) in ${(tInsert1 - tInsert0).toFixed(0)}ms`,
+		);
+
 		return entries.length;
 	}
 
