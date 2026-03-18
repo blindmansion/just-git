@@ -42,6 +42,7 @@ export type {
 
 // Helpers
 export {
+	checkoutTo,
 	createCommit,
 	diffTrees,
 	findMergeBases,
@@ -60,6 +61,7 @@ export {
 	resolveRef,
 	writeBlob,
 	writeTree,
+	type CheckoutToResult,
 	type CommitEntry,
 	type CreateCommitOptions,
 	type MergeConflict,

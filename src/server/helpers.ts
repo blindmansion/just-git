@@ -21,10 +21,13 @@ import {
 } from "../lib/object-db.ts";
 import { serializeCommit } from "../lib/objects/commit.ts";
 import { serializeTree } from "../lib/objects/tree.ts";
+import { dirname, join } from "../lib/path.ts";
 import { resolveRef as _resolveRef, listRefs } from "../lib/refs.ts";
+import { isSymlinkMode } from "../lib/symlink.ts";
 import { diffTrees as _diffTrees, flattenTree as _flattenTree } from "../lib/tree-ops.ts";
 import type { FlatTreeEntry } from "../lib/tree-ops.ts";
 import type { Commit, GitRepo, Identity, RefEntry, TreeDiffEntry } from "../lib/types.ts";
+import type { FileSystem } from "../fs.ts";
 
 export type { CommitEntry } from "../lib/commit-walk.ts";
 export type { MergeConflict } from "../lib/merge.ts";
@@ -260,4 +263,71 @@ export async function readFileAtCommit(
 	const entry = entries.find((e) => e.path === filePath);
 	if (!entry) return null;
 	return readBlobContent(repo, entry.hash);
+}
+
+// ── Checkout to filesystem ──────────────────────────────────────────
+
+const HEX40 = /^[0-9a-f]{40}$/;
+
+export interface CheckoutToResult {
+	commitHash: string;
+	treeHash: string;
+	filesWritten: number;
+}
+
+/**
+ * Materialize the worktree of a commit onto an arbitrary filesystem.
+ *
+ * Accepts a ref name ("HEAD", "refs/heads/main") or a raw commit hash.
+ * Writes all tracked files under `targetDir` (default "/"). No `.git`
+ * directory is created — just the working tree.
+ *
+ * Useful inside server hooks and platform callbacks to inspect, build,
+ * or lint the code at a given commit without affecting the repo itself.
+ */
+export async function checkoutTo(
+	repo: GitRepo,
+	refOrHash: string,
+	fs: FileSystem,
+	targetDir = "/",
+): Promise<CheckoutToResult> {
+	let commitHash = await _resolveRef(repo, refOrHash);
+	if (!commitHash) {
+		if (HEX40.test(refOrHash) && (await repo.objectStore.exists(refOrHash))) {
+			commitHash = refOrHash;
+		} else {
+			throw new Error(`ref or commit '${refOrHash}' not found`);
+		}
+	}
+
+	const commit = await _readCommit(repo, commitHash);
+	const entries = await _flattenTree(repo, commit.tree);
+
+	const createdDirs = new Set<string>();
+	let filesWritten = 0;
+
+	for (const entry of entries) {
+		const fullPath = join(targetDir, entry.path);
+		const dir = dirname(fullPath);
+
+		if (dir !== targetDir && !createdDirs.has(dir)) {
+			await fs.mkdir(dir, { recursive: true });
+			createdDirs.add(dir);
+		}
+
+		if (isSymlinkMode(entry.mode)) {
+			const target = await readBlobContent(repo, entry.hash);
+			if (fs.symlink) {
+				await fs.symlink(target, fullPath);
+			} else {
+				await fs.writeFile(fullPath, target);
+			}
+		} else {
+			const content = await readBlobBytes(repo, entry.hash);
+			await fs.writeFile(fullPath, content);
+		}
+		filesWritten++;
+	}
+
+	return { commitHash, treeHash: commit.tree, filesWritten };
 }
