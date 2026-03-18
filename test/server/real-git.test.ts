@@ -1,55 +1,19 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
 import { findGitDir } from "../../src/lib/repo.ts";
 import type { GitContext } from "../../src/lib/types.ts";
-import { createGitServer } from "../../src/server/handler.ts";
-
-const TEST_ENV = {
-	GIT_AUTHOR_NAME: "Test",
-	GIT_AUTHOR_EMAIL: "test@test.com",
-	GIT_COMMITTER_NAME: "Test",
-	GIT_COMMITTER_EMAIL: "test@test.com",
-	GIT_AUTHOR_DATE: "1000000000",
-	GIT_COMMITTER_DATE: "1000000000",
-};
-
-function envAt(ts: number) {
-	return { ...TEST_ENV, GIT_AUTHOR_DATE: String(ts), GIT_COMMITTER_DATE: String(ts) };
-}
-
-async function realGit(cwd: string, command: string, extraEnv?: Record<string, string>) {
-	const env: Record<string, string> = {
-		PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/local/bin",
-		HOME: realGitHome,
-		GIT_CONFIG_NOSYSTEM: "1",
-		GIT_CONFIG_GLOBAL: "/dev/null",
-		GIT_PROTOCOL_VERSION: "1",
-		GIT_AUTHOR_NAME: "Real Git",
-		GIT_AUTHOR_EMAIL: "real@test.com",
-		GIT_COMMITTER_NAME: "Real Git",
-		GIT_COMMITTER_EMAIL: "real@test.com",
-		...extraEnv,
-	};
-	const proc = Bun.spawn(["sh", "-c", `git ${command}`], {
-		cwd,
-		env,
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	const [stdout, stderr, exitCode] = await Promise.all([
-		new Response(proc.stdout).text(),
-		new Response(proc.stderr).text(),
-		proc.exited,
-	]);
-	return { stdout, stderr, exitCode };
-}
-
-let realGitHome: string;
+import {
+	envAt,
+	realGit,
+	createRealGitHome,
+	createSandbox,
+	createServerClient,
+	startServer,
+} from "./util.ts";
 
 describe("server with real git client", () => {
 	let srv: ReturnType<typeof Bun.serve>;
@@ -57,9 +21,10 @@ describe("server with real git client", () => {
 	let serverBash: Bash;
 	let serverRepo: GitContext;
 	let port: number;
+	let home: string;
 
 	beforeAll(async () => {
-		realGitHome = await mkdtemp(join(tmpdir(), "just-git-server-home-"));
+		home = await createRealGitHome();
 
 		serverFs = new InMemoryFs();
 		const git = createGit();
@@ -82,21 +47,25 @@ describe("server with real git client", () => {
 		if (!ctx) throw new Error("failed to find git dir");
 		serverRepo = ctx;
 
-		const server = createGitServer({ resolveRepo: async () => serverRepo });
-		srv = Bun.serve({ fetch: server.fetch, port: 0 });
-		port = srv.port!;
+		const s = startServer({ resolveRepo: async () => serverRepo });
+		srv = s.srv;
+		port = s.port;
 	});
 
 	afterAll(async () => {
 		srv?.stop();
-		if (realGitHome) await rm(realGitHome, { recursive: true, force: true });
+		if (home) await rm(home, { recursive: true, force: true });
 	});
 
 	test("clone from server", async () => {
-		const sandbox = await mkdtemp(join(tmpdir(), "just-git-realclient-"));
+		const sandbox = await createSandbox("just-git-realclient-");
 		try {
 			const cloneDir = join(sandbox, "local");
-			const result = await realGit(sandbox, `clone http://localhost:${port}/repo ${cloneDir}`);
+			const result = await realGit(
+				home,
+				sandbox,
+				`clone http://localhost:${port}/repo ${cloneDir}`,
+			);
 			expect(result.exitCode).toBe(0);
 
 			expect(readFileSync(join(cloneDir, "README.md"), "utf8")).toBe("# Hello World");
@@ -106,12 +75,10 @@ describe("server with real git client", () => {
 			const head = readFileSync(join(cloneDir, ".git/HEAD"), "utf8").trim();
 			expect(head).toBe("ref: refs/heads/main");
 
-			// Verify tag was fetched
-			const tagResult = await realGit(cloneDir, "tag -l");
+			const tagResult = await realGit(home, cloneDir, "tag -l");
 			expect(tagResult.stdout).toContain("v1.0");
 
-			// Verify remote tracking
-			const branchResult = await realGit(cloneDir, "branch -r");
+			const branchResult = await realGit(home, cloneDir, "branch -r");
 			expect(branchResult.stdout).toContain("origin/main");
 		} finally {
 			await rm(sandbox, { recursive: true, force: true });
@@ -119,19 +86,19 @@ describe("server with real git client", () => {
 	});
 
 	test("push to server", async () => {
-		const sandbox = await mkdtemp(join(tmpdir(), "just-git-realclient-"));
+		const sandbox = await createSandbox("just-git-realclient-");
 		try {
 			const cloneDir = join(sandbox, "local");
-			await realGit(sandbox, `clone http://localhost:${port}/repo ${cloneDir}`);
+			await realGit(home, sandbox, `clone http://localhost:${port}/repo ${cloneDir}`);
 
 			const mainBefore = await serverRepo.refStore.readRef("refs/heads/main");
 			const hashBefore = mainBefore?.type === "direct" ? mainBefore.hash : null;
 
 			writeFileSync(join(cloneDir, "pushed.txt"), "from real git");
-			await realGit(cloneDir, "add .");
-			await realGit(cloneDir, 'commit -m "push from real git"');
+			await realGit(home, cloneDir, "add .");
+			await realGit(home, cloneDir, 'commit -m "push from real git"');
 
-			const pushResult = await realGit(cloneDir, "push origin main");
+			const pushResult = await realGit(home, cloneDir, "push origin main");
 			expect(pushResult.exitCode).toBe(0);
 
 			const mainAfter = await serverRepo.refStore.readRef("refs/heads/main");
@@ -145,12 +112,12 @@ describe("server with real git client", () => {
 	});
 
 	test("fetch from server after new server-side commit", async () => {
-		const sandbox = await mkdtemp(join(tmpdir(), "just-git-realclient-"));
+		const sandbox = await createSandbox("just-git-realclient-");
 		try {
 			const cloneDir = join(sandbox, "local");
-			await realGit(sandbox, `clone http://localhost:${port}/repo ${cloneDir}`);
+			await realGit(home, sandbox, `clone http://localhost:${port}/repo ${cloneDir}`);
 
-			const trackingBefore = await realGit(cloneDir, "rev-parse origin/main");
+			const trackingBefore = await realGit(home, cloneDir, "rev-parse origin/main");
 
 			await serverBash.writeFile("/repo/server-change.txt", "from server");
 			await serverBash.exec("git add .");
@@ -158,13 +125,13 @@ describe("server with real git client", () => {
 				env: envAt(1000001000),
 			});
 
-			const fetchResult = await realGit(cloneDir, "fetch origin");
+			const fetchResult = await realGit(home, cloneDir, "fetch origin");
 			expect(fetchResult.exitCode).toBe(0);
 
-			const trackingAfter = await realGit(cloneDir, "rev-parse origin/main");
+			const trackingAfter = await realGit(home, cloneDir, "rev-parse origin/main");
 			expect(trackingAfter.stdout.trim()).not.toBe(trackingBefore.stdout.trim());
 
-			const logResult = await realGit(cloneDir, "log origin/main --oneline -3");
+			const logResult = await realGit(home, cloneDir, "log origin/main --oneline -3");
 			expect(logResult.stdout).toContain("server commit for real-git");
 		} finally {
 			await rm(sandbox, { recursive: true, force: true });
@@ -172,17 +139,17 @@ describe("server with real git client", () => {
 	});
 
 	test("push new branch to server", async () => {
-		const sandbox = await mkdtemp(join(tmpdir(), "just-git-realclient-"));
+		const sandbox = await createSandbox("just-git-realclient-");
 		try {
 			const cloneDir = join(sandbox, "local");
-			await realGit(sandbox, `clone http://localhost:${port}/repo ${cloneDir}`);
+			await realGit(home, sandbox, `clone http://localhost:${port}/repo ${cloneDir}`);
 
-			await realGit(cloneDir, "checkout -b real-git-branch");
+			await realGit(home, cloneDir, "checkout -b real-git-branch");
 			writeFileSync(join(cloneDir, "branch-file.txt"), "branch content");
-			await realGit(cloneDir, "add .");
-			await realGit(cloneDir, 'commit -m "new branch from real git"');
+			await realGit(home, cloneDir, "add .");
+			await realGit(home, cloneDir, 'commit -m "new branch from real git"');
 
-			const pushResult = await realGit(cloneDir, "push origin real-git-branch");
+			const pushResult = await realGit(home, cloneDir, "push origin real-git-branch");
 			expect(pushResult.exitCode).toBe(0);
 
 			const newBranch = await serverRepo.refStore.readRef("refs/heads/real-git-branch");
@@ -197,12 +164,12 @@ describe("server with real git client", () => {
 		const before = await serverRepo.refStore.readRef("refs/heads/feature");
 		expect(before).not.toBeNull();
 
-		const sandbox = await mkdtemp(join(tmpdir(), "just-git-realclient-"));
+		const sandbox = await createSandbox("just-git-realclient-");
 		try {
 			const cloneDir = join(sandbox, "local");
-			await realGit(sandbox, `clone http://localhost:${port}/repo ${cloneDir}`);
+			await realGit(home, sandbox, `clone http://localhost:${port}/repo ${cloneDir}`);
 
-			const deleteResult = await realGit(cloneDir, "push origin --delete feature");
+			const deleteResult = await realGit(home, cloneDir, "push origin --delete feature");
 			expect(deleteResult.exitCode).toBe(0);
 
 			const after = await serverRepo.refStore.readRef("refs/heads/feature");
@@ -213,12 +180,10 @@ describe("server with real git client", () => {
 	});
 
 	test("just-git client can fetch after real git pushes", async () => {
-		const sandbox = await mkdtemp(join(tmpdir(), "just-git-realclient-"));
+		const sandbox = await createSandbox("just-git-realclient-");
 		try {
-			// Clone with just-git first
-			const clientFs = new InMemoryFs();
-			const jgGit = createGit();
-			const jgClient = new Bash({ fs: clientFs, cwd: "/", customCommands: [jgGit] });
+			const jgClient = createServerClient();
+			const clientFs = jgClient.fs as InMemoryFs;
 
 			await jgClient.exec(`git clone http://localhost:${port}/repo /local`, {
 				env: envAt(1000002000),
@@ -226,16 +191,14 @@ describe("server with real git client", () => {
 
 			const trackingBefore = await clientFs.readFile("/local/.git/refs/remotes/origin/main");
 
-			// Push from real git
 			const cloneDir = join(sandbox, "local");
-			await realGit(sandbox, `clone http://localhost:${port}/repo ${cloneDir}`);
+			await realGit(home, sandbox, `clone http://localhost:${port}/repo ${cloneDir}`);
 			writeFileSync(join(cloneDir, "cross-test.txt"), "real git wrote this");
-			await realGit(cloneDir, "add .");
-			await realGit(cloneDir, 'commit -m "cross-pollination commit"');
-			const pushResult = await realGit(cloneDir, "push origin main");
+			await realGit(home, cloneDir, "add .");
+			await realGit(home, cloneDir, 'commit -m "cross-pollination commit"');
+			const pushResult = await realGit(home, cloneDir, "push origin main");
 			expect(pushResult.exitCode).toBe(0);
 
-			// Fetch from just-git
 			const fetchResult = await jgClient.exec("git fetch origin", { cwd: "/local" });
 			expect(fetchResult.exitCode).toBe(0);
 
@@ -252,17 +215,13 @@ describe("server with real git client", () => {
 	});
 
 	test("real git can fetch after just-git pushes", async () => {
-		const sandbox = await mkdtemp(join(tmpdir(), "just-git-realclient-"));
+		const sandbox = await createSandbox("just-git-realclient-");
 		try {
-			// Clone with real git first
 			const cloneDir = join(sandbox, "local");
-			await realGit(sandbox, `clone http://localhost:${port}/repo ${cloneDir}`);
-			const trackingBefore = await realGit(cloneDir, "rev-parse origin/main");
+			await realGit(home, sandbox, `clone http://localhost:${port}/repo ${cloneDir}`);
+			const trackingBefore = await realGit(home, cloneDir, "rev-parse origin/main");
 
-			// Push from just-git
-			const clientFs = new InMemoryFs();
-			const jgGit = createGit();
-			const jgClient = new Bash({ fs: clientFs, cwd: "/", customCommands: [jgGit] });
+			const jgClient = createServerClient();
 
 			await jgClient.exec(`git clone http://localhost:${port}/repo /jg-local`, {
 				env: envAt(1000003000),
@@ -276,14 +235,13 @@ describe("server with real git client", () => {
 			const pushResult = await jgClient.exec("git push origin main", { cwd: "/jg-local" });
 			expect(pushResult.exitCode).toBe(0);
 
-			// Fetch from real git
-			const fetchResult = await realGit(cloneDir, "fetch origin");
+			const fetchResult = await realGit(home, cloneDir, "fetch origin");
 			expect(fetchResult.exitCode).toBe(0);
 
-			const trackingAfter = await realGit(cloneDir, "rev-parse origin/main");
+			const trackingAfter = await realGit(home, cloneDir, "rev-parse origin/main");
 			expect(trackingAfter.stdout.trim()).not.toBe(trackingBefore.stdout.trim());
 
-			const logResult = await realGit(cloneDir, "log origin/main --oneline -3");
+			const logResult = await realGit(home, cloneDir, "log origin/main --oneline -3");
 			expect(logResult.stdout).toContain("just-git push for cross test");
 		} finally {
 			await rm(sandbox, { recursive: true, force: true });

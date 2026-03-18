@@ -4,21 +4,8 @@ import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
 import { findGitDir } from "../../src/lib/repo.ts";
 import type { GitContext } from "../../src/lib/types.ts";
-import { createGitServer } from "../../src/server/handler.ts";
 import { SqliteStorage } from "../../src/server/sqlite-storage.ts";
-
-const TEST_ENV = {
-	GIT_AUTHOR_NAME: "Test",
-	GIT_AUTHOR_EMAIL: "test@test.com",
-	GIT_COMMITTER_NAME: "Test",
-	GIT_COMMITTER_EMAIL: "test@test.com",
-	GIT_AUTHOR_DATE: "1000000000",
-	GIT_COMMITTER_DATE: "1000000000",
-};
-
-function envAt(ts: number) {
-	return { ...TEST_ENV, GIT_AUTHOR_DATE: String(ts), GIT_COMMITTER_DATE: String(ts) };
-}
+import { envAt, createServerClient, startServer } from "./util.ts";
 
 // ── Concurrent HTTP pushes to a VFS-backed server ────────────────────
 
@@ -42,22 +29,16 @@ describe("concurrent push safety (VFS-backed server)", () => {
 		if (!ctx) throw new Error("failed to find git dir");
 		serverRepo = ctx;
 
-		const server = createGitServer({ resolveRepo: async () => serverRepo });
-		srv = Bun.serve({ fetch: server.fetch, port: 0 });
-		port = srv.port!;
+		const s = startServer({ resolveRepo: async () => serverRepo });
+		srv = s.srv;
+		port = s.port;
 	});
 
 	afterAll(() => srv?.stop());
 
-	function createClient() {
-		const fs = new InMemoryFs();
-		const git = createGit();
-		return new Bash({ fs, cwd: "/", customCommands: [git] });
-	}
-
 	test("concurrent pushes to same ref — one wins, one gets rejected", async () => {
-		const alice = createClient();
-		const bob = createClient();
+		const alice = createServerClient();
+		const bob = createServerClient();
 
 		await alice.exec(`git clone http://localhost:${port}/repo /local`, { env: envAt(1000000100) });
 		await bob.exec(`git clone http://localhost:${port}/repo /local`, { env: envAt(1000000100) });
@@ -83,8 +64,8 @@ describe("concurrent push safety (VFS-backed server)", () => {
 	});
 
 	test("concurrent pushes to different refs both succeed", async () => {
-		const alice = createClient();
-		const bob = createClient();
+		const alice = createServerClient();
+		const bob = createServerClient();
 
 		await alice.exec(`git clone http://localhost:${port}/repo /local`, { env: envAt(1000000400) });
 		await bob.exec(`git clone http://localhost:${port}/repo /local`, { env: envAt(1000000400) });
@@ -145,12 +126,11 @@ describe("concurrent push safety (SQLite-backed server)", () => {
 		await pushBash.exec("git remote add origin sqlite://test");
 		await pushBash.exec("git push origin main", { env: envAt(1000000000) });
 
-		const server = createGitServer({
+		const s = startServer({
 			resolveRepo: async (path) => storage.repo(path),
 		});
-
-		srv = Bun.serve({ fetch: server.fetch, port: 0 });
-		port = srv.port!;
+		srv = s.srv;
+		port = s.port;
 	});
 
 	afterAll(() => {
@@ -158,15 +138,9 @@ describe("concurrent push safety (SQLite-backed server)", () => {
 		db?.close();
 	});
 
-	function createClient() {
-		const fs = new InMemoryFs();
-		const git = createGit();
-		return new Bash({ fs, cwd: "/", customCommands: [git] });
-	}
-
 	test("concurrent HTTP pushes to same SQLite ref — CAS rejects loser", async () => {
-		const alice = createClient();
-		const bob = createClient();
+		const alice = createServerClient();
+		const bob = createServerClient();
 
 		await alice.exec(`git clone http://localhost:${port}/test /local`, { env: envAt(1000000100) });
 		await bob.exec(`git clone http://localhost:${port}/test /local`, { env: envAt(1000000100) });
@@ -223,12 +197,11 @@ describe("cross-path push safety (resolveRemote + HTTP)", () => {
 		await pushBash.exec("git remote add origin sqlite://shared");
 		await pushBash.exec("git push origin main", { env: envAt(1000000000) });
 
-		const server = createGitServer({
+		const s = startServer({
 			resolveRepo: async (path) => storage.repo(path),
 		});
-
-		srv = Bun.serve({ fetch: server.fetch, port: 0 });
-		port = srv.port!;
+		srv = s.srv;
+		port = s.port;
 	});
 
 	afterAll(() => {
@@ -237,7 +210,6 @@ describe("cross-path push safety (resolveRemote + HTTP)", () => {
 	});
 
 	test("resolveRemote push + HTTP push to same ref — one rejected", async () => {
-		// Agent pushes via resolveRemote (LocalTransport)
 		const agentFs = new InMemoryFs();
 		const agentGit = createGit({
 			resolveRemote: () => storage.repo("shared"),
@@ -246,17 +218,13 @@ describe("cross-path push safety (resolveRemote + HTTP)", () => {
 		await agent.exec(`git clone http://localhost:${port}/shared /local`, {
 			env: envAt(1000000100),
 		});
-		// Reconfigure remote to use resolveRemote path
 		await agent.exec("git remote set-url origin local://shared", { cwd: "/local" });
 
 		await agent.writeFile("/local/agent.txt", "from agent");
 		await agent.exec("git add .", { cwd: "/local" });
 		await agent.exec('git commit -m "agent"', { cwd: "/local", env: envAt(1000000200) });
 
-		// HTTP client pushes at the same time
-		const httpFs = new InMemoryFs();
-		const httpGit = createGit();
-		const httpClient = new Bash({ fs: httpFs, cwd: "/", customCommands: [httpGit] });
+		const httpClient = createServerClient();
 		await httpClient.exec(`git clone http://localhost:${port}/shared /local`, {
 			env: envAt(1000000100),
 		});
