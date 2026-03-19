@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { $ } from "bun";
+import { readFileSync, writeFileSync } from "fs";
+import { join } from "path";
 import { createSandbox, jg, justBash, realGit, removeSandbox, writeToSandbox } from "./util";
 
 describe("interop: config cross-reading", () => {
@@ -11,10 +13,10 @@ describe("interop: config cross-reading", () => {
 	afterAll(() => removeSandbox(sandbox));
 
 	test("real git sets config, just-git reads it", async () => {
-		await realGit(sandbox, "config set user.name 'Real Author'");
-		await realGit(sandbox, "config set user.email 'real@author.com'");
-		await realGit(sandbox, "config set core.autocrlf false");
-		await realGit(sandbox, "config set custom.mykey myvalue");
+		await realGit(sandbox, "config user.name 'Real Author'");
+		await realGit(sandbox, "config user.email 'real@author.com'");
+		await realGit(sandbox, "config core.autocrlf false");
+		await realGit(sandbox, "config custom.mykey myvalue");
 
 		const b = justBash(sandbox);
 		const r1 = await jg(b, "git config get user.name");
@@ -38,11 +40,11 @@ describe("interop: config cross-reading", () => {
 		await jg(b, "git config set jg.testkey testvalue");
 		await jg(b, "git config set jg.number 42");
 
-		const r1 = await realGit(sandbox, "config get jg.testkey");
+		const r1 = await realGit(sandbox, "config --get jg.testkey");
 		expect(r1.exitCode).toBe(0);
 		expect(r1.stdout.trim()).toBe("testvalue");
 
-		const r2 = await realGit(sandbox, "config get jg.number");
+		const r2 = await realGit(sandbox, "config --get jg.number");
 		expect(r2.stdout.trim()).toBe("42");
 	});
 
@@ -70,9 +72,9 @@ describe("interop: config file format preservation", () => {
 	afterAll(() => removeSandbox(sandbox));
 
 	test("raw config readable after real git writes subsections", async () => {
-		await realGit(sandbox, "config set merge.ff only");
-		await realGit(sandbox, "config set branch.main.remote origin");
-		await realGit(sandbox, "config set branch.main.merge refs/heads/main");
+		await realGit(sandbox, "config merge.ff only");
+		await realGit(sandbox, "config branch.main.remote origin");
+		await realGit(sandbox, "config branch.main.merge refs/heads/main");
 
 		const b = justBash(sandbox);
 		const r = await jg(b, "git config get merge.ff");
@@ -87,31 +89,31 @@ describe("interop: config file format preservation", () => {
 		const b = justBash(sandbox);
 		await jg(b, "git config set alias.co checkout");
 
-		const r1 = await realGit(sandbox, "config get merge.ff");
+		const r1 = await realGit(sandbox, "config --get merge.ff");
 		expect(r1.exitCode).toBe(0);
 
-		const r2 = await realGit(sandbox, "config get branch.main.remote");
+		const r2 = await realGit(sandbox, "config --get branch.main.remote");
 		expect(r2.exitCode).toBe(0);
 
-		const r3 = await realGit(sandbox, "config get alias.co");
+		const r3 = await realGit(sandbox, "config --get alias.co");
 		expect(r3.exitCode).toBe(0);
 		expect(r3.stdout.trim()).toBe("checkout");
 	});
 
 	test("config survives multiple interleaved writes", async () => {
-		await realGit(sandbox, "config set real.key1 val1");
+		await realGit(sandbox, "config real.key1 val1");
 		const b1 = justBash(sandbox);
 		await jg(b1, "git config set jg.key1 jval1");
-		await realGit(sandbox, "config set real.key2 val2");
+		await realGit(sandbox, "config real.key2 val2");
 		const b2 = justBash(sandbox);
 		await jg(b2, "git config set jg.key2 jval2");
-		await realGit(sandbox, "config set real.key3 val3");
+		await realGit(sandbox, "config real.key3 val3");
 
-		const r1 = await realGit(sandbox, "config get real.key1");
+		const r1 = await realGit(sandbox, "config --get real.key1");
 		expect(r1.stdout.trim()).toBe("val1");
-		const r2 = await realGit(sandbox, "config get jg.key1");
+		const r2 = await realGit(sandbox, "config --get jg.key1");
 		expect(r2.stdout.trim()).toBe("jval1");
-		const r3 = await realGit(sandbox, "config get real.key3");
+		const r3 = await realGit(sandbox, "config --get real.key3");
 		expect(r3.stdout.trim()).toBe("val3");
 
 		const b3 = justBash(sandbox);
@@ -125,8 +127,8 @@ describe("interop: config unset", () => {
 	beforeAll(async () => {
 		sandbox = createSandbox();
 		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
-		await realGit(sandbox, "config set test.key1 value1");
-		await realGit(sandbox, "config set test.key2 value2");
+		await realGit(sandbox, "config test.key1 value1");
+		await realGit(sandbox, "config test.key2 value2");
 	});
 	afterAll(() => removeSandbox(sandbox));
 
@@ -135,15 +137,15 @@ describe("interop: config unset", () => {
 		const r = await jg(b, "git config unset test.key1");
 		expect(r.exitCode).toBe(0);
 
-		const check = await realGit(sandbox, "config get test.key1");
+		const check = await realGit(sandbox, "config --get test.key1");
 		expect(check.exitCode).not.toBe(0);
 
-		const check2 = await realGit(sandbox, "config get test.key2");
+		const check2 = await realGit(sandbox, "config --get test.key2");
 		expect(check2.stdout.trim()).toBe("value2");
 	});
 
 	test("real git unsets config, just-git confirms", async () => {
-		await realGit(sandbox, "config unset test.key2");
+		await realGit(sandbox, "config --unset test.key2");
 
 		const b = justBash(sandbox);
 		const r = await jg(b, "git config get test.key2");
@@ -201,8 +203,8 @@ describe("interop: subsection config (remotes, branches)", () => {
 	});
 
 	test("real git sets branch tracking, just-git reads", async () => {
-		await realGit(sandbox, "config set branch.main.remote origin");
-		await realGit(sandbox, "config set branch.main.merge refs/heads/main");
+		await realGit(sandbox, "config branch.main.remote origin");
+		await realGit(sandbox, "config branch.main.merge refs/heads/main");
 
 		const b = justBash(sandbox);
 		const r = await jg(b, "git config get branch.main.remote");
@@ -214,7 +216,7 @@ describe("interop: subsection config (remotes, branches)", () => {
 		const b = justBash(sandbox);
 		await jg(b, "git config set branch.main.rebase true");
 
-		const r = await realGit(sandbox, "config get branch.main.rebase");
+		const r = await realGit(sandbox, "config --get branch.main.rebase");
 		expect(r.exitCode).toBe(0);
 		expect(r.stdout.trim()).toBe("true");
 	});
@@ -229,7 +231,7 @@ describe("interop: edge-case config values", () => {
 	afterAll(() => removeSandbox(sandbox));
 
 	test("config value with spaces", async () => {
-		await realGit(sandbox, "config set user.name 'First Middle Last'");
+		await realGit(sandbox, "config user.name 'First Middle Last'");
 		const b = justBash(sandbox);
 		const r = await jg(b, "git config get user.name");
 		expect(r.exitCode).toBe(0);
@@ -237,7 +239,7 @@ describe("interop: edge-case config values", () => {
 	});
 
 	test("config value with special characters", async () => {
-		await realGit(sandbox, "config set test.url 'https://example.com/path?q=1&b=2'");
+		await realGit(sandbox, "config test.url 'https://example.com/path?q=1&b=2'");
 		const b = justBash(sandbox);
 		const r = await jg(b, "git config get test.url");
 		expect(r.exitCode).toBe(0);
@@ -245,7 +247,7 @@ describe("interop: edge-case config values", () => {
 	});
 
 	test("config value with equals sign", async () => {
-		await realGit(sandbox, "config set test.expr 'a=b=c'");
+		await realGit(sandbox, "config test.expr 'a=b=c'");
 		const b = justBash(sandbox);
 		const r = await jg(b, "git config get test.expr");
 		expect(r.exitCode).toBe(0);
@@ -253,8 +255,8 @@ describe("interop: edge-case config values", () => {
 	});
 
 	test("boolean config values", async () => {
-		await realGit(sandbox, "config set core.bare false");
-		await realGit(sandbox, "config set core.ignorecase true");
+		await realGit(sandbox, "config core.bare false");
+		await realGit(sandbox, "config core.ignorecase true");
 
 		const b = justBash(sandbox);
 		const r1 = await jg(b, "git config get core.bare");
@@ -264,5 +266,134 @@ describe("interop: edge-case config values", () => {
 		const r2 = await jg(b, "git config get core.ignorecase");
 		expect(r2.exitCode).toBe(0);
 		expect(r2.stdout.trim()).toBe("true");
+	});
+});
+
+describe("interop: quoted values and escapes", () => {
+	let sandbox: string;
+	beforeAll(async () => {
+		sandbox = createSandbox();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
+	});
+	afterAll(() => removeSandbox(sandbox));
+
+	test("value with hash character (real git quotes it)", async () => {
+		await realGit(sandbox, "config test.hash 'value # with hash'");
+		const raw = readFileSync(join(sandbox, ".git/config"), "utf8");
+		expect(raw).toContain("value");
+
+		const b = justBash(sandbox);
+		const r = await jg(b, "git config get test.hash");
+		expect(r.exitCode).toBe(0);
+		expect(r.stdout.trim()).toBe("value # with hash");
+	});
+
+	test("value with semicolon character", async () => {
+		await realGit(sandbox, "config test.semi 'value ; with semi'");
+
+		const b = justBash(sandbox);
+		const r = await jg(b, "git config get test.semi");
+		expect(r.exitCode).toBe(0);
+		expect(r.stdout.trim()).toBe("value ; with semi");
+	});
+
+	test("value with leading whitespace (real git quotes it)", async () => {
+		await realGit(sandbox, "config test.leading '  leading spaces'");
+
+		const b = justBash(sandbox);
+		const r = await jg(b, "git config get test.leading");
+		expect(r.exitCode).toBe(0);
+		expect(r.stdout).toBe("  leading spaces\n");
+	});
+
+	test("value with trailing whitespace (real git quotes it)", async () => {
+		await realGit(sandbox, "config test.trailing 'trailing spaces  '");
+
+		const b = justBash(sandbox);
+		const r = await jg(b, "git config get test.trailing");
+		expect(r.exitCode).toBe(0);
+		expect(r.stdout).toBe("trailing spaces  \n");
+	});
+
+	test("value with backslash (real git escapes it)", async () => {
+		await realGit(sandbox, "config test.bslash 'C:\\Users\\me'");
+
+		const b = justBash(sandbox);
+		const r = await jg(b, "git config get test.bslash");
+		expect(r.exitCode).toBe(0);
+		expect(r.stdout.trim()).toBe("C:\\Users\\me");
+	});
+
+	test("value with double quotes (real git escapes them)", async () => {
+		await realGit(sandbox, `config test.dquote 'say "hello"'`);
+
+		const b = justBash(sandbox);
+		const r = await jg(b, "git config get test.dquote");
+		expect(r.exitCode).toBe(0);
+		expect(r.stdout.trim()).toBe('say "hello"');
+	});
+
+	test("hand-crafted config with inline comment", async () => {
+		const configPath = join(sandbox, ".git/config");
+		const existing = readFileSync(configPath, "utf8");
+		writeFileSync(
+			configPath,
+			`${existing}[manual]\n\tkey1 = value1 # this is a comment\n\tkey2 = value2 ; another comment\n`,
+		);
+
+		const b = justBash(sandbox);
+		const r1 = await jg(b, "git config get manual.key1");
+		expect(r1.exitCode).toBe(0);
+		expect(r1.stdout.trim()).toBe("value1");
+
+		const r2 = await jg(b, "git config get manual.key2");
+		expect(r2.exitCode).toBe(0);
+		expect(r2.stdout.trim()).toBe("value2");
+
+		const rr1 = await realGit(sandbox, "config --get manual.key1");
+		expect(rr1.stdout.trim()).toBe("value1");
+	});
+
+	test("hand-crafted config with continuation line", async () => {
+		const configPath = join(sandbox, ".git/config");
+		const existing = readFileSync(configPath, "utf8");
+		writeFileSync(configPath, `${existing}[multi]\n\tline = hello \\\nworld\n`);
+
+		const b = justBash(sandbox);
+		const r = await jg(b, "git config get multi.line");
+		expect(r.exitCode).toBe(0);
+		expect(r.stdout.trim()).toBe("hello world");
+
+		const rr = await realGit(sandbox, "config --get multi.line");
+		expect(rr.stdout.trim()).toBe("hello world");
+	});
+
+	test("hand-crafted config with escape sequences", async () => {
+		const configPath = join(sandbox, ".git/config");
+		const existing = readFileSync(configPath, "utf8");
+		writeFileSync(
+			configPath,
+			`${existing}[esc]\n\ttabs = "col1\\tcol2"\n\tnewlines = "line1\\nline2"\n\tbackslash = path\\\\dir\n`,
+		);
+
+		const b = justBash(sandbox);
+
+		const r1 = await jg(b, "git config get esc.tabs");
+		expect(r1.exitCode).toBe(0);
+		expect(r1.stdout.trim()).toBe("col1\tcol2");
+
+		const r2 = await jg(b, "git config get esc.newlines");
+		expect(r2.exitCode).toBe(0);
+		expect(r2.stdout).toContain("line1\nline2");
+
+		const r3 = await jg(b, "git config get esc.backslash");
+		expect(r3.exitCode).toBe(0);
+		expect(r3.stdout.trim()).toBe("path\\dir");
+
+		const rr1 = await realGit(sandbox, "config --get esc.tabs");
+		expect(rr1.stdout.trim()).toBe("col1\tcol2");
+
+		const rr3 = await realGit(sandbox, "config --get esc.backslash");
+		expect(rr3.stdout.trim()).toBe("path\\dir");
 	});
 });

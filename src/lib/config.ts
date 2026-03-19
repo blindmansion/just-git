@@ -3,61 +3,211 @@ import type { GitContext } from "./types.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
 
-/**
- * Git config is INI-like with sections and optional subsections:
- *
- *   [core]
- *       repositoryformatversion = 0
- *       bare = false
- *   [remote "origin"]
- *       url = https://example.com/repo.git
- *
- * We represent this as a nested map:
- *   { "core": { "repositoryformatversion": "0", "bare": "false" },
- *     'remote "origin"': { "url": "https://example.com/repo.git" } }
- */
 export type GitConfigSection = Record<string, string>;
 export type GitConfig = Record<string, GitConfigSection>;
 
 // ── Parsing ─────────────────────────────────────────────────────────
 
+/**
+ * Parse a section header: `[section]`, `[section "subsection"]`, or
+ * `[section.subsection]`.  Returns the normalized section key or null
+ * on malformed input.
+ *
+ * Quoted subsections are case-sensitive; dot-notation subsections are
+ * lowercased (case-insensitive matching, like real git).
+ */
+function parseSectionHeader(line: string): string | null {
+	let pos = 1; // skip '['
+
+	let section = "";
+	while (pos < line.length) {
+		const ch = line[pos]!;
+		if (ch === "]" || ch === " " || ch === "\t" || ch === '"') break;
+		if (ch === ".") {
+			// Dot-notation subsection: [section.subsection]
+			pos++;
+			let subsection = "";
+			while (pos < line.length && line[pos] !== "]") {
+				subsection += line[pos];
+				pos++;
+			}
+			return `${section.toLowerCase()} "${subsection.toLowerCase()}"`;
+		}
+		section += ch;
+		pos++;
+	}
+
+	section = section.toLowerCase();
+	if (!section) return null;
+
+	// Skip whitespace between section name and subsection
+	while (pos < line.length && (line[pos] === " " || line[pos] === "\t")) pos++;
+
+	if (pos < line.length && line[pos] === '"') {
+		// Quoted subsection: [section "subsection"]
+		pos++;
+		let subsection = "";
+		while (pos < line.length && line[pos] !== '"') {
+			if (line[pos] === "\\" && pos + 1 < line.length) {
+				subsection += line[pos + 1];
+				pos += 2;
+			} else {
+				subsection += line[pos];
+				pos++;
+			}
+		}
+		return `${section} "${subsection}"`;
+	}
+
+	return section;
+}
+
+/**
+ * Parse a config value following the `=` sign, matching real git's
+ * semantics: double-quote toggling, escape sequences (`\\`, `\"`,
+ * `\n`, `\t`, `\b`), backslash-newline continuation, inline comments
+ * (`#`/`;` outside quotes), and trailing-whitespace trimming via a
+ * pending-space approach.
+ */
+function parseValue(
+	rawAfterEq: string,
+	allLines: string[],
+	startLineIdx: number,
+): { value: string; linesConsumed: number } {
+	let result = "";
+	let inQuotes = false;
+	let pendingSpace = 0;
+	let hasContent = false;
+	let lineIdx = startLineIdx;
+	let raw = rawAfterEq;
+	let pos = 0;
+
+	outer: while (true) {
+		while (pos < raw.length) {
+			const ch = raw[pos]!;
+
+			if (ch === "\r") {
+				pos++;
+				continue;
+			}
+
+			if (!inQuotes && (ch === "#" || ch === ";")) break outer;
+
+			if (!inQuotes && (ch === " " || ch === "\t")) {
+				if (hasContent) pendingSpace++;
+				pos++;
+				continue;
+			}
+
+			if (ch === '"') {
+				flushSpace();
+				inQuotes = !inQuotes;
+				pos++;
+				continue;
+			}
+
+			if (ch === "\\") {
+				if (pos + 1 >= raw.length) {
+					lineIdx++;
+					if (lineIdx < allLines.length) {
+						raw = allLines[lineIdx]!;
+						pos = 0;
+						continue;
+					}
+					break outer;
+				}
+				const next = raw[pos + 1]!;
+				flushSpace();
+				switch (next) {
+					case "\\":
+						result += "\\";
+						break;
+					case '"':
+						result += '"';
+						break;
+					case "n":
+						result += "\n";
+						break;
+					case "t":
+						result += "\t";
+						break;
+					case "b":
+						result += "\b";
+						break;
+					default:
+						result += next;
+						break;
+				}
+				hasContent = true;
+				pos += 2;
+				continue;
+			}
+
+			flushSpace();
+			result += ch;
+			hasContent = true;
+			pos++;
+		}
+
+		break;
+	}
+
+	return { value: result, linesConsumed: lineIdx - startLineIdx + 1 };
+
+	function flushSpace() {
+		while (pendingSpace > 0) {
+			result += " ";
+			pendingSpace--;
+		}
+	}
+}
+
 /** Parse a Git config file string into a GitConfig object. */
-function parseConfig(text: string): GitConfig {
+export function parseConfig(text: string): GitConfig {
 	const config: GitConfig = {};
 	let currentSection: string | null = null;
+	const lines = text.split("\n");
+	let i = 0;
 
-	for (const rawLine of text.split("\n")) {
-		const line = rawLine.trim();
+	while (i < lines.length) {
+		const rawLine = lines[i]!;
+		const trimmed = rawLine.trim();
 
-		// Skip empty lines and comments
-		if (!line || line.startsWith("#") || line.startsWith(";")) continue;
+		if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith(";")) {
+			i++;
+			continue;
+		}
 
-		// Section header: [section] or [section "subsection"]
-		if (line.startsWith("[")) {
-			const close = line.indexOf("]");
-			if (close === -1) continue;
-			currentSection = line.slice(1, close).trim();
-			if (!(currentSection in config)) {
+		if (trimmed.startsWith("[")) {
+			currentSection = parseSectionHeader(trimmed);
+			if (currentSection !== null && !(currentSection in config)) {
 				config[currentSection] = {};
+			}
+			i++;
+			continue;
+		}
+
+		if (currentSection !== null) {
+			const entries = config[currentSection];
+			if (!entries) {
+				i++;
+				continue;
+			}
+			const eqIdx = trimmed.indexOf("=");
+			if (eqIdx === -1) {
+				entries[trimmed.toLowerCase()] = "true";
+				i++;
+			} else {
+				const key = trimmed.slice(0, eqIdx).trim().toLowerCase();
+				const rawValue = trimmed.slice(eqIdx + 1);
+				const { value, linesConsumed } = parseValue(rawValue, lines, i);
+				entries[key] = value;
+				i += linesConsumed;
 			}
 			continue;
 		}
 
-		// Key = value pair
-		if (currentSection !== null) {
-			const entries = config[currentSection];
-			if (!entries) continue;
-			const eqIdx = line.indexOf("=");
-			if (eqIdx === -1) {
-				// Boolean key with no value (e.g. "bare" alone means true)
-				const key = line.trim().toLowerCase();
-				entries[key] = "true";
-			} else {
-				const key = line.slice(0, eqIdx).trim().toLowerCase();
-				const value = line.slice(eqIdx + 1).trim();
-				entries[key] = value;
-			}
-		}
+		i++;
 	}
 
 	return config;
