@@ -147,82 +147,42 @@ const server = createGitServer({
 });
 ```
 
-## `MemoryStorage`
+## Storage backends
 
-In-memory object and ref storage. No dependencies, no setup. Useful for tests, ephemeral servers, and benchmarking. Data is lost when the process exits.
+All three backends implement the `Storage` interface — `repo(repoId)` returns a `GitRepo`, `deleteRepo(repoId)` removes all data. Multiple repos share one store, partitioned by ID. They also work with `resolveRemote` for in-process cross-VFS transport alongside HTTP access.
+
+```ts
+import type { Storage } from "just-git/server";
+```
+
+### `MemoryStorage`
 
 ```ts
 import { MemoryStorage } from "just-git/server";
-
 const storage = new MemoryStorage();
-const repo = storage.repo("my-project");
 ```
 
-## `SqliteStorage`
+### `SqliteStorage`
 
-SQLite-backed object and ref storage. Multiple repos share one database, partitioned by repo ID. Compatible with `bun:sqlite`, `better-sqlite3`, or any driver matching the `SqliteDatabase` interface.
+Compatible with `bun:sqlite`, `better-sqlite3`, or any driver matching the `SqliteDatabase` interface. Creates tables on construction.
 
 ```ts
 import { SqliteStorage } from "just-git/server";
 import { Database } from "bun:sqlite";
-
 const storage = new SqliteStorage(new Database("repos.sqlite"));
-
-// Get a GitRepo scoped to a specific repo
-const repo = storage.repo("my-project");
-
-// Delete all data for a repo
-storage.deleteRepo("old-project");
 ```
 
-`SqliteStorage` automatically creates `git_objects` and `git_refs` tables on construction.
+### `PgStorage`
 
-### Using with `resolveRemote`
-
-`SqliteStorage` repos work with both the server (external HTTP access) and `resolveRemote` (in-process cross-VFS access). An agent can push to a `SqliteStorage` repo via `resolveRemote` while external clients access the same repo over HTTP. CAS-protected ref updates ensure correctness regardless of which path performs the write.
-
-```ts
-import { createGit } from "just-git";
-import { createGitServer, SqliteStorage } from "just-git/server";
-
-const storage = new SqliteStorage(new Database("repos.sqlite"));
-
-// Agent pushes via resolveRemote (no HTTP overhead)
-const git = createGit({
-  resolveRemote: (url) => storage.repo(extractRepoId(url)),
-});
-
-// External clients push via HTTP
-const server = createGitServer({
-  resolveRepo: async (repoPath) => storage.repo(repoPath),
-});
-```
-
-## `PgStorage`
-
-PostgreSQL-backed object and ref storage. Same multi-repo design as `SqliteStorage` — repos share one database, partitioned by repo ID. Works with `pg` (node-postgres) or any driver matching the `PgDatabase` interface.
+Works with `pg` (node-postgres) or any driver matching the `PgDatabase` interface. Use `wrapPgPool` to adapt a `pg` Pool. `create()` is async (runs schema setup).
 
 ```ts
 import { PgStorage, wrapPgPool } from "just-git/server";
 import { Pool } from "pg";
-
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const storage = await PgStorage.create(wrapPgPool(pool));
-
-// Get a GitRepo scoped to a specific repo
-const repo = storage.repo("my-project");
-
-// Delete all data for a repo
-await storage.deleteRepo("old-project");
+const storage = await PgStorage.create(wrapPgPool(new Pool({ connectionString: process.env.DATABASE_URL })));
 ```
 
-`PgStorage.create()` is async because it runs `CREATE TABLE IF NOT EXISTS` on the provided database. It creates the same `git_objects` and `git_refs` tables as `SqliteStorage`.
-
-### `wrapPgPool`
-
-Adapts a `pg`-style pool (anything with `query` and `connect` methods) into the `PgDatabase` interface. Handles `BEGIN`/`COMMIT`/`ROLLBACK` and client release automatically.
-
-If you're using a different driver, construct a `PgDatabase` directly:
+For other drivers, construct a `PgDatabase` directly:
 
 ```ts
 const db: PgDatabase = {
@@ -240,20 +200,6 @@ const db: PgDatabase = {
   },
 };
 const storage = await PgStorage.create(db);
-```
-
-### `Storage` interface
-
-Both `SqliteStorage` and `PgStorage` implement the `Storage` interface, so code that's generic over backends can type against it:
-
-```ts
-import type { Storage } from "just-git/server";
-
-function createServer(storage: Storage) {
-  return createGitServer({
-    resolveRepo: async (repoPath) => storage.repo(repoPath),
-  });
-}
 ```
 
 ## Working with pushed code

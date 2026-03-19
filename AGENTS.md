@@ -172,6 +172,18 @@ Key behaviors:
 - **Worktree walk** (`walkWorkTree`) — uses `lstatSafe` to treat symlinks as leaf entries. Never recurses into symlinked directories (security/correctness).
 - **Merge** — symlinks cannot be textually merged. Conflicting symlink changes produce all-or-nothing conflicts; non-conflicting changes resolve by taking the modified side.
 
+### Storage backends (`server/`)
+
+`Storage` interface (`server/storage.ts`): `repo(repoId) → GitRepo`, `deleteRepo(repoId) → Promise<void>`. All backends partition multiple repos by ID in a single store.
+
+| Backend | File | Construction | Driver interface |
+| --- | --- | --- | --- |
+| `MemoryStorage` | `server/memory-storage.ts` | `new MemoryStorage()` | None |
+| `SqliteStorage` | `server/sqlite-storage.ts` | `new SqliteStorage(db)` | `SqliteDatabase` (covers `bun:sqlite` and `better-sqlite3`) |
+| `PgStorage` | `server/pg-storage.ts` | `await PgStorage.create(db)` | `PgDatabase` (use `wrapPgPool(pool)` for `pg`) |
+
+The server handler (`createGitServer`) is storage-agnostic — it takes a `resolveRepo` callback returning `GitRepo`. Storage backends are interchangeable at that boundary.
+
 ## File reference
 
 See [FILE_REFERENCE.md](FILE_REFERENCE.md) for exported functions, types, and classes from each file. Regenerate with `bun scripts/gen-lib-reference.ts > FILE_REFERENCE.md`.
