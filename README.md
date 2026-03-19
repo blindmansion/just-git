@@ -4,9 +4,9 @@
 [![npm](https://img.shields.io/npm/v/just-git)](https://www.npmjs.com/package/just-git)
 [![bundle size](https://img.shields.io/bundlejs/size/just-git)](https://bundlejs.com/?q=just-git)
 
-Pure TypeScript git implementation. Zero dependencies. 34 commands. Works in Node, Bun, Deno, Cloudflare Workers, and the browser. [Tested against real git](TESTING.md) across more than a million randomized operations.
+Pure TypeScript git implementation. Zero dependencies. 34 commands. Works in Node, Bun, Deno, Cloudflare Workers, and the browser. [Tested against real git](docs/TESTING.md) across more than a million randomized operations.
 
-Two entry points: a **virtual filesystem client** for sandboxed environments (pairs with [just-bash](https://github.com/vercel-labs/just-bash), or use standalone), and an **[embeddable git server](SERVER.md)** that any standard `git` client can clone, fetch, and push to.
+Two entry points: a **virtual filesystem client** for sandboxed environments (pairs with [just-bash](https://github.com/vercel-labs/just-bash), or use standalone), and an **[embeddable git server](docs/SERVER.md)** that any standard `git` client can clone, fetch, and push to.
 
 ## Install
 
@@ -50,7 +50,7 @@ await bash.exec("git add . && git commit -m 'initial commit'");
 
 ### Server
 
-Stand up a git server with built-in storage (SQLite or [PostgreSQL](SERVER.md#pgstorage)), branch protection, and push hooks:
+Stand up a git server with built-in storage (SQLite or [PostgreSQL](docs/SERVER.md#pgstorage)), branch protection, and push hooks:
 
 ```ts
 import { createGitServer, SqliteStorage } from "just-git/server";
@@ -75,7 +75,7 @@ Bun.serve({ fetch: server.fetch });
 // git clone http://localhost:3000/my-repo ← works with real git
 ```
 
-Uses web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. For Node.js, use `toNodeHandler(server)` with `http.createServer` and `wrapBetterSqlite3` for `better-sqlite3`. See [SERVER.md](SERVER.md) for the full API.
+Uses web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. For Node.js, use `toNodeHandler(server)` with `http.createServer` and `wrapBetterSqlite3` for `better-sqlite3`. See [SERVER.md](docs/SERVER.md) for the full API.
 
 ## Options
 
@@ -248,7 +248,7 @@ See [`examples/multi-agent.ts`](examples/multi-agent.ts) for a full working exam
 
 ## Command coverage
 
-See [CLI.md](CLI.md) for full usage details.
+See [CLI.md](docs/CLI.md) for full usage details.
 
 | Command                           | Flags / options                                                                                                                                                                                                                                                                |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -305,7 +305,7 @@ See [CLI.md](CLI.md) for full usage details.
 
 ## Testing
 
-Targets high fidelity to real git (2.53.0). Validated with an [oracle testing framework](test/oracle/README.md) that generates randomized git workflows, runs them against real git, replays each step against just-git, and compares repository state and command output at every step. Run `bun oracle validate` to generate and test a representative set of traces yourself. See [TESTING.md](TESTING.md) for the full methodology and how to interpret results.
+Targets high fidelity to real git (2.53.0). Validated with an [oracle testing framework](test/oracle/README.md) that generates randomized git workflows, runs them against real git, replays each step against just-git, and compares repository state and command output at every step. Run `bun oracle validate` to generate and test a representative set of traces yourself. See [TESTING.md](docs/TESTING.md) for the full methodology and how to interpret results.
 
 When backed by a real filesystem (e.g. just-bash `ReadWriteFs`), interoperable with real git on the same repo. Try `bun sandbox "git init"` to explore interactively.
 

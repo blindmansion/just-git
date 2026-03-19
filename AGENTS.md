@@ -195,7 +195,7 @@ The server handler (`createGitServer`) is storage-agnostic — it takes a `resol
 
 ## File reference
 
-See [FILE_REFERENCE.md](FILE_REFERENCE.md) for exported functions, types, and classes from each file. Regenerate with `bun scripts/gen-lib-reference.ts > FILE_REFERENCE.md`.
+See [FILE_REFERENCE.md](docs/FILE_REFERENCE.md) for exported functions, types, and classes from each file. Regenerate with `bun scripts/gen-lib-reference.ts > docs/FILE_REFERENCE.md`.
 
 ### `src/index.ts` — Package exports
 

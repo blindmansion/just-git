@@ -1,7 +1,7 @@
 // Generates a markdown file documenting the full CLI surface area
 // by collecting --help output for every registered command.
 //
-// Usage: bun scripts/gen-cli-help.ts > CLI.md
+// Usage: bun scripts/gen-cli-help.ts > docs/CLI.md
 
 import { createGitCommand } from "../src/commands/git.ts";
 import { generateHelp } from "../src/parse/help.ts";

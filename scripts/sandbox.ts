@@ -2,9 +2,9 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Bash, ReadWriteFs } from "just-bash";
-import { createGit } from "./src/git";
+import { createGit } from "../src/git";
 
-const SANDBOX_DIR = join(dirname(import.meta.path), ".sandbox");
+const SANDBOX_DIR = join(dirname(import.meta.path), "..", ".sandbox");
 const STATE_FILE = join(SANDBOX_DIR, ".sandbox-cwd");
 
 const args = process.argv.slice(2);

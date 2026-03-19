@@ -1,7 +1,7 @@
 // Scans src/lib/**/*.ts and extracts all exported symbols,
 // then prints a markdown file reference to stdout.
 //
-// Usage: bun scripts/gen-lib-reference.ts > FILE_REFERENCE.md
+// Usage: bun scripts/gen-lib-reference.ts > docs/FILE_REFERENCE.md
 
 import { relative, resolve } from "node:path";
 import { Glob } from "bun";
