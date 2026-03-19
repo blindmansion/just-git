@@ -143,4 +143,76 @@ describe("git pull", () => {
 		const fetchHead = await readFile(bash.fs, "/local/.git/FETCH_HEAD");
 		expect(fetchHead).toBeDefined();
 	});
+
+	// ── pull.ff config ──────────────────────────────────────────────
+
+	describe("pull.ff config", () => {
+		test("pull.ff=false forces merge commit on fast-forward pull", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+
+			await bash.exec("git config pull.ff false", { cwd: "/local" });
+			const result = await bash.exec("git pull", { cwd: "/local" });
+
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).not.toContain("Fast-forward");
+			expect(result.stdout).toContain("Merge made by");
+		});
+
+		test("pull.ff=only rejects non-fast-forward pull", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec(
+				"cd /remote && echo remote > remote.txt && git add . && git commit -m remote",
+			);
+			await bash.exec("cd /local && echo local > local.txt && git add . && git commit -m local");
+
+			await bash.exec("git config pull.ff only", { cwd: "/local" });
+			const result = await bash.exec("git pull", { cwd: "/local" });
+
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("Not possible to fast-forward");
+		});
+
+		test("pull.ff=only allows fast-forward pull", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+
+			await bash.exec("git config pull.ff only", { cwd: "/local" });
+			const result = await bash.exec("git pull", { cwd: "/local" });
+
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("Fast-forward");
+		});
+
+		test("--no-ff overrides pull.ff=only", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+
+			await bash.exec("git config pull.ff only", { cwd: "/local" });
+			const result = await bash.exec("git pull --no-ff", { cwd: "/local" });
+
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).not.toContain("Fast-forward");
+			expect(result.stdout).toContain("Merge made by");
+		});
+
+		test("--ff-only overrides pull.ff=false on diverged branches", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec(
+				"cd /remote && echo remote > remote.txt && git add . && git commit -m remote",
+			);
+			await bash.exec("cd /local && echo local > local.txt && git add . && git commit -m local");
+
+			await bash.exec("git config pull.ff false", { cwd: "/local" });
+			const result = await bash.exec("git pull --ff-only", { cwd: "/local" });
+
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("Not possible to fast-forward");
+		});
+	});
 });

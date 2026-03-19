@@ -11,7 +11,7 @@ import {
 	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
 import { formatDiffStat } from "../lib/commit-summary.ts";
-import { readConfig } from "../lib/config.ts";
+import { getConfigValue, readConfig } from "../lib/config.ts";
 import { getReflogIdentity } from "../lib/identity.ts";
 import { getConflictedPaths, hasConflicts, readIndex } from "../lib/index.ts";
 import { buildMergeMessage, findAllMergeBases, handleFastForward } from "../lib/merge.ts";
@@ -226,13 +226,22 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				};
 			}
 
+			// Resolve effective FF mode: CLI flags override pull.ff config
+			let noFf = !!args.noFf;
+			let ffOnly = !!args.ffOnly;
+			if (!args.noFf && !args.ffOnly) {
+				const pullFFConfig = await getConfigValue(gitCtx, "pull.ff");
+				if (pullFFConfig === "false") noFf = true;
+				else if (pullFFConfig === "only") ffOnly = true;
+			}
+
 			const isFastForward = baseCommit === headHash;
 
-			if (args.ffOnly && !isFastForward) {
+			if (ffOnly && !isFastForward) {
 				return fatal("Not possible to fast-forward, aborting.");
 			}
 
-			if (isFastForward && !args.noFf) {
+			if (isFastForward && !noFf) {
 				const ffResult = await handleFastForward(gitCtx, headHash, theirsHash);
 				// Write reflog for the branch update
 				const head = await readHead(gitCtx);

@@ -356,4 +356,123 @@ describe("git merge", () => {
 			expect(commitResult.exitCode).toBe(0);
 		});
 	});
+
+	// ── merge.ff config ──────────────────────────────────────────────
+
+	describe("merge.ff config", () => {
+		test("merge.ff=false forces merge commit on fast-forward", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec("git branch feature");
+
+			await bash.exec("git checkout feature");
+			await bash.fs.writeFile("/repo/feature-file.txt", "feature\n");
+			await bash.exec("git add feature-file.txt");
+			await bash.exec('git commit -m "feature"');
+
+			await bash.exec("git checkout main");
+			await bash.exec("git config merge.ff false");
+			const result = await bash.exec("git merge feature");
+
+			expect(result.exitCode).toBe(0);
+			// Should NOT fast-forward — should create a merge commit
+			expect(result.stdout).not.toContain("Fast-forward");
+			const log = await bash.exec("git log --oneline");
+			expect(log.stdout).toContain("Merge branch");
+		});
+
+		test("merge.ff=only rejects non-fast-forward merge", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec("git branch feature");
+
+			// Diverge both branches
+			await bash.fs.writeFile("/repo/main-file.txt", "main\n");
+			await bash.exec("git add main-file.txt");
+			await bash.exec('git commit -m "main"');
+
+			await bash.exec("git checkout feature");
+			await bash.fs.writeFile("/repo/feature-file.txt", "feature\n");
+			await bash.exec("git add feature-file.txt");
+			await bash.exec('git commit -m "feature"');
+
+			await bash.exec("git checkout main");
+			await bash.exec("git config merge.ff only");
+			const result = await bash.exec("git merge feature");
+
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("Not possible to fast-forward");
+		});
+
+		test("merge.ff=only allows fast-forward merge", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec("git branch feature");
+
+			await bash.exec("git checkout feature");
+			await bash.fs.writeFile("/repo/feature-file.txt", "feature\n");
+			await bash.exec("git add feature-file.txt");
+			await bash.exec('git commit -m "feature"');
+
+			await bash.exec("git checkout main");
+			await bash.exec("git config merge.ff only");
+			const result = await bash.exec("git merge feature");
+
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("Fast-forward");
+		});
+
+		test("--no-ff overrides merge.ff=only", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec("git branch feature");
+
+			await bash.exec("git checkout feature");
+			await bash.fs.writeFile("/repo/feature-file.txt", "feature\n");
+			await bash.exec("git add feature-file.txt");
+			await bash.exec('git commit -m "feature"');
+
+			await bash.exec("git checkout main");
+			await bash.exec("git config merge.ff only");
+			const result = await bash.exec("git merge --no-ff feature");
+
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).not.toContain("Fast-forward");
+			const log = await bash.exec("git log --oneline");
+			expect(log.stdout).toContain("Merge branch");
+		});
+
+		test("--ff-only overrides merge.ff=false", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec("git branch feature");
+
+			// Diverge branches
+			await bash.fs.writeFile("/repo/main-file.txt", "main\n");
+			await bash.exec("git add main-file.txt");
+			await bash.exec('git commit -m "main"');
+
+			await bash.exec("git checkout feature");
+			await bash.fs.writeFile("/repo/feature-file.txt", "feature\n");
+			await bash.exec("git add feature-file.txt");
+			await bash.exec('git commit -m "feature"');
+
+			await bash.exec("git checkout main");
+			await bash.exec("git config merge.ff false");
+			const result = await bash.exec("git merge --ff-only feature");
+
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("Not possible to fast-forward");
+		});
+	});
 });

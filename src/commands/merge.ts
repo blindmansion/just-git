@@ -19,6 +19,7 @@ import {
 } from "../lib/command-utils.ts";
 import { walkCommits } from "../lib/commit-walk.ts";
 import { formatDiffStat } from "../lib/commit-summary.ts";
+import { getConfigValue } from "../lib/config.ts";
 import { formatDate } from "../lib/date.ts";
 import { getConflictedPaths, getStage0Entries, readIndex } from "../lib/index.ts";
 import { buildMergeMessage, findAllMergeBases, handleFastForward } from "../lib/merge.ts";
@@ -128,13 +129,22 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 				};
 			}
 
-			if (args.noFf && args.ffOnly) {
+			// Resolve effective FF mode: CLI flags override merge.ff config
+			let noFf = !!args.noFf;
+			let ffOnly = !!args.ffOnly;
+			if (!args.noFf && !args.ffOnly) {
+				const mergeFFConfig = await getConfigValue(gitCtx, "merge.ff");
+				if (mergeFFConfig === "false") noFf = true;
+				else if (mergeFFConfig === "only") ffOnly = true;
+			}
+
+			if (noFf && ffOnly) {
 				return fatal("--no-ff and --ff-only are incompatible");
 			}
 
-			const isFastForward = baseCommit === headHash && !args.noFf;
+			const isFastForward = baseCommit === headHash && !noFf;
 
-			if (args.ffOnly && !isFastForward) {
+			if (ffOnly && !isFastForward) {
 				return err(
 					"hint: Diverging branches can't be fast-forwarded, you need to either:\n" +
 						"hint:\n" +
@@ -206,7 +216,7 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 				theirsHash,
 				branch,
 				ctx.env,
-				args.noFf,
+				noFf,
 				ext,
 				customMessage,
 			);
