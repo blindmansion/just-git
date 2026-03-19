@@ -243,10 +243,10 @@ describe("createStandardHooks", () => {
 		});
 	});
 
-	describe("authorize", () => {
+	describe("authorizePush", () => {
 		test("rejects push without authorization header", async () => {
 			const hooks = createStandardHooks({
-				authorize: (req) => req.headers.has("Authorization"),
+				authorizePush: (req) => req.headers.has("Authorization"),
 			});
 			const { srv, port } = startServer({ resolveRepo: async () => serverRepo, hooks });
 

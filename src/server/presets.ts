@@ -20,7 +20,7 @@ export interface StandardHooksConfig {
 	/** Reject deletion and overwrite of tags. Tags are treated as immutable. */
 	denyDeleteTags?: boolean;
 	/** Return false to reject the entire push (e.g. check Authorization header). */
-	authorize?: (request: Request) => boolean | Promise<boolean>;
+	authorizePush?: (request: Request) => boolean | Promise<boolean>;
 	/** Called after refs are updated. */
 	onPush?: (event: PostReceiveEvent) => void | Promise<void>;
 }
@@ -38,7 +38,7 @@ export function createStandardHooks(config: StandardHooksConfig): ServerHooks {
 		denyNonFastForward = false,
 		denyDeletes = false,
 		denyDeleteTags = false,
-		authorize,
+		authorizePush,
 		onPush,
 	} = config;
 
@@ -48,10 +48,10 @@ export function createStandardHooks(config: StandardHooksConfig): ServerHooks {
 
 	const hooks: ServerHooks = {};
 
-	if (authorize || protectedSet.size > 0) {
+	if (authorizePush || protectedSet.size > 0) {
 		hooks.preReceive = async (event: PreReceiveEvent): Promise<void | Rejection> => {
-			if (authorize) {
-				const allowed = await authorize(event.request);
+			if (authorizePush) {
+				const allowed = await authorizePush(event.request);
 				if (!allowed) return { reject: true, message: "unauthorized" };
 			}
 

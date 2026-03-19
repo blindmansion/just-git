@@ -270,7 +270,7 @@ const server = createGitServer({
     protectedBranches: ["main", "production"],
     denyNonFastForward: true,
     denyDeletes: true,
-    authorize: (req) => req.headers.get("Authorization") === "Bearer secret",
+    authorizePush: (req) => req.headers.get("Authorization") === "Bearer secret",
     onPush: async (event) => {
       console.log(`Push to ${event.updates.map((u) => u.ref).join(", ")}`);
     },

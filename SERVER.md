@@ -138,7 +138,7 @@ const server = createGitServer({
     denyNonFastForward: true,
     denyDeletes: true,
     denyDeleteTags: true,
-    authorize: (request) => request.headers.has("Authorization"),
+    authorizePush: (request) => request.headers.has("Authorization"),
     onPush: async ({ repoPath, updates }) => {
       console.log(`push to ${repoPath}: ${updates.length} refs`);
     },
