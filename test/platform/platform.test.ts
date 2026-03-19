@@ -1251,7 +1251,7 @@ describe("REST API via server()", () => {
 
 	test("authorize receives correct repoId", async () => {
 		const platform = freshPlatform();
-		await seedRepo(platform, "my-org/my-repo");
+		await seedRepo(platform, "my-repo");
 
 		const receivedRepoIds: string[] = [];
 		const srv = platform.server({
@@ -1263,8 +1263,8 @@ describe("REST API via server()", () => {
 		const port = 49152 + Math.floor(Math.random() * 16000);
 		const bunServer = Bun.serve({ port, fetch: srv.fetch });
 		try {
-			await fetch(`http://localhost:${port}/api/my-org%2Fmy-repo/pulls`);
-			expect(receivedRepoIds).toContain("my-org%2Fmy-repo");
+			await fetch(`http://localhost:${port}/api/my-repo/pulls`);
+			expect(receivedRepoIds).toContain("my-repo");
 		} finally {
 			bunServer.stop(true);
 		}
