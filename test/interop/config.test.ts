@@ -397,3 +397,82 @@ describe("interop: quoted values and escapes", () => {
 		expect(rr3.stdout.trim()).toBe("path\\dir");
 	});
 });
+
+describe("interop: format-preserving writes", () => {
+	let sandbox: string;
+	beforeAll(async () => {
+		sandbox = createSandbox();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
+	});
+	afterAll(() => removeSandbox(sandbox));
+
+	test("just-git set preserves comments written by real git or user", async () => {
+		const configPath = join(sandbox, ".git/config");
+		const existing = readFileSync(configPath, "utf8");
+		writeFileSync(
+			configPath,
+			`${existing}# My custom comment\n[myapp]\n\t# key1 docs\n\tkey1 = original\n; footer comment\n`,
+		);
+
+		const b = justBash(sandbox);
+		await jg(b, "git config set myapp.key2 added");
+
+		const raw = readFileSync(configPath, "utf8");
+		expect(raw).toContain("# My custom comment");
+		expect(raw).toContain("# key1 docs");
+		expect(raw).toContain("; footer comment");
+		expect(raw).toContain("key1 = original");
+		expect(raw).toContain("key2 = added");
+	});
+
+	test("just-git set preserves real git's existing values", async () => {
+		await realGit(sandbox, "config core.editor vim");
+		await realGit(sandbox, "config myapp.author 'Real Author'");
+
+		const b = justBash(sandbox);
+		await jg(b, "git config set myapp.version 2");
+
+		const rEditor = await realGit(sandbox, "config --get core.editor");
+		expect(rEditor.stdout.trim()).toBe("vim");
+
+		const rAuthor = await realGit(sandbox, "config --get myapp.author");
+		expect(rAuthor.stdout.trim()).toBe("Real Author");
+
+		const rVersion = await realGit(sandbox, "config --get myapp.version");
+		expect(rVersion.stdout.trim()).toBe("2");
+	});
+
+	test("just-git unset preserves other entries", async () => {
+		await realGit(sandbox, "config test.keep keepme");
+		await realGit(sandbox, "config test.remove removeme");
+
+		const configBefore = readFileSync(join(sandbox, ".git/config"), "utf8");
+		expect(configBefore).toContain("keep");
+		expect(configBefore).toContain("remove");
+
+		const b = justBash(sandbox);
+		await jg(b, "git config unset test.remove");
+
+		const rKeep = await realGit(sandbox, "config --get test.keep");
+		expect(rKeep.stdout.trim()).toBe("keepme");
+
+		const rRemove = await realGit(sandbox, "config --get test.remove");
+		expect(rRemove.exitCode).not.toBe(0);
+	});
+
+	test("just-git write produces values real git can read", async () => {
+		const configPath = join(sandbox, ".git/config");
+		const existing = readFileSync(configPath, "utf8");
+		const { setConfigValueRaw } = await import("../../src/lib/config.ts");
+		const updated = setConfigValueRaw(existing, "test", "bslash", "C:\\path\\to");
+		writeFileSync(configPath, updated);
+
+		const r = await realGit(sandbox, "config --get test.bslash");
+		expect(r.exitCode).toBe(0);
+		expect(r.stdout.trim()).toBe("C:\\path\\to");
+
+		const b = justBash(sandbox);
+		const r2 = await jg(b, "git config get test.bslash");
+		expect(r2.stdout.trim()).toBe("C:\\path\\to");
+	});
+});

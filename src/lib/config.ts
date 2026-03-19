@@ -135,6 +135,7 @@ function parseValue(
 						result += "\b";
 						break;
 					default:
+						result += "\\";
 						result += next;
 						break;
 				}
@@ -213,18 +214,194 @@ export function parseConfig(text: string): GitConfig {
 	return config;
 }
 
-/** Serialize a GitConfig object back to the INI-like format. */
+// ── Value formatting ────────────────────────────────────────────────
+
+/**
+ * Format a config value for writing, matching real git's quoting and
+ * escaping rules. Always escapes `\` and `"`.  Wraps in double quotes
+ * when the value contains comment chars, leading/trailing whitespace,
+ * or control characters.
+ */
+export function formatConfigValue(value: string): string {
+	const needsQuoting = /[\n\t\b#;"]/.test(value) || value !== value.trim();
+
+	let escaped = "";
+	for (let i = 0; i < value.length; i++) {
+		const ch = value[i]!;
+		switch (ch) {
+			case "\\":
+				escaped += "\\\\";
+				break;
+			case '"':
+				escaped += '\\"';
+				break;
+			case "\n":
+				escaped += "\\n";
+				break;
+			case "\t":
+				escaped += "\\t";
+				break;
+			case "\b":
+				escaped += "\\b";
+				break;
+			default:
+				escaped += ch;
+		}
+	}
+
+	return needsQuoting ? `"${escaped}"` : escaped;
+}
+
+/** Serialize a GitConfig object to the INI-like format. */
 export function serializeConfig(config: GitConfig): string {
 	const lines: string[] = [];
 
 	for (const [section, entries] of Object.entries(config)) {
 		lines.push(`[${section}]`);
 		for (const [key, value] of Object.entries(entries)) {
-			lines.push(`\t${key} = ${value}`);
+			lines.push(`\t${key} = ${formatConfigValue(value)}`);
 		}
 	}
 
 	return `${lines.join("\n")}\n`;
+}
+
+// ── Raw text editing ────────────────────────────────────────────────
+
+/**
+ * Scan raw config lines to locate a section/key.  Returns:
+ * - `keyStart`/`keyEnd`: line range of the existing key (or -1)
+ * - `insertAfter`: line after which a new key should be inserted
+ *    (last key in the last matching section block, or the section
+ *    header if section has no keys; -1 if section not found)
+ * - `sectionHeaderLine`: line of the last matching section header (-1 if not found)
+ * - `sectionHasOtherKeys`: whether the section has keys besides the target
+ */
+function scanForKey(
+	lines: string[],
+	targetSection: string,
+	targetKey: string,
+): {
+	keyStart: number;
+	keyEnd: number;
+	insertAfter: number;
+	sectionHeaderLine: number;
+	sectionHasOtherKeys: boolean;
+} {
+	let currentSection: string | null = null;
+	let keyStart = -1;
+	let keyEnd = -1;
+	let insertAfter = -1;
+	let sectionHeaderLine = -1;
+	let sectionHasOtherKeys = false;
+	let i = 0;
+
+	while (i < lines.length) {
+		const trimmed = lines[i]!.trim();
+
+		if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith(";")) {
+			i++;
+			continue;
+		}
+
+		if (trimmed.startsWith("[")) {
+			currentSection = parseSectionHeader(trimmed);
+			if (currentSection === targetSection) {
+				sectionHeaderLine = i;
+				insertAfter = i;
+				sectionHasOtherKeys = false;
+			}
+			i++;
+			continue;
+		}
+
+		// Find extent of this key=value (including continuation lines)
+		let end = i;
+		while (end < lines.length - 1 && lines[end]!.replace(/\r$/, "").endsWith("\\")) {
+			end++;
+		}
+
+		if (currentSection === targetSection) {
+			const eqIdx = trimmed.indexOf("=");
+			const lineKey =
+				eqIdx === -1 ? trimmed.toLowerCase() : trimmed.slice(0, eqIdx).trim().toLowerCase();
+
+			if (lineKey === targetKey) {
+				keyStart = i;
+				keyEnd = end;
+			} else {
+				sectionHasOtherKeys = true;
+			}
+			insertAfter = end;
+		}
+
+		i = end + 1;
+	}
+
+	return { keyStart, keyEnd, insertAfter, sectionHeaderLine, sectionHasOtherKeys };
+}
+
+/**
+ * Surgically set a key in raw config text. Returns the modified text.
+ * If the key exists, replaces it in place. If the section exists but
+ * the key doesn't, appends the key to the section. If the section
+ * doesn't exist, appends both.
+ */
+export function setConfigValueRaw(
+	text: string,
+	sectionKey: string,
+	key: string,
+	value: string,
+): string {
+	const lines = text.split("\n");
+	const scan = scanForKey(lines, sectionKey, key);
+	const formatted = `\t${key} = ${formatConfigValue(value)}`;
+
+	if (scan.keyStart !== -1) {
+		lines.splice(scan.keyStart, scan.keyEnd - scan.keyStart + 1, formatted);
+	} else if (scan.insertAfter !== -1) {
+		lines.splice(scan.insertAfter + 1, 0, formatted);
+	} else {
+		// Append new section.  Ensure a blank line separator if the file
+		// has existing content (don't add one for empty/whitespace-only files).
+		const hasContent = lines.some((l) => l.trim().length > 0);
+		if (hasContent && lines.length > 0 && lines[lines.length - 1]!.trim() !== "") {
+			lines.push("");
+		}
+		lines.push(`[${sectionKey}]`, formatted);
+	}
+
+	return lines.join("\n");
+}
+
+/**
+ * Surgically remove a key from raw config text. Returns the modified
+ * text and whether the key was found. Removes the section header too
+ * if the section becomes empty.
+ */
+export function unsetConfigValueRaw(
+	text: string,
+	sectionKey: string,
+	key: string,
+): { text: string; found: boolean } {
+	const lines = text.split("\n");
+	const scan = scanForKey(lines, sectionKey, key);
+
+	if (scan.keyStart === -1) {
+		return { text, found: false };
+	}
+
+	// Remove the key line(s)
+	lines.splice(scan.keyStart, scan.keyEnd - scan.keyStart + 1);
+
+	// If section is now empty, remove the header too
+	if (!scan.sectionHasOtherKeys && scan.sectionHeaderLine !== -1) {
+		// Header line index shifted if key was before it (shouldn't happen,
+		// but be safe).  Key is always after header, so header index is stable.
+		lines.splice(scan.sectionHeaderLine, 1);
+	}
+
+	return { text: lines.join("\n"), found: true };
 }
 
 // ── Filesystem operations ───────────────────────────────────────────
@@ -235,6 +412,13 @@ export async function readConfig(ctx: GitContext): Promise<GitConfig> {
 	if (!(await ctx.fs.exists(path))) return {};
 	const text = await ctx.fs.readFile(path);
 	return parseConfig(text);
+}
+
+/** Read raw .git/config text. Returns empty string if file doesn't exist. */
+async function readConfigRaw(ctx: GitContext): Promise<string> {
+	const path = join(ctx.gitDir, "config");
+	if (!(await ctx.fs.exists(path))) return "";
+	return ctx.fs.readFile(path);
 }
 
 /** Serialize and write .git/config. */
@@ -259,27 +443,34 @@ export async function getConfigValue(
 	return config[section]?.[key];
 }
 
-/** Set a single config value by dotted key. Creates section if needed. */
+/**
+ * Set a single config value by dotted key. Creates section if needed.
+ * Uses format-preserving raw text editing to avoid destroying comments,
+ * formatting, and other entries.
+ */
 export async function setConfigValue(
 	ctx: GitContext,
 	dottedKey: string,
 	value: string,
 ): Promise<void> {
-	const config = await readConfig(ctx);
+	const raw = await readConfigRaw(ctx);
 	const { section, key } = parseDottedKey(dottedKey);
-	if (!config[section]) config[section] = {};
-	config[section][key] = value;
-	await writeConfig(ctx, config);
+	const updated = setConfigValueRaw(raw, section, key, value);
+	const path = join(ctx.gitDir, "config");
+	await ctx.fs.writeFile(path, updated);
 }
 
-/** Unset a single config value by dotted key. Returns false if key was not found. */
+/**
+ * Unset a single config value by dotted key. Returns false if key was
+ * not found. Uses format-preserving raw text editing.
+ */
 export async function unsetConfigValue(ctx: GitContext, dottedKey: string): Promise<boolean> {
-	const config = await readConfig(ctx);
+	const raw = await readConfigRaw(ctx);
 	const { section, key } = parseDottedKey(dottedKey);
-	if (!config[section]?.[key]) return false;
-	delete config[section][key];
-	if (Object.keys(config[section]).length === 0) delete config[section];
-	await writeConfig(ctx, config);
+	const result = unsetConfigValueRaw(raw, section, key);
+	if (!result.found) return false;
+	const path = join(ctx.gitDir, "config");
+	await ctx.fs.writeFile(path, result.text);
 	return true;
 }
 
