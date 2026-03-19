@@ -1,5 +1,11 @@
 # just-git
 
+## 1.1.8
+
+### Patch Changes
+
+- Add changesets and set up release flow
+
 ## 1.1.7
 
 ### Patch Changes
