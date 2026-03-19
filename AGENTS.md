@@ -176,11 +176,11 @@ Key behaviors:
 
 `Storage` interface (`server/storage.ts`): `repo(repoId) → GitRepo`, `deleteRepo(repoId) → Promise<void>`. All backends partition multiple repos by ID in a single store.
 
-| Backend | File | Construction | Driver interface |
-| --- | --- | --- | --- |
-| `MemoryStorage` | `server/memory-storage.ts` | `new MemoryStorage()` | None |
-| `SqliteStorage` | `server/sqlite-storage.ts` | `new SqliteStorage(db)` | `SqliteDatabase` (covers `bun:sqlite` and `better-sqlite3`) |
-| `PgStorage` | `server/pg-storage.ts` | `await PgStorage.create(db)` | `PgDatabase` (use `wrapPgPool(pool)` for `pg`) |
+| Backend         | File                       | Construction                 | Driver interface                                            |
+| --------------- | -------------------------- | ---------------------------- | ----------------------------------------------------------- |
+| `MemoryStorage` | `server/memory-storage.ts` | `new MemoryStorage()`        | None                                                        |
+| `SqliteStorage` | `server/sqlite-storage.ts` | `new SqliteStorage(db)`      | `SqliteDatabase` (covers `bun:sqlite` and `better-sqlite3`) |
+| `PgStorage`     | `server/pg-storage.ts`     | `await PgStorage.create(db)` | `PgDatabase` (use `wrapPgPool(pool)` for `pg`)              |
 
 The server handler (`createGitServer`) is storage-agnostic — it takes a `resolveRepo` callback returning `GitRepo`. Storage backends are interchangeable at that boundary.
 

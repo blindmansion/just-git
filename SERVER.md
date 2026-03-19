@@ -179,7 +179,9 @@ Works with `pg` (node-postgres) or any driver matching the `PgDatabase` interfac
 ```ts
 import { PgStorage, wrapPgPool } from "just-git/server";
 import { Pool } from "pg";
-const storage = await PgStorage.create(wrapPgPool(new Pool({ connectionString: process.env.DATABASE_URL })));
+const storage = await PgStorage.create(
+  wrapPgPool(new Pool({ connectionString: process.env.DATABASE_URL })),
+);
 ```
 
 For other drivers, construct a `PgDatabase` directly:
