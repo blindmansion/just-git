@@ -23,7 +23,7 @@ describe("platform compatibility", () => {
 			return;
 		}
 
-		const proc = Bun.spawn(["node", "examples/node-server.mjs"], {
+		const proc = Bun.spawn(["node", "test/smoke/node-server.mjs"], {
 			cwd: ROOT,
 			stdout: "pipe",
 			stderr: "pipe",
@@ -46,7 +46,7 @@ describe("platform compatibility", () => {
 			return;
 		}
 
-		const proc = Bun.spawn(["deno", "run", "--allow-all", "examples/deno-server.mjs"], {
+		const proc = Bun.spawn(["deno", "run", "--allow-all", "test/smoke/deno-server.mjs"], {
 			cwd: ROOT,
 			stdout: "pipe",
 			stderr: "pipe",

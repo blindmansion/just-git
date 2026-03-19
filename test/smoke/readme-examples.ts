@@ -6,8 +6,8 @@
 
 import { Bash, InMemoryFs } from "just-bash";
 import { Database } from "bun:sqlite";
-import { createGit } from "../src";
-import { createGitServer, SqliteStorage } from "../src/server";
+import { createGit } from "../../src";
+import { createGitServer, SqliteStorage } from "../../src/server";
 
 // ── Quick start: standalone exec() ──────────────────────────────────
 

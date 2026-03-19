@@ -6,8 +6,8 @@
  * Run: deno run --allow-all examples/deno-server.mjs   (requires `bun run build` first)
  */
 
-import { createGit, findRepo } from "../dist/index.js";
-import { createGitServer } from "../dist/server/index.js";
+import { createGit, findRepo } from "../../dist/index.js";
+import { createGitServer } from "../../dist/server/index.js";
 import { Bash, InMemoryFs } from "just-bash";
 
 const ENV = {

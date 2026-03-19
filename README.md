@@ -319,6 +319,7 @@ Runnable examples in [`examples/`](examples/):
 | [`multi-agent.ts`](examples/multi-agent.ts)                     | Cross-VFS collaboration with clone/push/pull between isolated agents |
 | [`server.ts`](examples/server.ts)                               | VFS-backed Smart HTTP server with virtual client clone and push      |
 | [`sqlite-server.ts`](examples/sqlite-server.ts)                 | SQLite-backed server with auto-creating repos, works with real `git` |
+| [`node-server.mjs`](examples/node-server.mjs)                   | Node.js HTTP server with SQLite + auth via `better-sqlite3`          |
 | [`platform-server.ts`](examples/platform-server.ts)             | GitHub-like PR workflows: create, merge, close via REST API          |
 | [`agent-remote-workflow.ts`](examples/agent-remote-workflow.ts) | Clone from GitHub, work in sandbox, push back (requires token)       |
 
