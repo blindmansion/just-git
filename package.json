@@ -53,9 +53,14 @@
 		"sandbox": "bun sandbox.ts",
 		"knip": "knip",
 		"knip:prod": "knip --config knip-production.json",
-		"gen-docs": "bun run scripts/gen-lib-reference.ts > FILE_REFERENCE.md && bun run scripts/gen-cli-help.ts > CLI.md"
+		"gen-docs": "bun run scripts/gen-lib-reference.ts > FILE_REFERENCE.md && bun run scripts/gen-cli-help.ts > CLI.md",
+		"changeset": "changeset",
+		"version-packages": "changeset version",
+		"release": "bun run build && changeset publish"
 	},
 	"devDependencies": {
+		"@changesets/changelog-github": "^0.6.0",
+		"@changesets/cli": "^2.30.0",
 		"@types/bun": "latest",
 		"@types/node": "^25.4.0",
 		"@types/pg": "^8.18.0",
