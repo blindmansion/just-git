@@ -18,11 +18,10 @@ npm install just-git
 
 ### Client
 
-Provide any `FileSystem` implementation and call `git.exec()`:
-
 ```ts
-import { createGit } from "just-git";
+import { createGit, MemoryFileSystem } from "just-git";
 
+const fs = new MemoryFileSystem();
 const git = createGit({ identity: { name: "Alice", email: "alice@example.com" } });
 
 await git.exec("git init", { fs, cwd: "/repo" });
@@ -31,7 +30,7 @@ await git.exec('git commit -m "initial commit"', { fs, cwd: "/repo" });
 await git.exec("git log --oneline", { fs, cwd: "/repo" });
 ```
 
-Tokenization handles single and double quotes. Pass `env` as a plain object when needed (e.g. `GIT_AUTHOR_NAME`).
+`MemoryFileSystem` is a minimal in-memory filesystem included with just-git. You can also provide your own implementation of the `FileSystem` interface (e.g. wrapping `node:fs/promises`). Tokenization handles single and double quotes. Pass `env` as a plain object when needed (e.g. `GIT_AUTHOR_NAME`).
 
 For a full virtual shell with file I/O, pipes, and scripting, pair with [just-bash](https://github.com/vercel-labs/just-bash):
 

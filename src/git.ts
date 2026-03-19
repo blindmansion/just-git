@@ -125,6 +125,22 @@ export class Git {
 	private blocked: Set<string> | null;
 	private hooks: GitHooks | undefined;
 	private inner: { execute: (args: string[], ctx: CommandContext) => Promise<ExecResult> };
+	private locks = new WeakMap<object, Promise<unknown>>();
+
+	private async withLock<T>(key: object, fn: () => Promise<T>): Promise<T> {
+		const prev = this.locks.get(key) ?? Promise.resolve();
+		let release!: () => void;
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
+		this.locks.set(key, gate);
+		await prev;
+		try {
+			return await fn();
+		} finally {
+			release();
+		}
+	}
 
 	constructor(options?: GitOptions) {
 		this.hooks = options?.hooks;
@@ -165,45 +181,47 @@ export class Git {
 		return this.execute(args, { fs: ctx.fs, cwd: ctx.cwd, env, stdin: ctx.stdin ?? "" });
 	};
 
-	execute = async (args: string[], ctx: CommandContext): Promise<ExecResult> => {
-		const command = args[0] ?? "";
+	execute = (args: string[], ctx: CommandContext): Promise<ExecResult> => {
+		return this.withLock(ctx.fs, async () => {
+			const command = args[0] ?? "";
 
-		if (this.blocked?.has(command)) {
-			return {
-				stdout: "",
-				stderr: `git: '${command}' is not available in this environment\n`,
-				exitCode: 1,
-			};
-		}
-
-		if (this.hooks?.beforeCommand) {
-			const rej = await this.hooks.beforeCommand({
-				command,
-				args: args.slice(1),
-				fs: ctx.fs,
-				cwd: ctx.cwd,
-				env: ctx.env,
-			});
-			if (isRejection(rej)) {
+			if (this.blocked?.has(command)) {
 				return {
 					stdout: "",
-					stderr: rej.message ?? "",
+					stderr: `git: '${command}' is not available in this environment\n`,
 					exitCode: 1,
 				};
 			}
-		}
 
-		const result = await this.inner.execute(args, ctx);
+			if (this.hooks?.beforeCommand) {
+				const rej = await this.hooks.beforeCommand({
+					command,
+					args: args.slice(1),
+					fs: ctx.fs,
+					cwd: ctx.cwd,
+					env: ctx.env,
+				});
+				if (isRejection(rej)) {
+					return {
+						stdout: "",
+						stderr: rej.message ?? "",
+						exitCode: 1,
+					};
+				}
+			}
 
-		if (this.hooks?.afterCommand) {
-			await this.hooks.afterCommand({
-				command,
-				args: args.slice(1),
-				result,
-			});
-		}
+			const result = await this.inner.execute(args, ctx);
 
-		return result;
+			if (this.hooks?.afterCommand) {
+				await this.hooks.afterCommand({
+					command,
+					args: args.slice(1),
+					result,
+				});
+			}
+
+			return result;
+		});
 	};
 }
 

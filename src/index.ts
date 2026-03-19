@@ -52,6 +52,7 @@ export type {
 	Rejection,
 } from "./hooks";
 export { composeGitHooks, isRejection } from "./hooks";
+export { MemoryFileSystem } from "./memory-fs";
 export type {
 	GitContext,
 	GitRepo,

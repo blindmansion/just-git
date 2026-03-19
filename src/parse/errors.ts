@@ -75,10 +75,15 @@ function levenshtein(a: string, b: string): number {
 }
 
 /** Find suggestions from a list of candidates within a distance threshold */
-export function findSuggestions(input: string, candidates: string[], maxDistance = 3): string[] {
+export function findSuggestions(
+	input: string,
+	candidates: string[],
+	maxDistance?: number,
+): string[] {
+	const limit = maxDistance ?? Math.min(Math.max(1, Math.floor(input.length / 2)), 3);
 	const scored = candidates
 		.map((c) => ({ candidate: c, distance: levenshtein(input, c) }))
-		.filter((x) => x.distance <= maxDistance && x.distance > 0)
+		.filter((x) => x.distance <= limit && x.distance > 0)
 		.sort((a, b) => a.distance - b.distance);
 
 	return scored.slice(0, 2).map((x) => x.candidate);
