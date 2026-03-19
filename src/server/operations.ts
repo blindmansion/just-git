@@ -110,6 +110,7 @@ const UPLOAD_PACK_CAPS = [
 	"side-band-64k",
 	"ofs-delta",
 	"include-tag",
+	"allow-reachable-sha1-in-want",
 ];
 
 const RECEIVE_PACK_CAPS = ["report-status", "side-band-64k", "ofs-delta", "delete-refs"];
@@ -147,11 +148,15 @@ export async function collectRefs(repo: GitRepo): Promise<RefsData> {
 		}
 	}
 
+	const sortedEntries = refEntries
+		.slice()
+		.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
 	if (headHash) {
 		refs.push({ name: "HEAD", hash: headHash });
 	}
 
-	for (const entry of refEntries) {
+	for (const entry of sortedEntries) {
 		refs.push({ name: entry.name, hash: entry.hash });
 
 		if (entry.name.startsWith("refs/tags/")) {

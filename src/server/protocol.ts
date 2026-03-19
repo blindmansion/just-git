@@ -13,7 +13,7 @@ import {
 	pktLineText,
 } from "../lib/transport/pkt-line.ts";
 
-const SIDEBAND_MAX_PAYLOAD = 65519 - 5; // pkt-line max (65520) minus 4-byte header minus 1-byte band
+const SIDEBAND_MAX_PAYLOAD = 65520 - 4 - 1; // pkt-line max (65520) minus 4-byte header minus 1-byte band = 65515
 
 // ── Ref advertisement ───────────────────────────────────────────────
 
