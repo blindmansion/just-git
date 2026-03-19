@@ -114,4 +114,122 @@ describe("git push", () => {
 		// Should succeed (nothing to push, remote already matches)
 		expect(result.exitCode).toBe(0);
 	});
+
+	describe("push.default", () => {
+		test("simple (default) pushes tracked branch with matching name", async () => {
+			const bash = await setupClonePair();
+			await bash.exec("cd /local && echo v2 > README.md && git add . && git commit -m update");
+
+			const result = await bash.exec("git push", { cwd: "/local" });
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("To /remote");
+		});
+
+		test("simple refuses when upstream name differs from local branch", async () => {
+			const bash = await setupClonePair();
+
+			// Create a local branch that tracks a differently-named remote branch
+			await bash.exec("cd /local && git checkout -b my-feature");
+			await bash.exec("cd /local && echo feat > feat.txt && git add . && git commit -m feat");
+			// Set tracking to origin/main (name mismatch: my-feature != main)
+			await bash.exec(
+				"cd /local && git config set branch.my-feature.remote origin && git config set branch.my-feature.merge refs/heads/main",
+			);
+
+			const result = await bash.exec("git push", { cwd: "/local" });
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("does not match");
+			expect(result.stderr).toContain("the name of your current branch");
+		});
+
+		test("simple falls back to current when no upstream configured", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("cd /local && git checkout -b new-branch");
+			await bash.exec("cd /local && echo new > new.txt && git add . && git commit -m new");
+
+			const result = await bash.exec("git push", { cwd: "/local" });
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("[new branch]");
+		});
+
+		test("simple falls back to current when pushing to a different remote", async () => {
+			const bash = await setupClonePair();
+
+			// Set up a second remote
+			await bash.exec("cd /local && git init --bare /remote2");
+			await bash.exec("cd /local && git remote add other /remote2");
+
+			// Track origin/main, but push to 'other'
+			await bash.exec("cd /local && echo v2 > README.md && git add . && git commit -m update");
+
+			const result = await bash.exec("git push other", { cwd: "/local" });
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("[new branch]");
+		});
+
+		test("push.default=current pushes to same-named remote branch", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("cd /local && git config set push.default current");
+			await bash.exec("cd /local && git checkout -b my-feature");
+			await bash.exec("cd /local && echo feat > feat.txt && git add . && git commit -m feat");
+			// Set mismatched tracking — current mode ignores it
+			await bash.exec(
+				"cd /local && git config set branch.my-feature.remote origin && git config set branch.my-feature.merge refs/heads/main",
+			);
+
+			const result = await bash.exec("git push", { cwd: "/local" });
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("[new branch]");
+			expect(result.stderr).toContain("my-feature");
+		});
+
+		test("push.default=upstream pushes to tracked upstream branch", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("cd /local && git config set push.default upstream");
+			await bash.exec("cd /local && echo v2 > README.md && git add . && git commit -m update");
+
+			const result = await bash.exec("git push", { cwd: "/local" });
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("To /remote");
+		});
+
+		test("push.default=upstream errors when no upstream configured", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("cd /local && git config set push.default upstream");
+			await bash.exec("cd /local && git checkout -b no-upstream");
+			await bash.exec("cd /local && echo x > x.txt && git add . && git commit -m x");
+
+			const result = await bash.exec("git push", { cwd: "/local" });
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("has no upstream branch");
+			expect(result.stderr).toContain("--set-upstream");
+		});
+
+		test("push.default=nothing errors without explicit refspec", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("cd /local && git config set push.default nothing");
+			await bash.exec("cd /local && echo v2 > README.md && git add . && git commit -m update");
+
+			const result = await bash.exec("git push", { cwd: "/local" });
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain('push.default is "nothing"');
+		});
+
+		test("push.default=nothing still allows explicit refspec", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("cd /local && git config set push.default nothing");
+			await bash.exec("cd /local && echo v2 > README.md && git add . && git commit -m update");
+
+			const result = await bash.exec("git push origin main:refs/heads/main", {
+				cwd: "/local",
+			});
+			expect(result.exitCode).toBe(0);
+		});
+	});
 });

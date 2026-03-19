@@ -7,7 +7,7 @@ import {
 	isCommandError,
 	requireGitContext,
 } from "../lib/command-utils.ts";
-import { readConfig, writeConfig } from "../lib/config.ts";
+import { getConfigValue, readConfig, writeConfig } from "../lib/config.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 import { listRefs, readHead, resolveHead, resolveRef } from "../lib/refs.ts";
 import { parseRefspec } from "../lib/transport/refspec.ts";
@@ -125,23 +125,35 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 					});
 				}
 			} else {
-				// Default: push current branch to same-named remote branch
+				// No explicit refspec — use push.default to decide behavior
 				const head = await readHead(gitCtx);
 				if (!head || head.type !== "symbolic") {
 					return fatal("You are not currently on a branch.");
 				}
 				const branchRef = head.target;
+				const branchName = branchRef.startsWith("refs/heads/")
+					? branchRef.slice("refs/heads/".length)
+					: branchRef;
 				const localHash = await resolveHead(gitCtx);
 				if (!localHash) {
 					return err("error: src refspec does not match any\n");
 				}
-				const oldHash = remoteRefMap.get(branchRef) ?? null;
-				updates.push({
-					name: branchRef,
-					oldHash,
-					newHash: localHash,
-					ok: force,
-				});
+
+				const pushDefault =
+					(await getConfigValue(gitCtx, "push.default"))?.toLowerCase() ?? "simple";
+
+				const pushUpdate = await resolvePushDefault(
+					gitCtx,
+					pushDefault,
+					branchRef,
+					branchName,
+					localHash,
+					remoteName,
+					remoteRefMap,
+					force,
+				);
+				if ("exitCode" in pushUpdate) return pushUpdate;
+				updates.push(pushUpdate);
 			}
 
 			if (updates.length === 0) {
@@ -237,6 +249,87 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 			return response;
 		},
 	});
+}
+
+async function resolvePushDefault(
+	ctx: GitContext,
+	pushDefault: string,
+	branchRef: string,
+	branchName: string,
+	localHash: ObjectId,
+	remoteName: string,
+	remoteRefMap: Map<string, ObjectId>,
+	force: boolean,
+): Promise<PushRefUpdate | { stdout: string; stderr: string; exitCode: number }> {
+	if (pushDefault === "nothing") {
+		return fatal("You didn't specify any refspecs to push, and " + 'push.default is "nothing".');
+	}
+
+	if (pushDefault === "current") {
+		return {
+			name: branchRef,
+			oldHash: remoteRefMap.get(branchRef) ?? null,
+			newHash: localHash,
+			ok: force,
+		};
+	}
+
+	if (pushDefault === "upstream") {
+		const cfg = await readConfig(ctx);
+		const section = cfg[`branch "${branchName}"`];
+		if (!section?.remote || !section?.merge) {
+			return fatal(
+				`The current branch ${branchName} has no upstream branch.\n` +
+					"To push the current branch and set the remote as upstream, use\n\n" +
+					`    git push --set-upstream ${remoteName} ${branchName}\n`,
+			);
+		}
+		const upstreamRef = section.merge as string;
+		return {
+			name: upstreamRef,
+			oldHash: remoteRefMap.get(upstreamRef) ?? null,
+			newHash: localHash,
+			ok: force,
+		};
+	}
+
+	// "simple" (default) — centralized: like upstream but refuse name mismatch;
+	// triangular (different remote): like current
+	const cfg = await readConfig(ctx);
+	const section = cfg[`branch "${branchName}"`];
+	if (section?.remote && section?.merge) {
+		const trackedRemote = section.remote as string;
+		const upstreamRef = section.merge as string;
+
+		if (trackedRemote === remoteName) {
+			const upstreamBranch = upstreamRef.startsWith("refs/heads/")
+				? upstreamRef.slice("refs/heads/".length)
+				: upstreamRef;
+			if (upstreamBranch !== branchName) {
+				return fatal(
+					"The upstream branch of your current branch does not match\n" +
+						"the name of your current branch.  To push to the upstream branch\n" +
+						"on the remote, use\n\n" +
+						`    git push ${remoteName} HEAD:${upstreamRef}\n\n` +
+						"To push to the branch of the same name on the remote, use\n\n" +
+						`    git push ${remoteName} HEAD\n`,
+				);
+			}
+			return {
+				name: upstreamRef,
+				oldHash: remoteRefMap.get(upstreamRef) ?? null,
+				newHash: localHash,
+				ok: force,
+			};
+		}
+	}
+	// No tracking or pushing to different remote — fall back to current
+	return {
+		name: branchRef,
+		oldHash: remoteRefMap.get(branchRef) ?? null,
+		newHash: localHash,
+		ok: force,
+	};
 }
 
 async function resolveRefForPush(ctx: GitContext, src: string): Promise<ObjectId | null> {
