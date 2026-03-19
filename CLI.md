@@ -505,6 +505,7 @@ Options:
   --name-only               Show only names of changed files
   --shortstat               Show only the shortstat summary line
   --numstat                 Machine-readable insertions/deletions per file
+  --graph                   Draw text-based graph of the commit history
 ```
 
 ## git ls-files

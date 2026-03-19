@@ -681,7 +681,27 @@ export class BatchChecker {
 		actual: string,
 	): boolean {
 		if (!command.includes("..")) return false;
-		return (actual === "" && expected !== "") || (expected === "" && actual !== "");
+		if (expected === actual) return false;
+		if ((actual === "") !== (expected === "")) return true;
+		const extractHashes = (s: string): string[] => {
+			const hashes: string[] = [];
+			for (const line of s.split("\n")) {
+				let m: RegExpMatchArray | null;
+				if ((m = line.match(/^commit ([0-9a-f]{40})/))) {
+					hashes.push(m[1]!);
+				} else if ((m = line.match(/^[|\\/ *]*([0-9a-f]{7,40})\s/))) {
+					hashes.push(m[1]!);
+				}
+			}
+			return hashes;
+		};
+		const expH = extractHashes(expected);
+		const actH = extractHashes(actual);
+		if (expH.length === 0 || actH.length === 0) return false;
+		if (expH.length === actH.length) return false;
+		const superset = expH.length > actH.length ? new Set(expH) : new Set(actH);
+		const subset = expH.length > actH.length ? actH : expH;
+		return subset.every((h) => superset.has(h));
 	}
 
 	/**

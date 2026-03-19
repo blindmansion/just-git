@@ -277,7 +277,7 @@ function abbreviatePath(path: string, maxWidth: number): string {
  * Callers must sort `fileStats` before calling. This function mutates
  * `stat.path` via `abbreviatePath` to fit column width constraints.
  */
-export function renderStatLines(fileStats: FileStat[]): string {
+export function renderStatLines(fileStats: FileStat[], statWidth = STAT_WIDTH): string {
 	if (fileStats.length === 0) return "";
 
 	const nonUnmerged = fileStats.filter((f) => !f.isUnmerged);
@@ -295,16 +295,16 @@ export function renderStatLines(fileStats: FileStat[]): string {
 	let graphWidth = maxTotal;
 	let nameWidth = maxNameLen;
 
-	if (nameWidth + numberWidth + 6 + graphWidth > STAT_WIDTH) {
-		const graphCap = Math.floor((STAT_WIDTH * 3) / 8) - numberWidth - 6;
+	if (nameWidth + numberWidth + 6 + graphWidth > statWidth) {
+		const graphCap = Math.floor((statWidth * 3) / 8) - numberWidth - 6;
 		if (graphWidth > graphCap) {
 			graphWidth = Math.max(graphCap, 6);
 		}
-		const nameCap = STAT_WIDTH - numberWidth - 6 - graphWidth;
+		const nameCap = statWidth - numberWidth - 6 - graphWidth;
 		if (nameWidth > nameCap) {
 			nameWidth = nameCap;
 		} else {
-			graphWidth = STAT_WIDTH - numberWidth - 6 - nameWidth;
+			graphWidth = statWidth - numberWidth - 6 - nameWidth;
 		}
 	}
 

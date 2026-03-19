@@ -539,8 +539,6 @@ async function formatWithGraph(
 			msgContent = formatPreset(effectivePreset, fctx, true, abbrevCommit);
 		}
 
-		const diffText = await formatCommitDiff(gitCtx, entry.commit, diffFormat);
-
 		graph.update(entry.hash, entry.commit.parents);
 
 		// Non-first commits in multi-line formats get a separator padding line
@@ -575,6 +573,11 @@ async function formatWithGraph(
 			output.push(prefix);
 		}
 
+		// Compute diff/stat after graph columns have settled so we can
+		// reduce the stat width by the graph prefix width (like real git).
+		const statWidth = 80 - graph.width;
+		const diffText = await formatCommitDiff(gitCtx, entry.commit, diffFormat, statWidth);
+
 		// Diff/stat output gets padding prefixes (columns already settled)
 		if (diffText) {
 			const diffLines = diffText.replace(/\n$/, "").split("\n");
@@ -605,6 +608,7 @@ async function formatCommitDiff(
 	ctx: GitContext,
 	commit: Commit,
 	format: LogDiffFormat,
+	statWidth?: number,
 ): Promise<string> {
 	if (!format) return "";
 	if (commit.parents.length >= 2) return "";
@@ -623,7 +627,7 @@ async function formatCommitDiff(
 		case "name-status":
 			return logNameStatus(remaining, renames);
 		case "stat":
-			return logStat(ctx, remaining, renames);
+			return logStat(ctx, remaining, renames, statWidth);
 		case "shortstat":
 			return logShortstat(ctx, remaining, renames);
 		case "numstat":
@@ -659,10 +663,11 @@ async function logStat(
 	ctx: GitContext,
 	remaining: TreeDiffEntry[],
 	renames: RenamePair[],
+	statWidth?: number,
 ): Promise<string> {
 	const { fileStats } = await computeDiffStats(ctx, remaining, renames);
 	fileStats.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
-	return renderStatLines(fileStats);
+	return renderStatLines(fileStats, statWidth);
 }
 
 async function logShortstat(
