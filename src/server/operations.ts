@@ -152,6 +152,19 @@ export async function collectRefs(repo: GitRepo): Promise<RefsData> {
 		.slice()
 		.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
+	// Storage backends (MemoryStorage, SqliteStorage, etc.) start with no
+	// HEAD. Real bare repos always have HEAD pointing at the default branch.
+	// Without HEAD + symref, git clients can't determine the default branch
+	// and shallow clones silently produce empty repos. Synthesize HEAD from
+	// the first branch ref when the store doesn't provide one.
+	if (!headHash && sortedEntries.length > 0) {
+		const defaultBranch = inferDefaultBranch(sortedEntries);
+		if (defaultBranch) {
+			headHash = defaultBranch.hash;
+			headTarget = defaultBranch.name;
+		}
+	}
+
 	if (headHash) {
 		refs.push({ name: "HEAD", hash: headHash });
 	}
@@ -173,6 +186,23 @@ export async function collectRefs(repo: GitRepo): Promise<RefsData> {
 	}
 
 	return { refs, headTarget };
+}
+
+const DEFAULT_BRANCH_PRIORITY = ["refs/heads/main", "refs/heads/master"];
+
+/**
+ * Pick the most likely default branch from a sorted ref list.
+ * Prefers `main`, then `master`, then the first `refs/heads/*` entry.
+ */
+function inferDefaultBranch(
+	entries: { name: string; hash: string }[],
+): { name: string; hash: string } | null {
+	for (const preferred of DEFAULT_BRANCH_PRIORITY) {
+		const match = entries.find((e) => e.name === preferred);
+		if (match) return match;
+	}
+	const firstBranch = entries.find((e) => e.name.startsWith("refs/heads/"));
+	return firstBranch ?? null;
 }
 
 /**
