@@ -32,6 +32,7 @@ export { createStandardHooks, type StandardHooksConfig } from "./presets.ts";
 
 // Storage
 export type { Storage } from "./storage.ts";
+export { MemoryStorage } from "./memory-storage.ts";
 export { SqliteStorage, type SqliteDatabase, type SqliteStatement } from "./sqlite-storage.ts";
 export {
 	PgStorage,

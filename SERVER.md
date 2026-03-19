@@ -147,6 +147,17 @@ const server = createGitServer({
 });
 ```
 
+## `MemoryStorage`
+
+In-memory object and ref storage. No dependencies, no setup. Useful for tests, ephemeral servers, and benchmarking. Data is lost when the process exits.
+
+```ts
+import { MemoryStorage } from "just-git/server";
+
+const storage = new MemoryStorage();
+const repo = storage.repo("my-project");
+```
+
 ## `SqliteStorage`
 
 SQLite-backed object and ref storage. Multiple repos share one database, partitioned by repo ID. Compatible with `bun:sqlite`, `better-sqlite3`, or any driver matching the `SqliteDatabase` interface.
