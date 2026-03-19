@@ -400,6 +400,8 @@ Arguments:
 Options:
   -l, --list  List all config entries
   --unset     Remove a config key
+  --get-all   Get all values for a multi-valued key
+  --add       Add a new line without altering existing values
 ```
 
 ## git diff

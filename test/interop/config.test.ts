@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { $ } from "bun";
 import { readFileSync, writeFileSync } from "fs";
 import { join } from "path";
+import { addConfigValueRaw } from "../../src/lib/config.ts";
 import { createSandbox, jg, justBash, realGit, removeSandbox, writeToSandbox } from "./util";
 
 describe("interop: config cross-reading", () => {
@@ -474,5 +475,108 @@ describe("interop: format-preserving writes", () => {
 		const b = justBash(sandbox);
 		const r2 = await jg(b, "git config get test.bslash");
 		expect(r2.stdout.trim()).toBe("C:\\path\\to");
+	});
+});
+
+describe("interop: multi-value keys", () => {
+	let sandbox: string;
+	beforeAll(async () => {
+		sandbox = createSandbox();
+		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
+	});
+	afterAll(() => removeSandbox(sandbox));
+
+	test("real git --add creates multi-value, just-git --get-all reads them", async () => {
+		await realGit(sandbox, "config multi.key val1");
+		await realGit(sandbox, "config --add multi.key val2");
+		await realGit(sandbox, "config --add multi.key val3");
+
+		const b = justBash(sandbox);
+		const r = await jg(b, "git config --get-all multi.key");
+		expect(r.exitCode).toBe(0);
+		expect(r.stdout).toBe("val1\nval2\nval3\n");
+	});
+
+	test("just-git --get returns last value for multi-value key", async () => {
+		const b = justBash(sandbox);
+		const r = await jg(b, "git config get multi.key");
+		expect(r.exitCode).toBe(0);
+		expect(r.stdout.trim()).toBe("val3");
+	});
+
+	test("real git --get-all agrees with just-git --get-all", async () => {
+		const rReal = await realGit(sandbox, "config --get-all multi.key");
+		expect(rReal.exitCode).toBe(0);
+
+		const b = justBash(sandbox);
+		const rJg = await jg(b, "git config --get-all multi.key");
+		expect(rJg.stdout).toBe(rReal.stdout);
+	});
+
+	test("just-git --add appends, real git --get-all sees it", async () => {
+		const b = justBash(sandbox);
+		await jg(b, "git config --add multi.key val4");
+
+		const r = await realGit(sandbox, "config --get-all multi.key");
+		expect(r.exitCode).toBe(0);
+		expect(r.stdout).toBe("val1\nval2\nval3\nval4\n");
+	});
+
+	test("just-git --list shows all multi-values", async () => {
+		const b = justBash(sandbox);
+		const r = await jg(b, "git config --list");
+		expect(r.exitCode).toBe(0);
+		const multiLines = r.stdout.split("\n").filter((l: string) => l.startsWith("multi.key="));
+		expect(multiLines).toEqual([
+			"multi.key=val1",
+			"multi.key=val2",
+			"multi.key=val3",
+			"multi.key=val4",
+		]);
+	});
+
+	test("real git --list agrees on multi-value lines", async () => {
+		const rReal = await realGit(sandbox, "config --list --local");
+		const rRealMulti = rReal.stdout.split("\n").filter((l: string) => l.startsWith("multi.key="));
+
+		const b = justBash(sandbox);
+		const rJg = await jg(b, "git config --list");
+		const rJgMulti = rJg.stdout.split("\n").filter((l: string) => l.startsWith("multi.key="));
+
+		expect(rJgMulti).toEqual(rRealMulti);
+	});
+
+	test("multi-value remote.origin.fetch refspecs", async () => {
+		await realGit(sandbox, "remote add myremote https://example.com/repo.git");
+		await realGit(sandbox, "config --add remote.myremote.fetch '+refs/tags/*:refs/tags/*'");
+
+		const b = justBash(sandbox);
+		const r = await jg(b, "git config --get-all remote.myremote.fetch");
+		expect(r.exitCode).toBe(0);
+		const lines = r.stdout.trim().split("\n");
+		expect(lines).toEqual(["+refs/heads/*:refs/remotes/myremote/*", "+refs/tags/*:refs/tags/*"]);
+
+		const rReal = await realGit(sandbox, "config --get-all remote.myremote.fetch");
+		expect(r.stdout).toBe(rReal.stdout);
+	});
+
+	test("just-git addConfigValueRaw produces values real git can read", async () => {
+		const configPath = join(sandbox, ".git/config");
+		const existing = readFileSync(configPath, "utf8");
+		const updated = addConfigValueRaw(existing, "jgmulti", "val", "first");
+		const updated2 = addConfigValueRaw(updated, "jgmulti", "val", "second");
+		writeFileSync(configPath, updated2);
+
+		const r = await realGit(sandbox, "config --get-all jgmulti.val");
+		expect(r.exitCode).toBe(0);
+		expect(r.stdout).toBe("first\nsecond\n");
+	});
+
+	test("get-all subcommand works same as --get-all flag", async () => {
+		const b = justBash(sandbox);
+		const rFlag = await jg(b, "git config --get-all multi.key");
+		const rSub = await jg(b, "git config get-all multi.key");
+		expect(rSub.exitCode).toBe(rFlag.exitCode);
+		expect(rSub.stdout).toBe(rFlag.stdout);
 	});
 });

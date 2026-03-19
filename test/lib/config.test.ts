@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+	addConfigValueRaw,
 	formatConfigValue,
 	parseConfig,
+	parseConfigMulti,
 	serializeConfig,
 	setConfigValueRaw,
 	unsetConfigValueRaw,
@@ -503,5 +505,132 @@ describe("unsetConfigValueRaw", () => {
 	test("preserves comments", () => {
 		const { text } = unsetConfigValueRaw(base, "core", "filemode");
 		expect(text).toContain("# global comment");
+	});
+});
+
+// ── parseConfigMulti ────────────────────────────────────────────────
+
+describe("parseConfigMulti", () => {
+	test("single value returns array of one", () => {
+		const cfg = parseConfigMulti("[core]\n\tbare = false\n");
+		expect(cfg.core?.bare).toEqual(["false"]);
+	});
+
+	test("duplicate keys accumulate into array", () => {
+		const cfg = parseConfigMulti("[core]\n\tkey = first\n\tkey = second\n");
+		expect(cfg.core?.key).toEqual(["first", "second"]);
+	});
+
+	test("multiple fetch refspecs", () => {
+		const text = `[remote "origin"]
+\turl = https://example.com
+\tfetch = +refs/heads/*:refs/remotes/origin/*
+\tfetch = +refs/tags/*:refs/tags/*
+`;
+		const cfg = parseConfigMulti(text);
+		expect(cfg['remote "origin"']?.fetch).toEqual([
+			"+refs/heads/*:refs/remotes/origin/*",
+			"+refs/tags/*:refs/tags/*",
+		]);
+		expect(cfg['remote "origin"']?.url).toEqual(["https://example.com"]);
+	});
+
+	test("duplicate sections merge into same arrays", () => {
+		const cfg = parseConfigMulti("[s]\n\ta = 1\n[s]\n\ta = 2\n\tb = 3\n");
+		expect(cfg.s?.a).toEqual(["1", "2"]);
+		expect(cfg.s?.b).toEqual(["3"]);
+	});
+
+	test("valueless key in multi mode", () => {
+		const cfg = parseConfigMulti("[core]\n\tbare\n");
+		expect(cfg.core?.bare).toEqual(["true"]);
+	});
+
+	test("valueless key duplicated", () => {
+		const cfg = parseConfigMulti("[s]\n\tflag\n\tflag\n");
+		expect(cfg.s?.flag).toEqual(["true", "true"]);
+	});
+
+	test("handles comments and empty lines", () => {
+		const text = "# comment\n[s]\n\n; another\n\tkey = val\n";
+		const cfg = parseConfigMulti(text);
+		expect(cfg.s?.key).toEqual(["val"]);
+	});
+
+	test("quoted subsection", () => {
+		const cfg = parseConfigMulti('[remote "origin"]\n\turl = http://x\n');
+		expect(cfg['remote "origin"']?.url).toEqual(["http://x"]);
+	});
+
+	test("multi-line value", () => {
+		const cfg = parseConfigMulti("[s]\n\tkey = hello \\\nworld\n");
+		expect(cfg.s?.key).toEqual(["hello world"]);
+	});
+
+	test("escape sequences in values", () => {
+		const cfg = parseConfigMulti('[s]\n\tkey = "a\\nb"\n');
+		expect(cfg.s?.key).toEqual(["a\nb"]);
+	});
+});
+
+// ── addConfigValueRaw ───────────────────────────────────────────────
+
+describe("addConfigValueRaw", () => {
+	const base = `[remote "origin"]
+\turl = https://example.com
+\tfetch = +refs/heads/*:refs/remotes/origin/*
+`;
+
+	test("appends second fetch refspec", () => {
+		const result = addConfigValueRaw(base, 'remote "origin"', "fetch", "+refs/tags/*:refs/tags/*");
+		const cfg = parseConfigMulti(result);
+		expect(cfg['remote "origin"']?.fetch).toEqual([
+			"+refs/heads/*:refs/remotes/origin/*",
+			"+refs/tags/*:refs/tags/*",
+		]);
+		expect(cfg['remote "origin"']?.url).toEqual(["https://example.com"]);
+	});
+
+	test("preserves existing value (does not replace)", () => {
+		const result = addConfigValueRaw(base, 'remote "origin"', "fetch", "second");
+		expect(result).toContain("+refs/heads/*:refs/remotes/origin/*");
+		expect(result).toContain("second");
+	});
+
+	test("appends to new section when section doesn't exist", () => {
+		const result = addConfigValueRaw(base, "user", "name", "Alice");
+		const cfg = parseConfigMulti(result);
+		expect(cfg.user?.name).toEqual(["Alice"]);
+		expect(cfg['remote "origin"']?.url).toEqual(["https://example.com"]);
+	});
+
+	test("appends to existing section when key doesn't exist", () => {
+		const result = addConfigValueRaw(base, 'remote "origin"', "pushurl", "https://push.com");
+		const cfg = parseConfigMulti(result);
+		expect(cfg['remote "origin"']?.pushurl).toEqual(["https://push.com"]);
+	});
+
+	test("handles empty input", () => {
+		const result = addConfigValueRaw("", "s", "key", "val");
+		const cfg = parseConfigMulti(result);
+		expect(cfg.s?.key).toEqual(["val"]);
+	});
+
+	test("three appends accumulate correctly", () => {
+		let text = base;
+		text = addConfigValueRaw(text, 'remote "origin"', "fetch", "ref2");
+		text = addConfigValueRaw(text, 'remote "origin"', "fetch", "ref3");
+		const cfg = parseConfigMulti(text);
+		expect(cfg['remote "origin"']?.fetch).toEqual([
+			"+refs/heads/*:refs/remotes/origin/*",
+			"ref2",
+			"ref3",
+		]);
+	});
+
+	test("escapes special values", () => {
+		const result = addConfigValueRaw(base, 'remote "origin"', "push", "value # hash");
+		const cfg = parseConfigMulti(result);
+		expect(cfg['remote "origin"']?.push).toEqual(["value # hash"]);
 	});
 });

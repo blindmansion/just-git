@@ -1,12 +1,15 @@
 import type { GitExtensions } from "../git.ts";
 import { err, isCommandError, requireGitContext } from "../lib/command-utils.ts";
 import {
-	type GitConfig,
+	type GitConfigMulti,
+	addConfigValue,
 	getConfigValue,
-	readConfig,
+	getConfigValueAll,
+	parseConfigMulti,
 	setConfigValue,
 	unsetConfigValue,
 } from "../lib/config.ts";
+import { join } from "../lib/path.ts";
 import { a, type Command, f } from "../parse/index.ts";
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -17,16 +20,18 @@ function isValidDottedKey(key: string): boolean {
 }
 
 /**
- * Flatten a GitConfig into `key=value` lines for `--list` / `list` output.
- * Two-part sections → `section.key`, subsection sections → `section.subsection.key`.
+ * Flatten a GitConfigMulti into `key=value` lines for `--list` output.
+ * Multi-value keys produce one line per value, matching real git.
  */
-function flattenConfig(config: GitConfig): string[] {
+function flattenConfigMulti(config: GitConfigMulti): string[] {
 	const lines: string[] = [];
 	for (const [section, entries] of Object.entries(config)) {
 		const match = section.match(/^(\S+)\s+"(.+)"$/);
-		for (const [key, value] of Object.entries(entries)) {
+		for (const [key, values] of Object.entries(entries)) {
 			const dottedKey = match ? `${match[1]}.${match[2]}.${key}` : `${section}.${key}`;
-			lines.push(`${dottedKey}=${value}`);
+			for (const value of values) {
+				lines.push(`${dottedKey}=${value}`);
+			}
 		}
 	}
 	return lines;
@@ -41,6 +46,8 @@ export function registerConfigCommand(parent: Command, ext?: GitExtensions) {
 		options: {
 			list: f().alias("l").describe("List all config entries"),
 			unset: f().describe("Remove a config key"),
+			"get-all": f().describe("Get all values for a multi-valued key"),
+			add: f().describe("Add a new line without altering existing values"),
 		},
 		handler: async (args, ctx) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
@@ -52,7 +59,31 @@ export function registerConfigCommand(parent: Command, ext?: GitExtensions) {
 
 			// ── Flag-based operations (legacy syntax) ────────────────
 			if (args.list) {
-				return handleList(await readConfig(gitCtx));
+				return handleList(gitCtx);
+			}
+
+			if (args["get-all"]) {
+				const key = first;
+				if (!key) {
+					return err("error: missing key", 2);
+				}
+				if (!isValidDottedKey(key)) {
+					return err(`error: invalid key: ${key}`, 2);
+				}
+				return handleGetAll(gitCtx, key);
+			}
+
+			if (args.add) {
+				const key = first;
+				const value = positionals[1] as string | undefined;
+				if (!key || value === undefined) {
+					return err("error: missing key and/or value", 2);
+				}
+				if (!isValidDottedKey(key)) {
+					return err(`error: invalid key: ${key}`, 2);
+				}
+				await addConfigValue(gitCtx, key, value);
+				return { stdout: "", stderr: "", exitCode: 0 };
 			}
 
 			if (args.unset) {
@@ -68,7 +99,7 @@ export function registerConfigCommand(parent: Command, ext?: GitExtensions) {
 
 			// ── Subcommand dispatch ──────────────────────────────────
 			if (first === "list") {
-				return handleList(await readConfig(gitCtx));
+				return handleList(gitCtx);
 			}
 
 			if (first === "get") {
@@ -80,6 +111,17 @@ export function registerConfigCommand(parent: Command, ext?: GitExtensions) {
 					return err(`error: invalid key: ${key}`, 2);
 				}
 				return handleGet(gitCtx, key);
+			}
+
+			if (first === "get-all") {
+				const key = positionals[1] as string | undefined;
+				if (!key) {
+					return err("error: missing key", 2);
+				}
+				if (!isValidDottedKey(key)) {
+					return err(`error: invalid key: ${key}`, 2);
+				}
+				return handleGetAll(gitCtx, key);
 			}
 
 			if (first === "set") {
@@ -139,6 +181,17 @@ async function handleGet(
 	return { stdout: `${value}\n`, stderr: "", exitCode: 0 };
 }
 
+async function handleGetAll(
+	gitCtx: Parameters<typeof getConfigValueAll>[0],
+	key: string,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+	const values = await getConfigValueAll(gitCtx, key);
+	if (values.length === 0) {
+		return err("");
+	}
+	return { stdout: `${values.join("\n")}\n`, stderr: "", exitCode: 0 };
+}
+
 async function handleUnset(
 	gitCtx: Parameters<typeof unsetConfigValue>[0],
 	key: string,
@@ -150,12 +203,21 @@ async function handleUnset(
 	return { stdout: "", stderr: "", exitCode: 0 };
 }
 
-function handleList(config: GitConfig): {
+async function handleList(gitCtx: {
+	gitDir: string;
+	fs: { exists: (p: string) => Promise<boolean>; readFile: (p: string) => Promise<string> };
+}): Promise<{
 	stdout: string;
 	stderr: string;
 	exitCode: number;
-} {
-	const lines = flattenConfig(config);
+}> {
+	const configPath = join(gitCtx.gitDir, "config");
+	let raw = "";
+	if (await gitCtx.fs.exists(configPath)) {
+		raw = await gitCtx.fs.readFile(configPath);
+	}
+	const config = parseConfigMulti(raw);
+	const lines = flattenConfigMulti(config);
 	return {
 		stdout: lines.length > 0 ? `${lines.join("\n")}\n` : "",
 		stderr: "",

@@ -6,6 +6,9 @@ import type { GitContext } from "./types.ts";
 export type GitConfigSection = Record<string, string>;
 export type GitConfig = Record<string, GitConfigSection>;
 
+export type GitConfigMultiSection = Record<string, string[]>;
+export type GitConfigMulti = Record<string, GitConfigMultiSection>;
+
 // ── Parsing ─────────────────────────────────────────────────────────
 
 /**
@@ -203,6 +206,64 @@ export function parseConfig(text: string): GitConfig {
 				const rawValue = trimmed.slice(eqIdx + 1);
 				const { value, linesConsumed } = parseValue(rawValue, lines, i);
 				entries[key] = value;
+				i += linesConsumed;
+			}
+			continue;
+		}
+
+		i++;
+	}
+
+	return config;
+}
+
+/**
+ * Parse a Git config file, preserving all values for duplicate keys.
+ * Unlike `parseConfig` (which keeps only the last value), this returns
+ * arrays of values for every key, enabling `--get-all` semantics.
+ */
+export function parseConfigMulti(text: string): GitConfigMulti {
+	const config: GitConfigMulti = {};
+	let currentSection: string | null = null;
+	const lines = text.split("\n");
+	let i = 0;
+
+	while (i < lines.length) {
+		const rawLine = lines[i]!;
+		const trimmed = rawLine.trim();
+
+		if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith(";")) {
+			i++;
+			continue;
+		}
+
+		if (trimmed.startsWith("[")) {
+			currentSection = parseSectionHeader(trimmed);
+			if (currentSection !== null && !(currentSection in config)) {
+				config[currentSection] = {};
+			}
+			i++;
+			continue;
+		}
+
+		if (currentSection !== null) {
+			const entries = config[currentSection];
+			if (!entries) {
+				i++;
+				continue;
+			}
+			const eqIdx = trimmed.indexOf("=");
+			if (eqIdx === -1) {
+				const key = trimmed.toLowerCase();
+				if (key in entries) entries[key]!.push("true");
+				else entries[key] = ["true"];
+				i++;
+			} else {
+				const key = trimmed.slice(0, eqIdx).trim().toLowerCase();
+				const rawValue = trimmed.slice(eqIdx + 1);
+				const { value, linesConsumed } = parseValue(rawValue, lines, i);
+				if (key in entries) entries[key]!.push(value);
+				else entries[key] = [value];
 				i += linesConsumed;
 			}
 			continue;
@@ -456,6 +517,62 @@ export async function setConfigValue(
 	const raw = await readConfigRaw(ctx);
 	const { section, key } = parseDottedKey(dottedKey);
 	const updated = setConfigValueRaw(raw, section, key, value);
+	const path = join(ctx.gitDir, "config");
+	await ctx.fs.writeFile(path, updated);
+}
+
+/**
+ * Get all values for a multi-value config key.
+ * Returns an empty array if the key doesn't exist.
+ */
+export async function getConfigValueAll(ctx: GitContext, dottedKey: string): Promise<string[]> {
+	const raw = await readConfigRaw(ctx);
+	if (!raw) return [];
+	const config = parseConfigMulti(raw);
+	const { section, key } = parseDottedKey(dottedKey);
+	return config[section]?.[key] ?? [];
+}
+
+/**
+ * Surgically append a value to a key in raw config text, without
+ * replacing any existing values. If the section doesn't exist, it is
+ * created. This is the raw-text equivalent of `git config --add`.
+ */
+export function addConfigValueRaw(
+	text: string,
+	sectionKey: string,
+	key: string,
+	value: string,
+): string {
+	const lines = text.split("\n");
+	const scan = scanForKey(lines, sectionKey, key);
+	const formatted = `\t${key} = ${formatConfigValue(value)}`;
+
+	if (scan.insertAfter !== -1) {
+		lines.splice(scan.insertAfter + 1, 0, formatted);
+	} else {
+		const hasContent = lines.some((l) => l.trim().length > 0);
+		if (hasContent && lines.length > 0 && lines[lines.length - 1]!.trim() !== "") {
+			lines.push("");
+		}
+		lines.push(`[${sectionKey}]`, formatted);
+	}
+
+	return lines.join("\n");
+}
+
+/**
+ * Append a config value by dotted key, without replacing existing values.
+ * This is the high-level equivalent of `git config --add`.
+ */
+export async function addConfigValue(
+	ctx: GitContext,
+	dottedKey: string,
+	value: string,
+): Promise<void> {
+	const raw = await readConfigRaw(ctx);
+	const { section, key } = parseDottedKey(dottedKey);
+	const updated = addConfigValueRaw(raw, section, key, value);
 	const path = join(ctx.gitDir, "config");
 	await ctx.fs.writeFile(path, updated);
 }
