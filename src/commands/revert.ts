@@ -326,7 +326,10 @@ async function handleAbort(
 			operationRef: "REVERT_HEAD",
 			noOpError: err("error: no cherry-pick or revert in progress\nfatal: revert failed\n", 128),
 			operationName: "revert",
-			clearState: clearRevertState,
+			clearState: async (ctx) => {
+				await clearRevertState(ctx);
+				await clearCherryPickState(ctx);
+			},
 			origHeadAsTargetRev: true,
 		});
 	}
