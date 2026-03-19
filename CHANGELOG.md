@@ -1,5 +1,11 @@
 # just-git
 
+## 1.1.10
+
+### Patch Changes
+
+- Fix flaky port collision in tests by using port: 0
+
 ## 1.1.9
 
 ### Patch Changes
