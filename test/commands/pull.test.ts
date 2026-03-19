@@ -144,6 +144,132 @@ describe("git pull", () => {
 		expect(fetchHead).toBeDefined();
 	});
 
+	// ── pull --rebase ───────────────────────────────────────────────
+
+	describe("pull --rebase", () => {
+		test("--rebase rebases local commits on top of remote", async () => {
+			const bash = await setupClonePair();
+
+			// Make divergent changes
+			await bash.exec(
+				"cd /remote && echo 'remote change' > remote.txt && git add . && git commit -m 'remote commit'",
+			);
+			await bash.exec(
+				"cd /local && echo 'local change' > local.txt && git add . && git commit -m 'local commit'",
+			);
+
+			const result = await bash.exec("git pull --rebase", { cwd: "/local" });
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("Successfully rebased");
+
+			// Should NOT have a merge commit — linear history
+			const log = await bash.exec("git log --oneline", { cwd: "/local" });
+			const lines = log.stdout.trim().split("\n");
+			expect(lines.length).toBe(3); // initial + remote + local (rebased)
+			expect(log.stdout).not.toContain("Merge");
+
+			// Both files should exist
+			expect(await readFile(bash.fs, "/local/remote.txt")).toBe("remote change\n");
+			expect(await readFile(bash.fs, "/local/local.txt")).toBe("local change\n");
+		});
+
+		test("--rebase fast-forwards when no local commits", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+
+			const result = await bash.exec("git pull --rebase", { cwd: "/local" });
+			expect(result.exitCode).toBe(0);
+			expect(await readFile(bash.fs, "/local/README.md")).toBe("v2\n");
+		});
+
+		test("--rebase with conflict stops for resolution", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec(
+				"cd /remote && echo 'remote version' > README.md && git add . && git commit -m remote",
+			);
+			await bash.exec(
+				"cd /local && echo 'local version' > README.md && git add . && git commit -m local",
+			);
+
+			const result = await bash.exec("git pull --rebase", { cwd: "/local" });
+			expect(result.exitCode).toBe(1);
+			expect(result.stderr).toContain("could not apply");
+
+			// Should be in rebase state, not merge state
+			expect(await pathExists(bash.fs, "/local/.git/rebase-merge")).toBe(true);
+			expect(await pathExists(bash.fs, "/local/.git/MERGE_HEAD")).toBe(false);
+		});
+	});
+
+	// ── pull.rebase config ──────────────────────────────────────────
+
+	describe("pull.rebase config", () => {
+		test("pull.rebase=true rebases by default", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec(
+				"cd /remote && echo 'remote' > remote.txt && git add . && git commit -m remote",
+			);
+			await bash.exec("cd /local && echo 'local' > local.txt && git add . && git commit -m local");
+
+			await bash.exec("git config pull.rebase true", { cwd: "/local" });
+			const result = await bash.exec("git pull", { cwd: "/local" });
+
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("Successfully rebased");
+			const log = await bash.exec("git log --oneline", { cwd: "/local" });
+			expect(log.stdout).not.toContain("Merge");
+		});
+
+		test("--no-rebase overrides pull.rebase=true", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec(
+				"cd /remote && echo 'remote' > remote.txt && git add . && git commit -m remote",
+			);
+			await bash.exec("cd /local && echo 'local' > local.txt && git add . && git commit -m local");
+
+			await bash.exec("git config pull.rebase true", { cwd: "/local" });
+			const result = await bash.exec("git pull --no-rebase", { cwd: "/local" });
+
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("Merge made by");
+		});
+
+		test("branch.<name>.rebase=true overrides pull.rebase default", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec(
+				"cd /remote && echo 'remote' > remote.txt && git add . && git commit -m remote",
+			);
+			await bash.exec("cd /local && echo 'local' > local.txt && git add . && git commit -m local");
+
+			await bash.exec("git config branch.main.rebase true", { cwd: "/local" });
+			const result = await bash.exec("git pull", { cwd: "/local" });
+
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("Successfully rebased");
+		});
+
+		test("branch.<name>.rebase=false overrides pull.rebase=true", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec(
+				"cd /remote && echo 'remote' > remote.txt && git add . && git commit -m remote",
+			);
+			await bash.exec("cd /local && echo 'local' > local.txt && git add . && git commit -m local");
+
+			await bash.exec("git config pull.rebase true", { cwd: "/local" });
+			await bash.exec("git config branch.main.rebase false", { cwd: "/local" });
+			const result = await bash.exec("git pull", { cwd: "/local" });
+
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("Merge made by");
+		});
+	});
+
 	// ── pull.ff config ──────────────────────────────────────────────
 
 	describe("pull.ff config", () => {

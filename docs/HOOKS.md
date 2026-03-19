@@ -54,21 +54,21 @@ Pre-hooks can reject the operation by returning `{ reject: true, message?: strin
 
 Post-hooks are observational — return value is ignored.
 
-| Hook             | Payload                                                | Type                  |
-| ---------------- | ------------------------------------------------------ | --------------------- |
-| `postCommit`     | `{ repo, hash, message, branch, parents, author }`     | `PostCommitEvent`     |
-| `postMerge`      | `{ repo, headHash, theirsHash, strategy, commitHash }` | `PostMergeEvent`      |
-| `postCheckout`   | `{ repo, prevHead, newHead, isBranchCheckout }`        | `PostCheckoutEvent`   |
-| `postPush`       | same payload as `prePush`                              | `PostPushEvent`       |
-| `postFetch`      | `{ repo, remote, url, refsUpdated }`                   | `PostFetchEvent`      |
-| `postClone`      | `{ repo, repository, targetPath, bare, branch }`       | `PostCloneEvent`      |
-| `postPull`       | `{ repo, remote, branch, strategy, commitHash }`       | `PostPullEvent`       |
-| `postReset`      | `{ repo, mode, targetHash }`                           | `PostResetEvent`      |
-| `postClean`      | `{ repo, removed, dryRun }`                            | `PostCleanEvent`      |
-| `postRm`         | `{ repo, removedPaths, cached }`                       | `PostRmEvent`         |
-| `postCherryPick` | `{ repo, mode, commitHash, hadConflicts }`             | `PostCherryPickEvent` |
-| `postRevert`     | `{ repo, mode, commitHash, hadConflicts }`             | `PostRevertEvent`     |
-| `postStash`      | `{ repo, action, ok }`                                 | `PostStashEvent`      |
+| Hook             | Payload                                                                                                                       | Type                  |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| `postCommit`     | `{ repo, hash, message, branch, parents, author }`                                                                            | `PostCommitEvent`     |
+| `postMerge`      | `{ repo, headHash, theirsHash, strategy, commitHash }`. `strategy`: `"fast-forward"` or `"three-way"`.                        | `PostMergeEvent`      |
+| `postCheckout`   | `{ repo, prevHead, newHead, isBranchCheckout }`                                                                               | `PostCheckoutEvent`   |
+| `postPush`       | same payload as `prePush`                                                                                                     | `PostPushEvent`       |
+| `postFetch`      | `{ repo, remote, url, refsUpdated }`                                                                                          | `PostFetchEvent`      |
+| `postClone`      | `{ repo, repository, targetPath, bare, branch }`                                                                              | `PostCloneEvent`      |
+| `postPull`       | `{ repo, remote, branch, strategy, commitHash }`. `strategy`: `"up-to-date"`, `"fast-forward"`, `"three-way"`, or `"rebase"`. | `PostPullEvent`       |
+| `postReset`      | `{ repo, mode, targetHash }`                                                                                                  | `PostResetEvent`      |
+| `postClean`      | `{ repo, removed, dryRun }`                                                                                                   | `PostCleanEvent`      |
+| `postRm`         | `{ repo, removedPaths, cached }`                                                                                              | `PostRmEvent`         |
+| `postCherryPick` | `{ repo, mode, commitHash, hadConflicts }`                                                                                    | `PostCherryPickEvent` |
+| `postRevert`     | `{ repo, mode, commitHash, hadConflicts }`                                                                                    | `PostRevertEvent`     |
+| `postStash`      | `{ repo, action, ok }`                                                                                                        | `PostStashEvent`      |
 
 ## Low-level events
 

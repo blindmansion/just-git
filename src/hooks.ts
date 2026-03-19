@@ -175,7 +175,7 @@ export interface PostPullEvent {
 	readonly repo: GitRepo;
 	readonly remote: string;
 	readonly branch: string | null;
-	readonly strategy: "up-to-date" | "fast-forward" | "three-way";
+	readonly strategy: "up-to-date" | "fast-forward" | "three-way" | "rebase";
 	readonly commitHash: ObjectId | null;
 }
 

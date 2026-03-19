@@ -27,6 +27,7 @@ import { resolveRemoteTransport } from "../lib/transport/remote.ts";
 import type { RemoteRef } from "../lib/transport/transport.ts";
 import type { ObjectId } from "../lib/types.ts";
 import { a, type Command, f } from "../parse/index.ts";
+import { performRebase } from "./rebase.ts";
 
 export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("pull", {
@@ -78,6 +79,28 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				}
 			}
 			remoteName = remoteName || "origin";
+
+			// Resolve rebase mode: CLI flags override config
+			let useRebase = false;
+			if (args.rebase) {
+				useRebase = true;
+			} else if (!args.noRebase) {
+				const head = await readHead(gitCtx);
+				if (head?.type === "symbolic") {
+					const bn = head.target.startsWith("refs/heads/")
+						? head.target.slice("refs/heads/".length)
+						: head.target;
+					const branchRebase = await getConfigValue(gitCtx, `branch.${bn}.rebase`);
+					if (branchRebase === "true") useRebase = true;
+					else if (branchRebase !== "false") {
+						const pullRebase = await getConfigValue(gitCtx, "pull.rebase");
+						if (pullRebase === "true") useRebase = true;
+					}
+				} else {
+					const pullRebase = await getConfigValue(gitCtx, "pull.rebase");
+					if (pullRebase === "true") useRebase = true;
+				}
+			}
 
 			let resolved;
 			try {
@@ -186,7 +209,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				return fatal("Could not determine remote HEAD");
 			}
 
-			// ── Merge phase ──────────────────────────────────────────
+			// ── Integration phase ────────────────────────────────────
 			const theirsHash = fetchHeadHash;
 
 			if (headHash === theirsHash) {
@@ -204,6 +227,37 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				};
 			}
 
+			// ── Rebase path ─────────────────────────────────────────
+			if (useRebase) {
+				const head = await readHead(gitCtx);
+				const headName = head?.type === "symbolic" ? head.target : "detached HEAD";
+				const upstreamLabel = remoteBranch ? `${remoteName}/${remoteBranch}` : remoteName;
+
+				const result = await performRebase(
+					gitCtx,
+					ctx.env,
+					headHash,
+					headName,
+					theirsHash,
+					theirsHash,
+					upstreamLabel,
+					ext,
+				);
+
+				if (result.exitCode === 0) {
+					await ext?.hooks?.postPull?.({
+						repo: gitCtx,
+						remote: remoteName,
+						branch: pullBranch,
+						strategy: "rebase",
+						commitHash: null,
+					});
+				}
+
+				return result;
+			}
+
+			// ── Merge path ──────────────────────────────────────────
 			const bases = await findAllMergeBases(gitCtx, headHash, theirsHash);
 			const baseCommit = bases[0] ?? null;
 

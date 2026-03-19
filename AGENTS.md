@@ -74,7 +74,7 @@ Post-hooks are fire-and-forget (return value ignored):
 - `postPush` — same payload as `prePush`.
 - `postFetch` — `{ repo, remote, url, refsUpdated }`.
 - `postClone` — `{ repo, repository, targetPath, bare, branch }`.
-- `postPull` — `{ repo, remote, branch, strategy, commitHash }`.
+- `postPull` — `{ repo, remote, branch, strategy, commitHash }`. `strategy` is `"up-to-date"`, `"fast-forward"`, `"three-way"`, or `"rebase"`.
 - `postReset` — `{ repo, mode, targetHash }`.
 - `postClean` — `{ repo, removed, dryRun }`.
 - `postRm` — `{ repo, removedPaths, cached }`.

@@ -296,6 +296,228 @@ async function fastForwardTo(
 	return null;
 }
 
+/**
+ * Core rebase engine used by both `git rebase` and `git pull --rebase`.
+ * Caller is responsible for resolving upstream/onto hashes and checking
+ * for concurrent rebase. This function handles worktree cleanliness,
+ * pre-rebase hook, commit collection, and the pick loop.
+ */
+export async function performRebase(
+	gitCtx: GitContext,
+	env: Map<string, string>,
+	origHead: ObjectId,
+	headName: string,
+	upstreamHash: ObjectId,
+	ontoHash: ObjectId,
+	upstreamLabel: string,
+	ext?: GitExtensions,
+): Promise<CommandResult> {
+	const branchName = headName.startsWith("refs/heads/") ? branchNameFromRef(headName) : "HEAD";
+
+	// ── Clean worktree check ─────────────────────────────────
+	const currentIndex = await readIndex(gitCtx);
+
+	const unmergedPaths = getConflictedPaths(currentIndex).sort();
+	if (unmergedPaths.length > 0) {
+		return {
+			stdout: unmergedPaths.map((p) => `${p}: needs merge\n`).join(""),
+			stderr:
+				"error: cannot rebase: You have unstaged changes.\n" +
+				"error: additionally, your index contains uncommitted changes.\n" +
+				"error: Please commit or stash them.\n",
+			exitCode: 1,
+		};
+	}
+
+	const headCommit = await readCommit(gitCtx, origHead);
+	const headMap = await flattenTreeToMap(gitCtx, headCommit.tree);
+
+	if (gitCtx.workTree) {
+		const hasStaged = hasStagedChanges(currentIndex, headMap);
+		const wtDiffs = await diffIndexToWorkTree(gitCtx, currentIndex);
+		const hasUnstaged = wtDiffs.some((d) => d.status === "modified" || d.status === "deleted");
+
+		if (hasStaged || hasUnstaged) {
+			const lines: string[] = [];
+			if (hasUnstaged) {
+				lines.push("error: cannot rebase: You have unstaged changes.");
+			}
+			if (hasStaged) {
+				if (hasUnstaged) {
+					lines.push("error: additionally, your index contains uncommitted changes.");
+				} else {
+					lines.push("error: cannot rebase: Your index contains uncommitted changes.");
+				}
+			}
+			lines.push("error: Please commit or stash them.");
+			return err(`${lines.join("\n")}\n`);
+		}
+	}
+
+	// pre-rebase hook
+	const preRebaseRej = await ext?.hooks?.preRebase?.({
+		repo: gitCtx,
+		upstream: upstreamLabel,
+		branch: headName !== "detached HEAD" ? branchName : null,
+	});
+	if (isRejection(preRebaseRej)) {
+		return { stdout: "", stderr: preRebaseRej.message ?? "", exitCode: 1 };
+	}
+
+	// ── Compute commit range ─────────────────────────────────
+	const plan = await collectRebaseSymmetricPlan(gitCtx, upstreamHash, origHead);
+	const commits = plan.right;
+
+	// ── Empty range: up-to-date or fast-forward ─────────────
+	if (commits.length === 0) {
+		if (ontoHash !== origHead) {
+			const ffErr = await fastForwardTo(gitCtx, ontoHash, currentIndex, headName);
+			if (ffErr) return ffErr;
+			await writeRebaseFfReflog(gitCtx, env, origHead, ontoHash, headName, upstreamLabel);
+			return {
+				stdout: "",
+				stderr: `Successfully rebased and updated ${headName}.\n`,
+				exitCode: 0,
+			};
+		}
+		return {
+			stdout: upToDateMessage(branchName),
+			stderr: "",
+			exitCode: 0,
+		};
+	}
+
+	// ── Cherry-pick skip detection ──────────────────────────
+	const skippedWarnings: string[] = [];
+	const leftSideCommits = plan.left;
+	const leftPatchIds = new Set<string>();
+	for (const c of leftSideCommits) {
+		const pid = await computePatchId(gitCtx, c.hash);
+		if (pid) leftPatchIds.add(pid);
+	}
+
+	const filteredCommits: typeof commits = [];
+	if (leftPatchIds.size > 0) {
+		for (const c of commits) {
+			const pid = await computePatchId(gitCtx, c.hash);
+			if (pid && leftPatchIds.has(pid)) {
+				skippedWarnings.push(
+					`warning: skipped previously applied commit ${abbreviateHash(c.hash)}`,
+				);
+			} else {
+				filteredCommits.push(c);
+			}
+		}
+	} else {
+		filteredCommits.push(...commits);
+	}
+
+	let skipStderr = "";
+	if (skippedWarnings.length > 0) {
+		skipStderr =
+			`${skippedWarnings.join("\n")}\n` +
+			"hint: use --reapply-cherry-picks to include skipped commits\n" +
+			'hint: Disable this message with "git config set advice.skippedCherryPicks false"\n';
+	}
+
+	if (filteredCommits.length === 0) {
+		if (ontoHash !== origHead) {
+			const ffErr = await fastForwardTo(gitCtx, ontoHash, currentIndex, headName);
+			if (ffErr) {
+				ffErr.stderr = skipStderr + ffErr.stderr;
+				return ffErr;
+			}
+			await writeRebaseFfReflog(gitCtx, env, origHead, ontoHash, headName, upstreamLabel);
+		}
+		return {
+			stdout: "",
+			stderr: `${skipStderr}Successfully rebased and updated ${headName}.\n`,
+			exitCode: 0,
+		};
+	}
+
+	// ── Build todo list ──────────────────────────────────────
+	const todo: RebaseTodoEntry[] = filteredCommits.map((c) => ({
+		hash: c.hash,
+		subject: firstLine(c.commit.message),
+	}));
+
+	// ── Skip unnecessary picks (fast-forward optimization) ───
+	let checkoutTarget = ontoHash;
+	let skippedCount = 0;
+	for (const entry of todo) {
+		const commit = await readCommit(gitCtx, entry.hash);
+		if (commit.parents.length > 1) break;
+		if (commit.parents.length === 0) break;
+		if (commit.parents[0] !== checkoutTarget) break;
+		checkoutTarget = entry.hash;
+		skippedCount++;
+	}
+	const done: RebaseTodoEntry[] = todo.splice(0, skippedCount);
+
+	if (todo.length === 0) {
+		if (checkoutTarget === origHead) {
+			return {
+				stdout: upToDateMessage(branchName),
+				stderr: skipStderr,
+				exitCode: 0,
+			};
+		}
+		const ffErr = await fastForwardTo(gitCtx, checkoutTarget, currentIndex, headName);
+		if (ffErr) {
+			ffErr.stderr = skipStderr + ffErr.stderr;
+			return ffErr;
+		}
+		await writeRebaseFfReflog(gitCtx, env, origHead, checkoutTarget, headName, upstreamLabel);
+		return {
+			stdout: "",
+			stderr: `${skipStderr}Successfully rebased and updated ${headName}.\n`,
+			exitCode: 0,
+		};
+	}
+
+	// ── Detach HEAD onto target ──────────────────────────────
+	const ffErr = await fastForwardTo(gitCtx, checkoutTarget, currentIndex, "detached HEAD");
+	if (ffErr) {
+		ffErr.stderr = skipStderr + ffErr.stderr;
+		return ffErr;
+	}
+
+	await deleteRef(gitCtx, "CHERRY_PICK_HEAD");
+	await deleteRef(gitCtx, "REVERT_HEAD");
+	await deleteStateFile(gitCtx, "MERGE_MSG");
+	await deleteStateFile(gitCtx, "MERGE_MODE");
+
+	await logRef(
+		gitCtx,
+		env,
+		"HEAD",
+		origHead,
+		checkoutTarget,
+		`rebase (start): checkout ${upstreamLabel}`,
+	);
+
+	// ── Initialize rebase state ──────────────────────────────
+	const state: RebaseState = {
+		headName,
+		origHead,
+		onto: ontoHash,
+		todo,
+		done,
+		msgnum: skippedCount,
+		end: skippedCount + todo.length,
+	};
+	await writeRebaseState(gitCtx, state);
+	await updateRef(gitCtx, "ORIG_HEAD", origHead);
+
+	// ── Run the pick loop ────────────────────────────────────
+	const pickResult = await runPickLoop(gitCtx, env);
+	if (skipStderr) {
+		pickResult.stderr = skipStderr + pickResult.stderr;
+	}
+	return pickResult;
+}
+
 export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("rebase", {
 		description: "Reapply commits on top of another base tip",
@@ -336,21 +558,12 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 				);
 			}
 
-			// Note: real git does NOT explicitly check for MERGE_HEAD or
-			// CHERRY_PICK_HEAD here. The worktree check below (staged/unstaged
-			// changes) handles those cases naturally — conflict entries (stages
-			// 1-3) are skipped by the diff machinery, so an index with only
-			// conflict entries is considered "clean". This allows rebase to
-			// start even during an in-progress cherry-pick with conflicts.
-
 			// Resolve current HEAD
 			const origHead = await requireHead(gitCtx);
 			if (isCommandError(origHead)) return origHead;
 
-			// Save head_name (the symbolic branch, or "detached HEAD")
 			const head = await readHead(gitCtx);
 			const headName = head?.type === "symbolic" ? head.target : "detached HEAD";
-			const branchName = head?.type === "symbolic" ? branchNameFromRef(head.target) : "HEAD";
 
 			// Resolve upstream (peel tags to commit)
 			const upstreamResult = await requireCommit(
@@ -376,247 +589,16 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 				ontoHash = upstreamHash;
 			}
 
-			// ── Clean worktree check ─────────────────────────────────
-			// Real git checks this before up-to-date detection.
-			// Only staged changes and unstaged tracked-file changes matter;
-			// untracked files are ignored.
-			const currentIndex = await readIndex(gitCtx);
-
-			// Block if the index has unmerged entries (stages 1-3).
-			// Real git's refresh_index reports these as "<path>: needs merge"
-			// on stdout and then require_clean_work_tree bails.
-			const unmergedPaths = getConflictedPaths(currentIndex).sort();
-			if (unmergedPaths.length > 0) {
-				return {
-					stdout: unmergedPaths.map((p) => `${p}: needs merge\n`).join(""),
-					stderr:
-						"error: cannot rebase: You have unstaged changes.\n" +
-						"error: additionally, your index contains uncommitted changes.\n" +
-						"error: Please commit or stash them.\n",
-					exitCode: 1,
-				};
-			}
-
-			const headCommit = await readCommit(gitCtx, origHead);
-			const headMap = await flattenTreeToMap(gitCtx, headCommit.tree);
-
-			if (gitCtx.workTree) {
-				const hasStaged = hasStagedChanges(currentIndex, headMap);
-
-				// Check for unstaged changes (worktree differs from index)
-				// Only tracked files (modified/deleted), NOT untracked files
-				const wtDiffs = await diffIndexToWorkTree(gitCtx, currentIndex);
-				const hasUnstaged = wtDiffs.some((d) => d.status === "modified" || d.status === "deleted");
-
-				if (hasStaged || hasUnstaged) {
-					const lines: string[] = [];
-					if (hasUnstaged) {
-						lines.push("error: cannot rebase: You have unstaged changes.");
-					}
-					if (hasStaged) {
-						if (hasUnstaged) {
-							lines.push("error: additionally, your index contains uncommitted changes.");
-						} else {
-							lines.push("error: cannot rebase: Your index contains uncommitted changes.");
-						}
-					}
-					lines.push("error: Please commit or stash them.");
-					return err(`${lines.join("\n")}\n`);
-				}
-			}
-
-			// pre-rebase hook
-			const preRebaseRej = await ext?.hooks?.preRebase?.({
-				repo: gitCtx,
-				upstream: upstreamArg,
-				branch: head?.type === "symbolic" ? branchNameFromRef(head.target) : null,
-			});
-			if (isRejection(preRebaseRej)) {
-				return { stdout: "", stderr: preRebaseRej.message ?? "", exitCode: 1 };
-			}
-
-			// ── Compute commit range ─────────────────────────────────
-			const plan = await collectRebaseSymmetricPlan(gitCtx, upstreamHash, origHead);
-			const commits = plan.right;
-
-			// ── Empty range: up-to-date or fast-forward ─────────────
-			if (commits.length === 0) {
-				if (ontoHash !== origHead) {
-					const ffErr = await fastForwardTo(gitCtx, ontoHash, currentIndex, headName);
-					if (ffErr) return ffErr;
-					await writeRebaseFfReflog(gitCtx, ctx.env, origHead, ontoHash, headName, upstreamArg);
-					return {
-						stdout: "",
-						stderr: `Successfully rebased and updated ${headName}.\n`,
-						exitCode: 0,
-					};
-				}
-				return {
-					stdout: upToDateMessage(branchName),
-					stderr: "",
-					exitCode: 0,
-				};
-			}
-
-			// ── Cherry-pick skip detection ──────────────────────────
-			// Filter out commits whose patches already exist in the upstream.
-			// Git uses symmetric difference: the "left side" is commits
-			// reachable from upstream but NOT from HEAD (origHead).
-			const skippedWarnings: string[] = [];
-
-			// Collect commits in HEAD..upstream (the "left side")
-			const leftSideCommits = plan.left;
-
-			// Compute patch-ids for the left side
-			const leftPatchIds = new Set<string>();
-			for (const c of leftSideCommits) {
-				const pid = await computePatchId(gitCtx, c.hash);
-				if (pid) leftPatchIds.add(pid);
-			}
-
-			// Filter commits: skip those whose patch-id matches a left-side commit
-			const filteredCommits: typeof commits = [];
-			if (leftPatchIds.size > 0) {
-				for (const c of commits) {
-					const pid = await computePatchId(gitCtx, c.hash);
-					if (pid && leftPatchIds.has(pid)) {
-						skippedWarnings.push(
-							`warning: skipped previously applied commit ${abbreviateHash(c.hash)}`,
-						);
-					} else {
-						filteredCommits.push(c);
-					}
-				}
-			} else {
-				filteredCommits.push(...commits);
-			}
-
-			// Build stderr with skip warnings + hint
-			let skipStderr = "";
-			if (skippedWarnings.length > 0) {
-				skipStderr =
-					`${skippedWarnings.join("\n")}\n` +
-					"hint: use --reapply-cherry-picks to include skipped commits\n" +
-					'hint: Disable this message with "git config set advice.skippedCherryPicks false"\n';
-			}
-
-			// If all commits were skipped (cherry-pick equivalents),
-			// fast-forward to onto if needed and report success.
-			if (filteredCommits.length === 0) {
-				if (ontoHash !== origHead) {
-					const ffErr = await fastForwardTo(gitCtx, ontoHash, currentIndex, headName);
-					if (ffErr) {
-						ffErr.stderr = skipStderr + ffErr.stderr;
-						return ffErr;
-					}
-					await writeRebaseFfReflog(gitCtx, ctx.env, origHead, ontoHash, headName, upstreamArg);
-				}
-				return {
-					stdout: "",
-					stderr: `${skipStderr}Successfully rebased and updated ${headName}.\n`,
-					exitCode: 0,
-				};
-			}
-
-			// ── Build todo list ──────────────────────────────────────
-			const todo: RebaseTodoEntry[] = filteredCommits.map((c) => ({
-				hash: c.hash,
-				subject: firstLine(c.commit.message),
-			}));
-
-			// ── Skip unnecessary picks (fast-forward optimization) ───
-			// Mirrors git's skip_unnecessary_picks() in sequencer.c.
-			// Scan the todo list from the beginning. While each pick's
-			// parent matches the current base, advance the base to that
-			// commit (avoiding a cherry-pick that would produce an
-			// identical result). This changes the checkout target from
-			// the original onto to the last fast-forwardable commit.
-			let checkoutTarget = ontoHash;
-			let skippedCount = 0;
-			for (const entry of todo) {
-				const commit = await readCommit(gitCtx, entry.hash);
-				// Stop at merge commits (they can't be fast-forwarded)
-				if (commit.parents.length > 1) break;
-				// Stop at root commits
-				if (commit.parents.length === 0) break;
-				// Stop if parent doesn't match current base
-				if (commit.parents[0] !== checkoutTarget) break;
-				checkoutTarget = entry.hash;
-				skippedCount++;
-			}
-			// Remove skipped entries from the front of the todo list
-			const done: RebaseTodoEntry[] = todo.splice(0, skippedCount);
-
-			// If we skipped all commits, the rebase is just a fast-forward
-			if (todo.length === 0) {
-				if (checkoutTarget === origHead) {
-					return {
-						stdout: upToDateMessage(branchName),
-						stderr: skipStderr,
-						exitCode: 0,
-					};
-				}
-				const ffErr = await fastForwardTo(gitCtx, checkoutTarget, currentIndex, headName);
-				if (ffErr) {
-					ffErr.stderr = skipStderr + ffErr.stderr;
-					return ffErr;
-				}
-				await writeRebaseFfReflog(gitCtx, ctx.env, origHead, checkoutTarget, headName, upstreamArg);
-				return {
-					stdout: "",
-					stderr: `${skipStderr}Successfully rebased and updated ${headName}.\n`,
-					exitCode: 0,
-				};
-			}
-
-			// ── Detach HEAD onto target ──────────────────────────────
-			// Checkout the target tree and detach HEAD. If untracked files
-			// would be overwritten, bail before creating rebase state.
-			// Note: we write directly to HEAD (not the branch ref) to detach.
-			const ffErr = await fastForwardTo(gitCtx, checkoutTarget, currentIndex, "detached HEAD");
-			if (ffErr) {
-				ffErr.stderr = skipStderr + ffErr.stderr;
-				return ffErr;
-			}
-
-			// Real git clears these during checkout_onto() / reset_head().
-			// Stale refs from prior cherry-pick/revert would otherwise poison
-			// later commits (commit.ts uses CHERRY_PICK_HEAD's author info).
-			await deleteRef(gitCtx, "CHERRY_PICK_HEAD");
-			await deleteRef(gitCtx, "REVERT_HEAD");
-			await deleteStateFile(gitCtx, "MERGE_MSG");
-			await deleteStateFile(gitCtx, "MERGE_MODE");
-
-			await logRef(
+			return performRebase(
 				gitCtx,
 				ctx.env,
-				"HEAD",
 				origHead,
-				checkoutTarget,
-				`rebase (start): checkout ${upstreamArg}`,
-			);
-
-			// ── Initialize rebase state ──────────────────────────────
-			const state: RebaseState = {
 				headName,
-				origHead,
-				onto: ontoHash,
-				todo,
-				done,
-				msgnum: skippedCount,
-				end: skippedCount + todo.length,
-			};
-			await writeRebaseState(gitCtx, state);
-			await updateRef(gitCtx, "ORIG_HEAD", origHead);
-
-			// ── Run the pick loop ────────────────────────────────────
-			const pickResult = await runPickLoop(gitCtx, ctx.env);
-
-			// Prepend skip warnings to stderr
-			if (skipStderr) {
-				pickResult.stderr = skipStderr + pickResult.stderr;
-			}
-			return pickResult;
+				upstreamHash,
+				ontoHash,
+				upstreamArg,
+				ext,
+			);
 		},
 	});
 }
