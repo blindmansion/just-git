@@ -423,6 +423,51 @@ const reflogExists: Action = {
 	},
 };
 
+const logGraph: Action = {
+	name: "logGraph",
+	category: "diagnostic",
+	canRun: (state) => state.hasCommits,
+	precondition: () => true,
+	weight: () => 1,
+	async execute(harness, rng) {
+		const n = rng.int(1, 10);
+		const flags = rng.pick([
+			"--oneline",
+			"",
+			"--all --oneline",
+			"--oneline --decorate",
+			'--format="%h %s"',
+			"--pretty=short",
+		]);
+		const cmd = `log --graph ${flags} -n ${n}`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+const logGraphDiff: Action = {
+	name: "logGraphDiff",
+	category: "diagnostic",
+	canRun: (state) => state.hasCommits,
+	precondition: () => true,
+	weight: () => 1,
+	async execute(harness, rng) {
+		const n = rng.int(1, 3);
+		const diffFlag = rng.pick([
+			"--stat",
+			"--name-status",
+			"--name-only",
+			"-p",
+			"--shortstat",
+			"--numstat",
+		]);
+		const oneline = rng.bool(0.5) ? " --oneline" : "";
+		const cmd = `log --graph ${diffFlag}${oneline} -n ${n}`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
 const logDiff: Action = {
 	name: "logDiff",
 	category: "diagnostic",
@@ -456,6 +501,8 @@ export const DIAGNOSTIC_ACTIONS: readonly Action[] = [
 	logPretty,
 	logRange,
 	logDiff,
+	logGraph,
+	logGraphDiff,
 	statusVariant,
 	diffUnstaged,
 	diffCached,

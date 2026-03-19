@@ -352,7 +352,7 @@ Reusable random walk engine for generating git operation sequences. Shared by or
 - `types.ts` — `Action` interface (with `category` and `fuzz` param), `ActionCategory`, `FuzzConfig`
 - `pickers.ts` — Shared value-selection helpers (`pickOtherBranch`, `pickFile`, `pickCommitHash`, `pickTag`, `pickRemote`, `pickAnyBranch`, `newBranchName`, `newTagName`, `inConflict`). Each picker accepts optional `{ fuzzRate }` to inject plausible-but-wrong values for error-path testing.
 - `actions/` — Action definitions split by category:
-  - `index.ts` — Re-exports `ALL_ACTIONS` (103 actions), `Action`, `ActionCategory`, per-category arrays
+  - `index.ts` — Re-exports `ALL_ACTIONS` (105 actions), `Action`, `ActionCategory`, per-category arrays
   - `file-ops.ts` — `fileOps` (seed-based file batch)
   - `staging.ts` — `addAll`, `addAllFlag`, `addSpecific`, `addUpdate`, `rmFile`, `rmCached`, `mvFile`
   - `commit.ts` — `commit`, `commitAll`, `commitAmend`, `commitAmendNoEdit`
