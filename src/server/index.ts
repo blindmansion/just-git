@@ -31,4 +31,12 @@ export type {
 export { createStandardHooks, type StandardHooksConfig } from "./presets.ts";
 
 // Storage
+export type { Storage } from "./storage.ts";
 export { SqliteStorage, type SqliteDatabase, type SqliteStatement } from "./sqlite-storage.ts";
+export {
+	PgStorage,
+	wrapPgPool,
+	type PgDatabase,
+	type PgPool,
+	type PgPoolClient,
+} from "./pg-storage.ts";

@@ -12,6 +12,7 @@ import type {
 	RefStore,
 } from "../lib/types.ts";
 import type { GitRepo } from "../lib/types.ts";
+import type { Storage } from "./storage.ts";
 
 // ── SQLite driver interface ─────────────────────────────────────────
 // Minimal interface covering bun:sqlite and better-sqlite3.
@@ -105,7 +106,7 @@ function prepareStatements(db: SqliteDatabase): Statements {
  * });
  * ```
  */
-export class SqliteStorage {
+export class SqliteStorage implements Storage {
 	private db: SqliteDatabase;
 	private stmts: Statements;
 	private ingestTx: (
@@ -134,7 +135,7 @@ export class SqliteStorage {
 	}
 
 	/** Delete all objects and refs for a repo. */
-	deleteRepo(repoId: string): void {
+	async deleteRepo(repoId: string): Promise<void> {
 		this.stmts.objDeleteAll.run(repoId);
 		this.stmts.refDeleteAll.run(repoId);
 	}

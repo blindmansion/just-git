@@ -50,7 +50,7 @@ await bash.exec("git add . && git commit -m 'initial commit'");
 
 ### Server
 
-Stand up a git server with SQLite-backed storage, branch protection, and push hooks:
+Stand up a git server with built-in storage (SQLite or [PostgreSQL](SERVER.md#pgstorage)), branch protection, and push hooks:
 
 ```ts
 import { createGitServer, SqliteStorage } from "just-git/server";

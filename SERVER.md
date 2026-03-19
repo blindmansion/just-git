@@ -187,6 +187,64 @@ const server = createGitServer({
 });
 ```
 
+## `PgStorage`
+
+PostgreSQL-backed object and ref storage. Same multi-repo design as `SqliteStorage` — repos share one database, partitioned by repo ID. Works with `pg` (node-postgres) or any driver matching the `PgDatabase` interface.
+
+```ts
+import { PgStorage, wrapPgPool } from "just-git/server";
+import { Pool } from "pg";
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const storage = await PgStorage.create(wrapPgPool(pool));
+
+// Get a GitRepo scoped to a specific repo
+const repo = storage.repo("my-project");
+
+// Delete all data for a repo
+await storage.deleteRepo("old-project");
+```
+
+`PgStorage.create()` is async because it runs `CREATE TABLE IF NOT EXISTS` on the provided database. It creates the same `git_objects` and `git_refs` tables as `SqliteStorage`.
+
+### `wrapPgPool`
+
+Adapts a `pg`-style pool (anything with `query` and `connect` methods) into the `PgDatabase` interface. Handles `BEGIN`/`COMMIT`/`ROLLBACK` and client release automatically.
+
+If you're using a different driver, construct a `PgDatabase` directly:
+
+```ts
+const db: PgDatabase = {
+  query: (text, values) => myDriver.query(text, values),
+  transaction: async (fn) => {
+    await myDriver.query("BEGIN");
+    try {
+      const result = await fn(db);
+      await myDriver.query("COMMIT");
+      return result;
+    } catch (err) {
+      await myDriver.query("ROLLBACK");
+      throw err;
+    }
+  },
+};
+const storage = await PgStorage.create(db);
+```
+
+### `Storage` interface
+
+Both `SqliteStorage` and `PgStorage` implement the `Storage` interface, so code that's generic over backends can type against it:
+
+```ts
+import type { Storage } from "just-git/server";
+
+function createServer(storage: Storage) {
+  return createGitServer({
+    resolveRepo: async (repoPath) => storage.repo(repoPath),
+  });
+}
+```
+
 ## Working with pushed code
 
 Use the [repo module](src/repo/) (`just-git/repo`) inside hooks to inspect pushed commits, read files, diff trees, and more:
