@@ -273,6 +273,58 @@
 				r = await exec("git stash pop");
 				r.exitCode === 0 ? pass("git stash pop") : fail("git stash pop", r.stderr);
 
+				// local clone — exercises packfile creation + parsing
+				// (the vendored fflate inflate path)
+				log("\n── local clone (packfile path) ──", "info");
+				const cloneExec = async (cmd, cwdOverride) => {
+					const args = cmd.replace(/^git /, "").split(/\s+/);
+					return git.execute(args, { fs, cwd: cwdOverride || cwd, env, stdin: "" });
+				};
+				r = await cloneExec("git clone /repo /clone", "/");
+				r.exitCode === 0 ? pass("git clone (local)") : fail("git clone", r.stderr);
+
+				// verify the clone has the right content
+				const clonedFile = await fs.readFile("/clone/README.md");
+				clonedFile.includes("Browser Test")
+					? pass("cloned file content matches")
+					: fail("cloned file content", clonedFile);
+
+				r = await cloneExec("git log --oneline", "/clone");
+				const cloneLogLines = r.stdout.trim().split("\n").filter(Boolean);
+				cloneLogLines.length >= 2
+					? pass(`clone has ${cloneLogLines.length} commits`)
+					: fail("clone commit count", r.stdout);
+
+				// push back to origin — exercises pack creation from clone
+				await fs.writeFile("/clone/from-clone.txt", "pushed from clone");
+				await cloneExec("git add .", "/clone");
+				r = await cloneExec("git commit -m from-clone", "/clone");
+				r.exitCode === 0 ? pass("commit in clone") : fail("commit in clone", r.stderr);
+				r = await cloneExec("git push", "/clone");
+				r.exitCode === 0 ? pass("git push to origin") : fail("git push", r.stderr);
+
+				// verify push arrived at origin
+				r = await exec("git log --oneline");
+				r.stdout.includes("from-clone")
+					? pass("origin received push")
+					: fail("origin received push", r.stdout);
+
+				// fetch from origin after a new commit
+				await fs.writeFile("/repo/origin-only.txt", "only in origin");
+				await exec("git add .");
+				r = await exec("git commit -m origin-update");
+				r.exitCode === 0 ? pass("origin commit") : fail("origin commit", r.stderr);
+
+				r = await cloneExec("git fetch", "/clone");
+				r.exitCode === 0 ? pass("git fetch") : fail("git fetch", r.stderr);
+				r = await cloneExec("git pull", "/clone");
+				r.exitCode === 0 ? pass("git pull") : fail("git pull", r.stderr);
+
+				const fetchedFile = await fs.readFile("/clone/origin-only.txt");
+				fetchedFile === "only in origin"
+					? pass("fetched file content matches")
+					: fail("fetched file content", fetchedFile);
+
 				// final summary
 				log("\n══════════════════════════", "info");
 				log("Browser smoke test complete", "info");

@@ -2,6 +2,12 @@
 // Thin wrapper over platform-specific zlib. Uses zlib format (RFC 1950)
 // with the 2-byte header and adler32 checksum, matching what git expects
 // inside packfiles and loose objects.
+//
+// Primary: node:zlib (Bun, Node, Deno) — fastest, synchronous.
+// Fallback: vendored fflate inflate (pure JS, works everywhere) +
+//           CompressionStream for deflation.
+
+import { pureInflate, pureInflateWithConsumed } from "./fflate.ts";
 
 interface InflateResult {
 	result: Uint8Array;
@@ -11,30 +17,28 @@ interface InflateResult {
 interface ZlibProvider {
 	deflateSync(data: Uint8Array): Uint8Array | Promise<Uint8Array>;
 	inflateSync(data: Uint8Array): Uint8Array | Promise<Uint8Array>;
-	/** When the platform's zlib supports `{ info: true }` (Bun, Node),
-	 *  a single inflate call that also reports compressed bytes consumed.
-	 *  Undefined on Deno (declares but doesn't implement) and browsers. */
-	inflateWithConsumed?: (data: Uint8Array) => InflateResult;
+	inflateWithConsumed(data: Uint8Array): InflateResult;
 }
 
 async function detect(): Promise<ZlibProvider> {
-	// Try node:zlib — require() for Bun / Node CJS / Deno,
-	// then import() for Node ESM where require() is unavailable.
-	// String construction hides the specifier from bundlers.
 	let zlib: any;
-	try {
-		zlib = require(["node", "zlib"].join(":"));
-	} catch {
+	// @ts-ignore — dom types not included; runtime check is intentional
+	const isBrowser = typeof document !== "undefined";
+	if (!isBrowser) {
 		try {
-			const specifier = ["node", "zlib"].join(":");
-			zlib = await import(specifier);
+			zlib = require(["node", "zlib"].join(":"));
 		} catch {
-			// neither require nor import worked — not a Node-like runtime
+			try {
+				const specifier = ["node", "zlib"].join(":");
+				zlib = await import(specifier);
+			} catch {
+				// neither require nor import worked — not a Node-like runtime
+			}
 		}
 	}
 
 	if (zlib && typeof zlib.deflateSync === "function" && typeof zlib.inflateSync === "function") {
-		let iwc: ZlibProvider["inflateWithConsumed"];
+		let iwc: ((data: Uint8Array) => InflateResult) | null = null;
 		try {
 			const probe = zlib.inflateSync(zlib.deflateSync(Buffer.from("x")), {
 				info: true,
@@ -52,44 +56,39 @@ async function detect(): Promise<ZlibProvider> {
 				};
 			}
 		} catch {
-			// { info: true } not supported on this runtime — leave undefined
+			// { info: true } not supported on this runtime (e.g. Deno)
 		}
 		return {
 			deflateSync: (data) => new Uint8Array(zlib.deflateSync(data)),
 			inflateSync: (data) => new Uint8Array(zlib.inflateSync(data)),
-			inflateWithConsumed: iwc,
+			inflateWithConsumed: iwc ?? pureInflateWithConsumed,
 		};
 	}
 
-	// Browser: CompressionStream/DecompressionStream with "deflate" (RFC 1950 zlib).
-	// DecompressionStream throws on trailing data per WHATWG Compression spec,
-	// so this path only works for loose objects (one zlib stream per file).
-	// Packfile parsing requires node:zlib.
-	if (
-		typeof globalThis.CompressionStream === "function" &&
-		typeof globalThis.DecompressionStream === "function"
-	) {
-		return {
-			async deflateSync(data) {
-				const cs = new CompressionStream("deflate");
-				const writer = cs.writable.getWriter();
-				writer.write(data as Uint8Array<ArrayBuffer>);
-				writer.close();
-				return new Uint8Array(await new Response(cs.readable).arrayBuffer());
-			},
-			async inflateSync(data) {
-				const ds = new DecompressionStream("deflate");
-				const writer = ds.writable.getWriter();
-				writer.write(data as Uint8Array<ArrayBuffer>);
-				writer.close();
-				return new Uint8Array(await new Response(ds.readable).arrayBuffer());
-			},
+	// No node:zlib — use vendored inflate (pure JS) and CompressionStream
+	// for deflation. inflateWithConsumed is always available via fflate.
+	let deflateFn: ZlibProvider["deflateSync"];
+	if (typeof globalThis.CompressionStream === "function") {
+		deflateFn = async (data) => {
+			const cs = new CompressionStream("deflate");
+			const writer = cs.writable.getWriter();
+			writer.write(data as Uint8Array<ArrayBuffer>);
+			writer.close();
+			return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+		};
+	} else {
+		deflateFn = () => {
+			throw new Error(
+				"No deflate implementation available. Requires node:zlib or CompressionStream.",
+			);
 		};
 	}
 
-	throw new Error(
-		"No zlib implementation available. Requires Bun, Node.js, Deno, or a browser with CompressionStream.",
-	);
+	return {
+		deflateSync: deflateFn,
+		inflateSync: pureInflate,
+		inflateWithConsumed: pureInflateWithConsumed,
+	};
 }
 
 // Lazy singleton — resolved on first call to any exported function.
@@ -113,45 +112,17 @@ export async function inflate(data: Uint8Array): Promise<Uint8Array> {
  * trailing data (back-to-back entries in a packfile). Returns the
  * decompressed bytes and the number of compressed bytes consumed.
  *
- * When the platform supports it (Bun, Node) this is a single zlib call
- * using `{ info: true }`. Otherwise falls back to inflate + binary search.
+ * Uses node:zlib `{ info: true }` when available (Bun, Node), otherwise
+ * falls back to vendored fflate which tracks the DEFLATE bit position.
  */
 export async function inflateObject(
 	data: Uint8Array,
 	expectedSize: number,
 ): Promise<InflateResult> {
 	const p = await provider();
-
-	if (p.inflateWithConsumed) {
-		const { result, bytesConsumed } = p.inflateWithConsumed(data);
-		if (result.byteLength !== expectedSize) {
-			throw new Error(`Inflate size mismatch: got ${result.byteLength}, expected ${expectedSize}`);
-		}
-		return { result, bytesConsumed };
+	const { result, bytesConsumed } = p.inflateWithConsumed(data);
+	if (result.byteLength !== expectedSize) {
+		throw new Error(`Inflate size mismatch: got ${result.byteLength}, expected ${expectedSize}`);
 	}
-
-	// Fallback: inflate the whole remaining buffer, then binary search
-	// for the exact compressed length. ~log2(N) extra inflate calls.
-	const full = await p.inflateSync(data);
-	if (full.byteLength !== expectedSize) {
-		throw new Error(`Inflate size mismatch: got ${full.byteLength}, expected ${expectedSize}`);
-	}
-
-	let lo = 2; // minimum zlib stream is 2 bytes (header)
-	let hi = data.byteLength;
-	while (lo < hi) {
-		const mid = (lo + hi) >>> 1;
-		try {
-			const trial = await p.inflateSync(data.subarray(0, mid));
-			if (trial.byteLength === expectedSize) {
-				hi = mid;
-			} else {
-				lo = mid + 1;
-			}
-		} catch {
-			lo = mid + 1;
-		}
-	}
-
-	return { result: full, bytesConsumed: lo };
+	return { result, bytesConsumed };
 }
