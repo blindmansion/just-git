@@ -1,6 +1,7 @@
 import { envelope } from "../lib/object-store.ts";
 import { readPack } from "../lib/pack/packfile.ts";
 import { sha1 } from "../lib/sha1.ts";
+import { normalizeRef } from "../lib/types.ts";
 import type {
 	ObjectId,
 	ObjectStore,
@@ -9,8 +10,8 @@ import type {
 	Ref,
 	RefEntry,
 	RefStore,
+	GitRepo,
 } from "../lib/types.ts";
-import type { GitRepo } from "../lib/types.ts";
 import type { Storage } from "./storage.ts";
 
 // ── MemoryStorage ───────────────────────────────────────────────────
@@ -128,8 +129,8 @@ class MemoryRefStore implements RefStore {
 		return this.store.get(name) ?? null;
 	}
 
-	async writeRef(name: string, ref: Ref): Promise<void> {
-		this.store.set(name, ref);
+	async writeRef(name: string, refOrHash: Ref | string): Promise<void> {
+		this.store.set(name, normalizeRef(refOrHash));
 	}
 
 	async deleteRef(name: string): Promise<void> {

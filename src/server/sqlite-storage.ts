@@ -2,6 +2,7 @@ import { ObjectCache } from "../lib/object-cache.ts";
 import { envelope } from "../lib/object-store.ts";
 import { readPack } from "../lib/pack/packfile.ts";
 import { sha1 } from "../lib/sha1.ts";
+import { normalizeRef } from "../lib/types.ts";
 import type {
 	ObjectId,
 	ObjectStore,
@@ -10,8 +11,8 @@ import type {
 	Ref,
 	RefEntry,
 	RefStore,
+	GitRepo,
 } from "../lib/types.ts";
-import type { GitRepo } from "../lib/types.ts";
 import type { Storage } from "./storage.ts";
 
 // ── SQLite driver interface ─────────────────────────────────────────
@@ -316,7 +317,8 @@ class SqliteRefStore implements RefStore {
 		return { type: "direct", hash: row.hash! };
 	}
 
-	async writeRef(name: string, ref: Ref): Promise<void> {
+	async writeRef(name: string, refOrHash: Ref | string): Promise<void> {
+		const ref = normalizeRef(refOrHash);
 		if (ref.type === "symbolic") {
 			this.stmts.refWrite.run(this.repoId, name, "symbolic", null, ref.target);
 		} else {

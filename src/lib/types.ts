@@ -100,6 +100,11 @@ export interface DirectRef {
 
 export type Ref = SymbolicRef | DirectRef;
 
+/** Normalize a `Ref | string` argument to a `Ref`. */
+export function normalizeRef(ref: Ref | string): Ref {
+	return typeof ref === "string" ? { type: "direct", hash: ref } : ref;
+}
+
 // ── Index (staging area) ────────────────────────────────────────────
 
 /** Stat-like metadata stored per index entry. */
@@ -147,8 +152,11 @@ export interface RefEntry {
 export interface RefStore {
 	/** Read a single ref without following symbolic refs. */
 	readRef(name: string): Promise<Ref | null>;
-	/** Write a ref (direct or symbolic). */
-	writeRef(name: string, ref: Ref): Promise<void>;
+	/**
+	 * Write a ref. Accepts a `Ref` object or a plain hash string
+	 * (shorthand for `{ type: "direct", hash }`).
+	 */
+	writeRef(name: string, ref: Ref | string): Promise<void>;
 	/** Delete a ref from storage. */
 	deleteRef(name: string): Promise<void>;
 	/** List all refs under a prefix, returning resolved hashes. */

@@ -220,14 +220,21 @@ export interface CreateCommitOptions {
 	author: Identity;
 	committer: Identity;
 	message: string;
+	/**
+	 * When set, advances `refs/heads/<branch>` to the new commit.
+	 * If HEAD does not exist yet, it is created as a symbolic ref
+	 * pointing to the branch — matching `git init` + `git commit`.
+	 */
+	branch?: string;
 }
 
 /**
  * Create a commit object directly in the object store.
  * Returns the new commit's hash.
  *
- * This does not update any refs — call `repo.refStore.writeRef()`
- * separately to advance a branch.
+ * When `branch` is provided, also advances the branch ref and
+ * (if HEAD is absent) initializes HEAD as a symbolic ref to it.
+ * Without `branch`, no refs are updated.
  */
 export async function createCommit(repo: GitRepo, options: CreateCommitOptions): Promise<string> {
 	const content = serializeCommit({
@@ -238,7 +245,18 @@ export async function createCommit(repo: GitRepo, options: CreateCommitOptions):
 		committer: options.committer,
 		message: options.message,
 	});
-	return writeObject(repo, "commit", content);
+	const hash = await writeObject(repo, "commit", content);
+
+	if (options.branch) {
+		const branchRef = `refs/heads/${options.branch}`;
+		await repo.refStore.writeRef(branchRef, { type: "direct", hash });
+		const head = await repo.refStore.readRef("HEAD");
+		if (!head) {
+			await repo.refStore.writeRef("HEAD", { type: "symbolic", target: branchRef });
+		}
+	}
+
+	return hash;
 }
 
 // ── Tree construction ───────────────────────────────────────────────
@@ -251,21 +269,25 @@ export interface TreeEntryInput {
 
 /**
  * Build a tree object from a flat list of entries and write it to the
- * object store. Entries default to mode "100644" (regular file).
+ * object store. When `mode` is omitted, the object store is consulted:
+ * tree objects get "040000", everything else gets "100644".
  *
  * For creating blobs to reference in the tree, write content directly
  * via `repo.objectStore.write("blob", content)`.
  */
 export async function writeTree(repo: GitRepo, entries: TreeEntryInput[]): Promise<string> {
 	const sorted = [...entries].sort((a, b) => a.name.localeCompare(b.name));
-	const content = serializeTree({
-		type: "tree",
-		entries: sorted.map((e) => ({
-			mode: e.mode ?? "100644",
-			name: e.name,
-			hash: e.hash,
-		})),
-	});
+	const resolved = await Promise.all(
+		sorted.map(async (e) => {
+			let mode = e.mode;
+			if (!mode) {
+				const obj = await repo.objectStore.read(e.hash);
+				mode = obj.type === "tree" ? "040000" : "100644";
+			}
+			return { mode, name: e.name, hash: e.hash };
+		}),
+	);
+	const content = serializeTree({ type: "tree", entries: resolved });
 	return writeObject(repo, "tree", content);
 }
 
@@ -502,7 +524,7 @@ class ReadonlyRefStore implements RefStore {
 	readRef(name: string): Promise<Ref | null> {
 		return this.inner.readRef(name);
 	}
-	writeRef(_name: string, _ref: Ref): Promise<void> {
+	writeRef(_name: string, _ref: Ref | string): Promise<void> {
 		throw new Error("cannot write ref: ref store is read-only");
 	}
 	deleteRef(_name: string): Promise<void> {

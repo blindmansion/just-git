@@ -4,15 +4,16 @@ import { parseTag } from "./objects/tag.ts";
 import { join } from "./path.ts";
 import { deleteReflog } from "./reflog.ts";
 import { ensureParentDir } from "./repo.ts";
-import type {
-	DirectRef,
-	GitContext,
-	GitRepo,
-	ObjectId,
-	Ref,
-	RefEntry,
-	RefStore,
-	SymbolicRef,
+import {
+	normalizeRef,
+	type DirectRef,
+	type GitContext,
+	type GitRepo,
+	type ObjectId,
+	type Ref,
+	type RefEntry,
+	type RefStore,
+	type SymbolicRef,
 } from "./types.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
@@ -54,7 +55,8 @@ export class FileSystemRefStore implements RefStore {
 		return null;
 	}
 
-	async writeRef(name: string, ref: Ref): Promise<void> {
+	async writeRef(name: string, refOrHash: Ref | string): Promise<void> {
+		const ref = normalizeRef(refOrHash);
 		const path = join(this.gitDir, name);
 		await ensureParentDir(this.fs, path);
 		if (ref.type === "symbolic") {
