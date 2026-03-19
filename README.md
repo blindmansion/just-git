@@ -4,9 +4,9 @@
 [![npm](https://img.shields.io/npm/v/just-git)](https://www.npmjs.com/package/just-git)
 [![bundle size](https://img.shields.io/bundlejs/size/just-git)](https://bundlejs.com/?q=just-git)
 
-Pure TypeScript git implementation. Zero dependencies. 34 commands. Works in Node, Bun, Deno, and the browser. [Tested against real git](TESTING.md) across more than a million randomized operations, comparing repository state and command output at every step.
+Pure TypeScript git implementation. Zero dependencies. 34 commands. Works in Node, Bun, Deno, Cloudflare Workers, and the browser. [Tested against real git](TESTING.md) across more than a million randomized operations.
 
-Designed for sandboxed environments where shelling out to real git isn't possible or desirable. Targets faithful reproduction of real git's behavior and output. Built to work with [just-bash](https://github.com/vercel-labs/just-bash), which provides a filesystem interface and shell that just-git registers into as a custom command, but can be used on its own.
+Two entry points: a **virtual filesystem client** for sandboxed environments (pairs with [just-bash](https://github.com/vercel-labs/just-bash), or use standalone), and an **[embeddable git server](SERVER.md)** that any standard `git` client can clone, fetch, and push to.
 
 ## Install
 
@@ -16,25 +16,66 @@ npm install just-git
 
 ## Quick start
 
+### Client
+
+Provide any `FileSystem` implementation and call `git.exec()`:
+
+```ts
+import { createGit } from "just-git";
+
+const git = createGit({ identity: { name: "Alice", email: "alice@example.com" } });
+
+await git.exec("git init", { fs, cwd: "/repo" });
+await git.exec("git add .", { fs, cwd: "/repo" });
+await git.exec('git commit -m "initial commit"', { fs, cwd: "/repo" });
+await git.exec("git log --oneline", { fs, cwd: "/repo" });
+```
+
+Tokenization handles single and double quotes. Pass `env` as a plain object when needed (e.g. `GIT_AUTHOR_NAME`).
+
+For a full virtual shell with file I/O, pipes, and scripting, pair with [just-bash](https://github.com/vercel-labs/just-bash):
+
 ```ts
 import { Bash } from "just-bash";
 import { createGit } from "just-git";
 
-const git = createGit({
-  identity: { name: "Alice", email: "alice@example.com" },
-});
-
 const bash = new Bash({
   cwd: "/repo",
-  customCommands: [git],
+  customCommands: [createGit({ identity: { name: "Alice", email: "alice@example.com" } })],
 });
 
-await bash.exec("git init");
 await bash.exec("echo 'hello' > README.md");
-await bash.exec("git add .");
-await bash.exec('git commit -m "initial commit"');
-await bash.exec("git log --oneline");
+await bash.exec("git add . && git commit -m 'initial commit'");
 ```
+
+### Server
+
+Stand up a git server with SQLite-backed storage, branch protection, and push hooks:
+
+```ts
+import { createGitServer, SqliteStorage } from "just-git/server";
+import { Database } from "bun:sqlite";
+
+const storage = new SqliteStorage(new Database("repos.sqlite"));
+
+const server = createGitServer({
+  resolveRepo: (path) => storage.repo(path),
+  hooks: {
+    preReceive: ({ updates }) => {
+      if (updates.some((u) => u.ref === "refs/heads/main" && !u.isFF))
+        return { reject: true, message: "no force-push to main" };
+    },
+    postReceive: ({ repoPath, updates }) => {
+      console.log(`${repoPath}: ${updates.length} ref(s) updated`);
+    },
+  },
+});
+
+Bun.serve({ fetch: server.fetch });
+// git clone http://localhost:3000/my-repo ← works with real git
+```
+
+Uses web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. See [SERVER.md](SERVER.md) for the full API.
 
 ## Options
 
@@ -205,43 +246,6 @@ Concurrent pushes to the same remote are automatically serialized — if two age
 
 See [`examples/multi-agent.ts`](examples/multi-agent.ts) for a full working example with a coordinator agent that merges feature branches.
 
-## Server
-
-`just-git/server` is an embeddable Git Smart HTTP server. Any standard git client can clone, fetch, and push. Uses web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime.
-
-```ts
-import { createGitServer, SqliteStorage } from "just-git/server";
-import { getChangedFiles } from "just-git/repo";
-import { Database } from "bun:sqlite";
-
-const storage = new SqliteStorage(new Database("repos.sqlite"));
-
-const server = createGitServer({
-  resolveRepo: async (repoPath) => storage.repo(repoPath),
-  hooks: {
-    preReceive: async ({ updates }) => {
-      for (const u of updates) {
-        if (u.ref === "refs/heads/main" && !u.isFF && !u.isCreate) {
-          return { reject: true, message: "no force-push to main" };
-        }
-      }
-    },
-    postReceive: async ({ repo, updates }) => {
-      for (const u of updates) {
-        const files = await getChangedFiles(repo, u.oldHash, u.newHash);
-        console.log(`${u.ref}: ${files.length} files changed`);
-      }
-    },
-  },
-});
-
-Bun.serve({ fetch: server.fetch });
-```
-
-`SqliteStorage` persists repos in SQLite without a filesystem — works with `bun:sqlite`, `better-sqlite3`, or any compatible driver. Repos backed by `SqliteStorage` work with both the server (external HTTP) and `resolveRemote` (in-process), with CAS-protected ref updates ensuring correctness regardless of write path.
-
-See [SERVER.md](SERVER.md) for the full API: hooks, `createStandardHooks`, `SqliteStorage`, configuration, and deployment patterns. See [`examples/sqlite-server.ts`](examples/sqlite-server.ts) for a runnable SQLite server and [`examples/server.ts`](examples/server.ts) for a VFS-backed server with virtual client. See [`src/platform/`](src/platform/) for a reference implementation that builds GitHub-like functionality (repos, pull requests, merge strategies) on top of these primitives.
-
 ## Command coverage
 
 See [CLI.md](CLI.md) for full usage details.
@@ -304,27 +308,6 @@ See [CLI.md](CLI.md) for full usage details.
 Targets high fidelity to real git (2.53.0). Validated with an [oracle testing framework](test/oracle/README.md) that generates randomized git workflows, runs them against real git, replays each step against just-git, and compares repository state and command output at every step. Run `bun oracle validate` to generate and test a representative set of traces yourself. See [TESTING.md](TESTING.md) for the full methodology and how to interpret results.
 
 When backed by a real filesystem (e.g. just-bash `ReadWriteFs`), interoperable with real git on the same repo. Try `bun sandbox "git init"` to explore interactively.
-
-## Without just-bash
-
-`git.execute()` takes an args array and a `CommandContext`. Provide any `FileSystem` implementation:
-
-```ts
-import { createGit } from "just-git";
-
-const git = createGit({ identity: { name: "Bot", email: "bot@example.com" } });
-
-const result = await git.execute(["init"], {
-  fs: myFileSystem, // any FileSystem implementation
-  cwd: "/repo",
-  env: new Map(),
-  stdin: "",
-});
-
-console.log(result.exitCode); // 0
-```
-
-The `FileSystem` interface requires: `readFile`, `readFileBuffer`, `writeFile`, `exists`, `stat`, `mkdir`, `readdir`, `rm`. Optional: `lstat`, `readlink`, `symlink`.
 
 ## Examples
 

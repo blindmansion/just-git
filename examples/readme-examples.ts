@@ -4,27 +4,66 @@
  * Run: bun examples/readme-examples.ts
  */
 
-import { Bash } from "just-bash";
+import { Bash, InMemoryFs } from "just-bash";
+import { Database } from "bun:sqlite";
 import { createGit } from "../src";
+import { createGitServer, SqliteStorage } from "../src/server";
 
-// ── Quick start ─────────────────────────────────────────────────────
+// ── Quick start: standalone exec() ──────────────────────────────────
 
 {
-	const git = createGit({
-		identity: { name: "Alice", email: "alice@example.com" },
-	});
+	const git = createGit({ identity: { name: "Alice", email: "alice@example.com" } });
+	const fs = new InMemoryFs();
 
+	await git.exec("git init", { fs, cwd: "/repo" });
+	await fs.writeFile("/repo/README.md", "hello");
+	await git.exec("git add .", { fs, cwd: "/repo" });
+	await git.exec('git commit -m "initial commit"', { fs, cwd: "/repo" });
+	const log = await git.exec("git log --oneline", { fs, cwd: "/repo" });
+	console.log("Quick start (standalone):", log.stdout.trim());
+}
+
+// ── Quick start: with just-bash ─────────────────────────────────────
+
+{
 	const bash = new Bash({
 		cwd: "/repo",
-		customCommands: [git],
+		customCommands: [createGit({ identity: { name: "Alice", email: "alice@example.com" } })],
 	});
 
 	await bash.exec("git init");
 	await bash.exec("echo 'hello' > README.md");
-	await bash.exec("git add .");
-	await bash.exec('git commit -m "initial commit"');
+	await bash.exec("git add . && git commit -m 'initial commit'");
 	const log = await bash.exec("git log --oneline");
-	console.log("Quick start:", log.stdout.trim());
+	console.log("Quick start (just-bash):", log.stdout.trim());
+}
+
+// ── Quick start: server ─────────────────────────────────────────────
+
+{
+	const storage = new SqliteStorage(new Database(":memory:"));
+
+	const server = createGitServer({
+		resolveRepo: (path) => storage.repo(path),
+		hooks: {
+			preReceive: ({ updates }) => {
+				if (updates.some((u) => u.ref === "refs/heads/main" && !u.isFF))
+					return { reject: true, message: "no force-push to main" };
+			},
+			postReceive: ({ repoPath, updates }) => {
+				console.log(`  [server] ${repoPath}: ${updates.length} ref(s) updated`);
+			},
+		},
+	});
+
+	const srv = Bun.serve({ fetch: server.fetch, port: 0 });
+
+	// Verify the server responds (clone into virtual client)
+	const git = createGit({ identity: { name: "Alice", email: "alice@example.com" } });
+	const fs = new InMemoryFs();
+	const clone = await git.exec(`clone ${srv.url}test-repo /repo`, { fs, cwd: "/" });
+	console.log("Quick start (server):", clone.exitCode === 0 ? "clone OK" : clone.stderr.trim());
+	srv.stop();
 }
 
 // ── Options: disabled commands ──────────────────────────────────────

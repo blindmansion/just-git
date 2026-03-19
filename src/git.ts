@@ -112,6 +112,14 @@ export interface GitExtensions {
 	refStore?: RefStore;
 }
 
+/** Simplified context for {@link Git.exec}. */
+export interface ExecContext {
+	fs: FileSystem;
+	cwd: string;
+	env?: Record<string, string>;
+	stdin?: string;
+}
+
 export class Git {
 	readonly name = "git";
 	private blocked: Set<string> | null;
@@ -134,6 +142,28 @@ export class Git {
 		};
 		this.inner = createGitCommand(extensions).toCommand();
 	}
+
+	/**
+	 * Run a git command from a string.
+	 *
+	 * Tokenizes the input with basic shell quoting (single/double quotes).
+	 * Strips a leading `git ` prefix if present. Does not support shell
+	 * features like pipes, redirections, variable expansion, or `&&`.
+	 *
+	 * ```ts
+	 * await git.exec('commit -m "initial commit"', { fs, cwd: "/repo" });
+	 * ```
+	 */
+	exec = async (command: string, ctx: ExecContext): Promise<ExecResult> => {
+		const args = tokenizeCommand(command);
+		const env = new Map<string, string>();
+		if (ctx.env) {
+			for (const [k, v] of Object.entries(ctx.env)) {
+				env.set(k, v);
+			}
+		}
+		return this.execute(args, { fs: ctx.fs, cwd: ctx.cwd, env, stdin: ctx.stdin ?? "" });
+	};
 
 	execute = async (args: string[], ctx: CommandContext): Promise<ExecResult> => {
 		const command = args[0] ?? "";
@@ -175,6 +205,64 @@ export class Git {
 
 		return result;
 	};
+}
+
+/**
+ * Tokenize a command string with basic shell quoting.
+ * Supports single quotes, double quotes (with backslash escapes),
+ * and whitespace splitting. Strips a leading "git" token if present.
+ */
+export function tokenizeCommand(input: string): string[] {
+	const tokens: string[] = [];
+	let current = "";
+	let i = 0;
+
+	while (i < input.length) {
+		const ch = input[i]!;
+
+		if (ch === '"') {
+			i++;
+			while (i < input.length && input[i] !== '"') {
+				if (input[i] === "\\" && i + 1 < input.length) {
+					const next = input[i + 1]!;
+					if (next === '"' || next === "\\") {
+						current += next;
+						i += 2;
+						continue;
+					}
+				}
+				current += input[i];
+				i++;
+			}
+			i++; // closing quote
+		} else if (ch === "'") {
+			i++;
+			while (i < input.length && input[i] !== "'") {
+				current += input[i];
+				i++;
+			}
+			i++; // closing quote
+		} else if (ch === " " || ch === "\t") {
+			if (current.length > 0) {
+				tokens.push(current);
+				current = "";
+			}
+			i++;
+		} else {
+			current += ch;
+			i++;
+		}
+	}
+
+	if (current.length > 0) {
+		tokens.push(current);
+	}
+
+	if (tokens.length > 0 && tokens[0] === "git") {
+		tokens.shift();
+	}
+
+	return tokens;
 }
 
 export function createGit(options?: GitOptions): Git {

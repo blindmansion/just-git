@@ -2,11 +2,12 @@ export type { FileStat, FileSystem } from "./fs";
 export type {
 	CommandContext,
 	CommandExecOptions,
+	ExecContext,
 	GitCommandName,
 	GitExtensions,
 	GitOptions,
 } from "./git";
-export { createGit, Git } from "./git";
+export { createGit, Git, tokenizeCommand } from "./git";
 export type {
 	AfterCommandEvent,
 	BeforeCommandEvent,
