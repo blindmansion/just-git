@@ -10,6 +10,7 @@ import { computeDiffStats, formatShortstatParts, renderStatLines } from "../lib/
 import { CommitHeap, walkCommits } from "../lib/commit-walk.ts";
 import { parseDate } from "../lib/date.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algorithm.ts";
+import { CommitGraph } from "../lib/graph.ts";
 import {
 	expandFormat,
 	type FormatContext,
@@ -62,6 +63,7 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 			nameOnly: f().describe("Show only names of changed files"),
 			shortstat: f().describe("Show only the shortstat summary line"),
 			numstat: f().describe("Machine-readable insertions/deletions per file"),
+			graph: f().describe("Draw text-based graph of the commit history"),
 		},
 		handler: async (args, ctx, meta) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
@@ -193,6 +195,12 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 									? "numstat"
 									: null;
 
+			// ── Graph / reverse conflict ────────────────────────────
+			const useGraph = args.graph;
+			if (useGraph && args.reverse) {
+				return fatal("options '--graph' and '--reverse' cannot be used together");
+			}
+
 			const needDecorations =
 				args.decorate ||
 				(customFormat != null && (customFormat.includes("%d") || customFormat.includes("%D")));
@@ -218,7 +226,10 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 						pathSpecs,
 						excludeHashes ? await buildExcludeSet(gitCtx, excludeHashes) : undefined,
 					)
-				: walkCommits(gitCtx, startHashes, { exclude: excludeHashes });
+				: walkCommits(gitCtx, startHashes, {
+						exclude: excludeHashes,
+						topoOrder: useGraph,
+					});
 
 			const collected: CommitEntry[] = [];
 			for await (const entry of walker) {
@@ -248,6 +259,19 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 			const entries = reverseOutput ? collected.reverse() : collected;
 
 			// ── Format output ───────────────────────────────────
+			if (useGraph) {
+				return formatWithGraph(
+					entries,
+					gitCtx,
+					customFormat,
+					presetName,
+					abbrevCommit,
+					diffFormat,
+					decoFn,
+					decoRawFn,
+				);
+			}
+
 			if (customFormat !== null) {
 				const lines: string[] = [];
 				for (const entry of entries) {
@@ -480,6 +504,99 @@ function formatDecorations(deco: DecorationMap, hash: ObjectId): string {
 	}
 
 	return parts.length > 0 ? `(${parts.join(", ")})` : "";
+}
+
+// ── Graph-aware output ──────────────────────────────────────────────
+
+async function formatWithGraph(
+	entries: CommitEntry[],
+	gitCtx: GitContext,
+	customFormat: string | null,
+	presetName: string | null,
+	abbrevCommit: boolean,
+	diffFormat: LogDiffFormat,
+	decoFn: ((h: ObjectId) => string) | undefined,
+	decoRawFn: ((h: ObjectId) => string) | undefined,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+	const graph = new CommitGraph();
+	const effectivePreset = presetName ?? "medium";
+	const isOneline = effectivePreset === "oneline";
+	const output: string[] = [];
+
+	for (let idx = 0; idx < entries.length; idx++) {
+		const entry = entries[idx] as CommitEntry;
+		const fctx: FormatContext = {
+			hash: entry.hash,
+			commit: entry.commit,
+			decorations: decoFn,
+			decorationsRaw: decoRawFn,
+		};
+
+		let msgContent: string;
+		if (customFormat !== null) {
+			msgContent = expandFormat(customFormat, fctx);
+		} else {
+			msgContent = formatPreset(effectivePreset, fctx, true, abbrevCommit);
+		}
+
+		const diffText = await formatCommitDiff(gitCtx, entry.commit, diffFormat);
+
+		graph.update(entry.hash, entry.commit.parents);
+
+		// Non-first commits in multi-line formats get a separator padding line
+		if (idx > 0 && !isOneline && customFormat === null) {
+			output.push(graph.paddingPrefix());
+		}
+
+		const msgLines = msgContent.split("\n");
+		let ci = 0;
+
+		// Output pre-commit expansion lines + commit line
+		while (true) {
+			const { prefix, isCommitLine } = graph.nextLine();
+			if (isCommitLine) {
+				output.push(prefix + (msgLines[ci++] ?? ""));
+				break;
+			}
+			output.push(prefix);
+		}
+
+		// Output remaining message lines with graph prefixes
+		while (ci < msgLines.length) {
+			const { prefix } = graph.nextLine();
+			output.push(prefix + msgLines[ci++]);
+		}
+
+		// Flush remaining structural lines (POST_MERGE, COLLAPSING)
+		// before diff/stat output — real git emits these between message
+		// and diff so that collapsing columns resolve before stats.
+		while (!graph.isFinished()) {
+			const { prefix } = graph.nextLine();
+			output.push(prefix);
+		}
+
+		// Diff/stat output gets padding prefixes (columns already settled)
+		if (diffText) {
+			const diffLines = diffText.replace(/\n$/, "").split("\n");
+			if (isOneline || customFormat !== null) {
+				for (const dl of diffLines) {
+					output.push(graph.paddingPrefix() + dl);
+				}
+			} else {
+				// Medium/full format: blank separator before diff
+				output.push(graph.paddingPrefix());
+				for (const dl of diffLines) {
+					output.push(graph.paddingPrefix() + dl);
+				}
+			}
+		}
+	}
+
+	return {
+		stdout: output.length > 0 ? `${output.join("\n")}\n` : "",
+		stderr: "",
+		exitCode: 0,
+	};
 }
 
 // ── Diff output for log ─────────────────────────────────────────────

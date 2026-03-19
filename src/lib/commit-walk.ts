@@ -93,8 +93,13 @@ export class CommitHeap {
 export async function* walkCommits(
 	ctx: GitRepo,
 	startHash: ObjectId | ObjectId[],
-	opts?: { exclude?: ObjectId[] },
+	opts?: { exclude?: ObjectId[]; topoOrder?: boolean },
 ): AsyncGenerator<CommitEntry> {
+	if (opts?.topoOrder) {
+		yield* walkCommitsTopoOrder(ctx, startHash, opts);
+		return;
+	}
+
 	const excluded = await buildExcludeSet(ctx, opts?.exclude);
 	const visited = new Set<ObjectId>(excluded);
 	const queue = new CommitHeap();
@@ -116,6 +121,85 @@ export async function* walkCommits(
 		for (const parentHash of entry.commit.parents) {
 			if (!visited.has(parentHash)) {
 				queue.push(await loadCommit(ctx, parentHash));
+			}
+		}
+	}
+}
+
+/**
+ * Walk commits in topological order (children before parents), using a
+ * LIFO stack so that after a merge, the last parent's branch is fully
+ * explored before earlier parents. This matches git's --topo-order.
+ *
+ * Phase 1: date-order walk to discover all reachable commits and
+ *          compute in-degrees (number of children in the set).
+ * Phase 2: Kahn's algorithm with a LIFO stack for topo output.
+ */
+async function* walkCommitsTopoOrder(
+	ctx: GitRepo,
+	startHash: ObjectId | ObjectId[],
+	opts?: { exclude?: ObjectId[] },
+): AsyncGenerator<CommitEntry> {
+	const excluded = await buildExcludeSet(ctx, opts?.exclude);
+	const visited = new Set<ObjectId>(excluded);
+	const queue = new CommitHeap();
+
+	const starts = Array.isArray(startHash) ? startHash : [startHash];
+	for (const h of starts) {
+		if (!visited.has(h)) {
+			queue.push(await loadCommit(ctx, h));
+		}
+	}
+
+	// Phase 1: collect all reachable commits in date order
+	const all: CommitEntry[] = [];
+	const hashToIdx = new Map<string, number>();
+
+	while (queue.size > 0) {
+		const entry = queue.pop()!;
+		if (visited.has(entry.hash)) continue;
+		visited.add(entry.hash);
+
+		hashToIdx.set(entry.hash, all.length);
+		all.push(entry);
+
+		for (const parentHash of entry.commit.parents) {
+			if (!visited.has(parentHash)) {
+				queue.push(await loadCommit(ctx, parentHash));
+			}
+		}
+	}
+
+	// Phase 2: topo-sort with LIFO stack
+	const n = all.length;
+	if (n === 0) return;
+
+	const inDeg = new Int32Array(n);
+	for (const entry of all) {
+		for (const p of entry.commit.parents) {
+			const pi = hashToIdx.get(p);
+			if (pi !== undefined) inDeg[pi] = (inDeg[pi] ?? 0) + 1;
+		}
+	}
+
+	// Seed: push zero-degree entries in reverse index order so the most
+	// recent (index 0) ends up on top of the stack.
+	const stack: number[] = [];
+	for (let i = n - 1; i >= 0; i--) {
+		if (inDeg[i] === 0) stack.push(i);
+	}
+
+	while (stack.length > 0) {
+		const idx = stack.pop()!;
+		yield all[idx]!;
+
+		// Push parents left-to-right; LIFO pops rightmost first
+		for (const p of all[idx]!.commit.parents) {
+			const pi = hashToIdx.get(p);
+			if (pi !== undefined) {
+				const deg = (inDeg[pi] ?? 0) - 1;
+				inDeg[pi] = deg;
+				if (deg === 0) stack.push(pi);
 			}
 		}
 	}

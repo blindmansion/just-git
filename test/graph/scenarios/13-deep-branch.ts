@@ -1,0 +1,32 @@
+import type { GraphScenario } from "../types";
+
+export default {
+	description: "Deep feature branch (many commits) merged into main",
+	steps: [
+		"git init",
+		"git add .",
+		'git commit -m "root"',
+		"git checkout -b long-branch",
+		{ write: "f1.txt", content: "1" },
+		"git add .",
+		'git commit -m "lb-1"',
+		{ write: "f2.txt", content: "2" },
+		"git add .",
+		'git commit -m "lb-2"',
+		{ write: "f3.txt", content: "3" },
+		"git add .",
+		'git commit -m "lb-3"',
+		{ write: "f4.txt", content: "4" },
+		"git add .",
+		'git commit -m "lb-4"',
+		{ write: "f5.txt", content: "5" },
+		"git add .",
+		'git commit -m "lb-5"',
+		"git checkout main",
+		{ write: "m.txt", content: "m" },
+		"git add .",
+		'git commit -m "main-1"',
+		'git merge long-branch -m "merge long-branch"',
+	],
+	logCommands: ["git log --graph --all --oneline"],
+} satisfies GraphScenario;
