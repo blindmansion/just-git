@@ -1,5 +1,11 @@
 # just-git
 
+## 1.1.9
+
+### Patch Changes
+
+- Improve repo helper ergonomics: auto-detect tree mode, createCommit branch option, writeRef string shorthand
+
 ## 1.1.8
 
 ### Patch Changes
