@@ -494,14 +494,26 @@ export async function writeConfig(ctx: GitContext, config: GitConfig): Promise<v
  *
  * For simple sections: "core.bare" → section="core", key="bare"
  * For subsections: 'remote.origin.url' → section='remote "origin"', key="url"
+ *
+ * Respects operator-level config overrides on `ctx.configOverrides`:
+ *   1. `locked` values always win
+ *   2. `.git/config` value
+ *   3. `defaults` fallback
  */
 export async function getConfigValue(
 	ctx: GitContext,
 	dottedKey: string,
 ): Promise<string | undefined> {
+	const overrides = ctx.configOverrides;
+	const locked = overrides?.locked?.[dottedKey];
+	if (locked !== undefined) return locked;
+
 	const config = await readConfig(ctx);
 	const { section, key } = parseDottedKey(dottedKey);
-	return config[section]?.[key];
+	const fromFile = config[section]?.[key];
+	if (fromFile !== undefined) return fromFile;
+
+	return overrides?.defaults?.[dottedKey];
 }
 
 /**
@@ -524,13 +536,26 @@ export async function setConfigValue(
 /**
  * Get all values for a multi-value config key.
  * Returns an empty array if the key doesn't exist.
+ *
+ * Respects operator-level locked overrides (returns `[lockedValue]`
+ * when set, ignoring on-disk values) and defaults.
  */
 export async function getConfigValueAll(ctx: GitContext, dottedKey: string): Promise<string[]> {
+	const overrides = ctx.configOverrides;
+	const locked = overrides?.locked?.[dottedKey];
+	if (locked !== undefined) return [locked];
+
 	const raw = await readConfigRaw(ctx);
-	if (!raw) return [];
-	const config = parseConfigMulti(raw);
-	const { section, key } = parseDottedKey(dottedKey);
-	return config[section]?.[key] ?? [];
+	if (raw) {
+		const config = parseConfigMulti(raw);
+		const { section, key } = parseDottedKey(dottedKey);
+		const fromFile = config[section]?.[key];
+		if (fromFile && fromFile.length > 0) return fromFile;
+	}
+
+	const def = overrides?.defaults?.[dottedKey];
+	if (def !== undefined) return [def];
+	return [];
 }
 
 /**

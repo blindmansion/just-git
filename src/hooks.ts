@@ -18,6 +18,22 @@ export interface IdentityOverride {
 	locked?: boolean;
 }
 
+/**
+ * Operator-level config overrides. Applied on every `getConfigValue()` read:
+ *
+ * - `locked` values take absolute precedence — the agent cannot override
+ *   them via `git config`. Writes still succeed on the VFS (so the agent
+ *   doesn't see errors), but the locked value always wins on read.
+ * - `defaults` supply fallback values when a key is absent from
+ *   `.git/config`. The agent *can* override these with `git config`.
+ *
+ * Keys are dotted config names, e.g. `"push.default"`, `"merge.ff"`.
+ */
+export interface ConfigOverrides {
+	locked?: Record<string, string>;
+	defaults?: Record<string, string>;
+}
+
 // ── Network policy ──────────────────────────────────────────────────
 
 export type FetchFunction = (

@@ -1,5 +1,6 @@
 import type { FileSystem } from "../fs.ts";
 import type {
+	ConfigOverrides,
 	CredentialProvider,
 	FetchFunction,
 	GitHooks,
@@ -247,6 +248,8 @@ export interface GitContext extends GitRepo {
 	networkPolicy?: NetworkPolicy | false;
 	/** Resolves remote URLs to GitRepos on potentially different VFS instances. */
 	resolveRemote?: RemoteResolver;
+	/** Operator-provided config overrides (locked values + defaults). */
+	configOverrides?: ConfigOverrides;
 }
 
 // ── Diff result types ───────────────────────────────────────────────

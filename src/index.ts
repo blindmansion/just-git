@@ -12,6 +12,7 @@ export type {
 	AfterCommandEvent,
 	BeforeCommandEvent,
 	CommitMsgEvent,
+	ConfigOverrides,
 	CredentialProvider,
 	ExecResult,
 	FetchFunction,

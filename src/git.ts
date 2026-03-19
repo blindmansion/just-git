@@ -1,6 +1,7 @@
 import { createGitCommand } from "./commands/git.ts";
 import type { FileSystem } from "./fs.ts";
 import {
+	type ConfigOverrides,
 	type CredentialProvider,
 	type ExecResult,
 	type FetchFunction,
@@ -95,6 +96,11 @@ export interface GitOptions {
 	 * and go through this store instead (e.g. SQLite-backed).
 	 */
 	refStore?: RefStore;
+	/**
+	 * Config overrides. `locked` values always win over `.git/config`;
+	 * `defaults` supply fallbacks when a key is absent from config.
+	 */
+	config?: ConfigOverrides;
 }
 
 /**
@@ -110,6 +116,7 @@ export interface GitExtensions {
 	resolveRemote?: RemoteResolver;
 	objectStore?: ObjectStore;
 	refStore?: RefStore;
+	configOverrides?: ConfigOverrides;
 }
 
 /** Simplified context for {@link Git.exec}. */
@@ -155,6 +162,7 @@ export class Git {
 			resolveRemote: options?.resolveRemote,
 			...(options?.objectStore ? { objectStore: options.objectStore } : {}),
 			...(options?.refStore ? { refStore: options.refStore } : {}),
+			...(options?.config ? { configOverrides: options.config } : {}),
 		};
 		this.inner = createGitCommand(extensions).toCommand();
 	}

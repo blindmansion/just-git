@@ -80,14 +80,15 @@ Uses web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare Work
 
 `createGit(options?)` accepts:
 
-| Option          | Description                                                                                                                                                                                                                                        |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `identity`      | Author/committer override. With `locked: true`, always wins over env vars and git config. Without `locked`, acts as a fallback.                                                                                                                    |
-| `credentials`   | `(url) => HttpAuth \| null` callback for Smart HTTP transport auth.                                                                                                                                                                                |
-| `disabled`      | `GitCommandName[]` of subcommands to block (e.g. `["push", "rebase"]`).                                                                                                                                                                            |
-| `network`       | `{ allowed?: string[], fetch?: FetchFunction }` to restrict HTTP access and/or provide a custom `fetch`. `allowed` accepts hostnames (`"github.com"`) or URL prefixes (`"https://github.com/myorg/"`). Set to `false` to block all network access. |
-| `hooks`         | `GitHooks` config object with named callback properties. See [Hooks](#hooks).                                                                                                                                                                      |
-| `resolveRemote` | `(url) => GitRepo \| null` callback for cross-VFS remote resolution. See [Multi-agent collaboration](#multi-agent-collaboration).                                                                                                                  |
+| Option          | Description                                                                                                                                                                                                                                                |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `identity`      | Author/committer override. With `locked: true`, always wins over env vars and git config. Without `locked`, acts as a fallback.                                                                                                                            |
+| `credentials`   | `(url) => HttpAuth \| null` callback for Smart HTTP transport auth.                                                                                                                                                                                        |
+| `disabled`      | `GitCommandName[]` of subcommands to block (e.g. `["push", "rebase"]`).                                                                                                                                                                                    |
+| `network`       | `{ allowed?: string[], fetch?: FetchFunction }` to restrict HTTP access and/or provide a custom `fetch`. `allowed` accepts hostnames (`"github.com"`) or URL prefixes (`"https://github.com/myorg/"`). Set to `false` to block all network access.         |
+| `config`        | `{ locked?, defaults? }` config overrides. `locked` values always win over `.git/config`; `defaults` supply fallbacks when a key is absent. Keys are dotted config names (e.g. `"push.default"`, `"merge.ff"`). See [Config overrides](#config-overrides). |
+| `hooks`         | `GitHooks` config object with named callback properties. See [Hooks](#hooks).                                                                                                                                                                              |
+| `resolveRemote` | `(url) => GitRepo \| null` callback for cross-VFS remote resolution. See [Multi-agent collaboration](#multi-agent-collaboration).                                                                                                                          |
 
 ```ts
 const git = createGit({
@@ -95,6 +96,10 @@ const git = createGit({
   credentials: async (url) => ({ type: "bearer", token: "ghp_..." }),
   disabled: ["rebase"],
   network: false, // no HTTP access
+  config: {
+    locked: { "push.default": "nothing" },
+    defaults: { "merge.ff": "only" },
+  },
 });
 ```
 
@@ -157,6 +162,30 @@ const git = createGit({
 ```
 
 Available pre-hooks: `preCommit`, `commitMsg`, `mergeMsg`, `preMergeCommit`, `preCheckout`, `prePush`, `preFetch`, `preClone`, `prePull`, `preRebase`, `preReset`, `preClean`, `preRm`, `preCherryPick`, `preRevert`, `preStash`. Available post-hooks: `postCommit`, `postMerge`, `postCheckout`, `postPush`, `postFetch`, `postClone`, `postPull`, `postReset`, `postClean`, `postRm`, `postCherryPick`, `postRevert`, `postStash`. Low-level events: `onRefUpdate`, `onRefDelete`, `onObjectWrite`. Command-level: `beforeCommand`, `afterCommand`.
+
+## Config overrides
+
+Control git config values at the operator level, without touching `.git/config`. Works like the `identity` option — `locked` values always win, `defaults` act as fallbacks.
+
+```ts
+const git = createGit({
+  config: {
+    locked: {
+      "push.default": "nothing", // agent must always specify a refspec
+      "merge.conflictstyle": "diff3", // always show base in conflict markers
+    },
+    defaults: {
+      "pull.rebase": "true", // default to rebase-on-pull (agent can change)
+      "merge.ff": "only", // default to ff-only (agent can change)
+    },
+  },
+});
+```
+
+- **`locked`** — values that take absolute precedence. The agent can run `git config set` (the write succeeds on the VFS), but the locked value always wins on every read. Useful for enforcing policies.
+- **`defaults`** — fallback values when a key is absent from `.git/config`. The agent _can_ override these with `git config set`. Useful for sensible defaults without restricting the agent.
+
+Applied transparently via `getConfigValue()` — all commands respect overrides automatically. Any dotted config key works (e.g. `"merge.ff"`, `"push.default"`, `"pull.rebase"`, `"merge.conflictstyle"`, `"branch.autoSetupMerge"`).
 
 ## Repo module
 
