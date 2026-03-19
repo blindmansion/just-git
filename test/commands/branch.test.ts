@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { EMPTY_REPO, TEST_ENV_NAMED as TEST_ENV } from "../fixtures";
-import { createTestBash, quickExec, readFile, runScenario } from "../util";
+import { createTestBash, quickExec, readFile, runScenario, setupClonePair } from "../util";
 
 describe("git branch", () => {
 	describe("outside a git repo", () => {
@@ -684,6 +684,57 @@ describe("git branch", () => {
 			const result = await bash.exec("git branch -d feature");
 			expect(result.exitCode).toBe(0);
 			expect(result.stdout).toContain("Deleted branch feature");
+		});
+	});
+
+	describe("branch.autoSetupMerge", () => {
+		test("auto-sets tracking when creating from remote tracking ref", async () => {
+			const bash = await setupClonePair();
+
+			// Create a new branch in remote and fetch it
+			await bash.exec(
+				"cd /remote && git checkout -b feature && echo feat > feat.txt && git add . && git commit -m feat",
+			);
+			await bash.exec("cd /local && git fetch");
+
+			// Create local branch from remote tracking ref
+			const result = await bash.exec("git branch my-feature origin/feature", {
+				cwd: "/local",
+			});
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("set up to track");
+
+			// Verify config
+			const config = await readFile(bash.fs, "/local/.git/config");
+			expect(config).toContain('branch "my-feature"');
+			expect(config).toContain("remote = origin");
+			expect(config).toContain("merge = refs/heads/feature");
+		});
+
+		test("does not track when branch.autoSetupMerge=false", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec(
+				"cd /remote && git checkout -b feature && echo feat > feat.txt && git add . && git commit -m feat",
+			);
+			await bash.exec("cd /local && git fetch");
+			await bash.exec("cd /local && git config set branch.autoSetupMerge false");
+
+			const result = await bash.exec("git branch my-feature origin/feature", {
+				cwd: "/local",
+			});
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).not.toContain("set up to track");
+		});
+
+		test("does not track when creating from local ref", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("cd /local && echo v2 > README.md && git add . && git commit -m update");
+
+			const result = await bash.exec("git branch my-feature main", { cwd: "/local" });
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toBe("");
 		});
 	});
 });

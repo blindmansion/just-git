@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BASIC_REPO, EMPTY_REPO, TEST_ENV_NAMED as TEST_ENV } from "../fixtures";
-import { createTestBash, quickExec, readFile, runScenario } from "../util";
+import { createTestBash, quickExec, readFile, runScenario, setupClonePair } from "../util";
 
 describe("git switch", () => {
 	describe("errors", () => {
@@ -250,6 +250,74 @@ describe("git switch", () => {
 			);
 			expect(results[3].exitCode).toBe(128);
 			expect(results[3].stderr).toContain("incompatible");
+		});
+	});
+
+	describe("branch.autoSetupMerge with -c", () => {
+		test("auto-sets tracking when creating from remote tracking ref", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec(
+				"cd /remote && git checkout -b feature && echo feat > feat.txt && git add . && git commit -m feat",
+			);
+			await bash.exec("cd /local && git fetch");
+
+			const result = await bash.exec("git switch -c my-feature origin/feature", {
+				cwd: "/local",
+			});
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("set up to track");
+
+			const config = await readFile(bash.fs, "/local/.git/config");
+			expect(config).toContain('branch "my-feature"');
+			expect(config).toContain("remote = origin");
+			expect(config).toContain("merge = refs/heads/feature");
+		});
+
+		test("does not track when branch.autoSetupMerge=false", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec(
+				"cd /remote && git checkout -b feature && echo feat > feat.txt && git add . && git commit -m feat",
+			);
+			await bash.exec("cd /local && git fetch");
+			await bash.exec("cd /local && git config set branch.autoSetupMerge false");
+
+			const result = await bash.exec("git switch -c my-feature origin/feature", {
+				cwd: "/local",
+			});
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).not.toContain("set up to track");
+		});
+	});
+
+	describe("checkout.defaultRemote", () => {
+		test("disambiguates when multiple remotes have the branch", async () => {
+			const bash = await setupClonePair();
+
+			// Create a feature branch in the original remote
+			await bash.exec(
+				"cd /remote && git checkout -b feature && echo feat > feat.txt && git add . && git commit -m feat",
+			);
+
+			// Create a second remote with the same branch
+			await bash.exec("cd / && git clone /remote /remote2");
+			await bash.exec("cd /local && git remote add other /remote2");
+
+			// Fetch both remotes
+			await bash.exec("cd /local && git fetch origin && git fetch other");
+
+			// Without config, DWIM fails (multiple candidates)
+			const fail = await bash.exec("git switch feature", { cwd: "/local" });
+			expect(fail.exitCode).toBe(128);
+
+			// Set checkout.defaultRemote to prefer origin
+			await bash.exec("cd /local && git config set checkout.defaultRemote origin");
+
+			const result = await bash.exec("git switch feature", { cwd: "/local" });
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("set up to track");
+			expect(result.stderr).toContain("origin/feature");
 		});
 	});
 });

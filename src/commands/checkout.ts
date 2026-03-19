@@ -5,6 +5,7 @@ import {
 	detachHeadCore,
 	findPreviousBranch,
 	formatCheckoutSummary,
+	guessRemoteBranch,
 	requireResolvedIndex,
 	restoreConflicted,
 	restoreFiles,
@@ -18,7 +19,7 @@ import {
 	requireCommit,
 	requireGitContext,
 } from "../lib/command-utils.ts";
-import { readConfig } from "../lib/config.ts";
+import { readConfig, writeConfig } from "../lib/config.ts";
 import { findEntry, readIndex } from "../lib/index.ts";
 import { peelToCommit, readCommit } from "../lib/object-db.ts";
 import { clearDetachPoint } from "../lib/operation-state.ts";
@@ -127,6 +128,12 @@ export function registerCheckoutCommand(parent: Command, ext?: GitExtensions) {
 
 			if (branchHash) {
 				return switchBranch(gitCtx, target, refName, branchHash, ctx.env, ext);
+			}
+
+			// ── DWIM: guess from remote tracking refs ───────────────────
+			const guessed = await guessRemoteBranch(gitCtx, target);
+			if (guessed) {
+				return createAndSwitchFromRemote(gitCtx, target, guessed.trackingRef, ctx.env, ext);
 			}
 
 			// ── Try as detached HEAD (commit hash, tag, etc.) ──────────
@@ -328,6 +335,53 @@ async function switchBranch(
 	});
 	if (isRejection(rej)) return err(rej.message ?? "");
 	return switchBranchCore(gitCtx, branchName, refName, targetHash, env, ext);
+}
+
+/**
+ * DWIM: create a local branch from a remote tracking ref and switch to it.
+ */
+async function createAndSwitchFromRemote(
+	gitCtx: GitContext,
+	branchName: string,
+	trackingRef: string,
+	env: Map<string, string>,
+	ext?: GitExtensions,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+	const rej = await ext?.hooks?.preCheckout?.({
+		repo: gitCtx,
+		target: branchName,
+		mode: "create-branch",
+	});
+	if (isRejection(rej)) return err(rej.message ?? "");
+
+	const targetHash = await resolveRef(gitCtx, trackingRef);
+	if (!targetHash) {
+		return fatal(`invalid reference: ${trackingRef}`);
+	}
+
+	const refName = `refs/heads/${branchName}`;
+	await updateRef(gitCtx, refName, targetHash);
+
+	// Set up tracking config
+	const trackingParts = trackingRef.replace(/^refs\/remotes\//, "").split("/");
+	const remote = trackingParts[0] ?? "";
+	const merge = `refs/heads/${trackingParts.slice(1).join("/")}`;
+	const config = await readConfig(gitCtx);
+	config[`branch "${branchName}"`] = {
+		...config[`branch "${branchName}"`],
+		remote,
+		merge,
+	};
+	await writeConfig(gitCtx, config);
+
+	await logRef(gitCtx, env, refName, null, targetHash, `branch: Created from ${trackingRef}`);
+
+	const result = await switchBranchCore(gitCtx, branchName, refName, targetHash, env, ext);
+
+	const trackBranch = trackingParts.slice(1).join("/");
+	result.stderr = `branch '${branchName}' set up to track '${remote}/${trackBranch}'.\n${result.stderr}`;
+
+	return result;
 }
 
 /**

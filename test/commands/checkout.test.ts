@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BASIC_REPO, EMPTY_REPO, TEST_ENV_NAMED as TEST_ENV } from "../fixtures";
-import { createTestBash, quickExec, readFile, runScenario } from "../util";
+import { createTestBash, quickExec, readFile, runScenario, setupClonePair } from "../util";
 
 describe("git checkout", () => {
 	describe("outside a git repo", () => {
@@ -457,6 +457,48 @@ describe("git checkout", () => {
 			// status should be clean
 			const status = await bash.exec("git status");
 			expect(status.stdout).toContain("nothing to commit");
+		});
+	});
+
+	describe("DWIM remote branch", () => {
+		test("auto-creates tracking branch from unique remote match", async () => {
+			const bash = await setupClonePair();
+
+			// Create a feature branch in remote
+			await bash.exec(
+				"cd /remote && git checkout -b feature && echo feat > feat.txt && git add . && git commit -m feat",
+			);
+			await bash.exec("cd /local && git fetch");
+
+			const result = await bash.exec("git checkout feature", { cwd: "/local" });
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("set up to track");
+			expect(result.stderr).toContain("origin/feature");
+
+			// Verify we're on the branch
+			const head = await bash.exec("git branch", { cwd: "/local" });
+			expect(head.stdout).toContain("* feature");
+		});
+
+		test("checkout.defaultRemote disambiguates multiple remotes", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec(
+				"cd /remote && git checkout -b feature && echo feat > feat.txt && git add . && git commit -m feat",
+			);
+			await bash.exec("cd / && git clone /remote /remote2");
+			await bash.exec("cd /local && git remote add other /remote2");
+			await bash.exec("cd /local && git fetch origin && git fetch other");
+
+			// Without config, checkout falls through to pathspec error
+			const fail = await bash.exec("git checkout feature", { cwd: "/local" });
+			expect(fail.exitCode).not.toBe(0);
+
+			await bash.exec("cd /local && git config set checkout.defaultRemote origin");
+
+			const result = await bash.exec("git checkout feature", { cwd: "/local" });
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("set up to track");
 		});
 	});
 });

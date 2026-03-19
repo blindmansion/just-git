@@ -6,6 +6,8 @@ import {
 	findPreviousBranch,
 	formatCheckoutSummary,
 	formatPrevHeadPosition,
+	guessRemoteBranch,
+	maybeSetupTracking,
 	requireResolvedIndex,
 	switchBranchCore,
 } from "../lib/checkout-utils.ts";
@@ -26,7 +28,6 @@ import { logRef, ZERO_HASH } from "../lib/reflog.ts";
 import {
 	createSymbolicRef,
 	deleteRef,
-	listRefs,
 	readHead,
 	resolveHead,
 	resolveRef,
@@ -181,33 +182,6 @@ async function switchToPrevious(
 	return switchToBranch(gitCtx, prev.name, prev.refName, prev.hash, env, ext);
 }
 
-// ── Guess remote tracking branch ─────────────────────────────────────
-
-async function guessRemoteBranch(
-	gitCtx: GitContext,
-	name: string,
-): Promise<{ startPoint: string; trackingRef: string } | null> {
-	const allRefs = await listRefs(gitCtx, "refs/remotes");
-	const candidates: { remote: string; ref: string }[] = [];
-
-	for (const ref of allRefs) {
-		const parts = ref.name.replace(/^refs\/remotes\//, "").split("/");
-		const remote = parts[0];
-		if (parts.length >= 2 && remote) {
-			const branch = parts.slice(1).join("/");
-			if (branch === name) {
-				candidates.push({ remote, ref: ref.name });
-			}
-		}
-	}
-
-	const c = candidates.length === 1 ? candidates[0] : undefined;
-	if (c) {
-		return { startPoint: c.ref, trackingRef: c.ref };
-	}
-	return null;
-}
-
 // ── Create and switch to a new branch ────────────────────────────────
 
 async function switchCreateBranch(
@@ -325,8 +299,11 @@ async function switchCreateBranch(
 		`checkout: moving from ${fromName} to ${branchName}`,
 	);
 
-	const trackingParts = trackingRef?.replace(/^refs\/remotes\//, "").split("/");
-	if (trackingParts) {
+	// Set up tracking config: DWIM path always tracks, explicit start-point
+	// respects branch.autoSetupMerge config
+	let trackingMsg = "";
+	if (trackingRef) {
+		const trackingParts = trackingRef.replace(/^refs\/remotes\//, "").split("/");
 		const remote = trackingParts[0] ?? "";
 		const merge = `refs/heads/${trackingParts.slice(1).join("/")}`;
 		const config = await readConfig(gitCtx);
@@ -336,6 +313,9 @@ async function switchCreateBranch(
 			merge,
 		};
 		await writeConfig(gitCtx, config);
+		trackingMsg = `branch '${branchName}' set up to track '${remote}/${trackingParts.slice(1).join("/")}'.\n`;
+	} else if (startPoint) {
+		trackingMsg = await maybeSetupTracking(gitCtx, branchName, startPoint);
 	}
 
 	await ext?.hooks?.postCheckout?.({
@@ -350,12 +330,7 @@ async function switchCreateBranch(
 			? `Switched to and reset branch '${branchName}'\n`
 			: `Switched to a new branch '${branchName}'\n`;
 
-	let stderr = detachPreamble + label + opWarning;
-
-	if (trackingParts) {
-		const trackBranch = trackingParts.slice(1).join("/");
-		stderr += `branch '${branchName}' set up to track '${trackingParts[0]}/${trackBranch}'.\n`;
-	}
+	let stderr = detachPreamble + label + opWarning + trackingMsg;
 
 	let stdout = "";
 	if (startPoint) {

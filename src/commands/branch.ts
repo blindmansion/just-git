@@ -1,4 +1,5 @@
 import type { GitExtensions } from "../git.ts";
+import { maybeSetupTracking } from "../lib/checkout-utils.ts";
 import {
 	abbreviateHash,
 	err,
@@ -305,7 +306,12 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 					targetHash,
 					`branch: Created from ${startLabel}`,
 				);
-				return { stdout: "", stderr: "", exitCode: 0 };
+
+				let trackingMsg = "";
+				if (startPoint) {
+					trackingMsg = await maybeSetupTracking(gitCtx, args.name, startPoint);
+				}
+				return { stdout: "", stderr: trackingMsg, exitCode: 0 };
 			}
 
 			// ── List branches ───────────────────────────────────────────

@@ -1,14 +1,21 @@
 import type { GitExtensions } from "../git.ts";
 import { abbreviateHash, type CommandResult, err, fatal, firstLine } from "./command-utils.ts";
 import { findOrphanedCommits } from "./commit-walk.ts";
-import { readConfig } from "./config.ts";
+import { getConfigValue, readConfig, writeConfig } from "./config.ts";
 import { addEntry, defaultStat, readIndex, writeIndex } from "./index.ts";
 import { hashObject, readCommit } from "./object-db.ts";
 import { clearAllOperationState, clearDetachPoint, writeDetachPoint } from "./operation-state.ts";
 import { join } from "./path.ts";
 import { matchPathspecs, parsePathspec } from "./pathspec.ts";
 import { logRef, readReflog, ZERO_HASH } from "./reflog.ts";
-import { createSymbolicRef, readHead, resolveHead, resolveRef, updateRef } from "./refs.ts";
+import {
+	createSymbolicRef,
+	listRefs,
+	readHead,
+	resolveHead,
+	resolveRef,
+	updateRef,
+} from "./refs.ts";
 import { formatLongTrackingInfo, getTrackingInfo } from "./status-format.ts";
 import { flattenTree, flattenTreeToMap } from "./tree-ops.ts";
 import type { GitContext, ObjectId } from "./types.ts";
@@ -578,4 +585,107 @@ export async function detachHeadCore(
 	const stdout = await formatCheckoutSummary(gitCtx, targetTree, currentIndex);
 
 	return { stdout, stderr, exitCode: 0 };
+}
+
+// ── Remote tracking ref detection and auto-setup ─────────────────────
+
+/**
+ * Resolve a start-point name to a remote tracking ref if possible.
+ * Returns `{ remote, branch, ref }` if it matches `refs/remotes/<remote>/<branch>`,
+ * or null otherwise.
+ */
+async function resolveRemoteTrackingRef(
+	gitCtx: GitContext,
+	startPoint: string,
+): Promise<{ remote: string; branch: string; ref: string } | null> {
+	if (startPoint.startsWith("refs/remotes/")) {
+		const hash = await resolveRef(gitCtx, startPoint);
+		if (!hash) return null;
+		const parts = startPoint.slice("refs/remotes/".length).split("/");
+		if (parts.length < 2) return null;
+		const remote = parts[0]!;
+		const branch = parts.slice(1).join("/");
+		return { remote, branch, ref: startPoint };
+	}
+
+	// Try short form: origin/main → refs/remotes/origin/main
+	const fullRef = `refs/remotes/${startPoint}`;
+	const hash = await resolveRef(gitCtx, fullRef);
+	if (hash) {
+		const parts = startPoint.split("/");
+		if (parts.length < 2) return null;
+		const remote = parts[0]!;
+		const branch = parts.slice(1).join("/");
+		return { remote, branch, ref: fullRef };
+	}
+
+	return null;
+}
+
+/**
+ * Auto-set branch tracking config when creating a branch from a remote tracking ref,
+ * respecting `branch.autoSetupMerge` config (default: true).
+ * Returns a message string for display, or empty string if no tracking was set.
+ */
+export async function maybeSetupTracking(
+	gitCtx: GitContext,
+	branchName: string,
+	startPoint: string,
+): Promise<string> {
+	const tracking = await resolveRemoteTrackingRef(gitCtx, startPoint);
+	if (!tracking) return "";
+
+	const autoSetup = await getConfigValue(gitCtx, "branch.autoSetupMerge");
+	if (autoSetup === "false") return "";
+
+	const config = await readConfig(gitCtx);
+	const section = `branch "${branchName}"`;
+	if (!config[section]) config[section] = {};
+	config[section].remote = tracking.remote;
+	config[section].merge = `refs/heads/${tracking.branch}`;
+	await writeConfig(gitCtx, config);
+
+	return `branch '${branchName}' set up to track '${tracking.remote}/${tracking.branch}'.\n`;
+}
+
+/**
+ * DWIM: guess a remote tracking branch for a name that doesn't match
+ * any local branch. Returns the match if exactly one remote has the branch,
+ * or uses `checkout.defaultRemote` config to disambiguate multiple matches.
+ */
+export async function guessRemoteBranch(
+	gitCtx: GitContext,
+	name: string,
+): Promise<{ remote: string; startPoint: string; trackingRef: string } | null> {
+	const allRefs = await listRefs(gitCtx, "refs/remotes");
+	const candidates: { remote: string; ref: string }[] = [];
+
+	for (const ref of allRefs) {
+		const parts = ref.name.replace(/^refs\/remotes\//, "").split("/");
+		const remote = parts[0];
+		if (parts.length >= 2 && remote) {
+			const branch = parts.slice(1).join("/");
+			if (branch === name) {
+				candidates.push({ remote, ref: ref.name });
+			}
+		}
+	}
+
+	if (candidates.length === 1) {
+		const c = candidates[0]!;
+		return { remote: c.remote, startPoint: c.ref, trackingRef: c.ref };
+	}
+
+	if (candidates.length > 1) {
+		const defaultRemote = await getConfigValue(gitCtx, "checkout.defaultRemote");
+		if (defaultRemote) {
+			const filtered = candidates.filter((c) => c.remote === defaultRemote);
+			if (filtered.length === 1) {
+				const c = filtered[0]!;
+				return { remote: c.remote, startPoint: c.ref, trackingRef: c.ref };
+			}
+		}
+	}
+
+	return null;
 }
