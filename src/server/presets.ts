@@ -2,13 +2,55 @@
  * Opinionated hook presets built on top of the minimal ServerHooks interface.
  */
 
+import type { GitRepo } from "../lib/types.ts";
 import type {
+	GitServerConfig,
 	PostReceiveEvent,
 	PreReceiveEvent,
 	Rejection,
 	ServerHooks,
 	UpdateEvent,
 } from "./types.ts";
+
+// ── Auth wrapper ────────────────────────────────────────────────────
+
+type ResolveRepo = GitServerConfig["resolveRepo"];
+
+/**
+ * Wrap a `resolveRepo` function with an authorization check that
+ * gates **all** access (clone, fetch, and push).
+ *
+ * The `authorize` callback receives the raw `Request` and returns:
+ * - `true` — request is allowed, delegate to the inner `resolveRepo`
+ * - `false` — respond with 403 Forbidden
+ * - `Response` — send as-is (e.g. 401 with `WWW-Authenticate` header)
+ *
+ * For push-only authorization, use `createStandardHooks({ authorizePush })`.
+ * The two compose naturally:
+ *
+ * ```ts
+ * const server = createGitServer({
+ *   resolveRepo: withAuth(
+ *     (req) => req.headers.get("Authorization") === `Bearer ${token}`,
+ *     (repoPath) => storage.repo(repoPath),
+ *   ),
+ *   hooks: createStandardHooks({ protectedBranches: ["main"] }),
+ * });
+ * ```
+ */
+export function withAuth(
+	authorize: (request: Request) => boolean | Response | Promise<boolean | Response>,
+	resolveRepo: ResolveRepo,
+): ResolveRepo {
+	return async (repoPath: string, request: Request): Promise<GitRepo | Response | null> => {
+		const result = await authorize(request);
+		if (result instanceof Response) return result;
+		if (!result) return new Response("Forbidden", { status: 403 });
+		return resolveRepo(repoPath, request);
+	};
+}
+
+// ── Hook presets ────────────────────────────────────────────────────
 
 export interface StandardHooksConfig {
 	/** Branches that cannot be force-pushed to or deleted. */

@@ -3,7 +3,7 @@ import { InMemoryFs, Bash } from "just-bash";
 import { createGit } from "../../src/index.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import type { GitContext } from "../../src/lib/types.ts";
-import { createStandardHooks } from "../../src/server/presets.ts";
+import { createStandardHooks, withAuth } from "../../src/server/presets.ts";
 import { envAt, createServerClient, startServer } from "./util.ts";
 
 describe("createStandardHooks", () => {
@@ -300,6 +300,120 @@ describe("createStandardHooks", () => {
 				expect(pushLog.length).toBe(1);
 				expect(pushLog[0]!.repoPath).toBe("myrepo");
 				expect(pushLog[0]!.refCount).toBe(1);
+			} finally {
+				srv.stop();
+			}
+		});
+	});
+
+	describe("withAuth", () => {
+		test("rejects clone when authorize returns false", async () => {
+			const { srv, port } = startServer({
+				resolveRepo: withAuth(
+					() => false,
+					async () => serverRepo,
+				),
+			});
+
+			try {
+				const client = createServerClient();
+				const clone = await client.exec(`git clone http://localhost:${port}/repo /local`, {
+					env: envAt(1000003000),
+				});
+				expect(clone.exitCode).not.toBe(0);
+			} finally {
+				srv.stop();
+			}
+		});
+
+		test("allows clone when authorize returns true", async () => {
+			const { srv, port } = startServer({
+				resolveRepo: withAuth(
+					() => true,
+					async () => serverRepo,
+				),
+			});
+
+			try {
+				const client = createServerClient();
+				const clone = await client.exec(`git clone http://localhost:${port}/repo /local`, {
+					env: envAt(1000003100),
+				});
+				expect(clone.exitCode).toBe(0);
+			} finally {
+				srv.stop();
+			}
+		});
+
+		test("returns custom Response when authorize returns one", async () => {
+			const { srv, port } = startServer({
+				resolveRepo: withAuth(
+					() =>
+						new Response("Unauthorized", {
+							status: 401,
+							headers: { "WWW-Authenticate": 'Bearer realm="git"' },
+						}),
+					async () => serverRepo,
+				),
+			});
+
+			try {
+				const res = await fetch(`http://localhost:${port}/repo/info/refs?service=git-upload-pack`);
+				expect(res.status).toBe(401);
+				expect(res.headers.get("WWW-Authenticate")).toBe('Bearer realm="git"');
+			} finally {
+				srv.stop();
+			}
+		});
+
+		test("gates push when authorize rejects", async () => {
+			const { srv, port } = startServer({
+				resolveRepo: withAuth(
+					(req) => req.headers.get("Authorization") === "Bearer secret",
+					async () => serverRepo,
+				),
+			});
+
+			try {
+				const client = createServerClient();
+				await client.exec(`git clone http://localhost:${port}/repo /local`, {
+					env: envAt(1000003200),
+				});
+				// Clone fails because no auth header on the info/refs request
+				const clone = await client.exec(`git clone http://localhost:${port}/repo /local2`, {
+					env: envAt(1000003200),
+				});
+				expect(clone.exitCode).not.toBe(0);
+			} finally {
+				srv.stop();
+			}
+		});
+
+		test("composes with createStandardHooks", async () => {
+			const hooks = createStandardHooks({ protectedBranches: ["main"] });
+			const { srv, port } = startServer({
+				resolveRepo: withAuth(
+					() => true,
+					async () => serverRepo,
+				),
+				hooks,
+			});
+
+			try {
+				const client = createServerClient();
+				await client.exec(`git clone http://localhost:${port}/repo /local`, {
+					env: envAt(1000003300),
+				});
+
+				await client.writeFile("/local/compose.txt", "compose");
+				await client.exec("git add .", { cwd: "/local" });
+				await client.exec('git commit --amend -m "diverge"', {
+					cwd: "/local",
+					env: envAt(1000003400),
+				});
+
+				const push = await client.exec("git push --force origin main", { cwd: "/local" });
+				expect(push.exitCode).not.toBe(0);
 			} finally {
 				srv.stop();
 			}

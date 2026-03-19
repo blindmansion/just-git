@@ -31,7 +31,7 @@ export type {
 } from "./types.ts";
 
 // Presets
-export { createStandardHooks, type StandardHooksConfig } from "./presets.ts";
+export { createStandardHooks, withAuth, type StandardHooksConfig } from "./presets.ts";
 
 // Storage
 export type { Storage } from "./storage.ts";

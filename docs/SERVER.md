@@ -64,14 +64,64 @@ The `repoPath` is the URL path with the git protocol suffix stripped. For `http:
 ```ts
 const server = createGitServer({
   resolveRepo: async (repoPath, request) => {
-    const token = request.headers.get("Authorization");
-    if (!token) return new Response("Unauthorized", { status: 401 });
-
     const repo = await db.findRepo(repoPath);
     if (!repo) return null; // 404
-
     return storage.repo(repoPath);
   },
+});
+```
+
+## Authorization
+
+### `withAuth` — gate all access
+
+Wraps `resolveRepo` with an auth check that fires on every request (clone, fetch, and push). Return `true` to allow, `false` for 403, or a `Response` for custom error responses.
+
+```ts
+import { createGitServer, withAuth } from "just-git/server";
+
+const server = createGitServer({
+  resolveRepo: withAuth(
+    (request) => {
+      const header = request.headers.get("Authorization");
+      if (!header) {
+        return new Response("Unauthorized", {
+          status: 401,
+          headers: { "WWW-Authenticate": 'Bearer realm="git"' },
+        });
+      }
+      return header === `Bearer ${process.env.GIT_TOKEN}`;
+    },
+    (repoPath) => storage.repo(repoPath),
+  ),
+});
+```
+
+### Public read, private write
+
+Use `withAuth` for full lockdown, or `authorizePush` (in `createStandardHooks`) for the common pattern where anyone can clone but only authorized users can push:
+
+```ts
+const server = createGitServer({
+  resolveRepo: (repoPath) => storage.repo(repoPath), // public reads
+  hooks: createStandardHooks({
+    authorizePush: (request) => request.headers.get("Authorization") === `Bearer ${token}`,
+    protectedBranches: ["main"],
+  }),
+});
+```
+
+### Layered access control
+
+Combine both for read/write permission tiers — `withAuth` checks read access, `authorizePush` checks write access:
+
+```ts
+const server = createGitServer({
+  resolveRepo: withAuth(checkReadAccess, (repoPath) => storage.repo(repoPath)),
+  hooks: createStandardHooks({
+    authorizePush: checkWriteAccess,
+    protectedBranches: ["main"],
+  }),
 });
 ```
 
@@ -126,7 +176,7 @@ All hook payloads include `repo: GitRepo` and `request: Request`. Pre-hooks retu
 
 ### `createStandardHooks`
 
-Covers common policies without writing hooks manually:
+Covers common push policies without writing hooks manually:
 
 ```ts
 import { createGitServer, createStandardHooks } from "just-git/server";
@@ -145,6 +195,8 @@ const server = createGitServer({
   }),
 });
 ```
+
+`authorizePush` only gates push operations — clone and fetch are unaffected. For read access control, use [`withAuth`](#withauth--gate-all-access).
 
 ### Composing hooks
 
