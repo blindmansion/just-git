@@ -1,0 +1,284 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf-8" />
+		<title>just-git browser smoke test</title>
+		<style>
+			body {
+				font-family: monospace;
+				background: #1a1a2e;
+				color: #e0e0e0;
+				padding: 2rem;
+			}
+			.pass {
+				color: #4ec96e;
+			}
+			.fail {
+				color: #ff6b6b;
+			}
+			.info {
+				color: #7ec8e3;
+			}
+			#log {
+				white-space: pre-wrap;
+				line-height: 1.6;
+			}
+			h1 {
+				color: #c9a0dc;
+				font-size: 1.2rem;
+			}
+		</style>
+	</head>
+	<body>
+		<h1>just-git browser smoke test</h1>
+		<div id="log">Loading module...</div>
+		<script type="module">
+			const el = document.getElementById("log");
+			const lines = [];
+
+			function log(msg, cls = "") {
+				lines.push(cls ? `<span class="${cls}">${esc(msg)}</span>` : esc(msg));
+				el.innerHTML = lines.join("\n");
+			}
+			function esc(s) {
+				return s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+			}
+			function pass(label) {
+				log(`  PASS  ${label}`, "pass");
+			}
+			function fail(label, err) {
+				log(`  FAIL  ${label}: ${err}`, "fail");
+			}
+
+			// Minimal in-memory filesystem satisfying the FileSystem interface
+			class MemFS {
+				constructor() {
+					this._files = new Map();
+					this._dirs = new Set(["/"]);
+				}
+				_resolve(p) {
+					return p.replace(/\/+/g, "/").replace(/\/$/, "") || "/";
+				}
+				_parent(p) {
+					const i = p.lastIndexOf("/");
+					return i <= 0 ? "/" : p.slice(0, i);
+				}
+				_ensureParent(p) {
+					const par = this._parent(p);
+					if (!this._dirs.has(par))
+						throw Object.assign(new Error(`ENOENT: ${par}`), { code: "ENOENT" });
+				}
+				async readFile(p) {
+					const d = this._files.get(this._resolve(p));
+					if (d === undefined) throw Object.assign(new Error(`ENOENT: ${p}`), { code: "ENOENT" });
+					return typeof d === "string" ? d : new TextDecoder().decode(d);
+				}
+				async readFileBuffer(p) {
+					const d = this._files.get(this._resolve(p));
+					if (d === undefined) throw Object.assign(new Error(`ENOENT: ${p}`), { code: "ENOENT" });
+					return d instanceof Uint8Array ? d : new TextEncoder().encode(d);
+				}
+				async writeFile(p, content) {
+					p = this._resolve(p);
+					await this.mkdir(this._parent(p), { recursive: true });
+					this._files.set(p, typeof content === "string" ? content : new Uint8Array(content));
+				}
+				async exists(p) {
+					p = this._resolve(p);
+					return this._files.has(p) || this._dirs.has(p);
+				}
+				async stat(p) {
+					p = this._resolve(p);
+					if (this._dirs.has(p))
+						return {
+							isFile: false,
+							isDirectory: true,
+							isSymbolicLink: false,
+							size: 0,
+							mode: 0o40755,
+						};
+					if (this._files.has(p)) {
+						const d = this._files.get(p);
+						return {
+							isFile: true,
+							isDirectory: false,
+							isSymbolicLink: false,
+							size: d.length ?? d.byteLength,
+							mode: 0o100644,
+						};
+					}
+					throw Object.assign(new Error(`ENOENT: ${p}`), { code: "ENOENT" });
+				}
+				async mkdir(p, opts) {
+					p = this._resolve(p);
+					if (this._dirs.has(p)) return;
+					if (opts?.recursive) {
+						const parts = p.split("/").filter(Boolean);
+						let cur = "";
+						for (const part of parts) {
+							cur += "/" + part;
+							this._dirs.add(cur);
+						}
+					} else {
+						this._ensureParent(p);
+						this._dirs.add(p);
+					}
+				}
+				async readdir(p) {
+					p = this._resolve(p);
+					const prefix = p === "/" ? "/" : p + "/";
+					const entries = new Set();
+					for (const k of this._files.keys()) {
+						if (k.startsWith(prefix)) {
+							const rest = k.slice(prefix.length);
+							entries.add(rest.split("/")[0]);
+						}
+					}
+					for (const k of this._dirs) {
+						if (k.startsWith(prefix) && k !== p) {
+							const rest = k.slice(prefix.length);
+							entries.add(rest.split("/")[0]);
+						}
+					}
+					return [...entries].sort();
+				}
+				async rm(p, opts) {
+					p = this._resolve(p);
+					if (this._files.has(p)) {
+						this._files.delete(p);
+						return;
+					}
+					if (this._dirs.has(p)) {
+						if (opts?.recursive) {
+							const prefix = p === "/" ? "/" : p + "/";
+							for (const k of [...this._files.keys()])
+								if (k.startsWith(prefix)) this._files.delete(k);
+							for (const k of [...this._dirs])
+								if (k.startsWith(prefix) || k === p) this._dirs.delete(k);
+						} else {
+							this._dirs.delete(p);
+						}
+						return;
+					}
+					if (!opts?.force) throw Object.assign(new Error(`ENOENT: ${p}`), { code: "ENOENT" });
+				}
+			}
+
+			try {
+				const { createGit } = await import("/dist/index.js");
+				log("Module loaded", "info");
+
+				const git = createGit();
+				const fs = new MemFS();
+				const cwd = "/repo";
+				const env = new Map([
+					["GIT_AUTHOR_NAME", "Browser"],
+					["GIT_AUTHOR_EMAIL", "browser@test.com"],
+					["GIT_COMMITTER_NAME", "Browser"],
+					["GIT_COMMITTER_EMAIL", "browser@test.com"],
+					["GIT_AUTHOR_DATE", "1000000000"],
+					["GIT_COMMITTER_DATE", "1000000000"],
+				]);
+
+				const exec = async (cmd) => {
+					const args = cmd.replace(/^git /, "").split(/\s+/);
+					return git.execute(args, { fs, cwd, env, stdin: "" });
+				};
+
+				await fs.writeFile("/repo/README.md", "# Browser Test\n\nHello from the browser.");
+				await fs.writeFile("/repo/src/index.ts", 'export const hello = "world";');
+
+				// git init
+				log("\n── git init ──", "info");
+				let r = await exec("git init");
+				r.exitCode === 0 ? pass("git init") : fail("git init", r.stderr);
+
+				// git add .
+				log("\n── git add . ──", "info");
+				r = await exec("git add .");
+				r.exitCode === 0 ? pass("git add .") : fail("git add .", r.stderr);
+
+				// git status
+				log("\n── git status ──", "info");
+				r = await exec("git status");
+				r.exitCode === 0 && r.stdout.includes("new file")
+					? pass("git status (shows staged)")
+					: fail("git status", r.stderr || r.stdout);
+
+				// git commit
+				log("\n── git commit ──", "info");
+				r = await exec("git commit -m initial");
+				r.exitCode === 0 ? pass("git commit") : fail("git commit", r.stderr);
+
+				// git log
+				log("\n── git log ──", "info");
+				r = await exec("git log --oneline");
+				r.exitCode === 0 && r.stdout.includes("initial")
+					? pass("git log")
+					: fail("git log", r.stderr || r.stdout);
+
+				// modify + diff
+				log("\n── modify + git diff ──", "info");
+				await fs.writeFile("/repo/src/index.ts", 'export const hello = "browser";');
+				r = await exec("git diff");
+				r.exitCode === 0 && r.stdout.includes("-export const hello")
+					? pass("git diff")
+					: fail("git diff", r.stderr || r.stdout);
+
+				// git add + commit again
+				log("\n── second commit ──", "info");
+				r = await exec("git add .");
+				r = await exec("git commit -m update");
+				r.exitCode === 0 ? pass("git commit #2") : fail("git commit #2", r.stderr);
+
+				// git log (2 commits)
+				r = await exec("git log --oneline");
+				const logLines = r.stdout.trim().split("\n").filter(Boolean);
+				logLines.length === 2
+					? pass(`git log shows ${logLines.length} commits`)
+					: fail("git log count", r.stdout);
+
+				// git branch
+				log("\n── git branch ──", "info");
+				r = await exec("git branch feature");
+				r.exitCode === 0 ? pass("git branch create") : fail("git branch create", r.stderr);
+				r = await exec("git checkout feature");
+				r.exitCode === 0 ? pass("git checkout feature") : fail("git checkout feature", r.stderr);
+
+				// commit on branch + merge
+				log("\n── branch commit + merge ──", "info");
+				await fs.writeFile("/repo/feature.txt", "feature content");
+				await exec("git add .");
+				r = await exec("git commit -m feat");
+				r.exitCode === 0 ? pass("commit on branch") : fail("commit on branch", r.stderr);
+
+				r = await exec("git checkout main");
+				r.exitCode === 0 ? pass("checkout main") : fail("checkout main", r.stderr);
+				r = await exec("git merge feature");
+				r.exitCode === 0 ? pass("merge feature") : fail("merge feature", r.stderr);
+
+				// git tag
+				log("\n── git tag ──", "info");
+				r = await exec("git tag v1.0.0");
+				r.exitCode === 0 ? pass("git tag create") : fail("git tag create", r.stderr);
+				r = await exec("git tag");
+				r.stdout.includes("v1.0.0") ? pass("git tag list") : fail("git tag list", r.stdout);
+
+				// git stash
+				log("\n── git stash ──", "info");
+				await fs.writeFile("/repo/stash-me.txt", "stash content");
+				await exec("git add .");
+				r = await exec("git stash push");
+				r.exitCode === 0 ? pass("git stash push") : fail("git stash push", r.stderr);
+				r = await exec("git stash pop");
+				r.exitCode === 0 ? pass("git stash pop") : fail("git stash pop", r.stderr);
+
+				// final summary
+				log("\n══════════════════════════", "info");
+				log("Browser smoke test complete", "info");
+			} catch (e) {
+				log(`\nFATAL: ${e.message}\n${e.stack}`, "fail");
+			}
+		</script>
+	</body>
+</html>

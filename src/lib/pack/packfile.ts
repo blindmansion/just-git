@@ -1,7 +1,7 @@
 import { hexAt, hexToBytes } from "../hex.ts";
 import { createHasher } from "../sha1.ts";
 import type { ObjectId, ObjectType, RawObject } from "../types.ts";
-import { deflate, inflate, inflateWithConsumed } from "./zlib.ts";
+import { deflate, inflateObject } from "./zlib.ts";
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -185,7 +185,7 @@ async function readEntry(data: Uint8Array, offset: number): Promise<RawPackEntry
 	// Compressed data — inflate it.
 	// We don't know exactly how many compressed bytes there are,
 	// so we inflate and use the consumed count from zlib.
-	const { result, bytesConsumed } = await inflateWithSize(data, offset, size);
+	const { result, bytesConsumed } = await inflateObject(data.subarray(offset), size);
 
 	return {
 		headerOffset,
@@ -548,57 +548,6 @@ function readSizeEncoding(data: Uint8Array, pos: number): { value: number; newPo
 		shift += 7;
 	} while (byte & 0x80);
 	return { value, newPos: pos };
-}
-
-// ── Inflate with consumed-byte tracking ──────────────────────────────
-
-/**
- * Inflate zlib-compressed data where we don't know the compressed
- * length in advance (entries are packed back-to-back).
- *
- * When the platform supports it (node:zlib with `{ info: true }`),
- * this is a single inflate call that reports bytes consumed directly.
- * Otherwise falls back to a binary search over truncated slices.
- */
-async function inflateWithSize(
-	data: Uint8Array,
-	offset: number,
-	expectedSize: number,
-): Promise<{ result: Uint8Array; bytesConsumed: number }> {
-	const remaining = data.subarray(offset);
-
-	if (inflateWithConsumed) {
-		const { result, bytesConsumed } = await inflateWithConsumed(remaining);
-		if (result.byteLength !== expectedSize) {
-			throw new Error(`Inflate size mismatch: got ${result.byteLength}, expected ${expectedSize}`);
-		}
-		return { result, bytesConsumed };
-	}
-
-	// Fallback: inflate the whole remaining buffer, then binary search
-	// for the exact compressed length (platforms without consumption metadata).
-	const full = await inflate(remaining);
-	if (full.byteLength !== expectedSize) {
-		throw new Error(`Inflate size mismatch: got ${full.byteLength}, expected ${expectedSize}`);
-	}
-
-	let lo = 2; // minimum zlib stream is 2 bytes (header + empty)
-	let hi = remaining.byteLength;
-	while (lo < hi) {
-		const mid = (lo + hi) >>> 1;
-		try {
-			const trial = await inflate(remaining.subarray(0, mid));
-			if (trial.byteLength === expectedSize) {
-				hi = mid;
-			} else {
-				lo = mid + 1;
-			}
-		} catch {
-			lo = mid + 1;
-		}
-	}
-
-	return { result: full, bytesConsumed: lo };
 }
 
 function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
