@@ -716,8 +716,8 @@ describe("checkoutTo", () => {
 		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commit });
 
 		const server = platform.gitServer();
-		const port = 49152 + Math.floor(Math.random() * 16000);
-		const bunServer = Bun.serve({ port, fetch: server.fetch });
+		const bunServer = Bun.serve({ port: 0, fetch: server.fetch });
+		const port = bunServer.port;
 
 		try {
 			const clientFs = new InMemoryFs();

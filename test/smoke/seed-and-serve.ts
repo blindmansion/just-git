@@ -75,8 +75,8 @@ const gitServer = createGitServer({
 	resolveRepo: async () => repo,
 });
 
-const port = 49152 + Math.floor(Math.random() * 16000);
-const srv = Bun.serve({ port, fetch: gitServer.fetch });
+const srv = Bun.serve({ port: 0, fetch: gitServer.fetch });
+const port = srv.port;
 
 // ── Clone from it with a virtual client ─────────────────────────────
 

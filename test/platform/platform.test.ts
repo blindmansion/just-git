@@ -710,8 +710,8 @@ describe("callbacks", () => {
 		});
 
 		const srv = platform.server();
-		const port = 49152 + Math.floor(Math.random() * 16000);
-		const bunServer = Bun.serve({ port, fetch: srv.fetch });
+		const bunServer = Bun.serve({ port: 0, fetch: srv.fetch });
+		const port = bunServer.port;
 		try {
 			const res = await fetch(`http://localhost:${port}/api/repo/pulls/1/merge`, {
 				method: "POST",
@@ -775,8 +775,8 @@ describe("onPullRequestUpdated", () => {
 			GIT_COMMITTER_DATE: "1000000200",
 		};
 
-		const port = 49152 + Math.floor(Math.random() * 16000);
-		const bunServer = Bun.serve({ port, fetch: server.fetch });
+		const bunServer = Bun.serve({ port: 0, fetch: server.fetch });
+		const port = bunServer.port;
 
 		try {
 			await bash.exec(`git clone http://localhost:${port}/repo /local`, { env });
@@ -829,8 +829,8 @@ describe("onPullRequestUpdated", () => {
 			GIT_COMMITTER_DATE: "1000000200",
 		};
 
-		const port = 49152 + Math.floor(Math.random() * 16000);
-		const bunServer = Bun.serve({ port, fetch: server.fetch });
+		const bunServer = Bun.serve({ port: 0, fetch: server.fetch });
+		const port = bunServer.port;
 
 		try {
 			await bash.exec(`git clone http://localhost:${port}/repo /local`, { env });
@@ -881,11 +881,8 @@ describe("git server integration", () => {
 			GIT_COMMITTER_DATE: "1000000200",
 		};
 
-		const port = 49152 + Math.floor(Math.random() * 16000);
-		const bunServer = Bun.serve({
-			port,
-			fetch: server.fetch,
-		});
+		const bunServer = Bun.serve({ port: 0, fetch: server.fetch });
+		const port = bunServer.port;
 
 		try {
 			const cloneResult = await bash.exec(`git clone http://localhost:${port}/repo /local`, {
@@ -930,8 +927,8 @@ describe("REST API via server()", () => {
 		await addCommitOnBranch(platform, "repo", "feature", "feat.txt", "feat\n", 1000000100);
 
 		const srv = platform.server();
-		const port = 49152 + Math.floor(Math.random() * 16000);
-		const bunServer = Bun.serve({ port, fetch: srv.fetch });
+		const bunServer = Bun.serve({ port: 0, fetch: srv.fetch });
+		const port = bunServer.port;
 
 		const api = (path: string, init?: RequestInit) =>
 			fetch(`http://localhost:${port}/api${path}`, {
@@ -1148,8 +1145,8 @@ describe("REST API via server()", () => {
 		await addCommitOnBranch(platform, "repo", "feature", "feat.txt", "feat\n", 1000000100);
 
 		const srv = platform.server({ apiBasePath: "/v1" });
-		const port = 49152 + Math.floor(Math.random() * 16000);
-		const bunServer = Bun.serve({ port, fetch: srv.fetch });
+		const bunServer = Bun.serve({ port: 0, fetch: srv.fetch });
+		const port = bunServer.port;
 
 		try {
 			await platform.createPullRequest("repo", {
@@ -1194,8 +1191,8 @@ describe("REST API via server()", () => {
 			},
 		});
 
-		const port = 49152 + Math.floor(Math.random() * 16000);
-		const bunServer = Bun.serve({ port, fetch: srv.fetch });
+		const bunServer = Bun.serve({ port: 0, fetch: srv.fetch });
+		const port = bunServer.port;
 		try {
 			const denied = await fetch(`http://localhost:${port}/api/repo/pulls`);
 			expect(denied.status).toBe(401);
@@ -1224,8 +1221,8 @@ describe("REST API via server()", () => {
 			},
 		});
 
-		const port = 49152 + Math.floor(Math.random() * 16000);
-		const bunServer = Bun.serve({ port, fetch: srv.fetch });
+		const bunServer = Bun.serve({ port: 0, fetch: srv.fetch });
+		const port = bunServer.port;
 		try {
 			const fs = new InMemoryFs();
 			const git = createGit();
@@ -1260,8 +1257,8 @@ describe("REST API via server()", () => {
 			},
 		});
 
-		const port = 49152 + Math.floor(Math.random() * 16000);
-		const bunServer = Bun.serve({ port, fetch: srv.fetch });
+		const bunServer = Bun.serve({ port: 0, fetch: srv.fetch });
+		const port = bunServer.port;
 		try {
 			await fetch(`http://localhost:${port}/api/my-repo/pulls`);
 			expect(receivedRepoIds).toContain("my-repo");
