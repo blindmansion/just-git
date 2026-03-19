@@ -29,6 +29,47 @@ export interface SqliteDatabase {
 	transaction<F extends (...args: any[]) => any>(fn: F): (...args: Parameters<F>) => ReturnType<F>;
 }
 
+// ── better-sqlite3 adapter ──────────────────────────────────────────
+
+export interface BetterSqlite3Statement {
+	run(...params: any[]): any;
+	get(...params: any[]): any;
+	all(...params: any[]): any[];
+}
+
+export interface BetterSqlite3Database {
+	exec(sql: string): any;
+	prepare(sql: string): BetterSqlite3Statement;
+	transaction<F extends (...args: any[]) => any>(fn: F): (...args: Parameters<F>) => ReturnType<F>;
+}
+
+/**
+ * Wrap a `better-sqlite3` database into a `SqliteDatabase`.
+ *
+ * Adapts `exec` → `run` and coerces `get` results from `undefined`
+ * to `null` to match the `bun:sqlite` convention.
+ *
+ * ```ts
+ * import Database from "better-sqlite3";
+ * const db = wrapBetterSqlite3(new Database("repos.sqlite"));
+ * const storage = new SqliteStorage(db);
+ * ```
+ */
+export function wrapBetterSqlite3(raw: BetterSqlite3Database): SqliteDatabase {
+	return {
+		run: (sql) => raw.exec(sql),
+		prepare: (sql) => {
+			const stmt = raw.prepare(sql);
+			return {
+				run: (...args: any[]) => stmt.run(...args),
+				get: (...args: any[]) => stmt.get(...args) ?? null,
+				all: (...args: any[]) => stmt.all(...args),
+			};
+		},
+		transaction: (fn) => raw.transaction(fn),
+	};
+}
+
 // ── Schema ──────────────────────────────────────────────────────────
 
 const SCHEMA = `

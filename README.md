@@ -75,7 +75,7 @@ Bun.serve({ fetch: server.fetch });
 // git clone http://localhost:3000/my-repo ← works with real git
 ```
 
-Uses web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. See [SERVER.md](SERVER.md) for the full API.
+Uses web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. For Node.js, use `toNodeHandler(server)` with `http.createServer` and `wrapBetterSqlite3` for `better-sqlite3`. See [SERVER.md](SERVER.md) for the full API.
 
 ## Options
 

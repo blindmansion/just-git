@@ -176,13 +176,22 @@ Key behaviors:
 
 `Storage` interface (`server/storage.ts`): `repo(repoId) → GitRepo`, `deleteRepo(repoId) → Promise<void>`. All backends partition multiple repos by ID in a single store.
 
-| Backend         | File                       | Construction                 | Driver interface                                            |
-| --------------- | -------------------------- | ---------------------------- | ----------------------------------------------------------- |
-| `MemoryStorage` | `server/memory-storage.ts` | `new MemoryStorage()`        | None                                                        |
-| `SqliteStorage` | `server/sqlite-storage.ts` | `new SqliteStorage(db)`      | `SqliteDatabase` (covers `bun:sqlite` and `better-sqlite3`) |
-| `PgStorage`     | `server/pg-storage.ts`     | `await PgStorage.create(db)` | `PgDatabase` (use `wrapPgPool(pool)` for `pg`)              |
+| Backend         | File                       | Construction                 | Driver interface                                                                 |
+| --------------- | -------------------------- | ---------------------------- | -------------------------------------------------------------------------------- |
+| `MemoryStorage` | `server/memory-storage.ts` | `new MemoryStorage()`        | None                                                                             |
+| `SqliteStorage` | `server/sqlite-storage.ts` | `new SqliteStorage(db)`      | `SqliteDatabase` (native for `bun:sqlite`; use `wrapBetterSqlite3(db)` for Node) |
+| `PgStorage`     | `server/pg-storage.ts`     | `await PgStorage.create(db)` | `PgDatabase` (use `wrapPgPool(pool)` for `pg`)                                   |
 
 The server handler (`createGitServer`) is storage-agnostic — it takes a `resolveRepo` callback returning `GitRepo`. Storage backends are interchangeable at that boundary.
+
+**Driver adapters:**
+
+- `wrapBetterSqlite3(db)` — wraps a `better-sqlite3` `Database` into `SqliteDatabase`. Adapts `exec` → `run` and coerces `get()` from `undefined` to `null`.
+- `wrapPgPool(pool)` — wraps a `pg` `Pool` into `PgDatabase`. Handles `BEGIN`/`COMMIT`/`ROLLBACK` and client release.
+
+**Node.js HTTP adapter:**
+
+- `toNodeHandler(server)` — converts a `GitServer` (web-standard `Request`/`Response`) into a `(req, res) => void` callback for `http.createServer`. Handles body collection, header conversion, and response piping.
 
 ## File reference
 

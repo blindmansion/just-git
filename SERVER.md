@@ -2,7 +2,7 @@
 
 Embeddable Git Smart HTTP server. Any standard git client (`git`, VS Code, GitHub Desktop) can clone from, fetch from, and push to repos served by just-git.
 
-Uses web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare Workers, Deno, or any fetch-compatible runtime.
+Uses web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare Workers, Deno, or any fetch-compatible runtime. For Node.js's `http.createServer`, use `toNodeHandler`.
 
 ```ts
 import { createGitServer } from "just-git/server";
@@ -21,6 +21,22 @@ const server = createGitServer({
 });
 
 Bun.serve({ fetch: server.fetch });
+```
+
+For Node.js, wrap with `toNodeHandler`:
+
+```ts
+import http from "node:http";
+import { createGitServer, SqliteStorage, wrapBetterSqlite3, toNodeHandler } from "just-git/server";
+import Database from "better-sqlite3";
+
+const storage = new SqliteStorage(wrapBetterSqlite3(new Database("repos.sqlite")));
+
+const server = createGitServer({
+  resolveRepo: async (repoPath) => storage.repo(repoPath),
+});
+
+http.createServer(toNodeHandler(server)).listen(3000);
 ```
 
 That's enough for a working server. Clients can clone, fetch, and push:
@@ -164,13 +180,23 @@ const storage = new MemoryStorage();
 
 ### `SqliteStorage`
 
-Compatible with `bun:sqlite`, `better-sqlite3`, or any driver matching the `SqliteDatabase` interface. Creates tables on construction.
+Creates tables on construction. Native with `bun:sqlite`; use `wrapBetterSqlite3` for `better-sqlite3` on Node.js.
 
 ```ts
+// Bun
 import { SqliteStorage } from "just-git/server";
 import { Database } from "bun:sqlite";
 const storage = new SqliteStorage(new Database("repos.sqlite"));
 ```
+
+```ts
+// Node.js
+import { SqliteStorage, wrapBetterSqlite3 } from "just-git/server";
+import Database from "better-sqlite3";
+const storage = new SqliteStorage(wrapBetterSqlite3(new Database("repos.sqlite")));
+```
+
+For other drivers, implement the `SqliteDatabase` interface directly.
 
 ### `PgStorage`
 

@@ -262,6 +262,106 @@ async function readRequestBody(req: Request): Promise<Uint8Array> {
 	return raw;
 }
 
+// ── Node.js adapter ─────────────────────────────────────────────────
+
+export interface NodeHttpRequest {
+	method?: string;
+	url?: string;
+	headers: Record<string, string | string[] | undefined>;
+	on(event: string, listener: (...args: any[]) => void): any;
+}
+
+export interface NodeHttpResponse {
+	writeHead(statusCode: number, headers?: Record<string, string | string[]>): any;
+	write(chunk: any): any;
+	end(data?: string): any;
+}
+
+/**
+ * Adapt a `GitServer` to Node.js's `http.createServer` callback.
+ *
+ * Converts between Node's `IncomingMessage`/`ServerResponse` and the
+ * web-standard `Request`/`Response` used by the server handler.
+ *
+ * ```ts
+ * import http from "node:http";
+ * const httpServer = http.createServer(toNodeHandler(server));
+ * httpServer.listen(4280);
+ * ```
+ */
+export function toNodeHandler(
+	server: GitServer,
+): (req: NodeHttpRequest, res: NodeHttpResponse) => void {
+	return (req, res) => {
+		const chunks: Uint8Array[] = [];
+		req.on("data", (chunk: Uint8Array) => chunks.push(new Uint8Array(chunk)));
+		req.on("error", () => {
+			res.writeHead(500);
+			res.end("Internal Server Error");
+		});
+		req.on("end", () => {
+			nodeRequestToFetch(server, req, chunks, res).catch(() => {
+				try {
+					res.writeHead(500);
+					res.end("Internal Server Error");
+				} catch {
+					// headers already sent
+				}
+			});
+		});
+	};
+}
+
+async function nodeRequestToFetch(
+	server: GitServer,
+	req: NodeHttpRequest,
+	chunks: Uint8Array[],
+	res: NodeHttpResponse,
+): Promise<void> {
+	const host = typeof req.headers.host === "string" ? req.headers.host : "localhost";
+	const url = new URL(req.url ?? "/", `http://${host}`);
+
+	const headers = new Headers();
+	for (const [key, value] of Object.entries(req.headers)) {
+		if (value === undefined) continue;
+		if (Array.isArray(value)) {
+			for (const v of value) headers.append(key, v);
+		} else {
+			headers.set(key, value);
+		}
+	}
+
+	const method = req.method ?? "GET";
+
+	let body: Uint8Array | undefined;
+	if (method !== "GET" && method !== "HEAD") {
+		let len = 0;
+		for (const c of chunks) len += c.byteLength;
+		const buf = new Uint8Array(len);
+		let off = 0;
+		for (const c of chunks) {
+			buf.set(c, off);
+			off += c.byteLength;
+		}
+		body = buf;
+	}
+
+	const request = new Request(url.href, { method, headers, body });
+	const response = await server.fetch(request);
+
+	const responseHeaders: Record<string, string> = {};
+	response.headers.forEach((value, key) => {
+		responseHeaders[key] = value;
+	});
+	res.writeHead(response.status, responseHeaders);
+
+	const responseBody = new Uint8Array(await response.arrayBuffer());
+	if (responseBody.byteLength > 0) {
+		res.write(responseBody);
+	}
+	res.end();
+}
+
 /**
  * Compose multiple hook sets into a single `ServerHooks` object.
  *
