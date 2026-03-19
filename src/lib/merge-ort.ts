@@ -1282,7 +1282,8 @@ async function mergeRenameContent(
 	const oursLines = splitLinesWithSentinel(oursText);
 	const theirsLines = splitLinesWithSentinel(theirsText);
 
-	const mergeResult = diff3Merge(oursLines, baseLines, theirsLines);
+	const style = labels?.conflictStyle;
+	const mergeResult = diff3Merge(oursLines, baseLines, theirsLines, { conflictStyle: style });
 
 	if (!mergeResult.conflict) {
 		const mergedHash = await writeCleanMergeBlob(ctx, mergeResult.result);
@@ -1299,6 +1300,7 @@ async function mergeRenameContent(
 		a: markerA,
 		b: markerB,
 		markerSize: markerSize ?? 7,
+		conflictStyle: style,
 	});
 	const markerHash = await writeObject(ctx, "blob", encoder.encode(markerContent));
 	return { hash: markerHash, conflict: true };
@@ -1320,6 +1322,7 @@ async function writeAddAddMarkers(
 	const markerContent = renderConflictMarkers(oursText, "", theirsText, {
 		a: labels?.a ?? "HEAD",
 		b: labels?.b ?? "theirs",
+		conflictStyle: labels?.conflictStyle,
 	});
 	return writeObject(ctx, "blob", encoder.encode(markerContent));
 }
@@ -1472,7 +1475,9 @@ async function processEntry(
 		const baseLines = splitLinesWithSentinel("");
 		const oursLines = splitLinesWithSentinel(oursText);
 		const theirsLines = splitLinesWithSentinel(theirsText);
-		const mergeResult = diff3Merge(oursLines, baseLines, theirsLines, labels);
+		const mergeResult = diff3Merge(oursLines, baseLines, theirsLines, {
+			conflictStyle: labels?.conflictStyle,
+		});
 
 		if (!mergeResult.conflict) {
 			const mergedHash = await writeCleanMergeBlob(ctx, mergeResult.result);
@@ -1487,6 +1492,7 @@ async function processEntry(
 		const markerContent = renderConflictMarkers(oursText, "", theirsText, {
 			a: labels?.a ?? "HEAD",
 			b: labels?.b ?? "theirs",
+			conflictStyle: labels?.conflictStyle,
 		});
 		const markerHash = await writeObject(ctx, "blob", encoder.encode(markerContent));
 		worktreeBlobs.set(path, { hash: markerHash, mode: ours!.mode });
@@ -1557,7 +1563,9 @@ async function processEntry(
 		const oursLines = splitLinesWithSentinel(oursText);
 		const theirsLines = splitLinesWithSentinel(theirsText);
 
-		const mergeResult = diff3Merge(oursLines, baseLines, theirsLines, labels);
+		const mergeResult = diff3Merge(oursLines, baseLines, theirsLines, {
+			conflictStyle: labels?.conflictStyle,
+		});
 
 		if (!mergeResult.conflict) {
 			const mergedHash = await writeCleanMergeBlob(ctx, mergeResult.result);
@@ -1590,6 +1598,7 @@ async function processEntry(
 			const markerContent = renderConflictMarkers(oursText, baseText, theirsText, {
 				a: oursLabel,
 				b: theirsLabel,
+				conflictStyle: labels?.conflictStyle,
 			});
 			const markerHash = await writeObject(ctx, "blob", encoder.encode(markerContent));
 			worktreeBlobs.set(path, { hash: markerHash, mode: ours!.mode });

@@ -242,7 +242,10 @@ async function handleThreeWayMerge(
 	const head = await readHead(gitCtx);
 	const currentBranch = head?.type === "symbolic" ? branchNameFromRef(head.target) : "HEAD";
 
-	const labels = { a: "HEAD", b: branchName };
+	const conflictStyle = ((await getConfigValue(gitCtx, "merge.conflictstyle")) ?? "merge") as
+		| "merge"
+		| "diff3";
+	const labels = { a: "HEAD", b: branchName, conflictStyle };
 
 	// Step 1: Run merge-ort (recursive — handles criss-cross merges)
 	const result = await mergeOrtRecursive(gitCtx, headHash, theirsHash, labels);
@@ -412,7 +415,10 @@ async function handleSquashMerge(
 	const headCommit = await readCommit(gitCtx, headHash);
 	const head = await readHead(gitCtx);
 
-	const labels = { a: "HEAD", b: branchName };
+	const conflictStyle = ((await getConfigValue(gitCtx, "merge.conflictstyle")) ?? "merge") as
+		| "merge"
+		| "diff3";
+	const labels = { a: "HEAD", b: branchName, conflictStyle };
 
 	const bases = await findAllMergeBases(gitCtx, headHash, theirsHash);
 	const isFF = bases.length > 0 && bases[0] === headHash;

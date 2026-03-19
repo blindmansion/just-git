@@ -344,7 +344,10 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			const currentBranch = head?.type === "symbolic" ? branchNameFromRef(head.target) : "HEAD";
 
 			const branchLabel = remoteBranch || remoteName || "FETCH_HEAD";
-			const labels = { a: "HEAD", b: branchLabel };
+			const conflictStyle = ((await getConfigValue(gitCtx, "merge.conflictstyle")) ?? "merge") as
+				| "merge"
+				| "diff3";
+			const labels = { a: "HEAD", b: branchLabel, conflictStyle };
 
 			const mergeResult = await mergeOrtRecursive(gitCtx, headHash, theirsHash, labels);
 

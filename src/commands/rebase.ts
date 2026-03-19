@@ -19,6 +19,7 @@ import {
 	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
 import { formatCommitSummary } from "../lib/commit-summary.ts";
+import { getConfigValue } from "../lib/config.ts";
 import {
 	getConflictedPaths,
 	getStage0Entries,
@@ -748,9 +749,13 @@ async function pickOneCommit(
 	const baseTree = parentCommit ? parentCommit.tree : null;
 	const shortHash = abbreviateHash(theirsHash);
 	const subject = firstLine(theirsCommit.message);
+	const conflictStyle = ((await getConfigValue(gitCtx, "merge.conflictstyle")) ?? "merge") as
+		| "merge"
+		| "diff3";
 	const labels = {
 		a: "HEAD",
 		b: subject ? `${shortHash} (${subject})` : shortHash,
+		conflictStyle,
 	};
 
 	const mergeResult = await mergeOrtNonRecursive(

@@ -475,4 +475,114 @@ describe("git merge", () => {
 			expect(result.stderr).toContain("Not possible to fast-forward");
 		});
 	});
+
+	// ── merge.conflictStyle ─────────────────────────────────────────
+
+	describe("merge.conflictStyle", () => {
+		test("diff3 includes base section in conflict markers", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/file.txt", "line1\noriginal\nline3\n");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec("git branch feature");
+
+			await bash.fs.writeFile("/repo/file.txt", "line1\nours\nline3\n");
+			await bash.exec("git add file.txt");
+			await bash.exec('git commit -m "main"');
+
+			await bash.exec("git checkout feature");
+			await bash.fs.writeFile("/repo/file.txt", "line1\ntheirs\nline3\n");
+			await bash.exec("git add file.txt");
+			await bash.exec('git commit -m "feature"');
+
+			await bash.exec("git checkout main");
+			await bash.exec("git config merge.conflictStyle diff3");
+			const result = await bash.exec("git merge feature");
+
+			expect(result.exitCode).toBe(1);
+			const content = await readFile(bash.fs, "/repo/file.txt");
+			expect(content).toContain("<<<<<<< HEAD");
+			expect(content).toContain("|||||||");
+			expect(content).toContain("original");
+			expect(content).toContain("=======");
+			expect(content).toContain(">>>>>>> feature");
+		});
+
+		test("default merge style has no ||||||| markers", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/file.txt", "line1\noriginal\nline3\n");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec("git branch feature");
+
+			await bash.fs.writeFile("/repo/file.txt", "line1\nours\nline3\n");
+			await bash.exec("git add file.txt");
+			await bash.exec('git commit -m "main"');
+
+			await bash.exec("git checkout feature");
+			await bash.fs.writeFile("/repo/file.txt", "line1\ntheirs\nline3\n");
+			await bash.exec("git add file.txt");
+			await bash.exec('git commit -m "feature"');
+
+			await bash.exec("git checkout main");
+			const result = await bash.exec("git merge feature");
+
+			expect(result.exitCode).toBe(1);
+			const content = await readFile(bash.fs, "/repo/file.txt");
+			expect(content).toContain("<<<<<<<");
+			expect(content).not.toContain("|||||||");
+		});
+
+		test("diff3 works with cherry-pick", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/file.txt", "line1\noriginal\nline3\n");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec("git branch feature");
+
+			await bash.exec("git checkout feature");
+			await bash.fs.writeFile("/repo/file.txt", "line1\nfeature\nline3\n");
+			await bash.exec("git add file.txt");
+			await bash.exec('git commit -m "feature change"');
+
+			await bash.exec("git checkout main");
+			await bash.fs.writeFile("/repo/file.txt", "line1\nmain\nline3\n");
+			await bash.exec("git add file.txt");
+			await bash.exec('git commit -m "main change"');
+
+			await bash.exec("git config merge.conflictStyle diff3");
+			const result = await bash.exec("git cherry-pick feature");
+
+			expect(result.exitCode).toBe(1);
+			const content = await readFile(bash.fs, "/repo/file.txt");
+			expect(content).toContain("|||||||");
+			expect(content).toContain("original");
+		});
+
+		test("diff3 works with revert", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/file.txt", "line1\noriginal\nline3\n");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+
+			await bash.fs.writeFile("/repo/file.txt", "line1\nchanged\nline3\n");
+			await bash.exec("git add file.txt");
+			await bash.exec('git commit -m "change"');
+
+			await bash.fs.writeFile("/repo/file.txt", "line1\nmodified-further\nline3\n");
+			await bash.exec("git add file.txt");
+			await bash.exec('git commit -m "further"');
+
+			await bash.exec("git config merge.conflictStyle diff3");
+			const result = await bash.exec("git revert HEAD~1");
+
+			expect(result.exitCode).toBe(1);
+			const content = await readFile(bash.fs, "/repo/file.txt");
+			expect(content).toContain("|||||||");
+		});
+	});
 });

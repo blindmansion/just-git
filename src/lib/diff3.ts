@@ -48,12 +48,16 @@ export interface MergeLabels {
 	b?: string;
 	/** Number of marker characters (default 7). Real git uses 9 for virtual merge bases. */
 	markerSize?: number;
+	/** Conflict marker style: "merge" (default) or "diff3" (includes base section). */
+	conflictStyle?: "merge" | "diff3";
 }
 
 /** Options for diff3Merge. */
 interface Diff3MergeOptions {
 	/** If true (default), treat identical a/b changes as non-conflicts. */
 	excludeFalseConflicts?: boolean;
+	/** When "diff3", skip conflict refinement to preserve base content in conflict blocks. */
+	conflictStyle?: "merge" | "diff3";
 }
 
 // ── diffIndices (internal) ──────────────────────────────────────────
@@ -285,15 +289,28 @@ export function diff3Merge(
 	}
 
 	flushOk();
+	if (options?.conflictStyle === "diff3") {
+		return simplifyNonConflicts(results);
+	}
 	return simplifyNonConflicts(refineConflicts(results));
 }
 
-// ── merge (2-way conflict markers) ─────────────────────────────────
+// ── merge (conflict markers) ────────────────────────────────────────
 
 /**
- * Three-way merge with standard 2-way conflict markers:
+ * Three-way merge with conflict markers.
  *
+ * Default (merge style):
  *     <<<<<<< ours
+ *     ...
+ *     =======
+ *     ...
+ *     >>>>>>> theirs
+ *
+ * diff3 style (conflictStyle: "diff3"):
+ *     <<<<<<< ours
+ *     ...
+ *     ||||||| base
  *     ...
  *     =======
  *     ...
@@ -301,11 +318,13 @@ export function diff3Merge(
  */
 export function merge(a: string[], o: string[], b: string[], labels?: MergeLabels): MergeResult {
 	const size = labels?.markerSize ?? 7;
+	const style = labels?.conflictStyle ?? "merge";
 	const aMarker = `${"<".repeat(size)}${labels?.a ? ` ${labels.a}` : ""}`;
+	const oMarker = `${"|".repeat(size)}${labels?.o ? ` ${labels.o}` : ""}`;
 	const separator = "=".repeat(size);
 	const bMarker = `${">".repeat(size)}${labels?.b ? ` ${labels.b}` : ""}`;
 
-	const blocks = diff3Merge(a, o, b);
+	const blocks = diff3Merge(a, o, b, { conflictStyle: style });
 	let conflict = false;
 	const result: string[] = [];
 
@@ -314,7 +333,11 @@ export function merge(a: string[], o: string[], b: string[], labels?: MergeLabel
 			result.push(...block.lines);
 		} else {
 			conflict = true;
-			result.push(aMarker, ...block.a, separator, ...block.b, bMarker);
+			if (style === "diff3") {
+				result.push(aMarker, ...block.a, oMarker, ...block.o, separator, ...block.b, bMarker);
+			} else {
+				result.push(aMarker, ...block.a, separator, ...block.b, bMarker);
+			}
 		}
 	}
 
@@ -473,6 +496,7 @@ interface MergeFileLabels {
 	o?: string;
 	b: string;
 	markerSize?: number;
+	conflictStyle?: "merge" | "diff3";
 }
 
 /**
@@ -490,7 +514,13 @@ export function renderConflictMarkers(
 		splitLinesWithSentinel(oursText),
 		splitLinesWithSentinel(baseText),
 		splitLinesWithSentinel(theirsText),
-		{ a: labels.a, b: labels.b, markerSize: labels.markerSize },
+		{
+			a: labels.a,
+			o: labels.o,
+			b: labels.b,
+			markerSize: labels.markerSize,
+			conflictStyle: labels.conflictStyle,
+		},
 	);
 
 	const lastRawLine = merged.result[merged.result.length - 1] ?? "";

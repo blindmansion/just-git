@@ -298,3 +298,80 @@ line3
 		);
 	});
 });
+
+// ── diff3 conflict style ────────────────────────────────────────────
+
+describe("merge with conflictStyle: diff3", () => {
+	test("conflict includes base section between ||||||| markers", () => {
+		const o = ["a", "b", "c"];
+		const a = ["a", "X", "c"];
+		const b = ["a", "Y", "c"];
+		const result = merge(a, o, b, { conflictStyle: "diff3" });
+		expect(result.conflict).toBe(true);
+		expect(result.result).toEqual([
+			"a",
+			"<<<<<<<",
+			"X",
+			"|||||||",
+			"b",
+			"=======",
+			"Y",
+			">>>>>>>",
+			"c",
+		]);
+	});
+
+	test("diff3 conflict with labels", () => {
+		const o = ["a", "b", "c"];
+		const a = ["a", "X", "c"];
+		const b = ["a", "Y", "c"];
+		const result = merge(a, o, b, { a: "ours", o: "base", b: "theirs", conflictStyle: "diff3" });
+		expect(result.conflict).toBe(true);
+		expect(result.result).toContain("<<<<<<< ours");
+		expect(result.result).toContain("||||||| base");
+		expect(result.result).toContain(">>>>>>> theirs");
+	});
+
+	test("clean merge — diff3 style makes no difference", () => {
+		const o = ["a", "b", "c", "d", "e"];
+		const a = ["a", "X", "c", "d", "e"];
+		const b = ["a", "b", "c", "Y", "e"];
+		const result = merge(a, o, b, { conflictStyle: "diff3" });
+		expect(result.conflict).toBe(false);
+		expect(result.result).toEqual(["a", "X", "c", "Y", "e"]);
+	});
+
+	test("diff3 shows empty base for add/add conflict", () => {
+		const o: string[] = [];
+		const a = ["X"];
+		const b = ["Y"];
+		const result = merge(a, o, b, { conflictStyle: "diff3" });
+		expect(result.conflict).toBe(true);
+		expect(result.result).toEqual(["<<<<<<<", "X", "|||||||", "=======", "Y", ">>>>>>>"]);
+	});
+
+	test("diff3 with custom marker size", () => {
+		const o = ["a", "b", "c"];
+		const a = ["a", "X", "c"];
+		const b = ["a", "Y", "c"];
+		const result = merge(a, o, b, { conflictStyle: "diff3", markerSize: 9 });
+		expect(result.conflict).toBe(true);
+		expect(result.result).toContain("<<<<<<<<<");
+		expect(result.result).toContain("|||||||||");
+		expect(result.result).toContain("=========");
+		expect(result.result).toContain(">>>>>>>>>");
+	});
+
+	test("diff3 multi-line base content preserved", () => {
+		const o = ["a", "b1", "b2", "c"];
+		const a = ["a", "X1", "X2", "c"];
+		const b = ["a", "Y1", "c"];
+		const result = merge(a, o, b, { conflictStyle: "diff3" });
+		expect(result.conflict).toBe(true);
+		const idx = result.result.indexOf("|||||||");
+		expect(idx).toBeGreaterThan(-1);
+		const sepIdx = result.result.indexOf("=======");
+		const baseContent = result.result.slice(idx + 1, sepIdx);
+		expect(baseContent).toEqual(["b1", "b2"]);
+	});
+});

@@ -19,6 +19,7 @@ import {
 	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
 import { formatCommitSummary } from "../lib/commit-summary.ts";
+import { getConfigValue } from "../lib/config.ts";
 import { getStage0Entries, readIndex } from "../lib/index.ts";
 import {
 	type ApplyMergeFailure,
@@ -174,9 +175,13 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 			const revertMessage = buildRevertMessage(revertedCommit, resolvedHash, mainlineParent);
 
 			// Three-way merge: base = commit tree, ours = HEAD tree, theirs = parent tree
+			const conflictStyle = ((await getConfigValue(gitCtx, "merge.conflictstyle")) ?? "merge") as
+				| "merge"
+				| "diff3";
 			const labels = {
 				a: "HEAD",
 				b: subject ? `parent of ${shortHash} (${subject})` : `parent of ${shortHash}`,
+				conflictStyle,
 			};
 
 			const result = await mergeOrtNonRecursive(

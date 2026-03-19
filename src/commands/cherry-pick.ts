@@ -19,6 +19,7 @@ import {
 	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
 import { formatCommitSummary } from "../lib/commit-summary.ts";
+import { getConfigValue } from "../lib/config.ts";
 import { getStage0Entries, readIndex, writeIndex } from "../lib/index.ts";
 import {
 	type ApplyMergeFailure,
@@ -217,9 +218,13 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 			}
 			const shortHash = abbreviateHash(theirsHash);
 			const subject = firstLine(theirsCommit.message);
+			const conflictStyle = ((await getConfigValue(gitCtx, "merge.conflictstyle")) ?? "merge") as
+				| "merge"
+				| "diff3";
 			const labels = {
 				a: "HEAD",
 				b: subject ? `${shortHash} (${subject})` : shortHash,
+				conflictStyle,
 			};
 
 			// Run merge-ort (non-recursive — cherry-pick uses single base)
