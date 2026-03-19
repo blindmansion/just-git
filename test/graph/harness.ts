@@ -100,7 +100,7 @@ export function buildReal(
 		}
 	};
 
-	exec("git init");
+	exec("git init -b main");
 	exec("git config user.name Test");
 	exec("git config user.email test@test.com");
 
