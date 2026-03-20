@@ -99,12 +99,6 @@ describe("unimplemented commands", () => {
 		expect(r.stderr).toContain("git help");
 	});
 
-	test("git describe reports not implemented", async () => {
-		const r = await git.exec("describe", { fs, cwd: "/" });
-		expect(r.exitCode).toBe(1);
-		expect(r.stderr).toContain("'describe' is not implemented");
-	});
-
 	test("git submodule reports not implemented", async () => {
 		const r = await git.exec("submodule", { fs, cwd: "/" });
 		expect(r.exitCode).toBe(1);

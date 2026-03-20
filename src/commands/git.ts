@@ -9,6 +9,7 @@ import { registerCheckoutCommand } from "./checkout.ts";
 import { registerCherryPickCommand } from "./cherry-pick.ts";
 import { registerCleanCommand } from "./clean.ts";
 import { registerCloneCommand } from "./clone.ts";
+import { registerDescribeCommand } from "./describe.ts";
 import { registerCommitCommand } from "./commit.ts";
 import { registerConfigCommand } from "./config.ts";
 import { registerDiffCommand } from "./diff.ts";
@@ -59,7 +60,6 @@ export const KNOWN_UNIMPLEMENTED_COMMANDS = new Set([
 	"count-objects",
 	"credential",
 	"daemon",
-	"describe",
 	"diff-files",
 	"diff-index",
 	"diff-tree",
@@ -120,6 +120,7 @@ export const KNOWN_UNIMPLEMENTED_COMMANDS = new Set([
 const COMMAND_REGISTRY: Record<GitCommandName, (git: Command, ext?: GitExtensions) => void> = {
 	init: (g, e) => registerInitCommand(g, e),
 	clone: (g, e) => registerCloneCommand(g, e),
+	describe: (g, e) => registerDescribeCommand(g, e),
 	fetch: (g, e) => registerFetchCommand(g, e),
 	pull: (g, e) => registerPullCommand(g, e),
 	push: (g, e) => registerPushCommand(g, e),

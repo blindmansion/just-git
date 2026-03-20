@@ -52,6 +52,7 @@ export type GitCommandName =
 	| "branch"
 	| "tag"
 	| "checkout"
+	| "describe"
 	| "diff"
 	| "reset"
 	| "merge"

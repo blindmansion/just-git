@@ -13,6 +13,7 @@ Usage:
 Commands:
   init         Initialize a new repository
   clone        Clone a repository into a new directory
+  describe     Give an object a human readable name based on an available ref
   fetch        Download objects and refs from another repository
   pull         Fetch from and integrate with another repository
   push         Update remote refs along with associated objects
@@ -406,6 +407,30 @@ Options:
   --unset     Remove a config key
   --get-all   Get all values for a multi-valued key
   --add       Add a new line without altering existing values
+```
+
+## git describe
+
+```
+git describe - Give an object a human readable name based on an available ref
+
+Usage:
+  git describe [options] [committish]
+
+Arguments:
+  committish  Commit to describe
+
+Options:
+  --tags                         Use any tag, not just annotated
+  --always                       Show abbreviated hash as fallback
+  --long                         Always output long format
+  --abbrev <number>              Abbreviation length
+  --dirty <string>               Append dirty marker if worktree has changes
+  --match <string>               Only consider tags matching glob
+  --exclude <string>             Exclude tags matching glob
+  -exact-match, --exact-match    Only output exact matches
+  -first-parent, --first-parent  Only follow first parent
+  --candidates <number>          Consider N most recent tags
 ```
 
 ## git diff
