@@ -50,6 +50,7 @@
 		"prepublishOnly": "bun run build",
 		"check": "bunx tsc --noEmit && bunx tsc --noEmit -p test/tsconfig.json && oxfmt && oxlint --fix",
 		"oracle": "bun test/oracle/cli.ts",
+		"browser-test": "bun test/smoke/serve-browser-test.ts",
 		"sandbox": "bun scripts/sandbox.ts",
 		"knip": "knip",
 		"knip:prod": "knip --config knip-production.json",
