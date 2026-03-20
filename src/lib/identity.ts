@@ -50,12 +50,14 @@ async function resolveIdentity(
 	const keys = ROLE_ENV[role];
 	const override = ctx.identityOverride;
 
+	const { timestamp, timezone } = parseDateEnv(env.get(keys.date));
+
 	if (override?.locked) {
 		return {
 			name: override.name,
 			email: override.email,
-			timestamp: getTimestamp(env.get(keys.date)),
-			timezone: "+0000",
+			timestamp,
+			timezone,
 		};
 	}
 
@@ -75,8 +77,8 @@ async function resolveIdentity(
 	return {
 		name,
 		email,
-		timestamp: getTimestamp(env.get(keys.date)),
-		timezone: "+0000",
+		timestamp,
+		timezone,
 	};
 }
 
@@ -110,16 +112,65 @@ export async function getReflogIdentity(
 // ── Helpers ─────────────────────────────────────────────────────────
 
 /**
- * Parse a date string to a Unix timestamp.
- * Supports raw epoch seconds or any string parseable by Date.parse.
- * Falls back to the current time.
+ * Parse a GIT_AUTHOR_DATE / GIT_COMMITTER_DATE value into a Unix
+ * timestamp and timezone string.
+ *
+ * Supported formats (matching real git):
+ *   - Pure digits: raw epoch seconds, e.g. "1718454600"
+ *   - @-prefixed epoch: "@1718454600"
+ *   - Git internal: "<epoch> <tz>", e.g. "1718454600 +0200"
+ *   - ISO 8601: "2024-06-15T14:30:00+0200" or "+02:00" or "Z"
+ *   - Anything Date.parse understands (RFC 2822, etc.)
+ *
+ * Falls back to current time with +0000 when undefined or unparseable.
  */
-function getTimestamp(dateStr: string | undefined): number {
-	if (dateStr) {
-		const asInt = parseInt(dateStr, 10);
-		if (!Number.isNaN(asInt)) return asInt;
-		const asDate = Date.parse(dateStr);
-		if (!Number.isNaN(asDate)) return Math.floor(asDate / 1000);
+function parseDateEnv(dateStr: string | undefined): { timestamp: number; timezone: string } {
+	const fallback = { timestamp: Math.floor(Date.now() / 1000), timezone: "+0000" };
+	if (!dateStr) return fallback;
+
+	const s = dateStr.trim();
+	if (!s) return fallback;
+
+	// @<epoch> — raw epoch with @ prefix
+	if (s.startsWith("@")) {
+		const rest = s.slice(1).trim();
+		const epoch = parseInt(rest, 10);
+		if (!Number.isNaN(epoch)) return { timestamp: epoch, timezone: "+0000" };
 	}
-	return Math.floor(Date.now() / 1000);
+
+	// Pure digits — raw epoch seconds
+	if (/^\d+$/.test(s)) {
+		return { timestamp: parseInt(s, 10), timezone: "+0000" };
+	}
+
+	// Git internal format: <epoch> <+/-HHMM>
+	const internal = s.match(/^(\d+)\s+([+-]\d{4})$/);
+	if (internal) {
+		return { timestamp: parseInt(internal[1]!, 10), timezone: internal[2]! };
+	}
+
+	// ISO 8601 / RFC 2822 / other Date.parse-able strings — parse with
+	// timezone extraction.
+	const ms = Date.parse(s);
+	if (!Number.isNaN(ms)) {
+		return { timestamp: Math.floor(ms / 1000), timezone: extractTimezone(s) };
+	}
+
+	return fallback;
+}
+
+/** Extract a timezone offset string from a date string. */
+function extractTimezone(s: string): string {
+	// Trailing Z → UTC
+	if (/Z$/i.test(s)) return "+0000";
+
+	// +HH:MM or -HH:MM (ISO 8601 with colon)
+	const colonMatch = s.match(/([+-])(\d{2}):(\d{2})$/);
+	if (colonMatch) return `${colonMatch[1]}${colonMatch[2]}${colonMatch[3]}`;
+
+	// +HHMM or -HHMM (compact offset)
+	const compactMatch = s.match(/([+-]\d{4})$/);
+	if (compactMatch) return compactMatch[1]!;
+
+	return "+0000";
 }
