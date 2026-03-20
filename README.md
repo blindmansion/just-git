@@ -30,9 +30,7 @@ await git.exec('git commit -m "initial commit"', { fs, cwd: "/repo" });
 await git.exec("git log --oneline", { fs, cwd: "/repo" });
 ```
 
-`MemoryFileSystem` is a minimal in-memory filesystem included with just-git. You can also provide your own implementation of the `FileSystem` interface (e.g. wrapping `node:fs/promises`). Tokenization handles single and double quotes. Pass `env` as a plain object when needed (e.g. `GIT_AUTHOR_NAME`).
-
-For a full virtual shell with file I/O, pipes, and scripting, pair with [just-bash](https://github.com/vercel-labs/just-bash):
+`MemoryFileSystem` is a minimal in-memory filesystem for standalone use. Tokenization handles single and double quotes; pass `env` as a plain object when needed (e.g. `GIT_AUTHOR_NAME`). The `FileSystem` interface is built around [just-bash](https://github.com/vercel-labs/just-bash)'s implementations — for anything beyond bare git commands, it's recommended to use just-git as a custom command in just-bash:
 
 ```ts
 import { Bash } from "just-bash";
