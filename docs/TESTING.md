@@ -1,6 +1,6 @@
 # How just-git is tested
 
-just-git targets faithful reproduction of real git's behavior — not just the happy path, but edge cases, error messages, conflict handling, and state transitions. This document explains how that fidelity is validated.
+just-git targets faithful reproduction of real git's behavior: not just the happy path, but edge cases, error messages, conflict handling, and state transitions. This document explains how that fidelity is validated.
 
 ## Oracle testing
 
@@ -8,9 +8,9 @@ The primary validation tool is an **oracle testing framework** that compares jus
 
 The process:
 
-1. **Generate** — A random walker produces sequences of git operations (commits, merges, rebases, cherry-picks, stash, reset, clean, etc.) and runs them against real git, recording the full repository state after every step.
-2. **Replay** — The same sequence is replayed against just-git's virtual implementation.
-3. **Compare** — At every step, repository state and command output are compared.
+1. **Generate**: A random walker produces sequences of git operations (commits, merges, rebases, cherry-picks, stash, reset, clean, etc.) and runs them against real git, recording the full repository state after every step.
+2. **Replay**: The same sequence is replayed against just-git's virtual implementation.
+3. **Compare**: At every step, repository state and command output are compared.
 
 What gets compared at each step:
 
@@ -19,7 +19,7 @@ What gets compared at each step:
 | State    | HEAD ref and SHA, all refs, index entries (with conflict stages), worktree contents, active operation (merge/rebase/cherry-pick), operation state files, stash entries |
 | Output   | Exit code, stdout, stderr                                                                                                                                              |
 
-The full current test suite we're validating against covers over 1,000 traces totalling more than a million operations across multiple presets. The `core` preset focuses on daily-use commands with light chaos and fuzz injection. The `kitchen` preset enables everything — chaos mode, fuzz injection, gitignore generation, and nearly all 103 available actions. A quick `bun oracle validate` run covers a smaller representative sample (~10 traces, ~3,000 operations) for fast feedback.
+The full current test suite we're validating against covers over 1,000 traces totalling more than a million operations across multiple presets. The `core` preset focuses on daily-use commands with light chaos and fuzz injection. The `kitchen` preset enables everything: chaos mode, fuzz injection, gitignore generation, and nearly all 103 available actions. A quick `bun oracle validate` run covers a smaller representative sample (~10 traces, ~3,000 operations) for fast feedback.
 
 ### Running it yourself
 
@@ -50,18 +50,18 @@ Oracle trace generation requires git 2.53.x (the version just-git targets). The 
 3 passed, 1 known  (4 total)
 ```
 
-- **PASS** — Every step matched real git in both state and output.
-- **KNOWN** — A divergence was detected but classified as a known, acceptable difference (e.g. rename detection tiebreaking — see below).
-- **WARN** — A non-critical output difference (e.g. diff hunk boundary tiebreaking).
-- **FAIL** — A genuine divergence that indicates a bug.
+- **PASS**: Every step matched real git in both state and output.
+- **KNOWN**: A divergence was detected but classified as a known, acceptable difference (e.g. rename detection tiebreaking; see below).
+- **WARN**: A non-critical output difference (e.g. diff hunk boundary tiebreaking).
+- **FAIL**: A genuine divergence that indicates a bug.
 
 ### Known acceptable differences
 
 Some behaviors are intentionally different or have inherent non-determinism:
 
-- **Rename detection tiebreaking** — When multiple deleted files share the same content, the pairing with added files is ambiguous. Real git's tiebreaking depends on internal hashmap iteration order. Our implementation uses sorted arrays with basename-first matching. Both are valid; neither is "correct."
-- **Rebase planner subset** — Our planner computes exact set differences via full BFS. Git's timestamp-ordered walker can include false positives when commit timestamps are non-monotonic. Our result is mathematically more correct but occasionally smaller.
-- **Conflict marker alignment** — The exact placement of conflict marker boundaries can differ between git's `xdl_merge` zealous mode and our diff3 implementation. Both produce correct, resolvable markers.
+- **Rename detection tiebreaking**: When multiple deleted files share the same content, the pairing with added files is ambiguous. Real git's tiebreaking depends on internal hashmap iteration order. Our implementation uses sorted arrays with basename-first matching. Both are valid; neither is "correct."
+- **Rebase planner subset**: Our planner computes exact set differences via full BFS. Git's timestamp-ordered walker can include false positives when commit timestamps are non-monotonic. Our result is mathematically more correct but occasionally smaller.
+- **Conflict marker alignment**: The exact placement of conflict marker boundaries can differ between git's `xdl_merge` zealous mode and our diff3 implementation. Both produce correct, resolvable markers.
 
 These are documented in detail in the [oracle README](test/oracle/README.md).
 

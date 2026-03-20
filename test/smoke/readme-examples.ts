@@ -15,7 +15,6 @@ import {
 	mergeTrees,
 	readCommit,
 	resolveRef,
-	listBranches,
 	createWorktree,
 	readonlyRepo,
 	writeBlob,
@@ -99,7 +98,7 @@ import type { GitHooks } from "../../src";
 					return { reject: true, message: `Blocked: ${forbidden.map((e) => e.path).join(", ")}` };
 				}
 			},
-			postCommit: async ({ repo, hash, branch, parents }) => {
+			postCommit: async ({ repo, hash, branch: _branch, parents }) => {
 				const files = await getChangedFiles(repo, parents[0] ?? null, hash);
 				changedFiles.push(files.map((f) => f.path));
 			},
@@ -216,14 +215,17 @@ import type { GitHooks } from "../../src";
 			},
 			commitMsg: (event) => {
 				if (!/^(feat|fix|docs|refactor|test|chore)(\(.+\))?:/.test(event.message)) {
-					return { reject: true, message: "Commit message must follow conventional commits format" };
+					return {
+						reject: true,
+						message: "Commit message must follow conventional commits format",
+					};
 				}
 			},
-			postCommit: async ({ repo, hash, branch, parents }) => {
+			postCommit: async ({ repo, hash, branch: _branch, parents }) => {
 				const files = await getChangedFiles(repo, parents[0] ?? null, hash);
 				void files; // used in docs for onAgentCommit callback
 			},
-			afterCommand: ({ command, args, result }) => {
+			afterCommand: ({ command, args: _args, result }) => {
 				auditLog.push({ command: `git ${command}`, exitCode: result.exitCode });
 			},
 			beforeCommand: async ({ command }) => {
@@ -263,10 +265,14 @@ import type { GitHooks } from "../../src";
 	const log2: string[] = [];
 
 	const hooks1: GitHooks = {
-		afterCommand: ({ command }) => { log1.push(command); },
+		afterCommand: ({ command }) => {
+			log1.push(command);
+		},
 	};
 	const hooks2: GitHooks = {
-		afterCommand: ({ command }) => { log2.push(command); },
+		afterCommand: ({ command }) => {
+			log2.push(command);
+		},
 	};
 
 	const git = createGit({
@@ -359,8 +365,14 @@ import type { GitHooks } from "../../src";
 	// Verify both cloned successfully
 	const aliceLog = await alice.exec("git log --oneline");
 	const bobLog = await bob.exec("git log --oneline");
-	console.assert(aliceLog.exitCode === 0 && aliceLog.stdout.includes("initial"), "Alice should have cloned");
-	console.assert(bobLog.exitCode === 0 && bobLog.stdout.includes("initial"), "Bob should have cloned");
+	console.assert(
+		aliceLog.exitCode === 0 && aliceLog.stdout.includes("initial"),
+		"Alice should have cloned",
+	);
+	console.assert(
+		bobLog.exitCode === 0 && bobLog.stdout.includes("initial"),
+		"Bob should have cloned",
+	);
 	console.log("CLIENT multi-agent: alice and bob cloned OK");
 }
 
@@ -411,8 +423,13 @@ import type { GitHooks } from "../../src";
 	await createCommit(repo, {
 		tree: treeHash,
 		parents: [],
-		author: { name: "Setup", email: "setup@example.com", timestamp: 1000000000, timezoneOffset: 0 },
-		committer: { name: "Setup", email: "setup@example.com", timestamp: 1000000000, timezoneOffset: 0 },
+		author: { name: "Setup", email: "setup@example.com", timestamp: 1000000000, timezone: "+0000" },
+		committer: {
+			name: "Setup",
+			email: "setup@example.com",
+			timestamp: 1000000000,
+			timezone: "+0000",
+		},
 		message: "initial",
 		branch: "main",
 	});

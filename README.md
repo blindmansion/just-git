@@ -30,7 +30,7 @@ await git.exec('git commit -m "initial commit"', { fs, cwd: "/repo" });
 await git.exec("git log --oneline", { fs, cwd: "/repo" });
 ```
 
-`MemoryFileSystem` is a minimal in-memory filesystem for standalone use. Tokenization handles single and double quotes; pass `env` as a plain object when needed (e.g. `GIT_AUTHOR_NAME`). The `FileSystem` interface is built around [just-bash](https://github.com/vercel-labs/just-bash)'s implementations — for anything beyond bare git commands, it's recommended to use just-git as a custom command in just-bash:
+`MemoryFileSystem` is a minimal in-memory filesystem for standalone use. Tokenization handles single and double quotes; pass `env` as a plain object when needed (e.g. `GIT_AUTHOR_NAME`). The `FileSystem` interface is built around [just-bash](https://github.com/vercel-labs/just-bash)'s implementations. For anything beyond bare git commands, it's recommended to use just-git as a custom command in just-bash:
 
 ```ts
 import { Bash } from "just-bash";
@@ -72,21 +72,21 @@ Bun.serve({ fetch: server.fetch });
 // git clone http://localhost:3000/my-repo ← works with real git
 ```
 
-Uses web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. For Node.js, use `toNodeHandler(server)` with `http.createServer` and `BetterSqlite3Storage` for `better-sqlite3`. See [SERVER.md](docs/SERVER.md) for the full API.
+Uses web-standard `Request`/`Response`. Works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. For Node.js, use `toNodeHandler(server)` with `http.createServer` and `BetterSqlite3Storage` for `better-sqlite3`. See [SERVER.md](docs/SERVER.md) for the full API.
 
 ## createGit options
 
 `createGit(options?)` accepts:
 
-| Option          | Description                                                                                                                                                                                                                                    |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `identity`      | Author/committer override. With `locked: true`, always wins over env vars and git config. Without `locked`, acts as a fallback.                                                                                                                |
-| `credentials`   | `(url) => HttpAuth \| null` callback for Smart HTTP transport auth.                                                                                                                                                                            |
-| `disabled`      | `GitCommandName[]` of subcommands to block (e.g. `["push", "rebase"]`).                                                                                                                                                                        |
-| `network`       | `{ allowed?: string[], fetch? }` to restrict HTTP access. Set to `false` to block all network access.                                                                                                                                          |
-| `config`        | `{ locked?, defaults? }` config overrides. `locked` values always win over `.git/config`; `defaults` supply fallbacks when a key is absent.                                                                                                    |
-| `hooks`         | Lifecycle hooks for pre/post command interception, commit gating, message enforcement, and audit logging.                                                                                                                                       |
-| `resolveRemote` | `(url) => GitRepo \| null` callback for cross-VFS remote resolution (multi-agent setups).                                                                                                                                                       |
+| Option          | Description                                                                                                                                 |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `identity`      | Author/committer override. With `locked: true`, always wins over env vars and git config. Without `locked`, acts as a fallback.             |
+| `credentials`   | `(url) => HttpAuth \| null` callback for Smart HTTP transport auth.                                                                         |
+| `disabled`      | `GitCommandName[]` of subcommands to block (e.g. `["push", "rebase"]`).                                                                     |
+| `network`       | `{ allowed?: string[], fetch? }` to restrict HTTP access. Set to `false` to block all network access.                                       |
+| `config`        | `{ locked?, defaults? }` config overrides. `locked` values always win over `.git/config`; `defaults` supply fallbacks when a key is absent. |
+| `hooks`         | Lifecycle hooks for pre/post command interception, commit gating, message enforcement, and audit logging.                                   |
+| `resolveRemote` | `(url) => GitRepo \| null` callback for cross-VFS remote resolution (multi-agent setups).                                                   |
 
 See [CLIENT.md](docs/CLIENT.md) for detailed usage, config overrides, and multi-agent collaboration.
 
@@ -118,7 +118,7 @@ Combine multiple hook sets with `composeGitHooks(auditHooks, policyHooks, loggin
 
 ## Repo module
 
-`just-git/repo` provides programmatic access to git repositories — reading commits, diffing trees, creating objects, and merging — without going through command execution.
+`just-git/repo` provides programmatic access to git repositories: reading commits, diffing trees, creating objects, and merging, all without going through command execution.
 
 Everything operates on `GitRepo`, a minimal `{ objectStore, refStore }` interface shared by the client and server. A `GitRepo` can be backed by a virtual filesystem, SQLite, Postgres, or any custom storage. The same helpers work inside both client-side hooks and server-side hooks, and `createWorktree` lets you spin up a full git client against a database-backed repo.
 
@@ -134,7 +134,7 @@ See [REPO.md](docs/REPO.md) for the full API, the `GitRepo` interface, and the h
 
 ## Multi-agent collaboration
 
-Multiple agents can clone, fetch, push, and pull across isolated in-memory filesystems within the same process via the `resolveRemote` option — no network or shared filesystem needed. Concurrent pushes are automatically serialized with proper non-fast-forward rejection. See [CLIENT.md](docs/CLIENT.md#multi-agent-collaboration) and [`examples/multi-agent.ts`](examples/multi-agent.ts).
+Multiple agents can clone, fetch, push, and pull across isolated in-memory filesystems within the same process via the `resolveRemote` option, without needing a network or shared filesystem. Concurrent pushes are automatically serialized with proper non-fast-forward rejection. See [CLIENT.md](docs/CLIENT.md#multi-agent-collaboration) and [`examples/multi-agent.ts`](examples/multi-agent.ts).
 
 ## Commands
 
@@ -142,9 +142,9 @@ Multiple agents can clone, fetch, push, and pull across isolated in-memory files
 
 ### Transport
 
-- **Local paths** — direct filesystem transfer between repositories.
-- **Cross-VFS** — clone, fetch, and push between isolated in-memory filesystems via `resolveRemote`. See [CLIENT.md](docs/CLIENT.md#multi-agent-collaboration).
-- **Smart HTTP** — clone, fetch, and push against real Git servers (e.g. GitHub) via Git Smart HTTP protocol. Auth via `credentials` option or `GIT_HTTP_BEARER_TOKEN` / `GIT_HTTP_USER` + `GIT_HTTP_PASSWORD` env vars.
+- **Local paths**: direct filesystem transfer between repositories.
+- **Cross-VFS**: clone, fetch, and push between isolated in-memory filesystems via `resolveRemote`. See [CLIENT.md](docs/CLIENT.md#multi-agent-collaboration).
+- **Smart HTTP**: clone, fetch, and push against real Git servers (e.g. GitHub) via Git Smart HTTP protocol. Auth via `credentials` option or `GIT_HTTP_BEARER_TOKEN` / `GIT_HTTP_USER` + `GIT_HTTP_PASSWORD` env vars.
 
 ### Internals
 

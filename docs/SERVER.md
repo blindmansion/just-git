@@ -2,7 +2,7 @@
 
 Embeddable Git Smart HTTP server. Any standard git client (`git`, VS Code, GitHub Desktop) can clone from, fetch from, and push to repos served by just-git.
 
-Uses web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare Workers, Deno, or any fetch-compatible runtime. For Node.js's `http.createServer`, use `toNodeHandler`.
+Uses web-standard `Request`/`Response`. Works with Bun, Hono, Cloudflare Workers, Deno, or any fetch-compatible runtime. For Node.js's `http.createServer`, use `toNodeHandler`.
 
 ```ts
 import { createGitServer } from "just-git/server";
@@ -55,9 +55,9 @@ resolveRepo: (repoPath: string, request: Request) => GitRepo | Response | null;
 
 Return values:
 
-- **`GitRepo`** — serve this repository
-- **`null`** — respond with 404
-- **`Response`** — send as-is (useful for 401/403 with custom headers)
+- **`GitRepo`**: serve this repository
+- **`null`**: respond with 404
+- **`Response`**: send as-is (useful for 401/403 with custom headers)
 
 The `repoPath` is the URL path with the git protocol suffix stripped. For `http://host/org/project/info/refs`, `repoPath` is `"org/project"`.
 
@@ -73,7 +73,7 @@ const server = createGitServer({
 
 ## Authorization
 
-### `withAuth` — gate all access
+### `withAuth`: gate all access
 
 Wraps `resolveRepo` with an auth check that fires on every request (clone, fetch, and push). Return `true` to allow, `false` for 403, or a `Response` for custom error responses.
 
@@ -113,7 +113,7 @@ const server = createGitServer({
 
 ### Layered access control
 
-Combine both for read/write permission tiers — `withAuth` checks read access, `authorizePush` checks write access:
+Combine both for read/write permission tiers: `withAuth` checks read access, `authorizePush` checks write access:
 
 ```ts
 const server = createGitServer({
@@ -167,12 +167,12 @@ const server = createGitServer({
 
 | Hook            | Fires when                                         | Can reject?                    |
 | --------------- | -------------------------------------------------- | ------------------------------ |
-| `preReceive`    | After objects are unpacked, before any ref updates | Yes — aborts entire push       |
-| `update`        | Per-ref, after `preReceive` passes                 | Yes — blocks this ref only     |
+| `preReceive`    | After objects are unpacked, before any ref updates | Yes (aborts entire push)       |
+| `update`        | Per-ref, after `preReceive` passes                 | Yes (blocks this ref only)     |
 | `postReceive`   | After all ref updates succeed                      | No                             |
-| `advertiseRefs` | Client requests ref listing (clone/fetch/push)     | No — returns filtered ref list |
+| `advertiseRefs` | Client requests ref listing (clone/fetch/push)     | No (returns filtered ref list) |
 
-All hook payloads include `repo: GitRepo` and `request: Request`. Pre-hooks return `{ reject: true, message? }` to block the operation — the same `Rejection` protocol used by [client-side hooks](HOOKS.md).
+All hook payloads include `repo: GitRepo` and `request: Request`. Pre-hooks return `{ reject: true, message? }` to block the operation, using the same `Rejection` protocol as [client-side hooks](HOOKS.md).
 
 ### `createStandardHooks`
 
@@ -196,7 +196,7 @@ const server = createGitServer({
 });
 ```
 
-`authorizePush` only gates push operations — clone and fetch are unaffected. For read access control, use [`withAuth`](#withauth--gate-all-access).
+`authorizePush` only gates push operations; clone and fetch are unaffected. For read access control, use [`withAuth`](#withauth--gate-all-access).
 
 ### Composing hooks
 
@@ -217,7 +217,7 @@ const server = createGitServer({
 
 ## Storage backends
 
-All three backends implement the `Storage` interface — `repo(repoId)` returns a `GitRepo`, `deleteRepo(repoId)` removes all data. Multiple repos share one store, partitioned by ID. They also work with `resolveRemote` for in-process cross-VFS transport alongside HTTP access.
+All three backends implement the `Storage` interface: `repo(repoId)` returns a `GitRepo`, `deleteRepo(repoId)` removes all data. Multiple repos share one store, partitioned by ID. They also work with `resolveRemote` for in-process cross-VFS transport alongside HTTP access.
 
 > **Note:** All storage backends auto-create repos on first access via `.repo(id)`. If you pass `storage.repo(path)` directly as `resolveRepo`, any URL path will create a repo and accept pushes. For production, validate repo paths in `resolveRepo` or wrap with [`withAuth`](#withauth--gate-all-access) to gate access.
 
