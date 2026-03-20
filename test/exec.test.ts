@@ -133,6 +133,37 @@ describe("Git.exec", () => {
 		expect(result.stderr).toContain("not available");
 	});
 
+	test("uses default cwd from createGit options", async () => {
+		const fs = new InMemoryFs();
+		const git = createGit({
+			fs,
+			cwd: "/repo",
+			identity: { name: "Test", email: "test@test.com" },
+		});
+		await git.exec("git init");
+		await fs.writeFile("/repo/file.txt", "hello");
+		await git.exec("git add .");
+		await git.exec('git commit -m "test"');
+		const log = await git.exec("git log --oneline");
+		expect(log.exitCode).toBe(0);
+		expect(log.stdout).toContain("test");
+	});
+
+	test("per-call cwd overrides default cwd", async () => {
+		const fs = new InMemoryFs();
+		const git = createGit({
+			fs,
+			cwd: "/repo",
+			identity: { name: "Test", email: "test@test.com" },
+		});
+		await git.exec("git init", { cwd: "/other" });
+		const log = await git.exec("git log", { cwd: "/other" });
+		expect(log.exitCode).not.toBe(0);
+
+		const otherInit = await git.exec("git rev-parse --git-dir", { cwd: "/other" });
+		expect(otherInit.exitCode).toBe(0);
+	});
+
 	test("fires hooks", async () => {
 		const commands: string[] = [];
 		const git = createGit({
@@ -280,5 +311,67 @@ describe("config overrides", () => {
 			const result = await git.exec("config get core.foo", { fs, cwd: "/repo" });
 			expect(result.stdout.trim()).toBe("bar");
 		});
+	});
+});
+
+// ── Identity ↔ config consistency ───────────────────────────────────
+
+describe("identity visible via git config", () => {
+	test("unlocked identity is readable via git config user.name/email", async () => {
+		const git = createGit({ identity: { name: "Alice", email: "alice@example.com" } });
+		const fs = new InMemoryFs();
+		await git.exec("init", { fs, cwd: "/repo" });
+
+		const name = await git.exec("config get user.name", { fs, cwd: "/repo" });
+		expect(name.exitCode).toBe(0);
+		expect(name.stdout.trim()).toBe("Alice");
+
+		const email = await git.exec("config get user.email", { fs, cwd: "/repo" });
+		expect(email.exitCode).toBe(0);
+		expect(email.stdout.trim()).toBe("alice@example.com");
+	});
+
+	test("unlocked identity can be overridden by git config set", async () => {
+		const git = createGit({ identity: { name: "Alice", email: "alice@example.com" } });
+		const fs = new InMemoryFs();
+		await git.exec("init", { fs, cwd: "/repo" });
+		await git.exec('config set user.name "Bob"', { fs, cwd: "/repo" });
+
+		const name = await git.exec("config get user.name", { fs, cwd: "/repo" });
+		expect(name.stdout.trim()).toBe("Bob");
+	});
+
+	test("locked identity cannot be overridden by git config set", async () => {
+		const git = createGit({
+			identity: { name: "Alice", email: "alice@example.com", locked: true },
+		});
+		const fs = new InMemoryFs();
+		await git.exec("init", { fs, cwd: "/repo" });
+		await git.exec('config set user.name "Bob"', { fs, cwd: "/repo" });
+
+		const name = await git.exec("config get user.name", { fs, cwd: "/repo" });
+		expect(name.stdout.trim()).toBe("Alice");
+	});
+
+	test("identity appears in git config --list", async () => {
+		const git = createGit({ identity: { name: "Alice", email: "alice@example.com" } });
+		const fs = new InMemoryFs();
+		await git.exec("init", { fs, cwd: "/repo" });
+
+		const list = await git.exec("config --list", { fs, cwd: "/repo" });
+		expect(list.stdout).toContain("user.name=Alice");
+		expect(list.stdout).toContain("user.email=alice@example.com");
+	});
+
+	test("explicit config overrides take precedence over identity", async () => {
+		const git = createGit({
+			identity: { name: "Alice", email: "alice@example.com" },
+			config: { defaults: { "user.name": "ConfigAlice" } },
+		});
+		const fs = new InMemoryFs();
+		await git.exec("init", { fs, cwd: "/repo" });
+
+		const name = await git.exec("config get user.name", { fs, cwd: "/repo" });
+		expect(name.stdout.trim()).toBe("ConfigAlice");
 	});
 });

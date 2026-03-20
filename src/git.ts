@@ -86,6 +86,12 @@ export interface GitOptions {
 	 * (just-bash always provides its own filesystem).
 	 */
 	fs?: FileSystem;
+	/**
+	 * Default working directory for {@link Git.exec}. Defaults to `"/"`.
+	 * Per-call `cwd` in {@link ExecContext} overrides this.
+	 * Ignored by `execute` (just-bash provides its own cwd).
+	 */
+	cwd?: string;
 	hooks?: GitHooks;
 	credentials?: CredentialProvider;
 	identity?: IdentityOverride;
@@ -137,10 +143,38 @@ export interface GitExtensions {
 export interface ExecContext {
 	/** Filesystem to operate on. Falls back to the `fs` set in {@link GitOptions}. */
 	fs?: FileSystem;
-	/** Working directory. Defaults to `"/"`. */
+	/** Working directory. Falls back to the `cwd` set in {@link GitOptions}, then `"/"`. */
 	cwd?: string;
 	env?: Record<string, string>;
 	stdin?: string;
+}
+
+/**
+ * Merge identity override into config overrides so that `git config user.name`
+ * and `git config user.email` reflect the operator-supplied identity.
+ *
+ * Locked identities become locked config values (cannot be overridden by
+ * `git config set`). Unlocked identities become default config values
+ * (agent can override with `git config set`).
+ */
+function mergeIdentityIntoConfig(
+	identity: IdentityOverride | undefined,
+	config: ConfigOverrides | undefined,
+): ConfigOverrides | undefined {
+	if (!identity) return config;
+
+	const tier = identity.locked ? "locked" : "defaults";
+	const entries: Record<string, string> = {
+		"user.name": identity.name,
+		"user.email": identity.email,
+	};
+
+	if (!config) return { [tier]: entries };
+
+	return {
+		...config,
+		[tier]: { ...entries, ...config[tier] },
+	};
 }
 
 /**
@@ -158,6 +192,7 @@ export interface ExecContext {
 export class Git {
 	readonly name = "git";
 	private defaultFs: FileSystem | undefined;
+	private defaultCwd: string;
 	private blocked: Set<string> | null;
 	private hooks: GitHooks | undefined;
 	private inner: { execute: (args: string[], ctx: CommandContext) => Promise<ExecResult> };
@@ -180,9 +215,13 @@ export class Git {
 
 	constructor(options?: GitOptions) {
 		this.defaultFs = options?.fs;
+		this.defaultCwd = options?.cwd ?? "/";
 		this.hooks = options?.hooks;
 		this.blocked = options?.disabled?.length ? new Set<string>(options.disabled) : null;
 		const network = options?.network;
+
+		const configOverrides = mergeIdentityIntoConfig(options?.identity, options?.config);
+
 		const extensions: GitExtensions = {
 			hooks: options?.hooks,
 			credentialProvider: options?.credentials,
@@ -192,7 +231,7 @@ export class Git {
 			resolveRemote: options?.resolveRemote,
 			...(options?.objectStore ? { objectStore: options.objectStore } : {}),
 			...(options?.refStore ? { refStore: options.refStore } : {}),
-			...(options?.config ? { configOverrides: options.config } : {}),
+			...(configOverrides ? { configOverrides } : {}),
 		};
 		this.inner = createGitCommand(extensions).toCommand();
 	}
@@ -213,7 +252,7 @@ export class Git {
 		if (!fs) {
 			throw new Error("No filesystem: pass `fs` in exec() options or in createGit()");
 		}
-		const cwd = ctx?.cwd ?? "/";
+		const cwd = ctx?.cwd ?? this.defaultCwd;
 		const args = tokenizeCommand(command);
 		const env = new Map<string, string>();
 		if (ctx?.env) {

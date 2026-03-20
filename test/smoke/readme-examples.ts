@@ -48,6 +48,7 @@ import type { GitHooks } from "../../src";
 	const fs = new MemoryFileSystem();
 	const git = createGit({
 		fs,
+		cwd: "/repo",
 		identity: { name: "Alice", email: "alice@example.com" },
 		credentials: (_url) => ({ type: "bearer" as const, token: "ghp_test_token" }),
 		hooks: {
@@ -58,11 +59,16 @@ import type { GitHooks } from "../../src";
 	});
 
 	await git.exec("git init");
-	await fs.writeFile("/README.md", "hello");
+	await fs.writeFile("/repo/README.md", "hello");
 	await git.exec("git add .");
 	await git.exec('git commit -m "initial commit"');
 	const log = await git.exec("git log --oneline");
 	console.assert(log.exitCode === 0, "standalone exec should succeed");
+
+	// Verify identity is readable via git config
+	const name = await git.exec("git config user.name");
+	console.assert(name.exitCode === 0, "identity should be readable via git config");
+	console.assert(name.stdout.trim() === "Alice", "user.name should match identity");
 
 	// Verify beforeCommand blocks push
 	const push = await git.exec("git push origin main");

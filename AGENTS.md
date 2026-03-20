@@ -47,9 +47,11 @@ const bash = new Bash({ cwd: "/repo", customCommands: [git] });
 
 **`GitOptions`:**
 
+- `fs` — `FileSystem` for standalone `exec()`. When set, `exec` calls don't need to pass `fs` per-call.
+- `cwd` — default working directory for `exec()`. Defaults to `"/"`. Per-call `cwd` in `ExecContext` overrides this. Set to the repo root so every `exec` call finds `.git` automatically.
 - `hooks` — `GitHooks` config object with named callback properties. All hooks are optional. Specified at construction time. Use `composeGitHooks(...hookSets)` to combine multiple hook sets.
 - `disabled` — `GitCommandName[]` of subcommands to block. Disabled commands return unknown-command errors.
-- `identity` — `IdentityOverride` with `name`, `email`, optional `locked`. When `locked: true`, overrides env vars (`GIT_AUTHOR_NAME`, etc.); when unlocked (default), acts as fallback when env vars and git config are absent.
+- `identity` — `IdentityOverride` with `name`, `email`, optional `locked`. When `locked: true`, overrides env vars (`GIT_AUTHOR_NAME`, etc.); when unlocked (default), acts as fallback when env vars and git config are absent. Identity values are surfaced through `git config user.name` / `user.email` reads — locked identity becomes locked config, unlocked becomes default config.
 - `credentials` — `CredentialProvider` callback `(url) => HttpAuth | null`. Provides auth for Smart HTTP transport. Takes precedence over `GIT_HTTP_BEARER_TOKEN`/`GIT_HTTP_USER` env vars.
 - `config` — `ConfigOverrides` with `locked` and `defaults` maps. `locked` values always win over `.git/config` — the agent can run `git config set` but the locked value takes precedence on every read. `defaults` supply fallback values when a key is absent from `.git/config` — the agent _can_ override these with `git config`. Keys are dotted config names (e.g. `"push.default"`, `"merge.ff"`). Applied transparently via `getConfigValue()` so all commands respect overrides automatically.
 - `resolveRemote` — `RemoteResolver` callback `(url) => GitRepo | null`. Resolves non-HTTP remote URLs to a `GitRepo`, enabling cross-VFS transport. Called before local filesystem lookup. Return null to fall back to `findRepo` on the local VFS. Enables multi-agent setups where each agent has its own isolated filesystem but can clone/fetch/push between repos on different VFS instances via `LocalTransport`. Also enables resolving to server-backed repos (e.g. `BunSqliteStorage`) for hybrid in-process/server scenarios.

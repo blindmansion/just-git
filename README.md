@@ -39,6 +39,7 @@ import { createGit, MemoryFileSystem } from "just-git";
 const fs = new MemoryFileSystem();
 const git = createGit({
   fs,
+  cwd: "/repo",
   identity: { name: "Alice", email: "alice@example.com" },
   credentials: (url) => ({ type: "bearer", token: process.env.GITHUB_TOKEN! }),
   hooks: {
@@ -49,10 +50,12 @@ const git = createGit({
 });
 
 await git.exec("git init");
-await fs.writeFile("/README.md", "# Hello\n");
+await fs.writeFile("/repo/README.md", "# Hello\n");
 await git.exec("git add .");
 await git.exec('git commit -m "initial commit"');
 ```
+
+Both `fs` and `cwd` can be set once in `createGit` and overridden per-call. `cwd` defaults to `"/"`. Set it to the repo root so every `exec` call finds `.git` automatically.
 
 `createGit` also supports [command restrictions, network policies, and config overrides](docs/CLIENT.md#options) for sandboxing, a [lifecycle hooks API](docs/CLIENT.md#hooks) covering pre-commit secret scanning to push gating, and [cross-VFS remote resolution](docs/CLIENT.md#multi-agent-collaboration) for multi-agent collaboration. See [CLIENT.md](docs/CLIENT.md) for the full reference.
 
@@ -131,16 +134,4 @@ When backed by a real filesystem (e.g. just-bash `ReadWriteFs`), interoperable w
 
 ## Examples
 
-Runnable examples in [`examples/`](examples/):
-
-| File                                                            | What it demonstrates                                                 |
-| --------------------------------------------------------------- | -------------------------------------------------------------------- |
-| [`usage.ts`](examples/usage.ts)                                 | Identity, disabled commands, hooks, compose, full sandbox setup      |
-| [`multi-agent.ts`](examples/multi-agent.ts)                     | Cross-VFS collaboration with clone/push/pull between isolated agents |
-| [`server.ts`](examples/server.ts)                               | VFS-backed Smart HTTP server with virtual client clone and push      |
-| [`sqlite-server.ts`](examples/sqlite-server.ts)                 | SQLite-backed server with auto-creating repos, works with real `git` |
-| [`node-server.mjs`](examples/node-server.mjs)                   | Node.js HTTP server with SQLite + auth via `better-sqlite3`          |
-| [`platform-server.ts`](examples/platform-server.ts)             | GitHub-like PR workflows: create, merge, close via REST API          |
-| [`agent-remote-workflow.ts`](examples/agent-remote-workflow.ts) | Clone from GitHub, work in sandbox, push back (requires token)       |
-
-Run any example with `bun examples/<file>`.
+Runnable examples in [`examples/`](examples/) — identity, hooks, multi-agent collaboration, Smart HTTP servers, and more. Run any with `bun examples/<file>`.
