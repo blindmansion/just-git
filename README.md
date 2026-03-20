@@ -14,8 +14,6 @@ Two entry points: a **virtual filesystem client** for sandboxed environments (pa
 npm install just-git
 ```
 
-ESM-only (`import`). For CJS contexts, use dynamic `await import("just-git")`.
-
 ## Quick start
 
 ### Client
