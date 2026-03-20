@@ -16,8 +16,8 @@ import type {
 import type { Storage } from "./storage.ts";
 
 // ── Postgres driver interface ───────────────────────────────────────
-// Minimal interface covering pg (node-postgres) and compatible drivers.
 
+/** Minimal database interface for PostgreSQL. Use {@link wrapPgPool} to adapt a `pg` Pool. */
 export interface PgDatabase {
 	query<T = any>(text: string, values?: any[]): Promise<{ rows: T[] }>;
 	transaction<R>(fn: (tx: PgDatabase) => Promise<R>): Promise<R>;
@@ -25,11 +25,13 @@ export interface PgDatabase {
 
 // ── pg Pool adapter ─────────────────────────────────────────────────
 
+/** Minimal pool interface matching the `pg` package's `Pool` class. */
 export interface PgPool {
 	query(text: string, values?: any[]): Promise<{ rows: any[] }>;
 	connect(): Promise<PgPoolClient>;
 }
 
+/** Minimal pool client interface matching the `pg` package's `PoolClient`. */
 export interface PgPoolClient {
 	query(text: string, values?: any[]): Promise<{ rows: any[] }>;
 	release(): void;

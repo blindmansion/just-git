@@ -1,6 +1,6 @@
 {
 	"name": "just-git",
-	"version": "1.2.2",
+	"version": "1.2.3",
 	"description": "Pure TypeScript git implementation: virtual filesystem client and embeddable server.",
 	"keywords": [
 		"agent",

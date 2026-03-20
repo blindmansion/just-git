@@ -30,7 +30,15 @@ import type { GitHooks } from "../../src";
 
 {
 	const fs = new MemoryFileSystem();
-	const git = createGit({ identity: { name: "Alice", email: "alice@example.com" } });
+	const git = createGit({
+		identity: { name: "Alice", email: "alice@example.com" },
+		credentials: (_url) => ({ type: "bearer" as const, token: "ghp_test_token" }),
+		hooks: {
+			beforeCommand: ({ command }) => {
+				if (command === "push") return { reject: true, message: "push requires approval" };
+			},
+		},
+	});
 
 	await git.exec("git init", { fs, cwd: "/repo" });
 	await fs.writeFile("/repo/README.md", "hello");
@@ -38,6 +46,11 @@ import type { GitHooks } from "../../src";
 	await git.exec('git commit -m "initial commit"', { fs, cwd: "/repo" });
 	const log = await git.exec("git log --oneline", { fs, cwd: "/repo" });
 	console.assert(log.exitCode === 0, "standalone exec should succeed");
+
+	// Verify beforeCommand blocks push
+	const push = await git.exec("git push origin main", { fs, cwd: "/repo" });
+	console.assert(push.exitCode !== 0, "push should be blocked by beforeCommand");
+	console.assert(push.stderr.includes("push requires approval"), "should show rejection message");
 	console.log("README standalone:", log.stdout.trim());
 }
 

@@ -17,12 +17,14 @@ import type { Storage } from "./storage.ts";
 
 // ── bun:sqlite driver types ─────────────────────────────────────────
 
+/** Minimal prepared statement interface matching `bun:sqlite`. */
 export interface BunSqliteStatement {
 	run(...params: any[]): void;
 	get(...params: any[]): any;
 	all(...params: any[]): any[];
 }
 
+/** Minimal database interface matching `bun:sqlite`'s `Database` class. */
 export interface BunSqliteDatabase {
 	run(sql: string): void;
 	prepare(sql: string): BunSqliteStatement;
@@ -92,6 +94,14 @@ function prepareStatements(db: BunSqliteDatabase): Statements {
 
 // ── BunSqliteStorage ────────────────────────────────────────────────
 
+/**
+ * SQLite-backed git storage using `bun:sqlite`.
+ *
+ * ```ts
+ * import { Database } from "bun:sqlite";
+ * const storage = new BunSqliteStorage(new Database("repos.db"));
+ * ```
+ */
 export class BunSqliteStorage implements Storage {
 	private db: BunSqliteDatabase;
 	private stmts: Statements;

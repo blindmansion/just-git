@@ -1,13 +1,6 @@
 export type { FileStat, FileSystem } from "./fs";
-export type {
-	CommandContext,
-	CommandExecOptions,
-	ExecContext,
-	GitCommandName,
-	GitExtensions,
-	GitOptions,
-} from "./git";
-export { createGit, Git, tokenizeCommand } from "./git";
+export type { ExecContext, GitCommandName, GitOptions } from "./git";
+export { createGit, Git } from "./git";
 export type {
 	AfterCommandEvent,
 	BeforeCommandEvent,
@@ -15,7 +8,6 @@ export type {
 	ConfigOverrides,
 	CredentialProvider,
 	ExecResult,
-	FetchFunction,
 	GitHooks,
 	IdentityOverride,
 	MergeMsgEvent,
@@ -62,14 +54,5 @@ export type {
 	RefStore,
 	RemoteResolver,
 } from "./lib/types";
-export type { HttpAuth, ShallowFetchOptions } from "./lib/transport/transport";
+export type { HttpAuth } from "./lib/transport/transport";
 export { findRepo } from "./lib/repo";
-export {
-	INFINITE_DEPTH,
-	readShallowCommits,
-	writeShallowCommits,
-	isShallowRepo,
-	applyShallowUpdates,
-	computeShallowBoundary,
-} from "./lib/shallow";
-export type { ShallowUpdate } from "./lib/shallow";

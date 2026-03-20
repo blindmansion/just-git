@@ -40,7 +40,7 @@ export async function readShallowCommits(ctx: GitContext): Promise<Set<ObjectId>
  * Write the shallow boundary set to `.git/shallow`.
  * Removes the file if the set is empty (repo is no longer shallow).
  */
-export async function writeShallowCommits(ctx: GitContext, hashes: Set<ObjectId>): Promise<void> {
+async function writeShallowCommits(ctx: GitContext, hashes: Set<ObjectId>): Promise<void> {
 	const path = join(ctx.gitDir, "shallow");
 	if (hashes.size === 0) {
 		try {

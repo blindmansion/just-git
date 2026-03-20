@@ -17,12 +17,14 @@ import type { Storage } from "./storage.ts";
 
 // ── better-sqlite3 driver types ─────────────────────────────────────
 
+/** Minimal prepared statement interface matching `better-sqlite3`. */
 export interface BetterSqlite3Statement {
 	run(...params: any[]): any;
 	get(...params: any[]): any;
 	all(...params: any[]): any[];
 }
 
+/** Minimal database interface matching the `better-sqlite3` `Database` class. */
 export interface BetterSqlite3Database {
 	exec(sql: string): any;
 	prepare(sql: string): BetterSqlite3Statement;
@@ -126,6 +128,14 @@ function prepareStatements(db: BetterSqlite3Database): Statements {
 
 // ── BetterSqlite3Storage ────────────────────────────────────────────
 
+/**
+ * SQLite-backed git storage using `better-sqlite3`.
+ *
+ * ```ts
+ * import Database from "better-sqlite3";
+ * const storage = new BetterSqlite3Storage(new Database("repos.db"));
+ * ```
+ */
 export class BetterSqlite3Storage implements Storage {
 	private db: BetterSqlite3Database;
 	private stmts: Statements;

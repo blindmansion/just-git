@@ -35,6 +35,7 @@ export interface CommandContext {
 	signal?: AbortSignal;
 }
 
+/** Git subcommand name. Used with {@link GitOptions.disabled} to block specific commands. */
 export type GitCommandName =
 	| "init"
 	| "clone"
@@ -71,6 +72,13 @@ export type GitCommandName =
 	| "gc"
 	| "bisect";
 
+/**
+ * Configuration for a {@link Git} instance.
+ *
+ * Controls hooks, identity, credentials, network access, command
+ * restrictions, and config overrides for all commands run through
+ * this instance.
+ */
 export interface GitOptions {
 	hooks?: GitHooks;
 	credentials?: CredentialProvider;
@@ -127,6 +135,19 @@ export interface ExecContext {
 	stdin?: string;
 }
 
+/**
+ * Git command handler. Runs git subcommands against a virtual filesystem.
+ *
+ * Create via {@link createGit}. Use as a standalone executor with
+ * {@link Git.exec}, or pass directly into just-bash's `customCommands`
+ * to make `git` available inside a virtual shell.
+ *
+ * ```ts
+ * const git = createGit();
+ * const fs = new MemoryFileSystem();
+ * await git.exec("init", { fs, cwd: "/repo" });
+ * ```
+ */
 export class Git {
 	readonly name = "git";
 	private blocked: Set<string> | null;
@@ -291,6 +312,7 @@ export function tokenizeCommand(input: string): string[] {
 	return tokens;
 }
 
+/** Create a new {@link Git} command handler with the given options. */
 export function createGit(options?: GitOptions): Git {
 	return new Git(options);
 }

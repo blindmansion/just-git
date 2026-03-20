@@ -96,15 +96,23 @@ export interface ServerHooks {
 
 // ── Hook events ─────────────────────────────────────────────────────
 
+/** A single ref update within a push. */
 export interface RefUpdate {
+	/** Full ref name, e.g. "refs/heads/main". */
 	ref: string;
+	/** Previous hash, or null if creating a new ref. */
 	oldHash: string | null;
+	/** New hash being pushed. */
 	newHash: string;
+	/** Whether the update is a fast-forward. */
 	isFF: boolean;
+	/** Whether this creates a new ref. */
 	isCreate: boolean;
+	/** Whether this deletes an existing ref. */
 	isDelete: boolean;
 }
 
+/** Fired after objects are unpacked but before refs are updated. */
 export interface PreReceiveEvent {
 	repo: GitRepo;
 	repoPath: string;
@@ -112,6 +120,7 @@ export interface PreReceiveEvent {
 	request: Request;
 }
 
+/** Fired per-ref after preReceive passes. */
 export interface UpdateEvent {
 	repo: GitRepo;
 	repoPath: string;
@@ -119,6 +128,7 @@ export interface UpdateEvent {
 	request: Request;
 }
 
+/** Fired after all ref updates succeed. */
 export interface PostReceiveEvent {
 	repo: GitRepo;
 	repoPath: string;
@@ -126,6 +136,7 @@ export interface PostReceiveEvent {
 	request: Request;
 }
 
+/** Fired during ref advertisement (info/refs). */
 export interface AdvertiseRefsEvent {
 	repo: GitRepo;
 	repoPath: string;
@@ -134,6 +145,7 @@ export interface AdvertiseRefsEvent {
 	request: Request;
 }
 
+/** A ref name and hash advertised to clients during fetch/push discovery. */
 export interface RefAdvertisement {
 	name: string;
 	hash: string;

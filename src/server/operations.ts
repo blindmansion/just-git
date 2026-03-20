@@ -121,7 +121,7 @@ const RECEIVE_PACK_CAPS = ["report-status", "side-band-64k", "ofs-delta", "delet
 
 // ── Ref advertisement ───────────────────────────────────────────────
 
-export interface RefsData {
+interface RefsData {
 	refs: RefAdvertisement[];
 	headTarget?: string;
 }
@@ -223,7 +223,7 @@ export function buildRefAdvertisementBytes(
 
 // ── Upload-pack (fetch/clone serving) ───────────────────────────────
 
-export interface UploadPackOptions {
+interface UploadPackOptions {
 	/** Pack cache instance. When provided, full clones (no haves) are cached. */
 	cache?: PackCache;
 	/** Repo path used as part of the cache key. Required when cache is set. */
@@ -506,7 +506,7 @@ async function handleUploadPackBuffered(
 
 // ── Receive-pack (push handling) ────────────────────────────────────
 
-export interface ReceivePackResult {
+interface ReceivePackResult {
 	updates: RefUpdate[];
 	unpackOk: boolean;
 	capabilities: string[];

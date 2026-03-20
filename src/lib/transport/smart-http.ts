@@ -16,6 +16,7 @@ import { ZERO_HASH } from "../hex.ts";
 
 // ── Auth ─────────────────────────────────────────────────────────────
 
+/** HTTP authentication credentials for Smart HTTP transport. */
 export type HttpAuth =
 	| { type: "basic"; username: string; password: string }
 	| { type: "bearer"; token: string };

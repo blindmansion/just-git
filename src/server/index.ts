@@ -2,19 +2,7 @@
 export { createGitServer, composeHooks } from "./handler.ts";
 
 // Node.js adapter
-export { toNodeHandler, type NodeHttpRequest, type NodeHttpResponse } from "./handler.ts";
-
-// Server operations (used internally by handler, exposed for custom transports)
-export {
-	PackCache,
-	buildRefAdvertisementBytes,
-	collectRefs,
-	handleUploadPack,
-	ingestReceivePack,
-	type ReceivePackResult,
-	type RefsData,
-	type UploadPackOptions,
-} from "./operations.ts";
+export { toNodeHandler } from "./handler.ts";
 
 // Types
 export type {

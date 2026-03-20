@@ -140,6 +140,7 @@ export interface Index {
 
 // ── Ref store ───────────────────────────────────────────────────────
 
+/** A resolved ref name and its target commit hash. */
 export interface RefEntry {
 	name: string;
 	hash: ObjectId;

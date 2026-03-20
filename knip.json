@@ -3,11 +3,17 @@
 	"tags": ["-lintignore"],
 	"entry": [
 		"test/**/*.test.ts",
+		"test/graph/run.ts",
+		"test/graph/scenarios/*.ts",
 		"test/oracle/planner-inspect.ts",
 		"test/perf/large-repo.ts",
+		"test/perf/server-stress.ts",
 		"test/random/bench.ts",
-		"test/random/stats.ts"
+		"test/random/stats.ts",
+		"test/smoke/readme-examples.ts",
+		"test/smoke/seed-and-serve.ts"
 	],
 	"project": ["src/**/*.ts", "!src/platform/**", "test/**/*.ts"],
+	"ignoreDependencies": ["better-sqlite3", "@types/better-sqlite3"],
 	"bun": false
 }

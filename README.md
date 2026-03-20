@@ -22,7 +22,15 @@ npm install just-git
 import { createGit, MemoryFileSystem } from "just-git";
 
 const fs = new MemoryFileSystem();
-const git = createGit({ identity: { name: "Alice", email: "alice@example.com" } });
+const git = createGit({
+  identity: { name: "Alice", email: "alice@example.com" },
+  credentials: (url) => ({ type: "bearer", token: process.env.GITHUB_TOKEN! }),
+  hooks: {
+    beforeCommand: ({ command }) => {
+      if (command === "push") return { reject: true, message: "push requires approval" };
+    },
+  },
+});
 
 await git.exec("git init", { fs, cwd: "/repo" });
 await git.exec("git add .", { fs, cwd: "/repo" });

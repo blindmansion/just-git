@@ -1,5 +1,6 @@
 import type { HttpAuth } from "./lib/transport/transport.ts";
 
+/** Result of executing a git command. */
 export interface ExecResult {
 	stdout: string;
 	stderr: string;
@@ -10,11 +11,23 @@ import type { GitRepo, Identity, Index, ObjectId, ObjectType } from "./lib/types
 
 // ── Credential & Identity overrides ─────────────────────────────────
 
+/**
+ * Callback that provides HTTP authentication for remote operations.
+ * Called with the remote URL; return credentials or null for anonymous access.
+ */
 export type CredentialProvider = (url: string) => HttpAuth | null | Promise<HttpAuth | null>;
 
+/**
+ * Override the author/committer identity for commits.
+ *
+ * When `locked` is true, this identity always wins — even if the agent
+ * sets `GIT_AUTHOR_NAME` or runs `git config user.name`. When unlocked
+ * (default), acts as a fallback when env vars and git config are absent.
+ */
 export interface IdentityOverride {
 	name: string;
 	email: string;
+	/** When true, this identity cannot be overridden by env vars or git config. */
 	locked?: boolean;
 }
 
@@ -36,11 +49,16 @@ export interface ConfigOverrides {
 
 // ── Network policy ──────────────────────────────────────────────────
 
+/** Custom fetch function signature for HTTP transport. */
 export type FetchFunction = (
 	input: string | URL | Request,
 	init?: RequestInit,
 ) => Promise<Response>;
 
+/**
+ * Controls which remote URLs the git instance may access over HTTP.
+ * Set to `false` on {@link GitOptions.network} to block all HTTP access.
+ */
 export interface NetworkPolicy {
 	/**
 	 * Allowed URL patterns. Can be:
@@ -54,11 +72,16 @@ export interface NetworkPolicy {
 
 // ── Rejection protocol ──────────────────────────────────────────────
 
+/**
+ * Returned from pre-hooks to block an operation.
+ * The optional `message` is surfaced as stderr.
+ */
 export interface Rejection {
 	reject: true;
 	message?: string;
 }
 
+/** Type guard for {@link Rejection}. */
 export function isRejection(value: unknown): value is Rejection {
 	return (
 		value != null &&
@@ -70,17 +93,20 @@ export function isRejection(value: unknown): value is Rejection {
 
 // ── Hook event payloads ─────────────────────────────────────────────
 
+/** Fired before a commit is created. Return a {@link Rejection} to block. */
 export interface PreCommitEvent {
 	readonly repo: GitRepo;
 	readonly index: Index;
 	readonly treeHash: ObjectId;
 }
 
+/** Fired after `preCommit` passes. Mutate `message` to rewrite the commit message. */
 export interface CommitMsgEvent {
 	readonly repo: GitRepo;
 	message: string;
 }
 
+/** Fired before a merge commit. Mutate `message` to rewrite the merge message. */
 export interface MergeMsgEvent {
 	readonly repo: GitRepo;
 	message: string;
@@ -89,6 +115,7 @@ export interface MergeMsgEvent {
 	readonly theirsHash: ObjectId;
 }
 
+/** Fired after a commit is successfully created. */
 export interface PostCommitEvent {
 	readonly repo: GitRepo;
 	readonly hash: ObjectId;
@@ -98,6 +125,7 @@ export interface PostCommitEvent {
 	readonly author: Identity;
 }
 
+/** Fired before a three-way merge commit is written. Return a {@link Rejection} to block. */
 export interface PreMergeCommitEvent {
 	readonly repo: GitRepo;
 	readonly mergeMessage: string;
@@ -106,6 +134,7 @@ export interface PreMergeCommitEvent {
 	readonly theirsHash: ObjectId;
 }
 
+/** Fired after a merge completes (fast-forward or three-way). */
 export interface PostMergeEvent {
 	readonly repo: GitRepo;
 	readonly headHash: ObjectId;
@@ -114,6 +143,7 @@ export interface PostMergeEvent {
 	readonly commitHash: ObjectId | null;
 }
 
+/** Fired after a branch checkout or detached HEAD checkout completes. */
 export interface PostCheckoutEvent {
 	readonly repo: GitRepo;
 	readonly prevHead: ObjectId | null;
@@ -121,6 +151,7 @@ export interface PostCheckoutEvent {
 	readonly isBranchCheckout: boolean;
 }
 
+/** Fired before objects are transferred during `git push`. Return a {@link Rejection} to block. */
 export interface PrePushEvent {
 	readonly repo: GitRepo;
 	readonly remote: string;
@@ -135,20 +166,24 @@ export interface PrePushEvent {
 	}>;
 }
 
+/** Fired after a push completes. Same payload as {@link PrePushEvent}. */
 export type PostPushEvent = PrePushEvent;
 
+/** Fired before a rebase begins. Return a {@link Rejection} to block. */
 export interface PreRebaseEvent {
 	readonly repo: GitRepo;
 	readonly upstream: string;
 	readonly branch: string | null;
 }
 
+/** Fired before a checkout or switch. Return a {@link Rejection} to block. */
 export interface PreCheckoutEvent {
 	readonly repo: GitRepo;
 	readonly target: string;
 	readonly mode: "switch" | "detach" | "create-branch" | "paths";
 }
 
+/** Fired before a fetch begins. Return a {@link Rejection} to block. */
 export interface PreFetchEvent {
 	readonly repo: GitRepo;
 	readonly remote: string;
@@ -158,6 +193,7 @@ export interface PreFetchEvent {
 	readonly tags: boolean;
 }
 
+/** Fired after a fetch completes. */
 export interface PostFetchEvent {
 	readonly repo: GitRepo;
 	readonly remote: string;
@@ -165,6 +201,7 @@ export interface PostFetchEvent {
 	readonly refsUpdated: number;
 }
 
+/** Fired before a clone begins. Return a {@link Rejection} to block. */
 export interface PreCloneEvent {
 	readonly repo?: GitRepo;
 	readonly repository: string;
@@ -173,6 +210,7 @@ export interface PreCloneEvent {
 	readonly branch: string | null;
 }
 
+/** Fired after a clone completes. */
 export interface PostCloneEvent {
 	readonly repo: GitRepo;
 	readonly repository: string;
@@ -181,12 +219,14 @@ export interface PostCloneEvent {
 	readonly branch: string | null;
 }
 
+/** Fired before a pull begins. Return a {@link Rejection} to block. */
 export interface PrePullEvent {
 	readonly repo: GitRepo;
 	readonly remote: string;
 	readonly branch: string | null;
 }
 
+/** Fired after a pull completes. */
 export interface PostPullEvent {
 	readonly repo: GitRepo;
 	readonly remote: string;
@@ -195,18 +235,21 @@ export interface PostPullEvent {
 	readonly commitHash: ObjectId | null;
 }
 
+/** Fired before a reset. Return a {@link Rejection} to block. */
 export interface PreResetEvent {
 	readonly repo: GitRepo;
 	readonly mode: "soft" | "mixed" | "hard" | "paths";
 	readonly target: string | null;
 }
 
+/** Fired after a reset completes. */
 export interface PostResetEvent {
 	readonly repo: GitRepo;
 	readonly mode: "soft" | "mixed" | "hard" | "paths";
 	readonly targetHash: ObjectId | null;
 }
 
+/** Fired before `git clean`. Return a {@link Rejection} to block. */
 export interface PreCleanEvent {
 	readonly repo: GitRepo;
 	readonly dryRun: boolean;
@@ -216,12 +259,14 @@ export interface PreCleanEvent {
 	readonly onlyIgnored: boolean;
 }
 
+/** Fired after `git clean` completes. */
 export interface PostCleanEvent {
 	readonly repo: GitRepo;
 	readonly removed: readonly string[];
 	readonly dryRun: boolean;
 }
 
+/** Fired before `git rm`. Return a {@link Rejection} to block. */
 export interface PreRmEvent {
 	readonly repo: GitRepo;
 	readonly paths: readonly string[];
@@ -230,18 +275,21 @@ export interface PreRmEvent {
 	readonly force: boolean;
 }
 
+/** Fired after `git rm` completes. */
 export interface PostRmEvent {
 	readonly repo: GitRepo;
 	readonly removedPaths: readonly string[];
 	readonly cached: boolean;
 }
 
+/** Fired before a cherry-pick. Return a {@link Rejection} to block. */
 export interface PreCherryPickEvent {
 	readonly repo: GitRepo;
 	readonly mode: "pick" | "continue" | "abort";
 	readonly commit: string | null;
 }
 
+/** Fired after a cherry-pick completes. */
 export interface PostCherryPickEvent {
 	readonly repo: GitRepo;
 	readonly mode: "pick" | "continue" | "abort";
@@ -249,12 +297,14 @@ export interface PostCherryPickEvent {
 	readonly hadConflicts: boolean;
 }
 
+/** Fired before a revert. Return a {@link Rejection} to block. */
 export interface PreRevertEvent {
 	readonly repo: GitRepo;
 	readonly mode: "revert" | "continue" | "abort";
 	readonly commit: string | null;
 }
 
+/** Fired after a revert completes. */
 export interface PostRevertEvent {
 	readonly repo: GitRepo;
 	readonly mode: "revert" | "continue" | "abort";
@@ -262,18 +312,21 @@ export interface PostRevertEvent {
 	readonly hadConflicts: boolean;
 }
 
+/** Fired before a stash operation. Return a {@link Rejection} to block. */
 export interface PreStashEvent {
 	readonly repo: GitRepo;
 	readonly action: "push" | "pop" | "apply" | "list" | "drop" | "show" | "clear";
 	readonly ref: string | null;
 }
 
+/** Fired after a stash operation completes. */
 export interface PostStashEvent {
 	readonly repo: GitRepo;
 	readonly action: "push" | "pop" | "apply" | "list" | "drop" | "show" | "clear";
 	readonly ok: boolean;
 }
 
+/** Fired whenever a ref is created or updated. */
 export interface RefUpdateEvent {
 	readonly repo: GitRepo;
 	readonly ref: string;
@@ -281,12 +334,14 @@ export interface RefUpdateEvent {
 	readonly newHash: ObjectId;
 }
 
+/** Fired whenever a ref is deleted. */
 export interface RefDeleteEvent {
 	readonly repo: GitRepo;
 	readonly ref: string;
 	readonly oldHash: ObjectId | null;
 }
 
+/** Fired whenever a git object (blob, tree, commit, tag) is written to the store. */
 export interface ObjectWriteEvent {
 	readonly repo: GitRepo;
 	readonly type: ObjectType;
@@ -297,6 +352,7 @@ export interface ObjectWriteEvent {
 
 import type { FileSystem } from "./fs.ts";
 
+/** Fired before any git subcommand executes. Return a {@link Rejection} to block. */
 export interface BeforeCommandEvent {
 	readonly command: string;
 	readonly args: string[];
@@ -305,6 +361,7 @@ export interface BeforeCommandEvent {
 	readonly env: Map<string, string>;
 }
 
+/** Fired after any git subcommand completes. */
 export interface AfterCommandEvent {
 	readonly command: string;
 	readonly args: string[];
@@ -316,6 +373,16 @@ export interface AfterCommandEvent {
 type PreHookReturn = void | Rejection | Promise<void | Rejection>;
 type PostHookReturn = void | Promise<void>;
 
+/**
+ * Hook callbacks for intercepting git operations.
+ *
+ * Pre-hooks can return a {@link Rejection} to block the operation.
+ * Post-hooks are fire-and-forget. Low-level events (`onRefUpdate`,
+ * `onRefDelete`, `onObjectWrite`) fire synchronously on every
+ * ref/object write.
+ *
+ * Use {@link composeGitHooks} to combine multiple hook sets.
+ */
 export interface GitHooks {
 	preCommit?: (event: PreCommitEvent) => PreHookReturn;
 	commitMsg?: (event: CommitMsgEvent) => PreHookReturn;
@@ -397,6 +464,13 @@ const POST_HOOK_KEYS: (keyof GitHooks)[] = [
 
 const LOW_LEVEL_KEYS: (keyof GitHooks)[] = ["onRefUpdate", "onRefDelete", "onObjectWrite"];
 
+/**
+ * Combine multiple {@link GitHooks} objects into one.
+ *
+ * Pre-hooks chain in order, short-circuiting on the first {@link Rejection}.
+ * Post-hooks and low-level events chain in order, individually try/caught.
+ * Mutable-message hooks (`commitMsg`, `mergeMsg`) pass the mutated message through.
+ */
 export function composeGitHooks(...hookSets: (GitHooks | undefined)[]): GitHooks {
 	const sets = hookSets.filter((h): h is GitHooks => h != null);
 	if (sets.length === 0) return {};

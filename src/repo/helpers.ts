@@ -44,6 +44,7 @@ import type { FileSystem } from "../fs.ts";
 
 export type { MergeConflict } from "../lib/merge.ts";
 
+/** Commit metadata returned by {@link getNewCommits}. */
 export interface CommitInfo {
 	hash: string;
 	message: string;
@@ -94,6 +95,7 @@ export async function getChangedFiles(
 	return _diffTrees(repo, oldTree, newCommit.tree);
 }
 
+/** Check whether `candidate` is an ancestor of `descendant` in the commit graph. */
 export async function isAncestor(
 	repo: GitRepo,
 	candidate: string,
@@ -102,34 +104,42 @@ export async function isAncestor(
 	return _isAncestor(repo, candidate, descendant);
 }
 
+/** Resolve a ref name (e.g. "HEAD", "refs/heads/main") to a commit hash. Returns null if not found. */
 export async function resolveRef(repo: GitRepo, name: string): Promise<string | null> {
 	return _resolveRef(repo, name);
 }
 
+/** List all local branches (`refs/heads/*`). */
 export async function listBranches(repo: GitRepo): Promise<RefEntry[]> {
 	return listRefs(repo, "refs/heads");
 }
 
+/** List all tags (`refs/tags/*`). */
 export async function listTags(repo: GitRepo): Promise<RefEntry[]> {
 	return listRefs(repo, "refs/tags");
 }
 
+/** Read and parse a commit object by its hash. */
 export async function readCommit(repo: GitRepo, hash: string): Promise<Commit> {
 	return _readCommit(repo, hash);
 }
 
+/** Read a blob's raw bytes by its hash. */
 export async function readBlob(repo: GitRepo, hash: string): Promise<Uint8Array> {
 	return readBlobBytes(repo, hash);
 }
 
+/** Read a blob as a UTF-8 string by its hash. */
 export async function readBlobText(repo: GitRepo, hash: string): Promise<string> {
 	return readBlobContent(repo, hash);
 }
 
+/** Recursively walk a tree object and return all file entries with their full paths. */
 export async function flattenTree(repo: GitRepo, treeHash: string): Promise<FlatTreeEntry[]> {
 	return _flattenTree(repo, treeHash);
 }
 
+/** Diff two tree objects and return the list of added/deleted/modified entries. Pass null for an empty tree. */
 export async function diffTrees(
 	repo: GitRepo,
 	treeA: string | null,
@@ -138,6 +148,7 @@ export async function diffTrees(
 	return _diffTrees(repo, treeA, treeB);
 }
 
+/** Find the merge base(s) of two commits. Returns one hash for most cases, multiple for criss-cross merges. */
 export async function findMergeBases(
 	repo: GitRepo,
 	commitA: string,
@@ -148,10 +159,15 @@ export async function findMergeBases(
 
 // ── Tree-level merge ────────────────────────────────────────────────
 
+/** Result of a tree-level merge via {@link mergeTrees} or {@link mergeTreesFromTreeHashes}. */
 export interface MergeTreesResult {
+	/** Hash of the result tree (may contain conflict-marker blobs). */
 	treeHash: string;
+	/** True if the merge completed without conflicts. */
 	clean: boolean;
+	/** Details of each conflict, if any. */
 	conflicts: MergeConflict[];
+	/** Informational messages from the merge engine. */
 	messages: string[];
 }
 
@@ -214,8 +230,11 @@ export async function mergeTreesFromTreeHashes(
 
 // ── Commit creation ─────────────────────────────────────────────────
 
+/** Options for {@link createCommit}. */
 export interface CreateCommitOptions {
+	/** Hash of the tree object for this commit. */
 	tree: string;
+	/** Parent commit hashes (empty for root commits). */
 	parents: string[];
 	author: Identity;
 	committer: Identity;
@@ -261,9 +280,13 @@ export async function createCommit(repo: GitRepo, options: CreateCommitOptions):
 
 // ── Tree construction ───────────────────────────────────────────────
 
+/** An entry to include in a tree built by {@link writeTree}. */
 export interface TreeEntryInput {
+	/** Filename (not a path — nesting is achieved by including tree entries). */
 	name: string;
+	/** Hash of the blob or tree object. */
 	hash: string;
+	/** File mode (e.g. "100644"). Auto-detected from the object store when omitted. */
 	mode?: string;
 }
 
@@ -321,6 +344,7 @@ export async function readFileAtCommit(
 
 const HEX40 = /^[0-9a-f]{40}$/;
 
+/** Result of {@link checkoutTo}. */
 export interface CheckoutToResult {
 	commitHash: string;
 	treeHash: string;
@@ -395,7 +419,9 @@ export interface CreateWorktreeOptions {
 	gitDir?: string;
 }
 
+/** Result of {@link createWorktree}. */
 export interface WorktreeResult {
+	/** The fully-wired GitContext, ready for use with lib/ functions. */
 	ctx: GitContext;
 	commitHash: string;
 	treeHash: string;

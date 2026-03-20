@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { InMemoryFs } from "just-bash";
-import { createGit, type ConfigOverrides, tokenizeCommand } from "../src";
+import { createGit, type ConfigOverrides } from "../src";
+import { tokenizeCommand } from "../src/git";
 import { TEST_ENV } from "./fixtures";
 
 // ── tokenizeCommand ─────────────────────────────────────────────────
