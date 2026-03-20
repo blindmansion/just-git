@@ -14,6 +14,8 @@ Two entry points: a **virtual filesystem client** for sandboxed environments (pa
 npm install just-git
 ```
 
+ESM-only (`import`). For CJS contexts, use dynamic `await import("just-git")`.
+
 ## Quick start
 
 ### Client
@@ -280,7 +282,7 @@ See [CLI.md](docs/CLI.md) for full usage details.
 
 | Command                           | Flags / options                                                                                                                                                                                                                                                                                  |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `init [<dir>]`                    | `--bare`, `--initial-branch`                                                                                                                                                                                                                                                                     |
+| `init [<dir>]`                    | `--bare`, `--initial-branch` (default: `main`)                                                                                                                                                                                                                                                   |
 | `clone <repo> [<dir>]`            | `--bare`, `-b <branch>`, `--depth`                                                                                                                                                                                                                                                               |
 | `blame <file>`                    | `-L <start>,<end>`, `-l`/`--long`, `-e`/`--show-email`, `-s`/`--suppress`, `-p`/`--porcelain`, `--line-porcelain`                                                                                                                                                                                |
 | `add <paths>`                     | `.`, `--all`/`-A`, `--update`/`-u`, `--force`/`-f`, `-n`/`--dry-run`, glob pathspecs                                                                                                                                                                                                             |
