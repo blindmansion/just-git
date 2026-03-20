@@ -31,7 +31,7 @@ await bash.exec("echo 'hello' > README.md");
 await bash.exec("git add . && git commit -m 'initial commit'");
 ```
 
-Pass a `Git` instance into [just-bash](https://github.com/vercel-labs/just-bash) as a custom command and you get pipes, redirects, `&&` chaining, and the full shell environment alongside git. For standalone use without just-bash, `MemoryFileSystem` provides a minimal in-memory filesystem and `git.exec` accepts a command string with basic quote-aware splitting:
+Pass a `Git` instance into [just-bash](https://github.com/vercel-labs/just-bash) as a custom command and you get pipes, redirects, `&&` chaining, and the full shell environment alongside git. For standalone use without just-bash, `MemoryFileSystem` provides a minimal in-memory filesystem and `git.exec` accepts a single git command string (no shell features):
 
 ```ts
 import { createGit, MemoryFileSystem } from "just-git";
