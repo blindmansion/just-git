@@ -106,6 +106,10 @@ upload-pack:    handleUploadPack → Response
 receive-pack:   ingestReceivePack → preReceive hook → per-ref update hook → apply refs → postReceive hook → Response
 ```
 
+**Node.js adapter** (`handler.ts` — `toNodeHandler`)
+
+Converts between Node's `IncomingMessage`/`ServerResponse` and the web-standard `Request`/`Response` used by the handler. This is a convenience wrapper — it buffers the full response body (via `response.arrayBuffer()`) before writing to the Node response. For web-standard runtimes (Bun, Deno, Workers), the `fetch` handler can return streaming `ReadableStream` responses directly. For Node deployments serving large repos where streaming matters, implement a custom adapter that pipes `response.body` to the Node response.
+
 **Repo helpers** (`just-git/repo`)
 
 Standalone functions for working with `GitRepo` directly, exported from `just-git/repo` (not the server module). Thin wrappers over lib/ primitives useful inside hooks and outside the server:
@@ -121,9 +125,11 @@ Opinionated hook configurations for common setups:
 
 - `createStandardHooks` — branch protection, force-push denial, delete denial, auth, post-push callback
 
-**Storage** (`sqlite-storage.ts`)
+**Storage** (`sqlite-storage.ts`, `memory-storage.ts`, `pg-storage.ts`)
 
-`SqliteStorage` — multi-repo SQLite backend implementing `ObjectStore` and `RefStore`. Multiple repos partitioned by `repo_id` in a single database.
+`SqliteStorage`, `MemoryStorage`, and `PgStorage` — multi-repo backends implementing `ObjectStore` and `RefStore`. Multiple repos partitioned by ID in a single store.
+
+All storage backends auto-create repos on `.repo(id)` — calling `storage.repo("any-string")` returns a functional `GitRepo` backed by lazily-initialized maps/tables, even if no data has ever been written. This is by design for convenience, but means `resolveRepo: (path) => storage.repo(path)` will accept any URL path. For production, validate repo paths in `resolveRepo` or use `withAuth` to gate access.
 
 ### Type hierarchy
 
@@ -156,11 +162,18 @@ const server = createGitServer({
     /* optional ServerHooks */
   },
   basePath: "/git", // optional URL prefix to strip
+  onError: (err, request) => {
+    // Custom error logging. Default logs just the message (no stack trace).
+    // Set to `false` to suppress all output.
+    myLogger.error("git server error", { err, url: request.url });
+  },
 });
 
 // Standard fetch-API handler
 Bun.serve({ fetch: server.fetch });
 ```
+
+**`onError`** controls what happens when the server catches an unhandled error (e.g. a storage backend throwing). The default handler logs only `err.message` to `console.error` — no stack traces, no internal paths. Pass a function to integrate with your logging system, or `false` to suppress all output. The HTTP response is always a generic 500 regardless.
 
 ### ServerHooks
 
