@@ -1,11 +1,20 @@
-import { findObjectsByPrefix, objectExists, peelToCommit, readCommit } from "./object-db.ts";
+import {
+	findObjectsByPrefix,
+	objectExists,
+	peelToCommit,
+	readCommit,
+	readObject,
+} from "./object-db.ts";
 import { readReflog } from "./reflog.ts";
 import { resolveRef } from "./refs.ts";
 import type { GitContext, ObjectId } from "./types.ts";
 
 // ── Suffix types ─────────────────────────────────────────────────
 
-type RevSuffix = { type: "tilde"; n: number } | { type: "caret"; n: number };
+type RevSuffix =
+	| { type: "tilde"; n: number }
+	| { type: "caret"; n: number }
+	| { type: "peel"; target: string };
 
 /**
  * Parse a revision string into a base ref, optional reflog index, and suffix operators.
@@ -33,6 +42,14 @@ function parseRevSuffixes(rev: string): {
 			const n = tildeMatch[2] === "" ? 1 : parseInt(tildeMatch[2], 10);
 			suffixes.unshift({ type: "tilde", n });
 			i = tildeMatch[1].length;
+			continue;
+		}
+
+		// Try to match ^{type} peel syntax at position before i
+		const peelMatch = rev.slice(0, i).match(/^(.+?)\^{([^}]*)}$/);
+		if (peelMatch && peelMatch[1] !== undefined && peelMatch[2] !== undefined) {
+			suffixes.unshift({ type: "peel", target: peelMatch[2] });
+			i = peelMatch[1].length;
 			continue;
 		}
 
@@ -188,6 +205,44 @@ async function resolveReflogEntry(
 }
 
 /**
+ * Peel an object to a specific type, as in `^{commit}`, `^{tree}`, `^{blob}`, `^{tag}`, `^{}`.
+ * - `^{commit}` — peel through tags to a commit
+ * - `^{tree}` — peel to a commit, return its tree
+ * - `^{blob}` — verify the object is a blob
+ * - `^{tag}` — verify the object is a tag
+ * - `^{}` — peel through tags to the first non-tag object
+ */
+async function peelToType(
+	ctx: GitContext,
+	hash: ObjectId,
+	target: string,
+): Promise<ObjectId | null> {
+	if (target === "" || target === "commit") {
+		try {
+			return await peelToCommit(ctx, hash);
+		} catch {
+			return null;
+		}
+	}
+
+	if (target === "tree") {
+		let commitHash: ObjectId;
+		try {
+			commitHash = await peelToCommit(ctx, hash);
+		} catch {
+			return null;
+		}
+		const commit = await readCommit(ctx, commitHash);
+		return commit.tree;
+	}
+
+	// ^{tag} and ^{blob}: read the object and verify its type
+	const raw = await readObject(ctx, hash);
+	if (raw.type !== target) return null;
+	return hash;
+}
+
+/**
  * Resolve a revision string to an ObjectId.
  *
  * Supports:
@@ -213,13 +268,17 @@ export async function resolveRevision(ctx: GitContext, rev: string): Promise<Obj
 	}
 	if (!hash) return null;
 
-	// Peel through tag objects to reach a commit before applying suffixes
-	if (suffixes.length > 0) {
+	// Peel through tag objects to reach a commit before applying parent/ancestor suffixes
+	const hasTildeOrCaret = suffixes.some((s) => s.type === "tilde" || s.type === "caret");
+	if (hasTildeOrCaret) {
 		hash = await peelToCommit(ctx, hash);
 	}
 
 	for (const suffix of suffixes) {
-		if (suffix.type === "tilde") {
+		if (suffix.type === "peel") {
+			if (!hash) return null;
+			hash = await peelToType(ctx, hash, suffix.target);
+		} else if (suffix.type === "tilde") {
 			for (let i = 0; i < suffix.n; i++) {
 				if (!hash) return null;
 				const commit = await readCommit(ctx, hash);

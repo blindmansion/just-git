@@ -6,9 +6,11 @@ import {
 	isCommandError,
 	requireGitContext,
 } from "../lib/command-utils.ts";
+import { readCommit } from "../lib/object-db.ts";
 import { relative } from "../lib/path.ts";
 import { readHead, resolveRef } from "../lib/refs.ts";
-import { resolveRevision } from "../lib/rev-parse.ts";
+import { parseRevPath, resolveRevision } from "../lib/rev-parse.ts";
+import { flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext } from "../lib/types.ts";
 import { a, type Command, f } from "../parse/index.ts";
 
@@ -127,6 +129,22 @@ export function registerRevParseCommand(parent: Command, ext?: GitExtensions) {
 					continue;
 				}
 
+				// Handle <rev>:<path> syntax
+				const revPathResult = parseRevPath(rev);
+				if (revPathResult) {
+					const resolved = await resolveRevPathToHash(
+						gitCtx,
+						revPathResult.rev,
+						revPathResult.path,
+					);
+					if (resolved === null) {
+						const normalizedPath = revPathResult.path.replace(/^\//, "");
+						return fatal(`path '${normalizedPath}' does not exist in '${revPathResult.rev}'`);
+					}
+					lines.push(short ? abbreviateHash(resolved) : resolved);
+					continue;
+				}
+
 				const hash = await resolveRevision(gitCtx, rev);
 				if (!hash) {
 					return revError(rev, verify);
@@ -189,4 +207,24 @@ async function resolveSymbolicFullName(ctx: GitContext, rev: string): Promise<st
 	}
 
 	return rev;
+}
+
+async function resolveRevPathToHash(
+	ctx: GitContext,
+	rev: string,
+	path: string,
+): Promise<string | null> {
+	const commitHash = await resolveRevision(ctx, rev);
+	if (!commitHash) return null;
+
+	const commit = await readCommit(ctx, commitHash);
+	const normalizedPath = path.replace(/^\//, "");
+
+	if (normalizedPath === "") {
+		return commit.tree;
+	}
+
+	const treeMap = await flattenTreeToMap(ctx, commit.tree);
+	const entry = treeMap.get(normalizedPath);
+	return entry?.hash ?? null;
 }
