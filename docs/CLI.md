@@ -511,6 +511,7 @@ Options:
   --shortstat               Show only the shortstat summary line
   --numstat                 Machine-readable insertions/deletions per file
   --graph                   Draw text-based graph of the commit history
+  --first-parent            Follow only the first parent of merge commits
 ```
 
 ## git ls-files
