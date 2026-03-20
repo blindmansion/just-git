@@ -1,41 +1,19 @@
 import type { GitExtensions } from "../git.ts";
 import {
-	type CommandResult,
 	fatal,
 	getCwdPrefix,
 	isCommandError,
 	requireGitContext,
 	requireRevision,
 } from "../lib/command-utils.ts";
+import { compilePattern, grepContent, type GrepMatch } from "../lib/grep.ts";
 import { readIndex } from "../lib/index.ts";
-import { isBinaryStr, peelToCommit, readBlobContent, readCommit } from "../lib/object-db.ts";
+import { peelToCommit, readBlobContent, readCommit } from "../lib/object-db.ts";
 import { join, relative } from "../lib/path.ts";
 import { matchPathspecs, parsePathspec, type Pathspec } from "../lib/pathspec.ts";
 import { flattenTree, type FlatTreeEntry } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
-
-// ── Pattern compilation ─────────────────────────────────────────────
-
-function escapeRegex(s: string): string {
-	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function compilePattern(
-	raw: string,
-	fixed: boolean,
-	ignoreCase: boolean,
-	wordRegexp: boolean,
-): RegExp | CommandResult {
-	let src = fixed ? escapeRegex(raw) : raw;
-	if (wordRegexp) src = `\\b${src}\\b`;
-	const flags = ignoreCase ? "i" : "";
-	try {
-		return new RegExp(src, flags);
-	} catch {
-		return fatal(`command line, '${raw}': invalid regular expression`);
-	}
-}
 
 // ── File enumeration ────────────────────────────────────────────────
 
@@ -109,44 +87,6 @@ function displayPath(filePath: string, cwdPrefix: string, fullName: boolean): st
 	return relative(cwdPrefix, filePath);
 }
 
-// ── Core grep logic ─────────────────────────────────────────────────
-
-interface GrepMatch {
-	lineNo: number;
-	line: string;
-}
-
-function grepFileContent(
-	content: string,
-	patterns: RegExp[],
-	allMatch: boolean,
-	invert: boolean,
-): { matches: GrepMatch[]; binary: boolean } {
-	if (isBinaryStr(content)) {
-		const hasMatch = patterns.some((p) => p.test(content));
-		return { matches: [], binary: hasMatch };
-	}
-
-	const lines = content.split("\n");
-	if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
-
-	if (allMatch && patterns.length > 1) {
-		const allHit = patterns.every((p) => lines.some((l) => p.test(l)));
-		if (!allHit) return { matches: [], binary: false };
-	}
-
-	const matches: GrepMatch[] = [];
-	for (let i = 0; i < lines.length; i++) {
-		const line = lines[i]!;
-		const hit = patterns.some((p) => p.test(line));
-		if (invert ? !hit : hit) {
-			matches.push({ lineNo: i + 1, line });
-		}
-	}
-
-	return { matches, binary: false };
-}
-
 // ── Command registration ────────────────────────────────────────────
 
 export function registerGrepCommand(parent: Command, ext?: GitExtensions) {
@@ -205,13 +145,12 @@ export function registerGrepCommand(parent: Command, ext?: GitExtensions) {
 			// ── Compile patterns ────────────────────────────────────
 			const patterns: RegExp[] = [];
 			for (const raw of patternStrs) {
-				const compiled = compilePattern(
-					raw,
-					!!args.fixedStrings,
-					!!args.ignoreCase,
-					!!args.wordRegexp,
-				);
-				if (isCommandError(compiled)) return compiled;
+				const compiled = compilePattern(raw, {
+					fixed: !!args.fixedStrings,
+					ignoreCase: !!args.ignoreCase,
+					wordRegexp: !!args.wordRegexp,
+				});
+				if (!compiled) return fatal(`command line, '${raw}': invalid regular expression`);
 				patterns.push(compiled);
 			}
 
@@ -293,7 +232,7 @@ export function registerGrepCommand(parent: Command, ext?: GitExtensions) {
 					if (maxDepth !== undefined && pathDepth(file.path) > maxDepth) continue;
 
 					const content = await file.getContent();
-					const result = grepFileContent(content, patterns, allMatch, invert);
+					const result = grepContent(content, patterns, allMatch, invert);
 
 					const dp = displayPath(file.path, cwdPrefix, !!args.fullName);
 					const prefix = source.prefix;

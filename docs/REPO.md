@@ -116,15 +116,16 @@ All functions accept `GitRepo` as the first argument.
 
 ### Reading
 
-| Function           | Signature                                       | Description                                |
-| ------------------ | ----------------------------------------------- | ------------------------------------------ |
-| `readCommit`       | `(repo, hash) → Commit`                         | Parse and return a commit object           |
-| `readBlob`         | `(repo, hash) → Uint8Array`                     | Read a blob as raw bytes                   |
-| `readBlobText`     | `(repo, hash) → string`                         | Read a blob as a UTF-8 string              |
-| `readFileAtCommit` | `(repo, commitHash, filePath) → string \| null` | Read a file's content at a specific commit |
-| `resolveRef`       | `(repo, name) → string \| null`                 | Resolve a ref name to a commit hash        |
-| `listBranches`     | `(repo) → RefEntry[]`                           | List all branches (`refs/heads/*`)         |
-| `listTags`         | `(repo) → RefEntry[]`                           | List all tags (`refs/tags/*`)              |
+| Function           | Signature                                               | Description                                                                                                                     |
+| ------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `readCommit`       | `(repo, hash) → Commit`                                 | Parse and return a commit object                                                                                                |
+| `readBlob`         | `(repo, hash) → Uint8Array`                             | Read a blob as raw bytes                                                                                                        |
+| `readBlobText`     | `(repo, hash) → string`                                 | Read a blob as a UTF-8 string                                                                                                   |
+| `readFileAtCommit` | `(repo, commitHash, filePath) → string \| null`         | Read a file's content at a specific commit                                                                                      |
+| `grep`             | `(repo, commitHash, patterns, opts?) → GrepFileMatch[]` | Search files at a commit for matching lines. Supports regex, fixed strings, globs, `allMatch`, `invert`, `maxCount`, `maxDepth` |
+| `resolveRef`       | `(repo, name) → string \| null`                         | Resolve a ref name to a commit hash                                                                                             |
+| `listBranches`     | `(repo) → RefEntry[]`                                   | List all branches (`refs/heads/*`)                                                                                              |
+| `listTags`         | `(repo) → RefEntry[]`                                   | List all tags (`refs/tags/*`)                                                                                                   |
 
 ### Diffing and history
 
