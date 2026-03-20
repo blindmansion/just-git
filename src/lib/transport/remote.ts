@@ -30,6 +30,10 @@ function isHttpUrl(url: string): boolean {
 	return url.startsWith("http://") || url.startsWith("https://");
 }
 
+function isSshUrl(url: string): boolean {
+	return url.startsWith("ssh://") || url.startsWith("git@") || url.startsWith("git+ssh://");
+}
+
 /**
  * Check a URL against a network policy. Returns null if allowed,
  * or an error message string if blocked.
@@ -104,6 +108,9 @@ export async function createTransportForUrl(
 		remoteRepo = (await ctx.resolveRemote(url)) ?? undefined;
 	}
 	if (!remoteRepo) {
+		if (isSshUrl(url)) {
+			throw new Error(`SSH transport is not supported. Use an HTTPS URL instead of '${url}'.`);
+		}
 		throw new Error(`'${url}' does not appear to be a git repository`);
 	}
 	return new LocalTransport(ctx, remoteRepo);
@@ -134,7 +141,14 @@ export async function resolveRemoteTransport(
 	const remoteRepo: GitRepo | null =
 		(ctx.resolveRemote ? await ctx.resolveRemote(remote.url) : null) ??
 		(await findRepo(ctx.fs, remote.url));
-	if (!remoteRepo) return null;
+	if (!remoteRepo) {
+		if (isSshUrl(remote.url)) {
+			throw new Error(
+				`SSH transport is not supported. Use an HTTPS URL instead of '${remote.url}'.`,
+			);
+		}
+		return null;
+	}
 
 	return {
 		transport: new LocalTransport(ctx, remoteRepo),

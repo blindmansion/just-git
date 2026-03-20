@@ -197,20 +197,24 @@ function parseIndex(data: Uint8Array): Index {
 		const stage = (flags >> 12) & 0x3;
 		const nameLen = flags & 0xfff;
 
-		// Read the name — use nameLen if < 0xFFF, otherwise scan for null
+		// Read the name — use nameLen if < 0xFFF, otherwise scan for null.
+		// nameLen is the UTF-8 byte length (capped at 0xFFF).
+		let nameBytesLen: number;
 		let name: string;
 		if (nameLen < 0xfff) {
 			name = new TextDecoder().decode(data.subarray(offset, offset + nameLen));
+			nameBytesLen = nameLen;
 		} else {
 			// Long name: scan for null terminator
 			let end = offset;
 			while (end < data.byteLength && data[end] !== 0) end++;
 			name = new TextDecoder().decode(data.subarray(offset, end));
+			nameBytesLen = end - offset;
 		}
 
 		// Entry is padded to 8-byte alignment (from entry start).
-		// Minimum entry size: 62 bytes of fixed fields + name + 1 null + padding
-		const entryLen = 62 + name.length + 1; // fixed + name + null
+		// Must use byte length, not JS string length, for non-ASCII paths.
+		const entryLen = 62 + nameBytesLen + 1;
 		const padded = Math.ceil(entryLen / 8) * 8;
 		offset = entryStart + padded;
 
@@ -221,13 +225,18 @@ function parseIndex(data: Uint8Array): Index {
 }
 
 async function serializeIndex(index: Index): Promise<Uint8Array> {
+	const encoder = new TextEncoder();
+
 	// Sort entries by path, then stage
 	const entries = [...index.entries].sort(compareEntries);
 
-	// Compute total size
+	// Pre-encode all names so we use UTF-8 byte lengths everywhere
+	const encodedNames: Uint8Array[] = [];
 	let totalSize = 12; // header
 	for (const entry of entries) {
-		const entryLen = 62 + entry.path.length + 1;
+		const nameBytes = encoder.encode(entry.path);
+		encodedNames.push(nameBytes);
+		const entryLen = 62 + nameBytes.byteLength + 1;
 		totalSize += Math.ceil(entryLen / 8) * 8;
 	}
 	totalSize += 20; // checksum
@@ -246,7 +255,9 @@ async function serializeIndex(index: Index): Promise<Uint8Array> {
 	offset += 4;
 
 	// ── Entries ──
-	for (const entry of entries) {
+	for (let i = 0; i < entries.length; i++) {
+		const entry = entries[i]!;
+		const nameBytes = encodedNames[i]!;
 		const entryStart = offset;
 
 		view.setUint32(offset, entry.stat.ctimeSeconds);
@@ -267,13 +278,12 @@ async function serializeIndex(index: Index): Promise<Uint8Array> {
 		offset += 20;
 
 		// Flags: stage in bits 13-12, name length in bits 11-0
-		const nameLen = Math.min(entry.path.length, 0xfff);
+		const nameLen = Math.min(nameBytes.byteLength, 0xfff);
 		const flags = ((entry.stage & 0x3) << 12) | nameLen;
 		view.setUint16(offset, flags);
 		offset += 2;
 
 		// Name (null-terminated)
-		const nameBytes = new TextEncoder().encode(entry.path);
 		data.set(nameBytes, offset);
 		offset += nameBytes.byteLength;
 		data[offset] = 0; // null terminator

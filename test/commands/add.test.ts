@@ -520,4 +520,76 @@ describe("git add", () => {
 			expect(paths.includes("src/main.ts") && paths.includes("src//main.ts")).toBe(false);
 		});
 	});
+
+	describe("unicode filenames", () => {
+		test("stages a file with CJK characters", async () => {
+			const bash = createTestBash({
+				files: { "/repo/日本語.txt": "japanese\n" },
+				env: TEST_ENV,
+			});
+			await bash.exec("git init");
+			const add = await bash.exec("git add .");
+			expect(add.exitCode).toBe(0);
+
+			const status = await bash.exec("git status");
+			expect(status.stdout).toContain("日本語.txt");
+		});
+
+		test("commits and logs a file with CJK characters", async () => {
+			const bash = createTestBash({
+				files: { "/repo/日本語.txt": "japanese\n" },
+				env: TEST_ENV,
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			const commit = await bash.exec('git commit -m "add japanese file"');
+			expect(commit.exitCode).toBe(0);
+
+			const lsFiles = await bash.exec("git ls-files");
+			expect(lsFiles.stdout.trim()).toBe("日本語.txt");
+		});
+
+		test("stages a file with emoji in the name", async () => {
+			const bash = createTestBash({
+				files: { "/repo/\u{1F680}rocket.txt": "to the moon\n" },
+				env: TEST_ENV,
+			});
+			await bash.exec("git init");
+			const add = await bash.exec("git add .");
+			expect(add.exitCode).toBe(0);
+
+			const commit = await bash.exec('git commit -m "emoji"');
+			expect(commit.exitCode).toBe(0);
+		});
+
+		test("round-trips unicode filenames through index write/read", async () => {
+			const bash = createTestBash({
+				files: {
+					"/repo/café.txt": "latte\n",
+					"/repo/日本語.txt": "japanese\n",
+					"/repo/Ü.txt": "umlaut\n",
+				},
+				env: TEST_ENV,
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "unicode files"');
+
+			const lsFiles = await bash.exec("git ls-files");
+			const files = lsFiles.stdout.trim().split("\n").sort();
+			expect(files).toContain("café.txt");
+			expect(files).toContain("日本語.txt");
+			expect(files).toContain("Ü.txt");
+		});
+
+		test("explicit git add with unicode path works", async () => {
+			const bash = createTestBash({
+				files: { "/repo/日本語.txt": "japanese\n" },
+				env: TEST_ENV,
+			});
+			await bash.exec("git init");
+			const add = await bash.exec("git add 日本語.txt");
+			expect(add.exitCode).toBe(0);
+		});
+	});
 });

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { pathExists, readFile, setupClonePair } from "../util";
+import { TEST_ENV } from "../fixtures";
+import { createTestBash, pathExists, readFile, setupClonePair } from "../util";
 
 describe("git push", () => {
 	test("pushes current branch to remote", async () => {
@@ -230,6 +231,31 @@ describe("git push", () => {
 				cwd: "/local",
 			});
 			expect(result.exitCode).toBe(0);
+		});
+	});
+
+	describe("SSH remote", () => {
+		test("gives clear error for git@ SSH URL", async () => {
+			const bash = createTestBash({ env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("echo hi > file.txt && git add . && git commit -m init");
+			await bash.exec("git remote add origin git@github.com:user/repo.git");
+
+			const result = await bash.exec("git push origin main");
+			expect(result.exitCode).not.toBe(0);
+			expect(result.stderr).toContain("SSH transport is not supported");
+			expect(result.stderr).toContain("HTTPS");
+		});
+
+		test("gives clear error for ssh:// URL", async () => {
+			const bash = createTestBash({ env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("echo hi > file.txt && git add . && git commit -m init");
+			await bash.exec("git remote add origin ssh://git@github.com/user/repo.git");
+
+			const result = await bash.exec("git push origin main");
+			expect(result.exitCode).not.toBe(0);
+			expect(result.stderr).toContain("SSH transport is not supported");
 		});
 	});
 });

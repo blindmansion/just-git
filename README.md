@@ -33,6 +33,7 @@ const git = createGit({
 });
 
 await git.exec("git init", { fs, cwd: "/repo" });
+await fs.writeFile("/repo/README.md", "# Hello\n");
 await git.exec("git add .", { fs, cwd: "/repo" });
 await git.exec('git commit -m "initial commit"', { fs, cwd: "/repo" });
 await git.exec("git log --oneline", { fs, cwd: "/repo" });
