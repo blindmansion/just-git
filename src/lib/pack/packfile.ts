@@ -108,6 +108,17 @@ export async function readPack(
 	if (version !== PACK_VERSION) {
 		throw new Error(`Unsupported pack version: ${version}`);
 	}
+
+	if (data.byteLength >= 32) {
+		const trailingHash = hexAt(data, data.byteLength - 20);
+		const hasher = createHasher();
+		hasher.update(data.subarray(0, data.byteLength - 20));
+		const computedHash = await hasher.hex();
+		if (computedHash !== trailingHash) {
+			throw new Error(`pack checksum mismatch: expected ${trailingHash}, computed ${computedHash}`);
+		}
+	}
+
 	const numObjects = view.getUint32(8);
 
 	const entries: RawPackEntry[] = [];
@@ -197,6 +208,8 @@ async function readEntry(data: Uint8Array, offset: number): Promise<RawPackEntry
 	};
 }
 
+const MAX_DELTA_DEPTH = 50;
+
 /**
  * Resolve all entries: apply deltas, compute hashes, return
  * fully materialized objects.
@@ -213,7 +226,11 @@ async function resolveEntries(
 
 	const resolved: (PackObject | null)[] = new Array(entries.length).fill(null);
 
-	async function resolve(idx: number): Promise<PackObject> {
+	async function resolve(idx: number, depth: number = 0): Promise<PackObject> {
+		if (depth > MAX_DELTA_DEPTH) {
+			throw new Error(`delta chain depth ${depth} exceeds limit of ${MAX_DELTA_DEPTH}`);
+		}
+
 		const cached = resolved[idx];
 		if (cached) return cached;
 
@@ -238,7 +255,7 @@ async function resolveEntries(
 			if (baseIdx === undefined) {
 				throw new Error(`OFS_DELTA base not found at offset ${entry.baseOffset}`);
 			}
-			const base = await resolve(baseIdx);
+			const base = await resolve(baseIdx, depth + 1);
 			const content = applyDelta(base.content, entry.inflated);
 			const obj: PackObject = {
 				type: base.type,
@@ -253,7 +270,7 @@ async function resolveEntries(
 		const baseIdx = await findByHash(entries, resolved, entry.baseHash!, resolve);
 		let base: RawObject | undefined;
 		if (baseIdx !== undefined) {
-			base = await resolve(baseIdx);
+			base = await resolve(baseIdx, depth + 1);
 		} else if (externalBase) {
 			const ext = await externalBase(entry.baseHash!);
 			if (ext) base = ext;

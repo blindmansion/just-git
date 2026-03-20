@@ -24,6 +24,7 @@ import { serializeCommit } from "../lib/objects/commit.ts";
 import { serializeTree } from "../lib/objects/tree.ts";
 import { dirname, join } from "../lib/path.ts";
 import { resolveRef as _resolveRef, listRefs } from "../lib/refs.ts";
+import { isInsideWorkTree, verifyPath, verifySymlinkTarget } from "../lib/path-safety.ts";
 import { isSymlinkMode } from "../lib/symlink.ts";
 import { diffTrees as _diffTrees, flattenTree as _flattenTree } from "../lib/tree-ops.ts";
 import type { FlatTreeEntry } from "../lib/tree-ops.ts";
@@ -384,7 +385,13 @@ export async function checkoutTo(
 	let filesWritten = 0;
 
 	for (const entry of entries) {
+		if (!verifyPath(entry.path)) {
+			throw new Error(`refusing to check out unsafe path '${entry.path}'`);
+		}
 		const fullPath = join(targetDir, entry.path);
+		if (!isInsideWorkTree(targetDir, fullPath)) {
+			throw new Error(`refusing to check out path outside target directory: '${entry.path}'`);
+		}
 		const dir = dirname(fullPath);
 
 		if (dir !== targetDir && !createdDirs.has(dir)) {
@@ -394,6 +401,9 @@ export async function checkoutTo(
 
 		if (isSymlinkMode(entry.mode)) {
 			const target = await readBlobContent(repo, entry.hash);
+			if (!verifySymlinkTarget(target)) {
+				throw new Error(`refusing to create symlink with unsafe target '${target}'`);
+			}
 			if (fs.symlink) {
 				await fs.symlink(target, fullPath);
 			} else {
@@ -487,7 +497,13 @@ export async function createWorktree(
 	let filesWritten = 0;
 
 	for (const entry of entries) {
+		if (!verifyPath(entry.path)) {
+			throw new Error(`refusing to check out unsafe path '${entry.path}'`);
+		}
 		const fullPath = join(workTree, entry.path);
+		if (!isInsideWorkTree(workTree, fullPath)) {
+			throw new Error(`refusing to check out path outside worktree: '${entry.path}'`);
+		}
 		const dir = dirname(fullPath);
 
 		if (dir !== workTree && !createdDirs.has(dir)) {
@@ -497,6 +513,9 @@ export async function createWorktree(
 
 		if (isSymlinkMode(entry.mode)) {
 			const target = await readBlobContent(repo, entry.hash);
+			if (!verifySymlinkTarget(target)) {
+				throw new Error(`refusing to create symlink with unsafe target '${target}'`);
+			}
 			if (fs.symlink) {
 				await fs.symlink(target, fullPath);
 			} else {

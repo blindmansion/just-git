@@ -2,6 +2,7 @@ import { comparePaths } from "./command-utils.ts";
 import { type IgnoreStack, isIgnored, loadBaseIgnore, pushDirIgnore } from "./ignore.ts";
 import { addEntry, defaultStat } from "./index.ts";
 import { readObject, writeObject } from "./object-db.ts";
+import { isInsideWorkTree, verifyPath, verifySymlinkTarget } from "./path-safety.ts";
 import { dirname, join } from "./path.ts";
 import { hashWorktreeEntry, isSymlinkMode, lstatSafe } from "./symlink.ts";
 import { flattenTree } from "./tree-ops.ts";
@@ -96,12 +97,20 @@ export async function checkoutEntry(
 		throw new Error("Cannot checkout in a bare repository");
 	}
 
+	if (!verifyPath(entry.path)) {
+		throw new Error(`refusing to check out unsafe path '${entry.path}'`);
+	}
+
 	const raw = await readObject(ctx, entry.hash);
 	if (raw.type !== "blob") {
 		throw new Error(`Expected blob for ${entry.path}, got ${raw.type}`);
 	}
 
 	const fullPath = join(ctx.workTree, entry.path);
+
+	if (!isInsideWorkTree(ctx.workTree, fullPath)) {
+		throw new Error(`refusing to check out path outside worktree: '${entry.path}'`);
+	}
 
 	// Ensure parent directories exist
 	const lastSlash = fullPath.lastIndexOf("/");
@@ -110,6 +119,10 @@ export async function checkoutEntry(
 	}
 
 	if (entry.mode != null && isSymlinkMode(entry.mode) && ctx.fs.symlink) {
+		const target = decoder.decode(raw.content);
+		if (!verifySymlinkTarget(target)) {
+			throw new Error(`refusing to create symlink with unsafe target '${target}'`);
+		}
 		// Remove any existing entry (file, dir, or symlink) before creating
 		// the symlink. Use lstat to detect broken symlinks that exists()
 		// would miss (exists follows symlinks; broken targets → false).
@@ -119,7 +132,6 @@ export async function checkoutEntry(
 		if (pathPresent) {
 			await ctx.fs.rm(fullPath, { force: true });
 		}
-		const target = decoder.decode(raw.content);
 		await ctx.fs.symlink(target, fullPath);
 	} else {
 		// For regular files, also remove stale symlinks at the same path
@@ -163,6 +175,10 @@ export async function stageFile(
 ): Promise<{ index: Index; hash: ObjectId }> {
 	if (!ctx.workTree) {
 		throw new Error("Cannot stage in a bare repository");
+	}
+
+	if (!verifyPath(path)) {
+		throw new Error(`refusing to stage unsafe path '${path}'`);
 	}
 
 	const fullPath = join(ctx.workTree, path);

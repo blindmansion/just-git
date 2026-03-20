@@ -113,6 +113,10 @@ export class PackedObjectStore implements ObjectStore {
 		if (await this.fs.exists(path)) {
 			const compressed = await this.fs.readFileBuffer(path);
 			const data = await inflate(compressed);
+			const computedHash = await sha1(data);
+			if (computedHash !== hash) {
+				throw new Error(`corrupt loose object ${hash}: SHA-1 mismatch (computed ${computedHash})`);
+			}
 			const obj = parseEnvelope(hash, data);
 			this.cache.set(hash, obj);
 			return obj;
@@ -145,11 +149,26 @@ export class PackedObjectStore implements ObjectStore {
 	async ingestPack(packData: Uint8Array): Promise<number> {
 		if (packData.byteLength < 32) return 0;
 		const view = new DataView(packData.buffer, packData.byteOffset, packData.byteLength);
+
+		const sig = view.getUint32(0);
+		if (sig !== 0x5041434b) {
+			throw new Error(`invalid pack signature: 0x${sig.toString(16)} (expected 0x5041434b)`);
+		}
+		const version = view.getUint32(4);
+		if (version !== 2) {
+			throw new Error(`unsupported pack version: ${version}`);
+		}
+
 		const numObjects = view.getUint32(8);
 		if (numObjects === 0) return 0;
 
 		const checksumBytes = packData.subarray(packData.byteLength - 20);
 		const packHash = bytesToHex(checksumBytes);
+
+		const computedChecksum = await sha1(packData.subarray(0, packData.byteLength - 20));
+		if (computedChecksum !== packHash) {
+			throw new Error(`pack checksum mismatch: expected ${packHash}, computed ${computedChecksum}`);
+		}
 
 		await this.fs.mkdir(this.packDir, { recursive: true });
 

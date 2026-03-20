@@ -13,6 +13,39 @@ import type { Tree, TreeEntry } from "../types.ts";
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+const VALID_MODES = new Set(["100644", "100755", "040000", "120000", "160000"]);
+
+/** Case-insensitive check for `.git`. */
+function isDotGit(name: string): boolean {
+	return name.length === 4 && name.toLowerCase() === ".git";
+}
+
+/**
+ * Validate a tree entry name and mode.
+ * Throws on invalid entries, providing defense-in-depth against
+ * malicious trees even when call sites forget `verifyPath`.
+ */
+function validateTreeEntry(name: string, mode: string): void {
+	if (name.length === 0) {
+		throw new Error("invalid tree entry: empty name");
+	}
+	if (name.includes("/")) {
+		throw new Error(`invalid tree entry: name contains slash: '${name}'`);
+	}
+	if (name.includes("\0")) {
+		throw new Error(`invalid tree entry: name contains null byte`);
+	}
+	if (name === "." || name === "..") {
+		throw new Error(`invalid tree entry: '${name}'`);
+	}
+	if (isDotGit(name)) {
+		throw new Error(`invalid tree entry: '${name}'`);
+	}
+	if (!VALID_MODES.has(mode)) {
+		throw new Error(`invalid tree entry mode: '${mode}' for '${name}'`);
+	}
+}
+
 /** Parse raw tree content into a Tree. */
 export function parseTree(content: Uint8Array): Tree {
 	const entries: TreeEntry[] = [];
@@ -38,6 +71,8 @@ export function parseTree(content: Uint8Array): Tree {
 		// Normalize mode: real git stores "40000" for directories, but our
 		// canonical representation uses "040000". Pad to 6 chars.
 		const normalizedMode = mode.padStart(6, "0");
+
+		validateTreeEntry(name, normalizedMode);
 
 		entries.push({ mode: normalizedMode, name, hash });
 		offset = nullIdx + 21;

@@ -1,4 +1,5 @@
 import { bytesToHex, hexToBytes } from "./hex.ts";
+import { verifyPath } from "./path-safety.ts";
 import { join } from "./path.ts";
 import { sha1 } from "./sha1.ts";
 import type { GitContext, Index, IndexEntry, IndexStat } from "./types.ts";
@@ -47,6 +48,9 @@ export async function writeIndex(ctx: GitContext, index: Index): Promise<void> {
  * entry is replaced.
  */
 export function addEntry(index: Index, entry: IndexEntry): Index {
+	if (!verifyPath(entry.path)) {
+		throw new Error(`refusing to add unsafe path to index: '${entry.path}'`);
+	}
 	let entries: IndexEntry[];
 	if (entry.stage === 0) {
 		// Stage 0 replaces all stages for this path (conflict resolution)

@@ -14,6 +14,8 @@ const TYPE_BY_NUM: Record<number, ObjectType> = {
 	4: "tag",
 };
 
+const MAX_DELTA_DEPTH = 50;
+
 /**
  * Random-access reader for a `.pack` + `.idx` pair.
  * Resolves objects (including deltas) on demand using the index
@@ -40,14 +42,17 @@ export class PackReader {
 	async readObject(hash: ObjectId): Promise<RawObject | null> {
 		const offset = this.index.lookup(hash);
 		if (offset === null) return null;
-		return this.readAt(offset);
+		return this.readAt(offset, 0);
 	}
 
 	get objectCount(): number {
 		return this.index.objectCount;
 	}
 
-	private async readAt(offset: number): Promise<RawObject> {
+	private async readAt(offset: number, depth: number): Promise<RawObject> {
+		if (depth > MAX_DELTA_DEPTH) {
+			throw new Error(`delta chain depth ${depth} exceeds limit of ${MAX_DELTA_DEPTH}`);
+		}
 		const d = this.data;
 		let pos = offset;
 
@@ -70,7 +75,7 @@ export class PackReader {
 				baseOff = (baseOff << 7) + (c & 0x7f);
 			}
 			const inflated = await inflate(d.subarray(pos));
-			const base = await this.readAt(offset - baseOff);
+			const base = await this.readAt(offset - baseOff, depth + 1);
 			return {
 				type: base.type,
 				content: applyDelta(base.content, inflated),
@@ -85,7 +90,7 @@ export class PackReader {
 			if (baseOffset === null) {
 				throw new Error(`REF_DELTA base ${baseHash} not found in pack`);
 			}
-			const base = await this.readAt(baseOffset);
+			const base = await this.readAt(baseOffset, depth + 1);
 			return {
 				type: base.type,
 				content: applyDelta(base.content, inflated),

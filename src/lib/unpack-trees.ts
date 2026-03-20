@@ -19,6 +19,7 @@
 
 import { comparePaths, err } from "./command-utils.ts";
 import { defaultStat, getStage0Entries } from "./index.ts";
+import { isInsideWorkTree, verifyPath } from "./path-safety.ts";
 import { dirname, join } from "./path.ts";
 import { hashWorktreeEntry, lstatSafe } from "./symlink.ts";
 import { flattenTreeToMap } from "./tree-ops.ts";
@@ -1013,7 +1014,13 @@ export async function applyWorktreeOps(ctx: GitContext, ops: WorktreeOp[]): Prom
 	const deletedPaths: string[] = [];
 
 	for (const op of ops) {
+		if (!verifyPath(op.path)) {
+			throw new Error(`refusing to apply worktree operation on unsafe path '${op.path}'`);
+		}
 		const fullPath = join(workTree, op.path);
+		if (!isInsideWorkTree(workTree, fullPath)) {
+			throw new Error(`refusing to apply worktree operation outside worktree: '${op.path}'`);
+		}
 
 		if (op.type === "delete") {
 			const present = await lstatSafe(ctx.fs, fullPath)
