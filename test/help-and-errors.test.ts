@@ -84,7 +84,7 @@ describe("unknown command with --help", () => {
 	test("git comit --help suggests commit", async () => {
 		const r = await git.exec("comit --help", { fs, cwd: "/" });
 		expect(r.exitCode).toBe(1);
-		expect(r.stderr).toContain("comit");
+		expect(r.stderr).toContain("'comit' is not a git command");
 		expect(r.stderr).toContain("commit");
 	});
 });
@@ -117,7 +117,14 @@ describe("unimplemented commands", () => {
 
 		expect(unimpl.stderr).toContain("is not implemented");
 		expect(unknown.stderr).not.toContain("is not implemented");
-		expect(unknown.stderr).toContain("Unknown command");
+		expect(unknown.stderr).toContain("is not a git command");
+	});
+
+	test("git worktree reports not implemented (not unknown command)", async () => {
+		const r = await git.exec("worktree list", { fs, cwd: "/" });
+		expect(r.exitCode).toBe(1);
+		expect(r.stderr).toContain("'worktree' is not implemented");
+		expect(r.stderr).toContain("git help");
 	});
 
 	test("disabled check takes priority over unimplemented", async () => {

@@ -33,10 +33,11 @@ function formatError(error: ParseError): string {
 			return `Option "--${error.name}" requires a value.`;
 
 		case "unknown_command": {
-			let msg = `Unknown command "${error.path}".`;
+			let msg = `git: '${error.path.replace(/^git /, "")}' is not a git command.`;
 			if (error.suggestions.length > 0) {
 				msg += ` Did you mean ${error.suggestions.map((s) => `"${s}"`).join(" or ")}?`;
 			}
+			msg += `\nRun 'git help' for available commands.`;
 			return msg;
 		}
 	}
@@ -44,7 +45,7 @@ function formatError(error: ParseError): string {
 
 /** Format multiple parse errors into a single string */
 export function formatErrors(errors: ParseError[]): string {
-	return errors.map(formatError).join("\n");
+	return errors.map(formatError).join("\n") + "\n";
 }
 
 // ============================================================================
