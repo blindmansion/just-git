@@ -11,7 +11,14 @@ import {
 } from "../lib/command-utils.ts";
 import { writeObject } from "../lib/object-db.ts";
 import { serializeTag } from "../lib/objects/tag.ts";
-import { deleteRef, listRefs, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
+import {
+	deleteRef,
+	isValidTagName,
+	listRefs,
+	resolveHead,
+	resolveRef,
+	updateRef,
+} from "../lib/refs.ts";
 import { WM_MATCH, wildmatch } from "../lib/wildmatch.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 
@@ -61,6 +68,10 @@ export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 
 			// ── Create tag ──────────────────────────────────────────────
 			if (args.name) {
+				if (!isValidTagName(args.name)) {
+					return fatal(`'${args.name}' is not a valid tag name`);
+				}
+
 				const commitArg = args.commit;
 				let targetHash: string | null;
 				if (commitArg) {

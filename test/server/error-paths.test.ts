@@ -266,6 +266,96 @@ describe("delete non-existent ref", () => {
 	});
 });
 
+// ── Push with invalid ref names ─────────────────────────────────────
+
+describe("push with invalid ref names", () => {
+	const BAD_REFS = [
+		["refs/heads/has~tilde", "contains ~"],
+		["refs/heads/has^caret", "contains ^"],
+		["refs/heads/has..double", "contains .."],
+		["refs/heads/.hidden", "component starts with ."],
+		["refs/heads/test.lock", "ends with .lock"],
+		["refs/heads/has:colon", "contains :"],
+		["refs/heads/@{bad}", "contains @{"],
+		["refs/heads/has[bracket", "contains ["],
+	];
+
+	for (const [refName, reason] of BAD_REFS) {
+		test(`rejects ${JSON.stringify(refName)} (${reason})`, async () => {
+			const repo = await setupRepo();
+
+			const zeroHash = "0".repeat(40);
+			const newHash = "a".repeat(40);
+
+			const commandLine = `${zeroHash} ${newHash} ${refName}`;
+			const nul = new Uint8Array([0]);
+			const enc = new TextEncoder();
+			const payload = concatPktLines(enc.encode(commandLine), nul, enc.encode(" report-status\n"));
+			const firstLine = encodePktLine(payload);
+
+			const body = concatPktLines(firstLine, flushPkt());
+
+			const server = createGitServer({ resolveRepo: async () => repo });
+			const res = await server.fetch(
+				new Request("http://localhost/repo/git-receive-pack", {
+					method: "POST",
+					body,
+				}),
+			);
+
+			expect(res.status).toBe(200);
+			const resBody = new Uint8Array(await res.arrayBuffer());
+			const lines = parsePktLineStream(resBody);
+
+			let foundNg = false;
+			for (const line of lines) {
+				const text = pktLineText(line);
+				if (text.startsWith(`ng ${refName}`)) {
+					foundNg = true;
+					expect(text).toContain("invalid refname");
+				}
+			}
+			expect(foundNg).toBe(true);
+		});
+	}
+
+	test("valid ref names are still accepted", async () => {
+		const repo = await setupRepo();
+
+		const mainRef = await repo.refStore.readRef("refs/heads/main");
+		const mainHash = mainRef?.type === "direct" ? mainRef.hash : "0".repeat(40);
+		const zeroHash = "0".repeat(40);
+
+		const commandLine = `${zeroHash} ${mainHash} refs/heads/valid-branch`;
+		const nul = new Uint8Array([0]);
+		const enc = new TextEncoder();
+		const payload = concatPktLines(enc.encode(commandLine), nul, enc.encode(" report-status\n"));
+		const firstLine = encodePktLine(payload);
+		const body = concatPktLines(firstLine, flushPkt());
+
+		const server = createGitServer({ resolveRepo: async () => repo });
+		const res = await server.fetch(
+			new Request("http://localhost/repo/git-receive-pack", {
+				method: "POST",
+				body,
+			}),
+		);
+
+		expect(res.status).toBe(200);
+		const resBody = new Uint8Array(await res.arrayBuffer());
+		const lines = parsePktLineStream(resBody);
+
+		let foundOk = false;
+		for (const line of lines) {
+			const text = pktLineText(line);
+			if (text.startsWith("ok refs/heads/valid-branch")) {
+				foundOk = true;
+			}
+		}
+		expect(foundOk).toBe(true);
+	});
+});
+
 // ── onError callback ────────────────────────────────────────────────
 
 describe("onError callback", () => {

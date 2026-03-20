@@ -20,6 +20,7 @@ import {
 	branchNameFromRef,
 	createSymbolicRef,
 	deleteRef,
+	isValidBranchName,
 	listRefs,
 	readHead,
 	resolveHead,
@@ -76,6 +77,10 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 					newName = args.name as string;
 				} else {
 					return fatal("branch name required");
+				}
+
+				if (!isValidBranchName(newName)) {
+					return fatal(`'${newName}' is not a valid branch name`);
 				}
 
 				const oldRef = `refs/heads/${oldName}`;
@@ -272,6 +277,10 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 
 			// ── Create branch ───────────────────────────────────────────
 			if (args.name && !args.remotes && !args.all) {
+				if (!isValidBranchName(args.name)) {
+					return fatal(`'${args.name}' is not a valid branch name`);
+				}
+
 				const startPoint = args.newName;
 				let targetHash: ObjectId | null;
 

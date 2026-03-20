@@ -8,7 +8,7 @@ import {
 } from "../lib/command-utils.ts";
 import { type GitConfig, readConfig, writeConfig } from "../lib/config.ts";
 import { readReflog, writeReflog } from "../lib/reflog.ts";
-import { deleteRef, listRefs, updateRef } from "../lib/refs.ts";
+import { checkRefFormat, deleteRef, listRefs, RefFormatFlag, updateRef } from "../lib/refs.ts";
 import type { GitContext } from "../lib/types.ts";
 import { a, type Command, f } from "../parse/index.ts";
 
@@ -73,6 +73,10 @@ export function registerRemoteCommand(parent: Command, ext?: GitExtensions) {
 			a.string().name("url").describe("Remote URL"),
 		],
 		handler: async (args, ctx) => {
+			if (!checkRefFormat(`refs/remotes/${args.name}`, RefFormatFlag.NONE)) {
+				return fatal(`'${args.name}' is not a valid remote name`);
+			}
+
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
 
@@ -197,6 +201,10 @@ async function handleRename(
 	oldName: string,
 	newName: string,
 ): Promise<CommandResult> {
+	if (!checkRefFormat(`refs/remotes/${newName}`, RefFormatFlag.NONE)) {
+		return fatal(`'${newName}' is not a valid remote name`);
+	}
+
 	const oldSection = `remote "${oldName}"`;
 	if (!(oldSection in config)) {
 		return err(`error: No such remote: '${oldName}'\n`, 2);

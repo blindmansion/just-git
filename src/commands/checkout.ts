@@ -24,7 +24,14 @@ import { findEntry, readIndex } from "../lib/index.ts";
 import { peelToCommit, readCommit } from "../lib/object-db.ts";
 import { clearDetachPoint } from "../lib/operation-state.ts";
 import { logRef, ZERO_HASH } from "../lib/reflog.ts";
-import { createSymbolicRef, readHead, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
+import {
+	createSymbolicRef,
+	isValidBranchName,
+	readHead,
+	resolveHead,
+	resolveRef,
+	updateRef,
+} from "../lib/refs.ts";
 import { resolveRevision } from "../lib/rev-parse.ts";
 import { formatLongTrackingInfo, getTrackingInfo } from "../lib/status-format.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
@@ -187,6 +194,10 @@ async function createOrphanBranch(
 	_env: Map<string, string>,
 	ext?: GitExtensions,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+	if (!isValidBranchName(branchName)) {
+		return fatal(`'${branchName}' is not a valid branch name`);
+	}
+
 	const refName = `refs/heads/${branchName}`;
 	const existing = await resolveRef(gitCtx, refName);
 	if (existing) {
@@ -237,6 +248,10 @@ async function createAndSwitch(
 	ext?: GitExtensions,
 	force = false,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+	if (!isValidBranchName(branchName)) {
+		return fatal(`'${branchName}' is not a valid branch name`);
+	}
+
 	const rej = await ext?.hooks?.preCheckout?.({
 		repo: gitCtx,
 		target: branchName,

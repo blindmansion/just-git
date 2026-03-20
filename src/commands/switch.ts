@@ -28,6 +28,7 @@ import { logRef, ZERO_HASH } from "../lib/reflog.ts";
 import {
 	createSymbolicRef,
 	deleteRef,
+	isValidBranchName,
 	readHead,
 	resolveHead,
 	resolveRef,
@@ -193,6 +194,10 @@ async function switchCreateBranch(
 	ext?: GitExtensions,
 	trackingRef?: string,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+	if (!isValidBranchName(branchName)) {
+		return fatal(`'${branchName}' is not a valid branch name`);
+	}
+
 	const refName = `refs/heads/${branchName}`;
 	const existing = await resolveRef(gitCtx, refName);
 
@@ -383,6 +388,10 @@ async function switchOrphanBranch(
 	_env: Map<string, string>,
 	ext?: GitExtensions,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+	if (!isValidBranchName(branchName)) {
+		return fatal(`'${branchName}' is not a valid branch name`);
+	}
+
 	const opBlock = await checkActiveOperation(gitCtx);
 	if (opBlock) return opBlock;
 

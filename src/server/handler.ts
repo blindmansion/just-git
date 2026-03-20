@@ -6,6 +6,7 @@
  */
 
 import { isRejection } from "../hooks.ts";
+import { checkRefFormat } from "../lib/refs.ts";
 import {
 	PackCache,
 	buildRefAdvertisementBytes,
@@ -181,6 +182,15 @@ export function createGitServer(config: GitServerConfig): GitServer {
 					const applied: RefUpdate[] = [];
 
 					for (const update of updates) {
+						if (!update.isDelete && !checkRefFormat(update.ref)) {
+							results.push({
+								ref: update.ref,
+								ok: false,
+								error: "invalid refname",
+							});
+							continue;
+						}
+
 						if (hooks?.update) {
 							const result = await hooks.update({ repo, repoPath, update, request: req });
 							if (isRejection(result)) {
