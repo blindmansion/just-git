@@ -401,6 +401,7 @@ Arguments:
 
 Options:
   -l, --list  List all config entries
+  --get       Get the value for a given key
   --unset     Remove a config key
   --get-all   Get all values for a multi-valued key
   --add       Add a new line without altering existing values

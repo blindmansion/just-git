@@ -178,6 +178,23 @@ describe("git config", () => {
 			expect(results[2].stdout).toBe("Dave\n");
 		});
 
+		test("git config --get <key> reads a value", async () => {
+			const { results } = await runScenario(
+				["git init", 'git config set user.name "Heidi"', "git config --get user.name"],
+				{ files: EMPTY_REPO },
+			);
+			expect(results[2].exitCode).toBe(0);
+			expect(results[2].stdout).toBe("Heidi\n");
+		});
+
+		test("git config --get exit 1 for missing key", async () => {
+			const { results } = await runScenario(["git init", "git config --get user.name"], {
+				files: EMPTY_REPO,
+			});
+			expect(results[1].exitCode).toBe(1);
+			expect(results[1].stdout).toBe("");
+		});
+
 		test("git config --unset <key> removes a key", async () => {
 			const { results } = await runScenario(
 				[

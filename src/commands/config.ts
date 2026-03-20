@@ -45,6 +45,7 @@ export function registerConfigCommand(parent: Command, ext?: GitExtensions) {
 		args: [a.string().name("positionals").variadic().optional()],
 		options: {
 			list: f().alias("l").describe("List all config entries"),
+			get: f().describe("Get the value for a given key"),
 			unset: f().describe("Remove a config key"),
 			"get-all": f().describe("Get all values for a multi-valued key"),
 			add: f().describe("Add a new line without altering existing values"),
@@ -60,6 +61,17 @@ export function registerConfigCommand(parent: Command, ext?: GitExtensions) {
 			// ── Flag-based operations (legacy syntax) ────────────────
 			if (args.list) {
 				return handleList(gitCtx);
+			}
+
+			if (args.get) {
+				const key = first;
+				if (!key) {
+					return err("error: missing key", 2);
+				}
+				if (!isValidDottedKey(key)) {
+					return err(`error: invalid key: ${key}`, 2);
+				}
+				return handleGet(gitCtx, key);
 			}
 
 			if (args["get-all"]) {
