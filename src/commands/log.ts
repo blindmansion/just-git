@@ -64,6 +64,7 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 			shortstat: f().describe("Show only the shortstat summary line"),
 			numstat: f().describe("Machine-readable insertions/deletions per file"),
 			graph: f().describe("Draw text-based graph of the commit history"),
+			firstParent: f().describe("Follow only the first parent of merge commits"),
 		},
 		handler: async (args, ctx, meta) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
@@ -219,16 +220,20 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 			const maxCount = args.maxCount;
 			const reverseOutput = args.reverse;
 
+			const firstParent = args.firstParent;
+
 			const walker = pathSpecs
 				? walkCommitsSimplified(
 						gitCtx,
 						startHashes,
 						pathSpecs,
 						excludeHashes ? await buildExcludeSet(gitCtx, excludeHashes) : undefined,
+						firstParent,
 					)
 				: walkCommits(gitCtx, startHashes, {
 						exclude: excludeHashes,
 						topoOrder: useGraph,
+						firstParent,
 					});
 
 			const collected: CommitEntry[] = [];
@@ -364,6 +369,7 @@ async function* walkCommitsSimplified(
 	startHashes: ObjectId[],
 	pathSpecs: Pathspec[],
 	excludeSet?: Set<ObjectId>,
+	firstParent?: boolean,
 ): AsyncGenerator<CommitEntry> {
 	const visited = new Set<ObjectId>(excludeSet);
 	const queue = new CommitHeap();
@@ -389,7 +395,7 @@ async function* walkCommitsSimplified(
 		visited.add(entry.hash);
 
 		const { commit } = entry;
-		const parents = commit.parents;
+		const parents = firstParent ? commit.parents.slice(0, 1) : commit.parents;
 
 		if (parents.length === 0) {
 			const diff = await diffTrees(ctx, null, commit.tree);

@@ -93,7 +93,12 @@ export class CommitHeap {
 export async function* walkCommits(
 	ctx: GitRepo,
 	startHash: ObjectId | ObjectId[],
-	opts?: { exclude?: ObjectId[]; topoOrder?: boolean; shallowBoundary?: Set<ObjectId> },
+	opts?: {
+		exclude?: ObjectId[];
+		topoOrder?: boolean;
+		shallowBoundary?: Set<ObjectId>;
+		firstParent?: boolean;
+	},
 ): AsyncGenerator<CommitEntry> {
 	if (opts?.topoOrder) {
 		yield* walkCommitsTopoOrder(ctx, startHash, opts);
@@ -121,7 +126,8 @@ export async function* walkCommits(
 
 		if (shallow?.has(entry.hash)) continue;
 
-		for (const parentHash of entry.commit.parents) {
+		const parents = opts?.firstParent ? entry.commit.parents.slice(0, 1) : entry.commit.parents;
+		for (const parentHash of parents) {
 			if (!visited.has(parentHash)) {
 				try {
 					queue.push(await loadCommit(ctx, parentHash));
@@ -145,7 +151,7 @@ export async function* walkCommits(
 async function* walkCommitsTopoOrder(
 	ctx: GitRepo,
 	startHash: ObjectId | ObjectId[],
-	opts?: { exclude?: ObjectId[]; shallowBoundary?: Set<ObjectId> },
+	opts?: { exclude?: ObjectId[]; shallowBoundary?: Set<ObjectId>; firstParent?: boolean },
 ): AsyncGenerator<CommitEntry> {
 	const excluded = await buildExcludeSet(ctx, opts?.exclude);
 	const visited = new Set<ObjectId>(excluded);
@@ -173,7 +179,8 @@ async function* walkCommitsTopoOrder(
 
 		if (shallow?.has(entry.hash)) continue;
 
-		for (const parentHash of entry.commit.parents) {
+		const parents = opts?.firstParent ? entry.commit.parents.slice(0, 1) : entry.commit.parents;
+		for (const parentHash of parents) {
 			if (!visited.has(parentHash)) {
 				try {
 					queue.push(await loadCommit(ctx, parentHash));
@@ -190,7 +197,8 @@ async function* walkCommitsTopoOrder(
 
 	const inDeg = new Int32Array(n);
 	for (const entry of all) {
-		for (const p of entry.commit.parents) {
+		const parents = opts?.firstParent ? entry.commit.parents.slice(0, 1) : entry.commit.parents;
+		for (const p of parents) {
 			const pi = hashToIdx.get(p);
 			if (pi !== undefined) inDeg[pi] = (inDeg[pi] ?? 0) + 1;
 		}
@@ -207,8 +215,10 @@ async function* walkCommitsTopoOrder(
 		const idx = stack.pop()!;
 		yield all[idx]!;
 
-		// Push parents left-to-right; LIFO pops rightmost first
-		for (const p of all[idx]!.commit.parents) {
+		const topoParents = opts?.firstParent
+			? all[idx]!.commit.parents.slice(0, 1)
+			: all[idx]!.commit.parents;
+		for (const p of topoParents) {
 			const pi = hashToIdx.get(p);
 			if (pi !== undefined) {
 				const deg = (inDeg[pi] ?? 0) - 1;

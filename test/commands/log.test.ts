@@ -1092,4 +1092,89 @@ describe("git log", () => {
 			expect(matches!.length).toBe(3);
 		});
 	});
+
+	describe("--first-parent", () => {
+		async function setupMergeHistory() {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec('echo "second" > /repo/file.txt');
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "second"');
+			// Create feature branch with two commits
+			await bash.exec("git checkout -b feature");
+			await bash.exec('echo "feat1" > /repo/feature.txt');
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "feature-1"');
+			await bash.exec('echo "feat2" >> /repo/feature.txt');
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "feature-2"');
+			// Back to main, add a commit, then merge
+			await bash.exec("git checkout main");
+			await bash.exec('echo "main-work" > /repo/main.txt');
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "main-work"');
+			await bash.exec('git merge feature -m "merge-feature"');
+			return bash;
+		}
+
+		test("on linear history shows all commits", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "first"');
+			await bash.exec('echo "change" > /repo/file.txt');
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "second"');
+
+			const result = await bash.exec("git log --first-parent --oneline");
+			expect(result.exitCode).toBe(0);
+			const lines = result.stdout.trim().split("\n");
+			expect(lines).toHaveLength(2);
+			expect(lines[0]).toContain("second");
+			expect(lines[1]).toContain("first");
+		});
+
+		test("skips second-parent branch after merge", async () => {
+			const bash = await setupMergeHistory();
+
+			const result = await bash.exec("git log --first-parent --oneline");
+			expect(result.exitCode).toBe(0);
+			const lines = result.stdout.trim().split("\n");
+			const messages = lines.map((l) => l.slice(l.indexOf(" ") + 1));
+			expect(messages).toEqual(["merge-feature", "main-work", "second", "initial"]);
+		});
+
+		test("combines with -n limit", async () => {
+			const bash = await setupMergeHistory();
+
+			const result = await bash.exec("git log --first-parent --oneline -n2");
+			expect(result.exitCode).toBe(0);
+			const lines = result.stdout.trim().split("\n");
+			expect(lines).toHaveLength(2);
+			expect(lines[0]).toContain("merge-feature");
+			expect(lines[1]).toContain("main-work");
+		});
+
+		test("combines with --reverse", async () => {
+			const bash = await setupMergeHistory();
+
+			const result = await bash.exec("git log --first-parent --reverse --oneline");
+			expect(result.exitCode).toBe(0);
+			const lines = result.stdout.trim().split("\n");
+			const messages = lines.map((l) => l.slice(l.indexOf(" ") + 1));
+			expect(messages).toEqual(["initial", "second", "main-work", "merge-feature"]);
+		});
+
+		test("without --first-parent includes feature branch commits", async () => {
+			const bash = await setupMergeHistory();
+
+			const result = await bash.exec("git log --oneline");
+			expect(result.exitCode).toBe(0);
+			const output = result.stdout;
+			expect(output).toContain("feature-1");
+			expect(output).toContain("feature-2");
+		});
+	});
 });
