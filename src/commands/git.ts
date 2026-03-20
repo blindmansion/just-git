@@ -1,5 +1,6 @@
 import type { GitCommandName, GitExtensions } from "../git.ts";
-import { type Command, command } from "../parse/index.ts";
+import { type Command, a, command } from "../parse/index.ts";
+import { generateHelp } from "../parse/help.ts";
 import { registerAddCommand } from "./add.ts";
 import { registerBisectCommand } from "./bisect.ts";
 import { registerBlameCommand } from "./blame.ts";
@@ -34,6 +35,73 @@ import { registerStashCommand } from "./stash.ts";
 import { registerStatusCommand } from "./status.ts";
 import { registerSwitchCommand } from "./switch.ts";
 import { registerTagCommand } from "./tag.ts";
+
+/**
+ * Real git commands that are not implemented in just-git.
+ * Used to produce a specific error message distinguishing
+ * "not implemented" from "not a git command".
+ */
+export const KNOWN_UNIMPLEMENTED_COMMANDS = new Set([
+	"am",
+	"annotate",
+	"apply",
+	"archive",
+	"bundle",
+	"cat-file",
+	"check-ignore",
+	"check-mailmap",
+	"check-ref-format",
+	"checkout-index",
+	"commit-tree",
+	"count-objects",
+	"credential",
+	"daemon",
+	"describe",
+	"difftool",
+	"fast-export",
+	"fast-import",
+	"filter-branch",
+	"for-each-ref",
+	"format-patch",
+	"fsck",
+	"hash-object",
+	"instaweb",
+	"interpret-trailers",
+	"log--hierarchical",
+	"ls-remote",
+	"ls-tree",
+	"maintenance",
+	"merge-base",
+	"mergetool",
+	"multi-pack-index",
+	"name-rev",
+	"notes",
+	"pack-objects",
+	"pack-refs",
+	"patch-id",
+	"prune",
+	"range-diff",
+	"read-tree",
+	"receive-pack",
+	"rerere",
+	"send-email",
+	"send-pack",
+	"shortlog",
+	"sparse-checkout",
+	"stash--helper",
+	"stripspace",
+	"submodule",
+	"symbolic-ref",
+	"unpack-objects",
+	"update-index",
+	"update-ref",
+	"upload-pack",
+	"var",
+	"verify-pack",
+	"whatchanged",
+	"worktree",
+	"write-tree",
+]);
 
 const COMMAND_REGISTRY: Record<GitCommandName, (git: Command, ext?: GitExtensions) => void> = {
 	init: (g) => registerInitCommand(g),
@@ -79,5 +147,26 @@ export function createGitCommand(ext?: GitExtensions): Command {
 	for (const register of Object.values(COMMAND_REGISTRY)) {
 		register(git, ext);
 	}
+
+	git.command("help", {
+		description: "Display help information",
+		args: [a.string().name("command").describe("Command to get help for").optional()],
+		handler: async (args) => {
+			const cmdName = args.command as string | undefined;
+			if (!cmdName) {
+				return { stdout: generateHelp(git), stderr: "", exitCode: 0 };
+			}
+			const child = git.children.get(cmdName);
+			if (child) {
+				return { stdout: generateHelp(child), stderr: "", exitCode: 0 };
+			}
+			return {
+				stdout: "",
+				stderr: `git: no help available for '${cmdName}'\n`,
+				exitCode: 1,
+			};
+		},
+	});
+
 	return git;
 }

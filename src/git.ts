@@ -1,4 +1,4 @@
-import { createGitCommand } from "./commands/git.ts";
+import { KNOWN_UNIMPLEMENTED_COMMANDS, createGitCommand } from "./commands/git.ts";
 import type { FileSystem } from "./fs.ts";
 import {
 	type ConfigOverrides,
@@ -11,6 +11,8 @@ import {
 	isRejection,
 } from "./hooks.ts";
 import type { ObjectStore, RefStore, RemoteResolver } from "./lib/types.ts";
+
+export const VERSION = "1.2.9";
 
 /** Options for subcommand execution (mirrors just-bash's CommandExecOptions). */
 export interface CommandExecOptions {
@@ -267,10 +269,26 @@ export class Git {
 		return this.withLock(ctx.fs, async () => {
 			const command = args[0] ?? "";
 
+			if (command === "--version" || command === "version") {
+				return {
+					stdout: `just-git version ${VERSION} (virtual git implementation)\n`,
+					stderr: "",
+					exitCode: 0,
+				};
+			}
+
 			if (this.blocked?.has(command)) {
 				return {
 					stdout: "",
 					stderr: `git: '${command}' is not available in this environment\n`,
+					exitCode: 1,
+				};
+			}
+
+			if (command && KNOWN_UNIMPLEMENTED_COMMANDS.has(command)) {
+				return {
+					stdout: "",
+					stderr: `git: '${command}' is not implemented. Run 'git help' for available commands.\n`,
 					exitCode: 1,
 				};
 			}

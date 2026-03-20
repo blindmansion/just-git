@@ -45,6 +45,7 @@ Commands:
   repack       Pack unpacked objects in a repository
   gc           Cleanup unnecessary files and optimize the local repository
   bisect       Use binary search to find the commit that introduced a bug
+  help         Display help information
 ```
 
 ## git add
@@ -456,6 +457,18 @@ Usage:
 
 Options:
   --aggressive  More aggressively optimize the repository
+```
+
+## git help
+
+```
+git help - Display help information
+
+Usage:
+  git help [command]
+
+Arguments:
+  command  Command to get help for
 ```
 
 ## git init

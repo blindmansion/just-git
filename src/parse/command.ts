@@ -373,7 +373,25 @@ export class Command<THandlerArgs extends object = {}, TInvokeArgs extends objec
 			}
 		}
 
-		// No subcommand matched — check for --help
+		// Unknown subcommand — report before checking --help so that
+		// `git frobnicate --help` doesn't silently show root help.
+		if (!this.handler && firstToken && !firstToken.startsWith("-")) {
+			const suggestions = findSuggestions(firstToken, [...this.children.keys()]);
+			return {
+				stdout: "",
+				stderr: formatErrors([
+					{
+						type: "unknown_command",
+						path: `${this.fullPath} ${firstToken}`,
+						suggestions,
+					},
+				]),
+				exitCode: 1,
+			};
+		}
+
+		// --help on this command (only reached when the first token is
+		// a flag or absent, or this command has a handler)
 		if (hasHelpFlag(tokens)) {
 			return { stdout: generateHelp(this), stderr: "", exitCode: 0 };
 		}
@@ -393,22 +411,6 @@ export class Command<THandlerArgs extends object = {}, TInvokeArgs extends objec
 				const message = err instanceof Error ? err.message : String(err);
 				return { stdout: "", stderr: message, exitCode: 1 };
 			}
-		}
-
-		// No handler — check for unknown subcommand
-		if (firstToken && !firstToken.startsWith("-")) {
-			const suggestions = findSuggestions(firstToken, [...this.children.keys()]);
-			return {
-				stdout: "",
-				stderr: formatErrors([
-					{
-						type: "unknown_command",
-						path: `${this.fullPath} ${firstToken}`,
-						suggestions,
-					},
-				]),
-				exitCode: 1,
-			};
 		}
 
 		// Bare invocation, no handler — show help

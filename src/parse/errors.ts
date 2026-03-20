@@ -12,6 +12,7 @@ function formatError(error: ParseError): string {
 			if (error.suggestions.length > 0) {
 				msg += ` Did you mean ${error.suggestions.map((s) => `"${s}"`).join(" or ")}?`;
 			}
+			msg += `\nNot all git options are supported. Run 'git <command> --help' for available options.`;
 			return msg;
 		}
 
