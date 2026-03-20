@@ -1,5 +1,5 @@
 import type { GitRepo, Identity } from "../lib/types.ts";
-import type { SqliteDatabase } from "../server/sqlite-storage.ts";
+import type { BunSqliteDatabase } from "../server/bun-sqlite-storage.ts";
 import type { Rejection } from "../hooks.ts";
 
 export type { Rejection };
@@ -7,7 +7,7 @@ export type { Rejection };
 // ── Configuration ───────────────────────────────────────────────────
 
 export interface PlatformConfig {
-	database: SqliteDatabase;
+	database: BunSqliteDatabase;
 	on?: PlatformCallbacks;
 }
 

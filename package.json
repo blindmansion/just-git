@@ -61,9 +61,11 @@
 	"devDependencies": {
 		"@changesets/changelog-github": "^0.6.0",
 		"@changesets/cli": "^2.30.0",
+		"@types/better-sqlite3": "^7.6.13",
 		"@types/bun": "latest",
 		"@types/node": "^25.4.0",
 		"@types/pg": "^8.18.0",
+		"better-sqlite3": "^12.8.0",
 		"just-bash": "^2.9.7",
 		"knip": "^5.86.0",
 		"oxfmt": "^0.38.0",

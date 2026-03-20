@@ -17,7 +17,7 @@ import {
 	writeBlob,
 	writeTree,
 } from "../../src/repo/helpers.ts";
-import { SqliteStorage } from "../../src/server/sqlite-storage.ts";
+import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
 
 const TEST_ENV = {
 	GIT_AUTHOR_NAME: "Test",
@@ -496,9 +496,9 @@ describe("checkoutTo", () => {
 		).rejects.toThrow("not found");
 	});
 
-	test("works with SqliteStorage-backed repos", async () => {
+	test("works with BunSqliteStorage-backed repos", async () => {
 		const db = new Database(":memory:");
-		const storage = new SqliteStorage(db);
+		const storage = new BunSqliteStorage(db);
 		const repo = storage.repo("test-repo");
 
 		await repo.refStore.writeRef("HEAD", {

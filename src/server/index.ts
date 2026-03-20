@@ -37,13 +37,15 @@ export { createStandardHooks, withAuth, type StandardHooksConfig } from "./prese
 export type { Storage } from "./storage.ts";
 export { MemoryStorage } from "./memory-storage.ts";
 export {
-	SqliteStorage,
-	wrapBetterSqlite3,
+	BunSqliteStorage,
+	type BunSqliteDatabase,
+	type BunSqliteStatement,
+} from "./bun-sqlite-storage.ts";
+export {
+	BetterSqlite3Storage,
 	type BetterSqlite3Database,
 	type BetterSqlite3Statement,
-	type SqliteDatabase,
-	type SqliteStatement,
-} from "./sqlite-storage.ts";
+} from "./better-sqlite3-storage.ts";
 export {
 	PgStorage,
 	wrapPgPool,

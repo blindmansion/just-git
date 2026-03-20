@@ -3,15 +3,14 @@ import Database from "better-sqlite3";
 import {
 	createGitServer,
 	createStandardHooks,
-	SqliteStorage,
+	BetterSqlite3Storage,
 	toNodeHandler,
 	withAuth,
-	wrapBetterSqlite3,
 } from "just-git/server";
 
 const GIT_TOKEN = process.env.GIT_TOKEN;
 
-const storage = new SqliteStorage(wrapBetterSqlite3(new Database("repos.sqlite")));
+const storage = new BetterSqlite3Storage(new Database("repos.sqlite"));
 
 const server = createGitServer({
 	resolveRepo: withAuth(

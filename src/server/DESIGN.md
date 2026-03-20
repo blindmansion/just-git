@@ -10,12 +10,12 @@ The server is a sub-export of just-git (`just-git/server`), not a separate packa
 
 - The server code reaches into 8+ internal `lib/` modules (pkt-line, packfile, object-walk, merge, sha1, tag parsing, hex constants, core types). Extracting it would require either exporting all of those as public API or duplicating them.
 - The server is the mirror of `SmartHttpTransport` — the client side of the Smart HTTP protocol already lives in just-git. They share pkt-line framing, pack format, capability negotiation.
-- The `ObjectStore` and `RefStore` interfaces are the shared abstraction. Both the VFS-backed git commands and the server operate through them. `SqliteStorage` is just another backing store — it's an extension of the library, not a separate library.
+- The `ObjectStore` and `RefStore` interfaces are the shared abstraction. Both the VFS-backed git commands and the server operate through them. `BunSqliteStorage`/`BetterSqlite3Storage` are just other backing stores — they're extensions of the library, not a separate library.
 - The sub-export (`"./server"` in package.json) means users who only need the VFS git commands never load server code. Tree-shaking works.
 
 ### Relationship to `resolveRemote`
 
-`resolveRemote` handles in-process git transport. An agent's `git clone/fetch/push` resolves the remote URL via a callback that returns a `GitRepo` — which can be another agent's VFS-backed repo, a `SqliteStorage.repo()`, or any `ObjectStore + RefStore` pair. Zero HTTP overhead, full CAS-protected push semantics.
+`resolveRemote` handles in-process git transport. An agent's `git clone/fetch/push` resolves the remote URL via a callback that returns a `GitRepo` — which can be another agent's VFS-backed repo, a `BunSqliteStorage.repo()`, or any `ObjectStore + RefStore` pair. Zero HTTP overhead, full CAS-protected push semantics.
 
 The server module adds two things `resolveRemote` can't do:
 
@@ -23,7 +23,7 @@ The server module adds two things `resolveRemote` can't do:
 
 2. **Crossing process/network boundaries.** `resolveRemote` requires `GitRepo` instances in the same process (passing object references). The server works over HTTP across machines or deployments.
 
-They're complementary. Both can target the same backing stores (e.g. the same SQLite database via `SqliteStorage`). An agent can `resolveRemote` push to a `SqliteStorage.repo()` that the server also serves over HTTP. CAS at the `RefStore` level ensures correctness regardless of which path performs the write.
+They're complementary. Both can target the same backing stores (e.g. the same SQLite database via `BunSqliteStorage`). An agent can `resolveRemote` push to a `BunSqliteStorage.repo()` that the server also serves over HTTP. CAS at the `RefStore` level ensures correctness regardless of which path performs the write.
 
 ## Target use case
 
@@ -125,9 +125,9 @@ Opinionated hook configurations for common setups:
 
 - `createStandardHooks` — branch protection, force-push denial, delete denial, auth, post-push callback
 
-**Storage** (`sqlite-storage.ts`, `memory-storage.ts`, `pg-storage.ts`)
+**Storage** (`bun-sqlite-storage.ts`, `better-sqlite3-storage.ts`, `memory-storage.ts`, `pg-storage.ts`)
 
-`SqliteStorage`, `MemoryStorage`, and `PgStorage` — multi-repo backends implementing `ObjectStore` and `RefStore`. Multiple repos partitioned by ID in a single store.
+`BunSqliteStorage`, `BetterSqlite3Storage`, `MemoryStorage`, and `PgStorage` — multi-repo backends implementing `ObjectStore` and `RefStore`. Multiple repos partitioned by ID in a single store.
 
 All storage backends auto-create repos on `.repo(id)` — calling `storage.repo("any-string")` returns a functional `GitRepo` backed by lazily-initialized maps/tables, even if no data has ever been written. This is by design for convenience, but means `resolveRepo: (path) => storage.repo(path)` will accept any URL path. For production, validate repo paths in `resolveRepo` or use `withAuth` to gate access.
 
@@ -435,7 +435,7 @@ All three paths can target the same backing store (e.g. the same SQLite database
 
 - **`atomic` push capability** — the Git Smart HTTP protocol defines `atomic` as a server-advertised capability. When a client sends `--atomic`, the server guarantees all-or-nothing ref updates: if any ref CAS fails or a hook rejects one ref, all are rolled back. Currently the server applies refs individually in a loop — each ref gets its own CAS, so a multi-ref push can partially succeed. The client-side transports (`LocalTransport`, `SmartHttpTransport`) already enforce atomic semantics before sending, so this only matters for external git clients pushing multiple refs with `--atomic`. Implementation: add `"atomic"` to `RECEIVE_PACK_CAPS`, detect the capability in the client's request, and batch all `compareAndSwapRef` calls into a single `db.transaction()`. Low priority — agent repos almost always push a single ref at a time.
 
-- **Server-side GC** — clean up orphaned objects from rejected pushes and deleted branches. The existing VFS-based `gc`/`repack` commands require `GitContext` (filesystem, `.git` directory, loose objects, pack files), but `SqliteStorage`-backed repos have none of that — objects are rows in a table. Server-side GC is a simpler problem: walk all refs to get root hashes, enumerate reachable objects via `enumerateObjectsWithContent` (already works on `GitRepo`), then `DELETE` unreachable rows. The natural home is a `gc(repoId)` method on `SqliteStorage` that runs the walk and issues the SQL directly, avoiding any changes to the `ObjectStore` interface. The reachability walk currently returns full object content; a hashes-only enumeration mode would be a worthwhile optimization for GC. Triggering would follow the pattern real git platforms use: fire-and-forget from `postReceive`, on a schedule, or on-demand — never blocking a push. Low urgency since SQLite rows from rejected pushes don't cause the filesystem-level overhead (inode proliferation, slow readdir) that motivates GC in traditional git servers.
+- **Server-side GC** — clean up orphaned objects from rejected pushes and deleted branches. The existing VFS-based `gc`/`repack` commands require `GitContext` (filesystem, `.git` directory, loose objects, pack files), but SQLite-storage-backed repos have none of that — objects are rows in a table. Server-side GC is a simpler problem: walk all refs to get root hashes, enumerate reachable objects via `enumerateObjectsWithContent` (already works on `GitRepo`), then `DELETE` unreachable rows. The natural home is a `gc(repoId)` method on the storage class that runs the walk and issues the SQL directly, avoiding any changes to the `ObjectStore` interface. The reachability walk currently returns full object content; a hashes-only enumeration mode would be a worthwhile optimization for GC. Triggering would follow the pattern real git platforms use: fire-and-forget from `postReceive`, on a schedule, or on-demand — never blocking a push. Low urgency since SQLite rows from rejected pushes don't cause the filesystem-level overhead (inode proliferation, slow readdir) that motivates GC in traditional git servers.
 
 - **Sideband progress messages** — the server can write to sideband-64k band-2 (stderr) during `receive-pack` to send progress messages or warnings back to the pushing client. This would let long-running hooks give feedback (e.g. "running tests...", "checking policy...") instead of the client seeing silence until the push completes.
 

@@ -156,7 +156,7 @@ export async function collectRefs(repo: GitRepo): Promise<RefsData> {
 		.slice()
 		.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
-	// Storage backends (MemoryStorage, SqliteStorage, etc.) start with no
+	// Storage backends (MemoryStorage, BunSqliteStorage, etc.) start with no
 	// HEAD. Real bare repos always have HEAD pointing at the default branch.
 	// Without HEAD + symref, git clients can't determine the default branch
 	// and shallow clones silently produce empty repos. Synthesize HEAD from

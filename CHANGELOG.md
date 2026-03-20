@@ -35,7 +35,7 @@
 
 ### Minor Changes
 
-- Add `wrapBetterSqlite3` and `toNodeHandler` server helpers
+- Add `BetterSqlite3Storage` and `toNodeHandler` server helpers
 - Add `log --graph` output
 
 ## 1.1.4

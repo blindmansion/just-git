@@ -35,7 +35,7 @@ import {
 } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { SqliteStorage } from "../../src/server/sqlite-storage.ts";
+import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
 import { createGitServer } from "../../src/server/handler.ts";
 
 const SOURCE_REPO = process.argv[2] || "https://github.com/DeabLabs/cannoli.git";
@@ -118,7 +118,7 @@ console.log(`  database:   ${DB_PATH === ":memory:" ? "(in-memory)" : DB_PATH}\n
 
 const db = new Database(DB_PATH);
 db.run("PRAGMA journal_mode = WAL");
-const storage = new SqliteStorage(db);
+const storage = new BunSqliteStorage(db);
 
 let pushCount = 0;
 

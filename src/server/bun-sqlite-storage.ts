@@ -15,60 +15,18 @@ import type {
 } from "../lib/types.ts";
 import type { Storage } from "./storage.ts";
 
-// ── SQLite driver interface ─────────────────────────────────────────
-// Minimal interface covering bun:sqlite and better-sqlite3.
+// ── bun:sqlite driver types ─────────────────────────────────────────
 
-export interface SqliteStatement {
+export interface BunSqliteStatement {
 	run(...params: any[]): void;
 	get(...params: any[]): any;
 	all(...params: any[]): any[];
 }
 
-export interface SqliteDatabase {
+export interface BunSqliteDatabase {
 	run(sql: string): void;
-	prepare(sql: string): SqliteStatement;
+	prepare(sql: string): BunSqliteStatement;
 	transaction<F extends (...args: any[]) => any>(fn: F): (...args: Parameters<F>) => ReturnType<F>;
-}
-
-// ── better-sqlite3 adapter ──────────────────────────────────────────
-
-export interface BetterSqlite3Statement {
-	run(...params: any[]): any;
-	get(...params: any[]): any;
-	all(...params: any[]): any[];
-}
-
-export interface BetterSqlite3Database {
-	exec(sql: string): any;
-	prepare(sql: string): BetterSqlite3Statement;
-	transaction<F extends (...args: any[]) => any>(fn: F): (...args: Parameters<F>) => ReturnType<F>;
-}
-
-/**
- * Wrap a `better-sqlite3` database into a `SqliteDatabase`.
- *
- * Adapts `exec` → `run` and coerces `get` results from `undefined`
- * to `null` to match the `bun:sqlite` convention.
- *
- * ```ts
- * import Database from "better-sqlite3";
- * const db = wrapBetterSqlite3(new Database("repos.sqlite"));
- * const storage = new SqliteStorage(db);
- * ```
- */
-export function wrapBetterSqlite3(raw: BetterSqlite3Database): SqliteDatabase {
-	return {
-		run: (sql) => raw.exec(sql),
-		prepare: (sql) => {
-			const stmt = raw.prepare(sql);
-			return {
-				run: (...args: any[]) => stmt.run(...args),
-				get: (...args: any[]) => stmt.get(...args) ?? null,
-				all: (...args: any[]) => stmt.all(...args),
-			};
-		},
-		transaction: (fn) => raw.transaction(fn),
-	};
 }
 
 // ── Schema ──────────────────────────────────────────────────────────
@@ -95,21 +53,21 @@ CREATE TABLE IF NOT EXISTS git_refs (
 // ── Prepared statement cache ────────────────────────────────────────
 
 interface Statements {
-	objInsert: SqliteStatement;
-	objRead: SqliteStatement;
-	objExists: SqliteStatement;
-	objPrefix: SqliteStatement;
-	objDeleteAll: SqliteStatement;
+	objInsert: BunSqliteStatement;
+	objRead: BunSqliteStatement;
+	objExists: BunSqliteStatement;
+	objPrefix: BunSqliteStatement;
+	objDeleteAll: BunSqliteStatement;
 
-	refRead: SqliteStatement;
-	refWrite: SqliteStatement;
-	refDelete: SqliteStatement;
-	refList: SqliteStatement;
-	refListAll: SqliteStatement;
-	refDeleteAll: SqliteStatement;
+	refRead: BunSqliteStatement;
+	refWrite: BunSqliteStatement;
+	refDelete: BunSqliteStatement;
+	refList: BunSqliteStatement;
+	refListAll: BunSqliteStatement;
+	refDeleteAll: BunSqliteStatement;
 }
 
-function prepareStatements(db: SqliteDatabase): Statements {
+function prepareStatements(db: BunSqliteDatabase): Statements {
 	return {
 		objInsert: db.prepare(
 			"INSERT OR IGNORE INTO git_objects (repo_id, hash, type, content) VALUES (?, ?, ?, ?)",
@@ -132,30 +90,16 @@ function prepareStatements(db: SqliteDatabase): Statements {
 	};
 }
 
-// ── SqliteStorage ───────────────────────────────────────────────────
+// ── BunSqliteStorage ────────────────────────────────────────────────
 
-/**
- * SQLite-backed git storage with multi-repo support.
- *
- * Creates and manages `git_objects` and `git_refs` tables in the
- * provided database. Multiple repos are partitioned by `repo_id`.
- *
- * ```ts
- * const db = new Database("repos.sqlite");
- * const storage = new SqliteStorage(db);
- * const server = createGitServer({
- *   resolve: async (repoPath) => storage.repo(repoPath),
- * });
- * ```
- */
-export class SqliteStorage implements Storage {
-	private db: SqliteDatabase;
+export class BunSqliteStorage implements Storage {
+	private db: BunSqliteDatabase;
 	private stmts: Statements;
 	private ingestTx: (
 		rows: Array<{ repoId: string; hash: string; type: string; content: Uint8Array }>,
 	) => void;
 
-	constructor(db: SqliteDatabase) {
+	constructor(db: BunSqliteDatabase) {
 		this.db = db;
 		db.run(SCHEMA);
 		this.stmts = prepareStatements(db);
@@ -168,24 +112,22 @@ export class SqliteStorage implements Storage {
 		);
 	}
 
-	/** Get a `GitRepo` scoped to a specific repo. */
 	repo(repoId: string): GitRepo {
 		return {
-			objectStore: new SqliteObjectStore(this.stmts, this.ingestTx, repoId),
-			refStore: new SqliteRefStore(this.stmts, this.db, repoId),
+			objectStore: new BunSqliteObjectStore(this.stmts, this.ingestTx, repoId),
+			refStore: new BunSqliteRefStore(this.stmts, this.db, repoId),
 		};
 	}
 
-	/** Delete all objects and refs for a repo. */
 	async deleteRepo(repoId: string): Promise<void> {
 		this.stmts.objDeleteAll.run(repoId);
 		this.stmts.refDeleteAll.run(repoId);
 	}
 }
 
-// ── SqliteObjectStore ───────────────────────────────────────────────
+// ── BunSqliteObjectStore ────────────────────────────────────────────
 
-class SqliteObjectStore implements ObjectStore {
+class BunSqliteObjectStore implements ObjectStore {
 	private cache: ObjectCache;
 
 	constructor(
@@ -264,14 +206,14 @@ class SqliteObjectStore implements ObjectStore {
 	}
 }
 
-// ── SqliteRefStore ──────────────────────────────────────────────────
+// ── BunSqliteRefStore ───────────────────────────────────────────────
 
-class SqliteRefStore implements RefStore {
+class BunSqliteRefStore implements RefStore {
 	private casTx: (name: string, expectedOldHash: string | null, newRef: Ref | null) => boolean;
 
 	constructor(
 		private stmts: Statements,
-		db: SqliteDatabase,
+		db: BunSqliteDatabase,
 		private repoId: string,
 	) {
 		const s = stmts;

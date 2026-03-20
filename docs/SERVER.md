@@ -11,10 +11,10 @@ import { createGitServer } from "just-git/server";
 ## Quick start
 
 ```ts
-import { createGitServer, SqliteStorage } from "just-git/server";
+import { createGitServer, BunSqliteStorage } from "just-git/server";
 import { Database } from "bun:sqlite";
 
-const storage = new SqliteStorage(new Database("repos.sqlite"));
+const storage = new BunSqliteStorage(new Database("repos.sqlite"));
 
 const server = createGitServer({
   resolveRepo: async (repoPath) => storage.repo(repoPath),
@@ -27,10 +27,10 @@ For Node.js, wrap with `toNodeHandler`:
 
 ```ts
 import http from "node:http";
-import { createGitServer, SqliteStorage, wrapBetterSqlite3, toNodeHandler } from "just-git/server";
+import { createGitServer, BetterSqlite3Storage, toNodeHandler } from "just-git/server";
 import Database from "better-sqlite3";
 
-const storage = new SqliteStorage(wrapBetterSqlite3(new Database("repos.sqlite")));
+const storage = new BetterSqlite3Storage(new Database("repos.sqlite"));
 
 const server = createGitServer({
   resolveRepo: async (repoPath) => storage.repo(repoPath),
@@ -232,25 +232,25 @@ import { MemoryStorage } from "just-git/server";
 const storage = new MemoryStorage();
 ```
 
-### `SqliteStorage`
+### `BunSqliteStorage`
 
-Creates tables on construction. Native with `bun:sqlite`; use `wrapBetterSqlite3` for `better-sqlite3` on Node.js.
+For Bun. Takes a `bun:sqlite` `Database` directly.
 
 ```ts
-// Bun
-import { SqliteStorage } from "just-git/server";
+import { BunSqliteStorage } from "just-git/server";
 import { Database } from "bun:sqlite";
-const storage = new SqliteStorage(new Database("repos.sqlite"));
+const storage = new BunSqliteStorage(new Database("repos.sqlite"));
 ```
+
+### `BetterSqlite3Storage`
+
+For Node.js. Takes a `better-sqlite3` `Database` directly.
 
 ```ts
-// Node.js
-import { SqliteStorage, wrapBetterSqlite3 } from "just-git/server";
+import { BetterSqlite3Storage } from "just-git/server";
 import Database from "better-sqlite3";
-const storage = new SqliteStorage(wrapBetterSqlite3(new Database("repos.sqlite")));
+const storage = new BetterSqlite3Storage(new Database("repos.sqlite"));
 ```
-
-For other drivers, implement the `SqliteDatabase` interface directly.
 
 ### `PgStorage`
 

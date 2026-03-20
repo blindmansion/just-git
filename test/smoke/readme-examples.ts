@@ -7,7 +7,7 @@
 import { Bash, InMemoryFs } from "just-bash";
 import { Database } from "bun:sqlite";
 import { createGit } from "../../src";
-import { createGitServer, SqliteStorage } from "../../src/server";
+import { createGitServer, BunSqliteStorage } from "../../src/server";
 
 // ── Quick start: standalone exec() ──────────────────────────────────
 
@@ -41,7 +41,7 @@ import { createGitServer, SqliteStorage } from "../../src/server";
 // ── Quick start: server ─────────────────────────────────────────────
 
 {
-	const storage = new SqliteStorage(new Database(":memory:"));
+	const storage = new BunSqliteStorage(new Database(":memory:"));
 
 	const server = createGitServer({
 		resolveRepo: (path) => storage.repo(path),

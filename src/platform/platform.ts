@@ -1,7 +1,7 @@
 import type { GitRepo } from "../lib/types.ts";
 import { composeHooks, createGitServer } from "../server/handler.ts";
 import { resolveRef } from "../repo/helpers.ts";
-import { SqliteStorage, type SqliteDatabase } from "../server/sqlite-storage.ts";
+import { BunSqliteStorage, type BunSqliteDatabase } from "../server/bun-sqlite-storage.ts";
 import type { GitServer, GitServerConfig, ServerHooks } from "../server/types.ts";
 import { executeMerge, MergeError } from "./pull-requests.ts";
 import { PlatformDb } from "./storage.ts";
@@ -21,16 +21,16 @@ import type {
 } from "./types.ts";
 
 export class Platform {
-	private storage: SqliteStorage;
+	private storage: BunSqliteStorage;
 	private platformDb: PlatformDb;
 	private callbacks: PlatformCallbacks;
 
 	/** The raw SQLite database, for user queries against platform tables. */
-	readonly db: SqliteDatabase;
+	readonly db: BunSqliteDatabase;
 
 	constructor(config: PlatformConfig) {
 		this.db = config.database;
-		this.storage = new SqliteStorage(config.database);
+		this.storage = new BunSqliteStorage(config.database);
 		this.platformDb = new PlatformDb(config.database);
 		this.callbacks = config.on ?? {};
 	}

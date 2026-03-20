@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test, beforeEach } from "bun:test";
-import { SqliteStorage } from "../../src/server/sqlite-storage.ts";
+import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
 import { envelope } from "../../src/lib/object-store.ts";
 import { sha1 } from "../../src/lib/sha1.ts";
 import { writePack } from "../../src/lib/pack/packfile.ts";
@@ -12,13 +12,13 @@ async function makeHash(type: ObjectType, content: Uint8Array): Promise<string> 
 	return sha1(envelope(type, content));
 }
 
-describe("SqliteStorage", () => {
+describe("BunSqliteStorage", () => {
 	let db: Database;
-	let storage: SqliteStorage;
+	let storage: BunSqliteStorage;
 
 	beforeEach(() => {
 		db = new Database(":memory:");
-		storage = new SqliteStorage(db);
+		storage = new BunSqliteStorage(db);
 	});
 
 	// ── ObjectStore ──────────────────────────────────────────────

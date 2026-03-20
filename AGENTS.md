@@ -52,7 +52,7 @@ const bash = new Bash({ cwd: "/repo", customCommands: [git] });
 - `identity` — `IdentityOverride` with `name`, `email`, optional `locked`. When `locked: true`, overrides env vars (`GIT_AUTHOR_NAME`, etc.); when unlocked (default), acts as fallback when env vars and git config are absent.
 - `credentials` — `CredentialProvider` callback `(url) => HttpAuth | null`. Provides auth for Smart HTTP transport. Takes precedence over `GIT_HTTP_BEARER_TOKEN`/`GIT_HTTP_USER` env vars.
 - `config` — `ConfigOverrides` with `locked` and `defaults` maps. `locked` values always win over `.git/config` — the agent can run `git config set` but the locked value takes precedence on every read. `defaults` supply fallback values when a key is absent from `.git/config` — the agent _can_ override these with `git config`. Keys are dotted config names (e.g. `"push.default"`, `"merge.ff"`). Applied transparently via `getConfigValue()` so all commands respect overrides automatically.
-- `resolveRemote` — `RemoteResolver` callback `(url) => GitRepo | null`. Resolves non-HTTP remote URLs to a `GitRepo`, enabling cross-VFS transport. Called before local filesystem lookup. Return null to fall back to `findRepo` on the local VFS. Enables multi-agent setups where each agent has its own isolated filesystem but can clone/fetch/push between repos on different VFS instances via `LocalTransport`. Also enables resolving to server-backed repos (e.g. `SqliteStorage`) for hybrid in-process/server scenarios.
+- `resolveRemote` — `RemoteResolver` callback `(url) => GitRepo | null`. Resolves non-HTTP remote URLs to a `GitRepo`, enabling cross-VFS transport. Called before local filesystem lookup. Return null to fall back to `findRepo` on the local VFS. Enables multi-agent setups where each agent has its own isolated filesystem but can clone/fetch/push between repos on different VFS instances via `LocalTransport`. Also enables resolving to server-backed repos (e.g. `BunSqliteStorage`) for hybrid in-process/server scenarios.
 
 **Hooks** (`GitHooks` interface — config-at-construction, named callbacks):
 
@@ -187,17 +187,17 @@ Key behaviors:
 
 `Storage` interface (`server/storage.ts`): `repo(repoId) → GitRepo`, `deleteRepo(repoId) → Promise<void>`. All backends partition multiple repos by ID in a single store.
 
-| Backend         | File                       | Construction                 | Driver interface                                                                 |
-| --------------- | -------------------------- | ---------------------------- | -------------------------------------------------------------------------------- |
-| `MemoryStorage` | `server/memory-storage.ts` | `new MemoryStorage()`        | None                                                                             |
-| `SqliteStorage` | `server/sqlite-storage.ts` | `new SqliteStorage(db)`      | `SqliteDatabase` (native for `bun:sqlite`; use `wrapBetterSqlite3(db)` for Node) |
-| `PgStorage`     | `server/pg-storage.ts`     | `await PgStorage.create(db)` | `PgDatabase` (use `wrapPgPool(pool)` for `pg`)                                   |
+| Backend                | File                               | Construction                   | Driver interface                                  |
+| ---------------------- | ---------------------------------- | ------------------------------ | ------------------------------------------------- |
+| `MemoryStorage`        | `server/memory-storage.ts`         | `new MemoryStorage()`          | None                                              |
+| `BunSqliteStorage`     | `server/bun-sqlite-storage.ts`     | `new BunSqliteStorage(db)`     | `BunSqliteDatabase` (native `bun:sqlite`)         |
+| `BetterSqlite3Storage` | `server/better-sqlite3-storage.ts` | `new BetterSqlite3Storage(db)` | `BetterSqlite3Database` (native `better-sqlite3`) |
+| `PgStorage`            | `server/pg-storage.ts`             | `await PgStorage.create(db)`   | `PgDatabase` (use `wrapPgPool(pool)` for `pg`)    |
 
 The server handler (`createGitServer`) is storage-agnostic — it takes a `resolveRepo` callback returning `GitRepo`. Storage backends are interchangeable at that boundary.
 
 **Driver adapters:**
 
-- `wrapBetterSqlite3(db)` — wraps a `better-sqlite3` `Database` into `SqliteDatabase`. Adapts `exec` → `run` and coerces `get()` from `undefined` to `null`.
 - `wrapPgPool(pool)` — wraps a `pg` `Pool` into `PgDatabase`. Handles `BEGIN`/`COMMIT`/`ROLLBACK` and client release.
 
 **Node.js HTTP adapter:**

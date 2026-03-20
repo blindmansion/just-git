@@ -6,7 +6,7 @@ import { findRepo } from "../../src/lib/repo.ts";
 import { resolveRef } from "../../src/lib/refs.ts";
 import { readCommit } from "../../src/lib/object-db.ts";
 import { flattenTree } from "../../src/lib/tree-ops.ts";
-import { SqliteStorage } from "../../src/server/sqlite-storage.ts";
+import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
 import { createWorktree, readonlyRepo } from "../../src/repo/helpers.ts";
 
 const TEST_ENV = {
@@ -24,11 +24,11 @@ function envAt(ts: number) {
 
 describe("hybrid worktree (VFS + SQLite stores)", () => {
 	let db: Database;
-	let storage: SqliteStorage;
+	let storage: BunSqliteStorage;
 
 	beforeAll(async () => {
 		db = new Database(":memory:");
-		storage = new SqliteStorage(db);
+		storage = new BunSqliteStorage(db);
 
 		const repo = storage.repo("test-repo");
 		await repo.refStore.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
@@ -271,11 +271,11 @@ describe("hybrid worktree (VFS + SQLite stores)", () => {
 
 describe("readonlyRepo", () => {
 	let db: Database;
-	let storage: SqliteStorage;
+	let storage: BunSqliteStorage;
 
 	beforeAll(async () => {
 		db = new Database(":memory:");
-		storage = new SqliteStorage(db);
+		storage = new BunSqliteStorage(db);
 
 		const repo = storage.repo("ro-test");
 		await repo.refStore.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });

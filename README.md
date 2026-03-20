@@ -52,10 +52,10 @@ await bash.exec("git add . && git commit -m 'initial commit'");
 Stand up a git server with built-in storage (SQLite or [PostgreSQL](docs/SERVER.md#pgstorage)), branch protection, and push hooks:
 
 ```ts
-import { createGitServer, SqliteStorage } from "just-git/server";
+import { createGitServer, BunSqliteStorage } from "just-git/server";
 import { Database } from "bun:sqlite";
 
-const storage = new SqliteStorage(new Database("repos.sqlite"));
+const storage = new BunSqliteStorage(new Database("repos.sqlite"));
 
 const server = createGitServer({
   resolveRepo: (path) => storage.repo(path),
@@ -74,7 +74,7 @@ Bun.serve({ fetch: server.fetch });
 // git clone http://localhost:3000/my-repo ← works with real git
 ```
 
-Uses web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. For Node.js, use `toNodeHandler(server)` with `http.createServer` and `wrapBetterSqlite3` for `better-sqlite3`. See [SERVER.md](docs/SERVER.md) for the full API.
+Uses web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. For Node.js, use `toNodeHandler(server)` with `http.createServer` and `BetterSqlite3Storage` for `better-sqlite3`. See [SERVER.md](docs/SERVER.md) for the full API.
 
 ## Options
 
