@@ -119,8 +119,12 @@ export function basename(path: string, ext?: string): string {
 
 /** Compute the relative path from `from` to `to` */
 export function relative(from: string, to: string): string {
-	const fromNorm = normalize(from);
-	const toNorm = normalize(to);
+	let fromNorm = normalize(from);
+	let toNorm = normalize(to);
+
+	// Strip trailing slashes to match Node.js path.relative behavior
+	if (fromNorm.length > 1 && fromNorm.endsWith("/")) fromNorm = fromNorm.slice(0, -1);
+	if (toNorm.length > 1 && toNorm.endsWith("/")) toNorm = toNorm.slice(0, -1);
 
 	if (fromNorm === toNorm) return "";
 
