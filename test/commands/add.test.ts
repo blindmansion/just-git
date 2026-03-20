@@ -485,4 +485,39 @@ describe("git add", () => {
 			expect(stagedLines.length).toBe(2);
 		});
 	});
+
+	describe("trailing-slash directory pathspec", () => {
+		test("git add src/ does not create double-slash index entries", async () => {
+			const bash = createTestBash({ files: BASIC_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add src/");
+			const lsFiles = await bash.exec("git ls-files");
+
+			const paths = lsFiles.stdout.trim().split("\n");
+			expect(paths.filter((p) => p.includes("//"))).toEqual([]);
+		});
+
+		test("git add src (no trailing slash) does not create double-slash paths", async () => {
+			const bash = createTestBash({ files: BASIC_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add src");
+			const lsFiles = await bash.exec("git ls-files");
+
+			const paths = lsFiles.stdout.trim().split("\n");
+			expect(paths.filter((p) => p.includes("//"))).toEqual([]);
+		});
+
+		test("after commit with git add src/, ls-files shows clean paths", async () => {
+			const bash = createTestBash({ files: BASIC_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add src/");
+			await bash.exec("git add README.md");
+			await bash.exec('git commit -m "initial"');
+			const lsFiles = await bash.exec("git ls-files");
+
+			const paths = lsFiles.stdout.trim().split("\n");
+			expect(paths.filter((p) => p.includes("//"))).toEqual([]);
+			expect(paths.includes("src/main.ts") && paths.includes("src//main.ts")).toBe(false);
+		});
+	});
 });

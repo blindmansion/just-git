@@ -163,3 +163,40 @@ describe("rev-parse @{N} reflog syntax", () => {
 		expect(at1).toBe(featHash);
 	});
 });
+
+describe("rev-parse ^{type} peel syntax", () => {
+	test("HEAD^{tree} resolves to tree object", async () => {
+		const bash = setup();
+		await bash.exec("git init");
+		await bash.exec("git add .");
+		await bash.exec('git commit -m "initial"');
+
+		const result = await bash.exec("git rev-parse HEAD^{tree}");
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout.trim()).toHaveLength(40);
+	});
+
+	test("HEAD^{commit} resolves to commit object", async () => {
+		const bash = setup();
+		await bash.exec("git init");
+		await bash.exec("git add .");
+		await bash.exec('git commit -m "initial"');
+
+		const result = await bash.exec("git rev-parse HEAD^{commit}");
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout.trim()).toHaveLength(40);
+	});
+});
+
+describe("rev-parse <rev>:<path> syntax", () => {
+	test("HEAD:README.md resolves to blob hash", async () => {
+		const bash = setup();
+		await bash.exec("git init");
+		await bash.exec("git add .");
+		await bash.exec('git commit -m "initial"');
+
+		const result = await bash.exec("git rev-parse HEAD:README.md");
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout.trim()).toHaveLength(40);
+	});
+});
