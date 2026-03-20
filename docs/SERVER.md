@@ -286,7 +286,7 @@ const storage = await PgStorage.create(db);
 
 ## Working with pushed code
 
-Use the [repo module](src/repo/) (`just-git/repo`) inside hooks to inspect pushed commits, read files, diff trees, and more:
+Use the [repo module](REPO.md) (`just-git/repo`) inside hooks to inspect pushed commits, read files, diff trees, and more:
 
 ```ts
 import { getChangedFiles, readFileAtCommit, getNewCommits } from "just-git/repo";

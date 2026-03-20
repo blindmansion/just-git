@@ -1,10 +1,10 @@
 # Hooks reference
 
-Full reference for `just-git` hooks and event types. See the [README](README.md) for usage examples.
+Full reference for `just-git` hooks and event types. See the [README](../README.md) for a quick introduction and [CLIENT.md](CLIENT.md) for detailed usage examples.
 
 ## GitHooks interface
 
-All hooks are specified as named callback properties on a `GitHooks` config object, passed at construction time via `createGit({ hooks: { ... } })`. All event payloads include `repo: GitRepo`, giving hooks access to the [repo module helpers](src/repo/) for inspecting repository state.
+All hooks are specified as named callback properties on a `GitHooks` config object, passed at construction time via `createGit({ hooks: { ... } })`. All event payloads include `repo: GitRepo`, giving hooks access to the [repo module helpers](REPO.md) for inspecting repository state.
 
 ## Rejection protocol
 
