@@ -213,6 +213,16 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 
 			// Resolve commit message: -m / -F flags take priority, then amend's old message, then MERGE_MSG
 			let messageText: string | undefined = args.message;
+			if (messageText !== undefined) {
+				messageText = stripCommentLines(messageText);
+				if (!messageText) {
+					return {
+						stdout: "Aborting commit due to empty commit message.\n",
+						stderr: "",
+						exitCode: 1,
+					};
+				}
+			}
 			if (!messageText && args.file !== undefined) {
 				if (args.file === "-") {
 					messageText = ctx.stdin;

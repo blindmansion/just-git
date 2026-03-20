@@ -982,10 +982,13 @@ Options:
 git stash show - Show the changes recorded in a stash entry as a diff
 
 Usage:
-  git stash show [stash]
+  git stash show [options] [stash]
 
 Arguments:
   stash  Stash reference (e.g. stash@{0})
+
+Options:
+  -p, --patch  Show full diff (default is --stat)
 ```
 
 ## git status

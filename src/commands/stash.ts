@@ -7,6 +7,7 @@ import {
 	isCommandError,
 	requireGitContext,
 } from "../lib/command-utils.ts";
+import { formatDiffStat } from "../lib/commit-summary.ts";
 import { formatUnifiedDiff } from "../lib/diff-algorithm.ts";
 import { getConflictedPaths, readIndex } from "../lib/index.ts";
 import { readBlobContent, readCommit } from "../lib/object-db.ts";
@@ -191,13 +192,16 @@ export function registerStashCommand(parent: Command, ext?: GitExtensions) {
 
 	stash.command("show", {
 		description: "Show the changes recorded in a stash entry as a diff",
+		options: {
+			patch: f().alias("p").describe("Show full diff (default is --stat)"),
+		},
 		args: [a.string().name("stash").describe("Stash reference (e.g. stash@{0})").optional()],
 		handler: async (args, ctx) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
 			const abort = await emitPreStash(ext, gitCtxOrError, "show", args.stash ?? null);
 			if (isRejection(abort)) return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-			const result = await handleShow(gitCtxOrError, args.stash);
+			const result = await handleShow(gitCtxOrError, args.stash, args.patch);
 			await emitPostStash(ext, gitCtxOrError, "show", result.exitCode === 0);
 			return result;
 		},
@@ -383,7 +387,11 @@ async function handleDrop(gitCtx: GitContext, refArg: string | undefined): Promi
 	};
 }
 
-async function handleShow(gitCtx: GitContext, refArg: string | undefined): Promise<CommandResult> {
+async function handleShow(
+	gitCtx: GitContext,
+	refArg: string | undefined,
+	patch?: boolean,
+): Promise<CommandResult> {
 	const stashIndex = parseStashArg(refArg);
 	if (stashIndex < 0) {
 		return err(`error: '${refArg}' is not a valid stash reference`);
@@ -401,13 +409,17 @@ async function handleShow(gitCtx: GitContext, refArg: string | undefined): Promi
 	}
 
 	const parent = await readCommit(gitCtx, parentHash);
-	const diffs = await diffTrees(gitCtx, parent.tree, stashCommit.tree);
 
-	let output = "";
-	for (const diff of diffs) {
-		output += await formatTreeDiff(gitCtx, diff);
+	if (patch) {
+		const diffs = await diffTrees(gitCtx, parent.tree, stashCommit.tree);
+		let output = "";
+		for (const diff of diffs) {
+			output += await formatTreeDiff(gitCtx, diff);
+		}
+		return { stdout: output, stderr: "", exitCode: 0 };
 	}
 
+	const output = await formatDiffStat(gitCtx, parent.tree, stashCommit.tree);
 	return { stdout: output, stderr: "", exitCode: 0 };
 }
 

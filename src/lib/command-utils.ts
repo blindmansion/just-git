@@ -305,14 +305,40 @@ export async function writeCommitAndAdvance(
 	return hash;
 }
 
-/** Strip lines starting with `#` from MERGE_MSG / commit message text. */
+/**
+ * Clean up a commit message matching git's `strbuf_stripspace` with
+ * comment stripping (the default `--cleanup=strip` mode):
+ * - Remove lines starting with `#`
+ * - Trim trailing whitespace from each line
+ * - Strip leading and trailing blank lines
+ * - Collapse consecutive blank lines into one
+ *
+ * Returns `""` when the cleaned message is empty.
+ */
 export function stripCommentLines(text: string): string {
-	return text
+	const lines = text
 		.split("\n")
 		.filter((line) => !line.startsWith("#"))
-		.map((line) => line.trimEnd())
-		.join("\n")
-		.replace(/\n+$/, "\n");
+		.map((line) => line.trimEnd());
+
+	while (lines.length > 0 && lines[0] === "") lines.shift();
+	while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+
+	if (lines.length === 0) return "";
+
+	const result: string[] = [];
+	let prevBlank = false;
+	for (const line of lines) {
+		if (line === "") {
+			if (!prevBlank) result.push(line);
+			prevBlank = true;
+		} else {
+			result.push(line);
+			prevBlank = false;
+		}
+	}
+
+	return result.join("\n") + "\n";
 }
 
 /** Ensure a commit message ends with exactly one newline. */

@@ -292,7 +292,7 @@ describe("git stash", () => {
 	// ── Show ─────────────────────────────────────────────────────────
 
 	describe("show", () => {
-		test("show stash diff", async () => {
+		test("show defaults to stat format", async () => {
 			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
 			await bash.exec("git init");
 			await bash.exec("git add .");
@@ -302,6 +302,22 @@ describe("git stash", () => {
 			await bash.exec("git stash");
 
 			const result = await bash.exec("git stash show");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("README.md");
+			expect(result.stdout).toContain("file changed");
+			expect(result.stdout).not.toContain("diff --git");
+		});
+
+		test("show -p shows full diff", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+
+			await bash.exec('echo "modified content" > /repo/README.md');
+			await bash.exec("git stash");
+
+			const result = await bash.exec("git stash show -p");
 			expect(result.exitCode).toBe(0);
 			expect(result.stdout).toContain("diff --git");
 			expect(result.stdout).toContain("README.md");
