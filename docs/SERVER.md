@@ -219,6 +219,8 @@ const server = createGitServer({
 
 All three backends implement the `Storage` interface — `repo(repoId)` returns a `GitRepo`, `deleteRepo(repoId)` removes all data. Multiple repos share one store, partitioned by ID. They also work with `resolveRemote` for in-process cross-VFS transport alongside HTTP access.
 
+> **Note:** All storage backends auto-create repos on first access via `.repo(id)`. If you pass `storage.repo(path)` directly as `resolveRepo`, any URL path will create a repo and accept pushes. For production, validate repo paths in `resolveRepo` or wrap with [`withAuth`](#withauth--gate-all-access) to gate access.
+
 ```ts
 import type { Storage } from "just-git/server";
 ```

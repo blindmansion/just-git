@@ -78,8 +78,6 @@ Bun.serve({ fetch: server.fetch });
 
 Uses web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. For Node.js, use `toNodeHandler(server)` with `http.createServer` and `wrapBetterSqlite3` for `better-sqlite3`. See [SERVER.md](docs/SERVER.md) for the full API.
 
-> **Note:** All storage backends (`MemoryStorage`, `SqliteStorage`, `PgStorage`) auto-create repos on first access via `.repo(id)`. If you pass `storage.repo(path)` directly as `resolveRepo`, any URL path will create a repo and accept pushes. For production, validate repo paths in `resolveRepo` or wrap with `withAuth` to gate access.
-
 ## Options
 
 `createGit(options?)` accepts:
