@@ -34,6 +34,59 @@ describe("git commit", () => {
 		});
 	});
 
+	describe("multiple -m flags", () => {
+		test("joins multiple -m values with double newline", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			const result = await bash.exec('git commit -m "title" -m "body paragraph" -m "footer"');
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("title");
+
+			const log = await bash.exec("git log -1");
+			expect(log.stdout).toContain("    title");
+			expect(log.stdout).toContain("    body paragraph");
+			expect(log.stdout).toContain("    footer");
+		});
+
+		test("two -m flags produce title + body", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "subject" -m "details here"');
+
+			const log = await bash.exec("git log --format=%B -1");
+			expect(log.stdout).toContain("subject");
+			expect(log.stdout).toContain("details here");
+			// Separated by blank line
+			expect(log.stdout).toContain("subject\n\ndetails here");
+		});
+
+		test("single -m still works normally", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "just one message"');
+
+			const log = await bash.exec("git log --format=%s -1");
+			expect(log.stdout.trim()).toBe("just one message");
+		});
+
+		test("-am with additional -m flags combines correctly", async () => {
+			const bash = createTestBash({ files: BASIC_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "first"');
+			bash.fs.writeFile("/repo/README.md", "changed\n");
+
+			const result = await bash.exec('git commit -am "title" -m "body"');
+			expect(result.exitCode).toBe(0);
+
+			const log = await bash.exec("git log --format=%B -1");
+			expect(log.stdout).toContain("title\n\nbody");
+		});
+	});
+
 	describe("root commit", () => {
 		test("exits 0", async () => {
 			const { results } = await runScenario(

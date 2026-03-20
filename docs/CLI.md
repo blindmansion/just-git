@@ -857,10 +857,21 @@ Options:
 git show - Show various types of objects
 
 Usage:
-  git show [object...]
+  git show [options] [object...]
 
 Arguments:
   object...
+
+Options:
+  -p, --patch        Show diff in patch format
+  --no-patch         Suppress diff output
+  --stat             Show diffstat summary
+  --name-only        Show only names of changed files
+  --name-status      Show names and status of changed files
+  --shortstat        Show only the shortstat summary line
+  --numstat          Machine-readable insertions/deletions per file
+  --format <string>  Pretty-print format string
+  --pretty <string>  Pretty-print format or preset name
 ```
 
 ## git stash

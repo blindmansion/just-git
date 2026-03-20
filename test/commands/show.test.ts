@@ -216,6 +216,152 @@ describe("git show", () => {
 		});
 	});
 
+	describe("output format flags", () => {
+		test("--stat shows diffstat instead of patch", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "initial"', "git show --stat"],
+				{ files: BASIC_REPO, env: TEST_ENV },
+			);
+			const show = results[3];
+			expect(show.exitCode).toBe(0);
+			expect(show.stdout).toContain("    initial");
+			expect(show.stdout).toContain("README.md");
+			expect(show.stdout).toContain("3 files changed");
+			expect(show.stdout).not.toContain("diff --git");
+		});
+
+		test("--name-only lists changed file names", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "initial"', "git show --name-only"],
+				{ files: BASIC_REPO, env: TEST_ENV },
+			);
+			const show = results[3];
+			expect(show.exitCode).toBe(0);
+			expect(show.stdout).toContain("README.md\n");
+			expect(show.stdout).toContain("src/main.ts\n");
+			expect(show.stdout).toContain("src/util.ts\n");
+			expect(show.stdout).not.toContain("diff --git");
+		});
+
+		test("--name-status lists names with status letters", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "initial"', "git show --name-status"],
+				{ files: BASIC_REPO, env: TEST_ENV },
+			);
+			const show = results[3];
+			expect(show.exitCode).toBe(0);
+			expect(show.stdout).toContain("A\tREADME.md");
+			expect(show.stdout).toContain("A\tsrc/main.ts");
+			expect(show.stdout).not.toContain("diff --git");
+		});
+
+		test("-p shows patch (same as default)", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "initial"', "git show -p"],
+				{ files: BASIC_REPO, env: TEST_ENV },
+			);
+			const show = results[3];
+			expect(show.exitCode).toBe(0);
+			expect(show.stdout).toContain("diff --git");
+		});
+
+		test("--no-patch suppresses diff output", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "initial"', "git show --no-patch"],
+				{ files: BASIC_REPO, env: TEST_ENV },
+			);
+			const show = results[3];
+			expect(show.exitCode).toBe(0);
+			expect(show.stdout).toContain("    initial");
+			expect(show.stdout).toContain("Author:");
+			expect(show.stdout).not.toContain("diff --git");
+			expect(show.stdout).not.toContain("files changed");
+		});
+
+		test("--shortstat shows only summary line", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "initial"', "git show --shortstat"],
+				{ files: BASIC_REPO, env: TEST_ENV },
+			);
+			const show = results[3];
+			expect(show.exitCode).toBe(0);
+			expect(show.stdout).toContain("3 files changed, 3 insertions(+)");
+			expect(show.stdout).not.toContain("diff --git");
+		});
+
+		test("--numstat shows machine-readable insertions/deletions", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "initial"', "git show --numstat"],
+				{ files: BASIC_REPO, env: TEST_ENV },
+			);
+			const show = results[3];
+			expect(show.exitCode).toBe(0);
+			expect(show.stdout).toContain("1\t0\tREADME.md");
+			expect(show.stdout).toContain("1\t0\tsrc/main.ts");
+			expect(show.stdout).not.toContain("diff --git");
+		});
+	});
+
+	describe("--format and --pretty", () => {
+		test("--format=%H shows only the full hash", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "initial"', "git show --format=%H --no-patch"],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			const show = results[3];
+			expect(show.exitCode).toBe(0);
+			expect(show.stdout.trim()).toMatch(/^[a-f0-9]{40}$/);
+		});
+
+		test("--format=%s shows subject line", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "initial"', "git show --format=%s --no-patch"],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			const show = results[3];
+			expect(show.exitCode).toBe(0);
+			expect(show.stdout.trim()).toBe("initial");
+		});
+
+		test("--pretty=oneline shows hash + subject on one line", async () => {
+			const { results } = await runScenario(
+				[
+					"git init",
+					"git add .",
+					'git commit -m "initial"',
+					"git show --pretty=oneline --no-patch",
+				],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			const show = results[3];
+			expect(show.exitCode).toBe(0);
+			expect(show.stdout.trim()).toMatch(/^[a-f0-9]{40} initial$/);
+		});
+
+		test("--pretty=short shows author without date", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "initial"', "git show --pretty=short --no-patch"],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			const show = results[3];
+			expect(show.exitCode).toBe(0);
+			expect(show.stdout).toContain("Author:");
+			expect(show.stdout).not.toContain("Date:");
+		});
+
+		test("--format with --stat shows formatted header + diffstat", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "initial"', "git show --format=%s --stat"],
+				{ files: BASIC_REPO, env: TEST_ENV },
+			);
+			const show = results[3];
+			expect(show.exitCode).toBe(0);
+			expect(show.stdout).toContain("initial");
+			expect(show.stdout).toContain("3 files changed");
+			expect(show.stdout).not.toContain("diff --git");
+		});
+	});
+
 	describe("show with modified files", () => {
 		test("diff shows modifications correctly", async () => {
 			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });

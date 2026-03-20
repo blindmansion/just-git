@@ -39,9 +39,66 @@ import { buildTreeFromIndex } from "../lib/tree-ops.ts";
 import { diffIndexToWorkTree, stageFile } from "../lib/worktree.ts";
 import { type Command, f, o } from "../parse/index.ts";
 
+/**
+ * Pre-process tokens to collect multiple `-m` / `--message` values and
+ * join them with `\n\n`, matching real git's behavior.
+ */
+function collectMessages(tokens: string[]): string[] {
+	const messages: string[] = [];
+	const result: string[] = [];
+	let i = 0;
+	while (i < tokens.length) {
+		const t = tokens[i]!;
+		if (t === "--") {
+			for (; i < tokens.length; i++) result.push(tokens[i]!);
+			break;
+		}
+		if (t === "-m" || t === "--message") {
+			if (i + 1 < tokens.length) {
+				messages.push(tokens[i + 1]!);
+				i += 2;
+			} else {
+				result.push(t);
+				i++;
+			}
+			continue;
+		}
+		if (t.startsWith("--message=")) {
+			messages.push(t.slice("--message=".length));
+			i++;
+			continue;
+		}
+		if (t.startsWith("-") && !t.startsWith("--") && t.length > 1) {
+			const chars = t.slice(1);
+			const mIdx = chars.indexOf("m");
+			if (mIdx !== -1) {
+				const before = chars.slice(0, mIdx);
+				const after = chars.slice(mIdx + 1);
+				if (before.length > 0) result.push(`-${before}`);
+				if (after.length > 0) {
+					messages.push(after);
+				} else if (i + 1 < tokens.length) {
+					messages.push(tokens[i + 1]!);
+					i += 2;
+					continue;
+				}
+				i++;
+				continue;
+			}
+		}
+		result.push(t);
+		i++;
+	}
+	if (messages.length > 0) {
+		result.push("-m", messages.join("\n\n"));
+	}
+	return result;
+}
+
 export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("commit", {
 		description: "Record changes to the repository",
+		transformArgs: collectMessages,
 		options: {
 			message: o.string().alias("m").describe("Commit message"),
 			file: o.string().alias("F").describe("Read commit message from file ('-' for stdin)"),

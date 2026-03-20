@@ -9,23 +9,50 @@ import {
 	requireHead,
 	requireRevision,
 } from "../lib/command-utils.ts";
+import { computeDiffStats, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
 import { formatDate } from "../lib/date.ts";
-import { formatUnifiedDiff } from "../lib/diff-algorithm.ts";
-import { readBlobContent, readCommit, readObject, readTag } from "../lib/object-db.ts";
-import { detectRenames, type RenamePair } from "../lib/rename-detection.ts";
+import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algorithm.ts";
+import {
+	expandFormat,
+	type FormatContext,
+	formatPreset,
+	parseFormatArg,
+} from "../lib/log-format.ts";
+import { isBinaryStr, readBlobContent, readCommit, readObject, readTag } from "../lib/object-db.ts";
+import { detectRenames, formatRenamePath, type RenamePair } from "../lib/rename-detection.ts";
 import { parseRevPath } from "../lib/rev-parse.ts";
 import { parseTree } from "../lib/objects/tree.ts";
 import { join } from "../lib/path.ts";
 import { diffTrees, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { Commit, GitContext, ObjectId, Tag, Tree, TreeDiffEntry } from "../lib/types.ts";
-import { a, type Command } from "../parse/index.ts";
+import { a, type Command, f, o } from "../parse/index.ts";
 
 const decoder = new TextDecoder();
+
+type ShowDiffFormat =
+	| "patch"
+	| "stat"
+	| "name-only"
+	| "name-status"
+	| "shortstat"
+	| "numstat"
+	| null;
 
 export function registerShowCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("show", {
 		description: "Show various types of objects",
 		args: [a.string().name("object").variadic().optional()],
+		options: {
+			patch: f().alias("p").describe("Show diff in patch format"),
+			noPatch: f().describe("Suppress diff output"),
+			stat: f().describe("Show diffstat summary"),
+			nameOnly: f().describe("Show only names of changed files"),
+			nameStatus: f().describe("Show names and status of changed files"),
+			shortstat: f().describe("Show only the shortstat summary line"),
+			numstat: f().describe("Machine-readable insertions/deletions per file"),
+			format: o.string().describe("Pretty-print format string"),
+			pretty: o.string().describe("Pretty-print format or preset name"),
+		},
 		handler: async (args, ctx) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
@@ -51,15 +78,50 @@ export function registerShowCommand(parent: Command, ext?: GitExtensions) {
 
 			const raw = await readObject(gitCtx, hash);
 
+			// Determine diff output format
+			let diffFormat: ShowDiffFormat;
+			if (args.noPatch) {
+				diffFormat = null;
+			} else if (args.stat) {
+				diffFormat = "stat";
+			} else if (args.nameOnly) {
+				diffFormat = "name-only";
+			} else if (args.nameStatus) {
+				diffFormat = "name-status";
+			} else if (args.shortstat) {
+				diffFormat = "shortstat";
+			} else if (args.numstat) {
+				diffFormat = "numstat";
+			} else {
+				diffFormat = "patch";
+			}
+
+			// Determine header format
+			const formatRaw = args.format ?? args.pretty;
+			let customFormat: string | null = null;
+			let presetName: string | null = null;
+			if (formatRaw !== undefined) {
+				const parsed = parseFormatArg(formatRaw);
+				customFormat = parsed.formatStr;
+				presetName = parsed.preset;
+			}
+
 			switch (raw.type) {
 				case "commit": {
 					const commit = await readCommit(gitCtx, hash);
-					const output = await formatCommitShow(gitCtx, hash, commit);
+					const output = await formatCommitShow(
+						gitCtx,
+						hash,
+						commit,
+						diffFormat,
+						customFormat,
+						presetName,
+					);
 					return { stdout: output, stderr: "", exitCode: 0 };
 				}
 				case "tag": {
 					const tag = await readTag(gitCtx, hash);
-					const output = await formatTagShow(gitCtx, tag);
+					const output = await formatTagShow(gitCtx, tag, diffFormat, customFormat, presetName);
 					return { stdout: output, stderr: "", exitCode: 0 };
 				}
 				case "tree": {
@@ -117,24 +179,46 @@ async function handleRevPath(
 
 // ── Commit display ──────────────────────────────────────────────────
 
-async function formatCommitShow(ctx: GitContext, hash: ObjectId, commit: Commit): Promise<string> {
-	const lines: string[] = [];
-
-	lines.push(`commit ${hash}`);
-	if (commit.parents.length >= 2) {
-		const abbrevParents = commit.parents.map((p) => abbreviateHash(p)).join(" ");
-		lines.push(`Merge: ${abbrevParents}`);
+async function formatCommitShow(
+	ctx: GitContext,
+	hash: ObjectId,
+	commit: Commit,
+	diffFormat: ShowDiffFormat = "patch",
+	customFormat: string | null = null,
+	presetName: string | null = null,
+): Promise<string> {
+	// ── Header ──────────────────────────────────────────────────
+	let header: string;
+	if (customFormat !== null) {
+		const fctx: FormatContext = { hash, commit };
+		header = expandFormat(customFormat, fctx);
+	} else if (presetName !== null) {
+		const fctx: FormatContext = { hash, commit };
+		header = formatPreset(presetName, fctx, true, false);
+	} else {
+		const lines: string[] = [];
+		lines.push(`commit ${hash}`);
+		if (commit.parents.length >= 2) {
+			const abbrevParents = commit.parents.map((p) => abbreviateHash(p)).join(" ");
+			lines.push(`Merge: ${abbrevParents}`);
+		}
+		lines.push(`Author: ${commit.author.name} <${commit.author.email}>`);
+		lines.push(`Date:   ${formatDate(commit.author.timestamp, commit.author.timezone)}`);
+		lines.push("");
+		const msg = commit.message.replace(/\n$/, "");
+		for (const msgLine of msg.split("\n")) {
+			lines.push(`    ${msgLine}`);
+		}
+		header = lines.join("\n");
 	}
-	lines.push(`Author: ${commit.author.name} <${commit.author.email}>`);
-	lines.push(`Date:   ${formatDate(commit.author.timestamp, commit.author.timezone)}`);
-	lines.push("");
-	const msg = commit.message.replace(/\n$/, "");
-	for (const msgLine of msg.split("\n")) {
-		lines.push(`    ${msgLine}`);
+
+	if (!diffFormat) {
+		return `${header}\n`;
 	}
 
+	// ── Diff ────────────────────────────────────────────────────
+	let diffOutput = "";
 	if (commit.parents.length <= 1) {
-		// Non-merge: show unified diff against parent
 		const parentTree =
 			commit.parents.length === 1
 				? (await readCommit(ctx, commit.parents[0] as ObjectId)).tree
@@ -142,29 +226,32 @@ async function formatCommitShow(ctx: GitContext, hash: ObjectId, commit: Commit)
 
 		const rawDiffs = await diffTrees(ctx, parentTree, commit.tree);
 		const { remaining: diffs, renames } = await detectRenames(ctx, rawDiffs);
-		const diffOutput = await formatDiffsWithRenames(ctx, diffs, renames);
-		if (diffOutput) {
-			lines.push("");
-			lines.push(diffOutput.replace(/\n$/, ""));
-		}
+		diffOutput = await formatShowDiff(ctx, diffs, renames, diffFormat);
 	} else {
-		// Merge commit: show combined diff (diff --cc)
-		const combinedOutput = await formatCombinedDiff(ctx, commit);
-		if (combinedOutput) {
-			lines.push("");
-			lines.push(combinedOutput.replace(/\n$/, ""));
-		} else {
-			// Real git adds a trailing blank line even with no combined diff
-			lines.push("");
+		if (diffFormat === "patch") {
+			diffOutput = (await formatCombinedDiff(ctx, commit)) ?? "";
 		}
+		// For non-patch formats on merge commits, no output (matches real git)
 	}
 
-	return `${lines.join("\n")}\n`;
+	if (diffOutput) {
+		return `${header}\n\n${diffOutput.replace(/\n$/, "")}\n`;
+	}
+	if (commit.parents.length >= 2) {
+		return `${header}\n\n`;
+	}
+	return `${header}\n`;
 }
 
 // ── Tag display ─────────────────────────────────────────────────────
 
-async function formatTagShow(ctx: GitContext, tag: Tag): Promise<string> {
+async function formatTagShow(
+	ctx: GitContext,
+	tag: Tag,
+	diffFormat: ShowDiffFormat = "patch",
+	customFormat: string | null = null,
+	presetName: string | null = null,
+): Promise<string> {
 	const lines: string[] = [];
 
 	lines.push(`tag ${tag.name}`);
@@ -176,10 +263,16 @@ async function formatTagShow(ctx: GitContext, tag: Tag): Promise<string> {
 		lines.push(`    ${msgLine}`);
 	}
 
-	// Then show the tagged object (typically a commit)
 	if (tag.objectType === "commit") {
 		const commit = await readCommit(ctx, tag.object);
-		const commitOutput = await formatCommitShow(ctx, tag.object, commit);
+		const commitOutput = await formatCommitShow(
+			ctx,
+			tag.object,
+			commit,
+			diffFormat,
+			customFormat,
+			presetName,
+		);
 		lines.push("");
 		lines.push(commitOutput.replace(/\n$/, ""));
 	}
@@ -198,7 +291,122 @@ function formatTreeShow(tree: Tree): string {
 	return lines.length > 0 ? `${lines.join("\n")}\n` : "";
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────
+// ── Diff format dispatch ────────────────────────────────────────────
+
+async function formatShowDiff(
+	ctx: GitContext,
+	diffs: TreeDiffEntry[],
+	renames: RenamePair[],
+	format: ShowDiffFormat,
+): Promise<string> {
+	switch (format) {
+		case "patch":
+			return formatDiffsWithRenames(ctx, diffs, renames);
+		case "stat":
+			return showStat(ctx, diffs, renames);
+		case "shortstat":
+			return showShortstat(ctx, diffs, renames);
+		case "numstat":
+			return showNumstat(ctx, diffs, renames);
+		case "name-only":
+			return showNameOnly(diffs, renames);
+		case "name-status":
+			return showNameStatus(diffs, renames);
+		default:
+			return "";
+	}
+}
+
+function showNameOnly(diffs: TreeDiffEntry[], renames: RenamePair[]): string {
+	const paths: string[] = [];
+	for (const d of diffs) paths.push(d.path);
+	for (const r of renames) paths.push(r.newPath);
+	paths.sort();
+	return paths.length > 0 ? `${paths.join("\n")}\n` : "";
+}
+
+function showNameStatus(diffs: TreeDiffEntry[], renames: RenamePair[]): string {
+	const items: { key: string; line: string }[] = [];
+	for (const d of diffs) {
+		const s = d.status === "added" ? "A" : d.status === "deleted" ? "D" : "M";
+		items.push({ key: d.path, line: `${s}\t${d.path}` });
+	}
+	for (const r of renames) {
+		const score = String(r.similarity ?? 100).padStart(3, "0");
+		items.push({ key: r.newPath, line: `R${score}\t${r.oldPath}\t${r.newPath}` });
+	}
+	items.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+	return items.length > 0 ? items.map((i) => `${i.line}\n`).join("") : "";
+}
+
+async function showStat(
+	ctx: GitContext,
+	diffs: TreeDiffEntry[],
+	renames: RenamePair[],
+): Promise<string> {
+	const { fileStats } = await computeDiffStats(ctx, diffs, renames);
+	fileStats.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
+	return renderStatLines(fileStats);
+}
+
+async function showShortstat(
+	ctx: GitContext,
+	diffs: TreeDiffEntry[],
+	renames: RenamePair[],
+): Promise<string> {
+	const { fileStats } = await computeDiffStats(ctx, diffs, renames);
+	let totalIns = 0;
+	let totalDel = 0;
+	for (const s of fileStats) {
+		totalIns += s.insertions;
+		totalDel += s.deletions;
+	}
+	const line = formatShortstatParts(fileStats.length, totalIns, totalDel);
+	return line ? `${line}\n` : "";
+}
+
+async function showNumstat(
+	ctx: GitContext,
+	diffs: TreeDiffEntry[],
+	renames: RenamePair[],
+): Promise<string> {
+	const items: { key: string; oldHash?: string; newHash?: string; display: string }[] = [];
+	for (const d of diffs) {
+		items.push({ key: d.path, oldHash: d.oldHash, newHash: d.newHash, display: d.path });
+	}
+	for (const r of renames) {
+		items.push({
+			key: r.newPath,
+			oldHash: r.oldHash,
+			newHash: r.newHash,
+			display: formatRenamePath(r.oldPath, r.newPath),
+		});
+	}
+	items.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+
+	let out = "";
+	for (const item of items) {
+		const oldContent = item.oldHash ? await readBlobContent(ctx, item.oldHash) : "";
+		const newContent = item.newHash ? await readBlobContent(ctx, item.newHash) : "";
+		if (isBinaryStr(oldContent) || isBinaryStr(newContent)) {
+			out += `-\t-\t${item.display}\n`;
+		} else {
+			const oldLines = splitLinesWithNL(oldContent);
+			const newLines = splitLinesWithNL(newContent);
+			const edits = myersDiff(oldLines, newLines);
+			let ins = 0;
+			let del = 0;
+			for (const edit of edits) {
+				if (edit.type === "insert") ins++;
+				else if (edit.type === "delete") del++;
+			}
+			out += `${ins}\t${del}\t${item.display}\n`;
+		}
+	}
+	return out;
+}
+
+// ── Patch formatting helpers ────────────────────────────────────────
 
 async function formatTreeDiff(ctx: GitContext, diff: TreeDiffEntry): Promise<string> {
 	const oldContent = diff.oldHash ? await readBlobContent(ctx, diff.oldHash) : "";
