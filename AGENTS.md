@@ -293,6 +293,8 @@ Re-exports `createGit`, `Git`, `GitOptions`, `GitCommandName`, `GitExtensions`, 
 
 ## Commands
 
+Each command implements a subset of real git's flags — the Summary column lists exactly what's supported.
+
 | Command           | File                      | Summary                                                                                                                                                                                                                                                                                                                                                  |
 | ----------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `git init`        | `commands/init.ts`        | `init`, `init <dir>`, `init --bare`, `--initial-branch <name>`                                                                                                                                                                                                                                                                                           |
