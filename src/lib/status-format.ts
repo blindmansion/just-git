@@ -10,7 +10,7 @@ import { isRebaseInProgress, readRebaseState } from "./rebase.ts";
 import { branchNameFromRef, readHead, resolveHead, resolveRef } from "./refs.ts";
 import { detectRenames } from "./rename-detection.ts";
 import { flattenTreeToMap } from "./tree-ops.ts";
-import type { GitContext, Index, ObjectId, TreeDiffEntry } from "./types.ts";
+import type { GitContext, GitRepo, Index, ObjectId, TreeDiffEntry } from "./types.ts";
 import { diffIndexToWorkTree } from "./worktree.ts";
 
 export interface StatusEntry {
@@ -384,7 +384,7 @@ async function formatLongStatus(
  * Includes rename detection — collapses add+delete pairs into "renamed" entries.
  */
 export async function getStagedChanges(
-	ctx: GitContext,
+	ctx: GitRepo,
 	headHash: ObjectId | null,
 	index: Index,
 	unmergedEntries?: StatusEntry[],
@@ -578,7 +578,7 @@ interface TrackingInfo {
  * the upstream ref and compute ahead/behind counts.
  */
 export async function getTrackingInfo(
-	ctx: GitContext,
+	ctx: GitRepo,
 	config: GitConfig,
 	branchName: string,
 ): Promise<TrackingInfo | null> {

@@ -24,7 +24,15 @@ import { parseRevPath } from "../lib/rev-parse.ts";
 import { parseTree } from "../lib/objects/tree.ts";
 import { join } from "../lib/path.ts";
 import { diffTrees, flattenTreeToMap } from "../lib/tree-ops.ts";
-import type { Commit, GitContext, ObjectId, Tag, Tree, TreeDiffEntry } from "../lib/types.ts";
+import type {
+	Commit,
+	GitContext,
+	GitRepo,
+	ObjectId,
+	Tag,
+	Tree,
+	TreeDiffEntry,
+} from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 
 const decoder = new TextDecoder();
@@ -180,7 +188,7 @@ async function handleRevPath(
 // ── Commit display ──────────────────────────────────────────────────
 
 async function formatCommitShow(
-	ctx: GitContext,
+	ctx: GitRepo,
 	hash: ObjectId,
 	commit: Commit,
 	diffFormat: ShowDiffFormat = "patch",
@@ -246,7 +254,7 @@ async function formatCommitShow(
 // ── Tag display ─────────────────────────────────────────────────────
 
 async function formatTagShow(
-	ctx: GitContext,
+	ctx: GitRepo,
 	tag: Tag,
 	diffFormat: ShowDiffFormat = "patch",
 	customFormat: string | null = null,
@@ -294,7 +302,7 @@ function formatTreeShow(tree: Tree): string {
 // ── Diff format dispatch ────────────────────────────────────────────
 
 async function formatShowDiff(
-	ctx: GitContext,
+	ctx: GitRepo,
 	diffs: TreeDiffEntry[],
 	renames: RenamePair[],
 	format: ShowDiffFormat,
@@ -340,7 +348,7 @@ function showNameStatus(diffs: TreeDiffEntry[], renames: RenamePair[]): string {
 }
 
 async function showStat(
-	ctx: GitContext,
+	ctx: GitRepo,
 	diffs: TreeDiffEntry[],
 	renames: RenamePair[],
 ): Promise<string> {
@@ -350,7 +358,7 @@ async function showStat(
 }
 
 async function showShortstat(
-	ctx: GitContext,
+	ctx: GitRepo,
 	diffs: TreeDiffEntry[],
 	renames: RenamePair[],
 ): Promise<string> {
@@ -366,7 +374,7 @@ async function showShortstat(
 }
 
 async function showNumstat(
-	ctx: GitContext,
+	ctx: GitRepo,
 	diffs: TreeDiffEntry[],
 	renames: RenamePair[],
 ): Promise<string> {
@@ -408,7 +416,7 @@ async function showNumstat(
 
 // ── Patch formatting helpers ────────────────────────────────────────
 
-async function formatTreeDiff(ctx: GitContext, diff: TreeDiffEntry): Promise<string> {
+async function formatTreeDiff(ctx: GitRepo, diff: TreeDiffEntry): Promise<string> {
 	const oldContent = diff.oldHash ? await readBlobContent(ctx, diff.oldHash) : "";
 	const newContent = diff.newHash ? await readBlobContent(ctx, diff.newHash) : "";
 
@@ -423,7 +431,7 @@ async function formatTreeDiff(ctx: GitContext, diff: TreeDiffEntry): Promise<str
 	});
 }
 
-async function formatRenameDiff(ctx: GitContext, rename: RenamePair): Promise<string> {
+async function formatRenameDiff(ctx: GitRepo, rename: RenamePair): Promise<string> {
 	const oldContent = rename.oldHash ? await readBlobContent(ctx, rename.oldHash) : "";
 	const newContent = rename.newHash ? await readBlobContent(ctx, rename.newHash) : "";
 
@@ -441,7 +449,7 @@ async function formatRenameDiff(ctx: GitContext, rename: RenamePair): Promise<st
 }
 
 async function formatDiffsWithRenames(
-	ctx: GitContext,
+	ctx: GitRepo,
 	diffs: TreeDiffEntry[],
 	renames: RenamePair[],
 ): Promise<string> {
@@ -475,7 +483,7 @@ interface FlatEntry {
 	hash: string;
 }
 
-async function formatCombinedDiff(ctx: GitContext, commit: Commit): Promise<string> {
+async function formatCombinedDiff(ctx: GitRepo, commit: Commit): Promise<string> {
 	if (commit.parents.length < 2) return "";
 
 	// Get flat tree entries for each parent and the result
@@ -517,7 +525,7 @@ async function formatCombinedDiff(ctx: GitContext, commit: Commit): Promise<stri
 }
 
 async function formatCombinedEntry(
-	ctx: GitContext,
+	ctx: GitRepo,
 	path: string,
 	parentMaps: Map<string, FlatEntry>[],
 	resultMap: Map<string, FlatEntry>,

@@ -3,7 +3,7 @@
 `just-git/repo` provides a programmatic API for working with git repositories: reading commits, diffing trees, creating objects, and merging, all without going through command execution.
 
 ```ts
-import { readCommit, readFileAtCommit, getChangedFiles, mergeTrees } from "just-git/repo";
+import { readCommit, readFileAtCommit, getChangedFiles, blame, mergeTrees } from "just-git/repo";
 ```
 
 For command-execution configuration, see [CLIENT.md](CLIENT.md). For the embeddable server, see [SERVER.md](SERVER.md).
@@ -128,14 +128,17 @@ All functions accept `GitRepo` as the first argument.
 
 ### Diffing and history
 
-| Function          | Signature                                               | Description                                          |
-| ----------------- | ------------------------------------------------------- | ---------------------------------------------------- |
-| `getChangedFiles` | `(repo, oldHash, newHash) → TreeDiffEntry[]`            | Files changed between two commits                    |
-| `diffTrees`       | `(repo, treeA, treeB) → TreeDiffEntry[]`                | Diff two tree hashes directly                        |
-| `flattenTree`     | `(repo, treeHash) → FlatTreeEntry[]`                    | Flatten a tree to a sorted list of path/hash entries |
-| `getNewCommits`   | `(repo, oldHash, newHash) → AsyncGenerator<CommitInfo>` | Walk commits introduced by a ref update              |
-| `findMergeBases`  | `(repo, commitA, commitB) → string[]`                   | Find merge base(s) of two commits                    |
-| `isAncestor`      | `(repo, candidate, descendant) → boolean`               | Check if one commit is an ancestor of another        |
+| Function            | Signature                                               | Description                                                                                     |
+| ------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `getChangedFiles`   | `(repo, oldHash, newHash) → TreeDiffEntry[]`            | Files changed between two commits                                                               |
+| `diffTrees`         | `(repo, treeA, treeB) → TreeDiffEntry[]`                | Diff two tree hashes directly                                                                   |
+| `flattenTree`       | `(repo, treeHash) → FlatTreeEntry[]`                    | Flatten a tree to a sorted list of path/hash entries                                            |
+| `getNewCommits`     | `(repo, oldHash, newHash) → AsyncGenerator<CommitInfo>` | Walk commits introduced by a ref update                                                         |
+| `walkCommitHistory` | `(repo, startHash, opts?) → AsyncGenerator<CommitInfo>` | Walk the commit graph from one or more hashes. Supports `exclude`, `firstParent`                |
+| `findMergeBases`    | `(repo, commitA, commitB) → string[]`                   | Find merge base(s) of two commits                                                               |
+| `isAncestor`        | `(repo, candidate, descendant) → boolean`               | Check if one commit is an ancestor of another                                                   |
+| `countAheadBehind`  | `(repo, localHash, upstreamHash) → { ahead, behind }`   | Count how many commits local is ahead/behind upstream                                           |
+| `blame`             | `(repo, commitHash, path, opts?) → BlameEntry[]`        | Line-by-line blame with originating commit, author, and content. Optional `startLine`/`endLine` |
 
 ### Writing
 

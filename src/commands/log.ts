@@ -26,7 +26,7 @@ import { branchNameFromRef, listRefs, readHead, resolveHead } from "../lib/refs.
 import { detectRenames, formatRenamePath, type RenamePair } from "../lib/rename-detection.ts";
 import { resolveRevision } from "../lib/rev-parse.ts";
 import { diffTrees } from "../lib/tree-ops.ts";
-import type { Commit, GitContext, ObjectId, TreeDiffEntry } from "../lib/types.ts";
+import type { Commit, GitRepo, ObjectId, TreeDiffEntry } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 
 type LogDiffFormat =
@@ -330,7 +330,7 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-async function buildExcludeSet(ctx: GitContext, hashes: ObjectId[]): Promise<Set<ObjectId>> {
+async function buildExcludeSet(ctx: GitRepo, hashes: ObjectId[]): Promise<Set<ObjectId>> {
 	const set = new Set<ObjectId>();
 	for await (const entry of walkCommits(ctx, hashes)) {
 		set.add(entry.hash);
@@ -365,7 +365,7 @@ interface CommitEntry {
  *   parents. If not TREESAME to any, yield and follow all parents.
  */
 async function* walkCommitsSimplified(
-	ctx: GitContext,
+	ctx: GitRepo,
 	startHashes: ObjectId[],
 	pathSpecs: Pathspec[],
 	excludeSet?: Set<ObjectId>,
@@ -457,7 +457,7 @@ interface DecorationMap {
 	byHash: Map<ObjectId, Decoration[]>;
 }
 
-async function buildDecorationMap(ctx: GitContext): Promise<DecorationMap> {
+async function buildDecorationMap(ctx: GitRepo): Promise<DecorationMap> {
 	const head = await readHead(ctx);
 	const headTarget = head?.type === "symbolic" ? branchNameFromRef(head.target) : null;
 	const headHash = await resolveHead(ctx);
@@ -528,7 +528,7 @@ function formatDecorations(deco: DecorationMap, hash: ObjectId): string {
 
 async function formatWithGraph(
 	entries: CommitEntry[],
-	gitCtx: GitContext,
+	gitCtx: GitRepo,
 	customFormat: string | null,
 	presetName: string | null,
 	abbrevCommit: boolean,
@@ -623,7 +623,7 @@ async function formatWithGraph(
 // ── Diff output for log ─────────────────────────────────────────────
 
 async function formatCommitDiff(
-	ctx: GitContext,
+	ctx: GitRepo,
 	commit: Commit,
 	format: LogDiffFormat,
 	statWidth?: number,
@@ -678,7 +678,7 @@ function logNameStatus(remaining: TreeDiffEntry[], renames: RenamePair[]): strin
 }
 
 async function logStat(
-	ctx: GitContext,
+	ctx: GitRepo,
 	remaining: TreeDiffEntry[],
 	renames: RenamePair[],
 	statWidth?: number,
@@ -689,7 +689,7 @@ async function logStat(
 }
 
 async function logShortstat(
-	ctx: GitContext,
+	ctx: GitRepo,
 	remaining: TreeDiffEntry[],
 	renames: RenamePair[],
 ): Promise<string> {
@@ -705,7 +705,7 @@ async function logShortstat(
 }
 
 async function logNumstat(
-	ctx: GitContext,
+	ctx: GitRepo,
 	remaining: TreeDiffEntry[],
 	renames: RenamePair[],
 ): Promise<string> {
@@ -746,7 +746,7 @@ async function logNumstat(
 }
 
 async function logPatch(
-	ctx: GitContext,
+	ctx: GitRepo,
 	remaining: TreeDiffEntry[],
 	renames: RenamePair[],
 ): Promise<string> {

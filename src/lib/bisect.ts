@@ -4,7 +4,7 @@ import { readCommit } from "./object-db.ts";
 import { deleteStateFile, readStateFile, writeStateFile } from "./operation-state.ts";
 import { join } from "./path.ts";
 import { deleteRef, listRefs, resolveRef } from "./refs.ts";
-import type { GitContext } from "./types.ts";
+import type { GitContext, GitRepo } from "./types.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -133,7 +133,7 @@ export async function cleanBisectState(ctx: GitContext): Promise<void> {
  * test.
  */
 export async function findBisectionCommit(
-	ctx: GitContext,
+	ctx: GitRepo,
 	badHash: string,
 	goodHashes: string[],
 	skipHashes: Set<string>,
@@ -286,7 +286,7 @@ export function formatBisectingLine(result: BisectResult): string {
 /**
  * Format the "first bad commit found" message.
  */
-export async function formatFirstBadCommit(ctx: GitContext, hash: string): Promise<string> {
+export async function formatFirstBadCommit(ctx: GitRepo, hash: string): Promise<string> {
 	const commit = await readCommit(ctx, hash);
 	const subject = firstLine(commit.message);
 

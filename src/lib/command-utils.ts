@@ -9,7 +9,7 @@ import { logRef } from "./reflog.ts";
 import { advanceBranchRef, readHead, resolveHead, resolveRef } from "./refs.ts";
 import { findRepo } from "./repo.ts";
 import { resolveRevision } from "./rev-parse.ts";
-import type { Commit, GitContext, Identity, Index, ObjectId } from "./types.ts";
+import type { Commit, GitContext, GitRepo, Identity, Index, ObjectId } from "./types.ts";
 import { applyWorktreeOps, mergeAbort } from "./unpack-trees.ts";
 
 export interface CommandResult {
@@ -65,7 +65,7 @@ export function requireWorkTree(gitCtx: GitContext): CommandResult | null {
 /**
  * Resolve HEAD to an ObjectId, returning an error if no commits exist.
  */
-export async function requireHead(gitCtx: GitContext): Promise<ObjectId | CommandResult> {
+export async function requireHead(gitCtx: GitRepo): Promise<ObjectId | CommandResult> {
 	const hash = await resolveHead(gitCtx);
 	if (!hash) return fatal("your current branch does not have any commits yet");
 	return hash;
@@ -285,7 +285,7 @@ export async function handleOperationAbort(
  * Returns the new commit hash.
  */
 export async function writeCommitAndAdvance(
-	ctx: GitContext,
+	ctx: GitRepo,
 	tree: ObjectId,
 	parents: ObjectId[],
 	author: Identity,

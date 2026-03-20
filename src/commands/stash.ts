@@ -21,7 +21,7 @@ import {
 } from "../lib/stash.ts";
 import { generateLongFormStatus } from "../lib/status-format.ts";
 import { diffTrees } from "../lib/tree-ops.ts";
-import type { GitContext, ObjectId, TreeDiffEntry } from "../lib/types.ts";
+import type { GitContext, GitRepo, ObjectId, TreeDiffEntry } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -38,7 +38,7 @@ function parseStashArg(arg: string | undefined): number {
 	return -1;
 }
 
-async function formatTreeDiff(ctx: GitContext, diff: TreeDiffEntry): Promise<string> {
+async function formatTreeDiff(ctx: GitRepo, diff: TreeDiffEntry): Promise<string> {
 	const oldContent = diff.oldHash ? await readBlobContent(ctx, diff.oldHash) : "";
 	const newContent = diff.newHash ? await readBlobContent(ctx, diff.newHash) : "";
 

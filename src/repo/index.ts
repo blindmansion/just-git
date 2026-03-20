@@ -1,6 +1,8 @@
 // Repo operations SDK — high-level functions for working with GitRepo
 export {
+	blame,
 	checkoutTo,
+	countAheadBehind,
 	createCommit,
 	createWorktree,
 	diffTrees,
@@ -19,8 +21,10 @@ export {
 	readFileAtCommit,
 	readonlyRepo,
 	resolveRef,
+	walkCommitHistory,
 	writeBlob,
 	writeTree,
+	type BlameEntry,
 	type CheckoutToResult,
 	type CommitInfo,
 	type CreateCommitOptions,

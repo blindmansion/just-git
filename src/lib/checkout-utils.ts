@@ -18,7 +18,7 @@ import {
 } from "./refs.ts";
 import { formatLongTrackingInfo, getTrackingInfo } from "./status-format.ts";
 import { flattenTree, flattenTreeToMap } from "./tree-ops.ts";
-import type { GitContext, ObjectId } from "./types.ts";
+import type { GitContext, GitRepo, ObjectId } from "./types.ts";
 import { applyWorktreeOps, checkoutTrees } from "./unpack-trees.ts";
 import { checkoutEntry } from "./worktree.ts";
 
@@ -357,7 +357,7 @@ function formatOrphanWarning(orphans: { hash: string; subject: string }[]): stri
 /**
  * Format "Previous HEAD position was <short> <subject>\n".
  */
-export async function formatPrevHeadPosition(gitCtx: GitContext, hash: ObjectId): Promise<string> {
+export async function formatPrevHeadPosition(gitCtx: GitRepo, hash: ObjectId): Promise<string> {
 	const commit = await readCommit(gitCtx, hash);
 	return `Previous HEAD position was ${abbreviateHash(hash)} ${firstLine(commit.message)}\n`;
 }
@@ -595,7 +595,7 @@ export async function detachHeadCore(
  * or null otherwise.
  */
 async function resolveRemoteTrackingRef(
-	gitCtx: GitContext,
+	gitCtx: GitRepo,
 	startPoint: string,
 ): Promise<{ remote: string; branch: string; ref: string } | null> {
 	if (startPoint.startsWith("refs/remotes/")) {

@@ -7,7 +7,7 @@ import {
 } from "./object-db.ts";
 import { readReflog } from "./reflog.ts";
 import { resolveRef } from "./refs.ts";
-import type { GitContext, ObjectId } from "./types.ts";
+import type { GitContext, GitRepo, ObjectId } from "./types.ts";
 
 // ── Suffix types ─────────────────────────────────────────────────
 
@@ -98,7 +98,7 @@ const SPECIAL_REFS = [
  * Returns the full hash if exactly one match is found, null if none,
  * and throws on ambiguity.
  */
-async function resolveShortHash(ctx: GitContext, prefix: string): Promise<ObjectId | null> {
+async function resolveShortHash(ctx: GitRepo, prefix: string): Promise<ObjectId | null> {
 	const matches = await findObjectsByPrefix(ctx, prefix);
 
 	if (matches.length === 0) return null;
@@ -126,7 +126,7 @@ class ShortHashAmbiguousError extends Error {
  *   6. Tag name → refs/tags/<name>
  *   7. Remote tracking ref → refs/remotes/<name>
  */
-async function resolveBaseRef(ctx: GitContext, ref: string): Promise<ObjectId | null> {
+async function resolveBaseRef(ctx: GitRepo, ref: string): Promise<ObjectId | null> {
 	// @ is an alias for HEAD
 	if (ref === "HEAD" || ref === "@") {
 		return resolveRef(ctx, "HEAD");
@@ -212,11 +212,7 @@ async function resolveReflogEntry(
  * - `^{tag}` — verify the object is a tag
  * - `^{}` — peel through tags to the first non-tag object
  */
-async function peelToType(
-	ctx: GitContext,
-	hash: ObjectId,
-	target: string,
-): Promise<ObjectId | null> {
+async function peelToType(ctx: GitRepo, hash: ObjectId, target: string): Promise<ObjectId | null> {
 	if (target === "" || target === "commit") {
 		try {
 			return await peelToCommit(ctx, hash);

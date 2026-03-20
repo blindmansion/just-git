@@ -1,7 +1,7 @@
 import { readObject } from "./object-db.ts";
 import { parseCommit } from "./objects/commit.ts";
 import { join } from "./path.ts";
-import type { Commit, GitContext, Identity, ObjectId } from "./types.ts";
+import type { Commit, GitContext, GitRepo, Identity, ObjectId } from "./types.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -191,7 +191,7 @@ interface RebaseSymmetricPlan {
  * as an output filter).
  */
 export async function collectRebaseSymmetricPlan(
-	ctx: GitContext,
+	ctx: GitRepo,
 	upstream: ObjectId,
 	head: ObjectId,
 ): Promise<RebaseSymmetricPlan> {
@@ -218,7 +218,7 @@ export async function collectRebaseSymmetricPlan(
 }
 
 async function collectReachable(
-	ctx: GitContext,
+	ctx: GitRepo,
 	start: ObjectId,
 	cache: Map<ObjectId, PlannedCommit>,
 ): Promise<Set<ObjectId>> {
@@ -257,7 +257,7 @@ async function collectReachable(
  *  - --reverse flips the output to oldest-first (parents before children).
  */
 async function orderNonMergeSideFromStart(
-	ctx: GitContext,
+	ctx: GitRepo,
 	cache: Map<ObjectId, PlannedCommit>,
 	_start: ObjectId,
 	side: Set<ObjectId>,
@@ -322,7 +322,7 @@ async function orderNonMergeSideFromStart(
 }
 
 async function loadCommit(
-	ctx: GitContext,
+	ctx: GitRepo,
 	hash: ObjectId,
 	cache: Map<ObjectId, PlannedCommit>,
 ): Promise<PlannedCommit> {

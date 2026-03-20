@@ -13,7 +13,7 @@ import { listRefs, readHead, resolveHead, resolveRef } from "../lib/refs.ts";
 import { parseRefspec } from "../lib/transport/refspec.ts";
 import { resolveRemoteTransport } from "../lib/transport/remote.ts";
 import type { PushRefUpdate } from "../lib/transport/transport.ts";
-import type { GitContext, ObjectId } from "../lib/types.ts";
+import type { GitContext, GitRepo, ObjectId } from "../lib/types.ts";
 import { a, type Command, f } from "../parse/index.ts";
 
 export function registerPushCommand(parent: Command, ext?: GitExtensions) {
@@ -332,7 +332,7 @@ async function resolvePushDefault(
 	};
 }
 
-async function resolveRefForPush(ctx: GitContext, src: string): Promise<ObjectId | null> {
+async function resolveRefForPush(ctx: GitRepo, src: string): Promise<ObjectId | null> {
 	if (src.startsWith("refs/")) {
 		return resolveRef(ctx, src);
 	}

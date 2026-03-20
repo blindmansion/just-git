@@ -5,7 +5,8 @@
  * and equally useful outside the server for direct repo inspection.
  */
 
-import { walkCommits } from "../lib/commit-walk.ts";
+import { blame as _blame, type BlameEntry } from "../lib/blame.ts";
+import { walkCommits, countAheadBehind as _countAheadBehind } from "../lib/commit-walk.ts";
 import {
 	findAllMergeBases as _findMergeBases,
 	isAncestor as _isAncestor,
@@ -520,6 +521,62 @@ export async function createWorktree(
 	await writeIndex(ctx, index);
 
 	return { ctx, commitHash, treeHash: commit.tree, filesWritten };
+}
+
+// ── Ahead/behind ────────────────────────────────────────────────────
+
+/**
+ * Count how many commits `localHash` is ahead of and behind `upstreamHash`.
+ * Useful for tracking info display and branch comparison.
+ */
+export async function countAheadBehind(
+	repo: GitRepo,
+	localHash: string,
+	upstreamHash: string,
+): Promise<{ ahead: number; behind: number }> {
+	return _countAheadBehind(repo, localHash, upstreamHash);
+}
+
+// ── Blame ───────────────────────────────────────────────────────────
+
+export type { BlameEntry };
+
+/**
+ * Compute line-by-line blame for a file at a given commit.
+ * Returns one entry per line with the originating commit, author, and content.
+ * Optionally restrict to a line range with `startLine` / `endLine` (1-based).
+ */
+export async function blame(
+	repo: GitRepo,
+	commitHash: string,
+	path: string,
+	opts?: { startLine?: number; endLine?: number },
+): Promise<BlameEntry[]> {
+	return _blame(repo, commitHash, path, opts);
+}
+
+// ── Commit history walk ─────────────────────────────────────────────
+
+/**
+ * Walk the commit graph starting from one or more hashes, yielding
+ * commits in reverse chronological order. Supports excluding commits
+ * reachable from specified hashes and following only first parents.
+ */
+export async function* walkCommitHistory(
+	repo: GitRepo,
+	startHash: string | string[],
+	opts?: { exclude?: string[]; firstParent?: boolean },
+): AsyncGenerator<CommitInfo> {
+	for await (const entry of walkCommits(repo, startHash, opts)) {
+		yield {
+			hash: entry.hash,
+			message: entry.commit.message,
+			tree: entry.commit.tree,
+			parents: entry.commit.parents,
+			author: entry.commit.author,
+			committer: entry.commit.committer,
+		};
+	}
 }
 
 // ── Read-only repo wrapper ──────────────────────────────────────────
