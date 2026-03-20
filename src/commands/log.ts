@@ -12,6 +12,7 @@ import { parseDate } from "../lib/date.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algorithm.ts";
 import { CommitGraph } from "../lib/graph.ts";
 import {
+	type DateMode,
 	expandFormat,
 	type FormatContext,
 	formatPreset,
@@ -65,6 +66,11 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 			numstat: f().describe("Machine-readable insertions/deletions per file"),
 			graph: f().describe("Draw text-based graph of the commit history"),
 			firstParent: f().describe("Follow only the first parent of merge commits"),
+			date: o
+				.string()
+				.describe(
+					"Date format: short, iso, iso-strict, relative, rfc, raw, unix, local, human, default",
+				),
 		},
 		handler: async (args, ctx, meta) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
@@ -182,6 +188,23 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 				presetName = parsed.preset;
 			}
 
+			const VALID_DATE_MODES = new Set<string>([
+				"default",
+				"short",
+				"iso",
+				"iso-strict",
+				"relative",
+				"rfc",
+				"raw",
+				"unix",
+				"local",
+				"human",
+			]);
+			if (args.date && !VALID_DATE_MODES.has(args.date)) {
+				return { stdout: "", stderr: `fatal: unknown date format ${args.date}\n`, exitCode: 128 };
+			}
+			const dateMode: DateMode | undefined = args.date as DateMode | undefined;
+
 			const diffFormat: LogDiffFormat = args.patch
 				? "patch"
 				: args.stat
@@ -274,6 +297,7 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 					diffFormat,
 					decoFn,
 					decoRawFn,
+					dateMode,
 				);
 			}
 
@@ -285,6 +309,7 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 						commit: entry.commit,
 						decorations: decoFn,
 						decorationsRaw: decoRawFn,
+						dateMode,
 					};
 					let line = expandFormat(customFormat, fctx);
 					const diffText = await formatCommitDiff(gitCtx, entry.commit, diffFormat);
@@ -310,6 +335,7 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 					commit: entry.commit,
 					decorations: decoFn,
 					decorationsRaw: decoRawFn,
+					dateMode,
 				};
 				let line = formatPreset(effectivePreset, fctx, idx === 0, abbrevCommit);
 				const diffText = await formatCommitDiff(gitCtx, entry.commit, diffFormat);
@@ -535,6 +561,7 @@ async function formatWithGraph(
 	diffFormat: LogDiffFormat,
 	decoFn: ((h: ObjectId) => string) | undefined,
 	decoRawFn: ((h: ObjectId) => string) | undefined,
+	dateMode?: DateMode,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
 	const graph = new CommitGraph();
 	const effectivePreset = presetName ?? "medium";
@@ -548,6 +575,7 @@ async function formatWithGraph(
 			commit: entry.commit,
 			decorations: decoFn,
 			decorationsRaw: decoRawFn,
+			dateMode,
 		};
 
 		let msgContent: string;

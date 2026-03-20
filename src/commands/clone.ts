@@ -36,13 +36,37 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			const isHttp = repository.startsWith("http://") || repository.startsWith("https://");
-			const sourcePath = isHttp ? repository : resolve(ctx.cwd, repository);
 			const branchOpt = args.branch;
+
+			// For local paths, verify the source is a git repository.
+			// Try resolveRemote with the raw URL first (supports custom URL
+			// schemes like "server://repo"), then fall back to path resolution.
+			let sourceRepo: GitRepo | null = null;
+			let sourcePath = repository;
+			if (!isHttp) {
+				if (ext?.resolveRemote) {
+					sourceRepo = await ext.resolveRemote(repository);
+				}
+				if (!sourceRepo) {
+					sourcePath = resolve(ctx.cwd, repository);
+					sourceRepo = await findRepo(ctx.fs, sourcePath);
+				}
+				if (!sourceRepo) {
+					return fatal(`repository '${repository}' does not exist`);
+				}
+			} else {
+				sourcePath = repository;
+			}
 
 			// Determine target directory name
 			let targetName = args.directory;
 			if (!targetName) {
-				let base = isHttp ? (repository.split("/").pop() ?? repository) : basename(sourcePath);
+				let base: string;
+				if (isHttp || repository.includes("://")) {
+					base = repository.split("/").pop() ?? repository;
+				} else {
+					base = basename(sourcePath);
+				}
 				if (base.endsWith(".git")) {
 					base = base.slice(0, -4);
 				}
@@ -70,20 +94,6 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 					return fatal(
 						`destination path '${targetName}' already exists and is not an empty directory.`,
 					);
-				}
-			}
-
-			// For local paths, verify the source is a git repository
-			let sourceRepo: GitRepo | null = null;
-			if (!isHttp) {
-				if (ext?.resolveRemote) {
-					sourceRepo = await ext.resolveRemote(sourcePath);
-				}
-				if (!sourceRepo) {
-					sourceRepo = await findRepo(ctx.fs, sourcePath);
-				}
-				if (!sourceRepo) {
-					return fatal(`repository '${repository}' does not exist`);
 				}
 			}
 

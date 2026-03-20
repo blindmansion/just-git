@@ -1,8 +1,9 @@
+import type { GitExtensions } from "../git.ts";
 import { resolve } from "../lib/path.ts";
 import { initRepository } from "../lib/repo.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 
-export function registerInitCommand(parent: Command) {
+export function registerInitCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("init", {
 		description: "Initialize a new repository",
 		args: [a.string().name("directory").describe("The directory to initialize").optional()],
@@ -12,7 +13,10 @@ export function registerInitCommand(parent: Command) {
 		},
 		examples: ["git init", "git init --bare", "git init my-project"],
 		handler: async (args, ctx) => {
-			const initialBranch = args.initialBranch;
+			const initialBranch =
+				args.initialBranch ??
+				ext?.configOverrides?.locked?.["init.defaultBranch"] ??
+				ext?.configOverrides?.defaults?.["init.defaultBranch"];
 			const targetDir = args.directory ? resolve(ctx.cwd, args.directory) : ctx.cwd;
 
 			if (args.directory) {

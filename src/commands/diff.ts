@@ -32,7 +32,7 @@ import { detectRenames, formatRenamePath, type RenamePair } from "../lib/rename-
 import { diffTrees, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, IndexEntry, ObjectId, TreeDiffEntry } from "../lib/types.ts";
 import { diffIndexToWorkTree } from "../lib/worktree.ts";
-import { a, type Command, f } from "../parse/index.ts";
+import { a, type Command, f, o } from "../parse/index.ts";
 
 const decoder = new TextDecoder();
 
@@ -99,6 +99,11 @@ function renameResultToItems(remaining: TreeDiffEntry[], renames: RenamePair[]):
 export function registerDiffCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("diff", {
 		description: "Show changes between commits, commit and working tree, etc.",
+		transformArgs: (tokens) =>
+			tokens.map((t) => {
+				const m = /^-U(\d+)$/.exec(t);
+				return m ? `--unified=${m[1]}` : t;
+			}),
 		args: [a.string().name("commits").variadic().optional()],
 		options: {
 			cached: f().describe("Show staged changes (index vs HEAD)"),
@@ -108,6 +113,11 @@ export function registerDiffCommand(parent: Command, ext?: GitExtensions) {
 			nameStatus: f().describe("Show names and status of changed files"),
 			shortstat: f().describe("Show only the shortstat summary line"),
 			numstat: f().describe("Machine-readable insertions/deletions per file"),
+			unified: o.number().alias("U").describe("Generate diffs with <n> lines of context"),
+			findRenames: f().alias("M").describe("Detect renames (enabled by default)"),
+			findCopies: f().alias("C").describe("Detect copies (accepted for compatibility)"),
+			color: f().describe("Show colored diff (accepted for compatibility)"),
+			noColor: f().describe("Turn off colored diff (accepted for compatibility)"),
 		},
 		handler: async (args, ctx, meta) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
@@ -168,7 +178,8 @@ export function registerDiffCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			if (isError(result)) return result;
-			const output = await formatOutput(gitCtx, result.items, format);
+			const contextLines = args.unified;
+			const output = await formatOutput(gitCtx, result.items, format, contextLines);
 			if (result.stderr) output.stderr = result.stderr;
 			return output;
 		},
@@ -550,6 +561,7 @@ async function formatOutput(
 	gitCtx: GitContext,
 	items: DiffFileResult[],
 	format: DiffOutputFormat,
+	contextLines?: number,
 ): Promise<CommandResult> {
 	let stdout: string;
 	switch (format) {
@@ -569,7 +581,7 @@ async function formatOutput(
 			stdout = formatAsNameStatus(items);
 			break;
 		default:
-			stdout = await formatAsUnified(gitCtx, items);
+			stdout = await formatAsUnified(gitCtx, items, contextLines);
 			break;
 	}
 	return { stdout, stderr: "", exitCode: 0 };
@@ -577,7 +589,11 @@ async function formatOutput(
 
 // ── Output formatters ───────────────────────────────────────────────
 
-async function formatAsUnified(gitCtx: GitContext, items: DiffFileResult[]): Promise<string> {
+async function formatAsUnified(
+	gitCtx: GitContext,
+	items: DiffFileResult[],
+	contextLines?: number,
+): Promise<string> {
 	let output = "";
 	const combinedDiffPaths = new Set<string>();
 	const hashAbbrevs = await buildRepoAwareDiffHashAbbrevs(gitCtx, items);
@@ -643,6 +659,7 @@ async function formatAsUnified(gitCtx: GitContext, items: DiffFileResult[]): Pro
 				newHash: abbreviateDiffHash(item.newHash, hashAbbrevs),
 				renameTo: item.path,
 				similarity: item.similarity,
+				contextLines,
 			});
 		} else {
 			output += formatUnifiedDiff({
@@ -655,6 +672,7 @@ async function formatAsUnified(gitCtx: GitContext, items: DiffFileResult[]): Pro
 				newHash: abbreviateDiffHash(item.newHash, hashAbbrevs),
 				isNew: item.status === "A",
 				isDeleted: item.status === "D",
+				contextLines,
 			});
 		}
 	}

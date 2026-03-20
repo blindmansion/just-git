@@ -264,6 +264,54 @@ describe("resolveRemote", () => {
 		expect(bobResult.exitCode).toBe(0);
 	});
 
+	test("clone with custom URL scheme via resolveRemote", async () => {
+		const { originCtx } = await setupOrigin();
+
+		const agentFs = new InMemoryFs();
+		const agentGit = createGit({
+			resolveRemote: (url) => (url === "vfs://origin" ? originCtx : null),
+		});
+		const agent = new Bash({
+			fs: agentFs,
+			cwd: "/",
+			customCommands: [agentGit],
+		});
+
+		const result = await agent.exec("git clone vfs://origin /repo", {
+			env: envAt(1000000100),
+		});
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain("Cloning into");
+
+		const readme = await agent.readFile("/repo/README.md");
+		expect(readme).toBe("# Hello");
+
+		const log = await agent.exec("git log --oneline", { cwd: "/repo", env: envAt(1000000100) });
+		expect(log.stdout).toContain("initial");
+	});
+
+	test("clone with custom URL scheme derives target dir from last path segment", async () => {
+		const { originCtx } = await setupOrigin();
+
+		const agentFs = new InMemoryFs();
+		const agentGit = createGit({
+			resolveRemote: (url) => (url === "vfs://host/myrepo.git" ? originCtx : null),
+		});
+		const agent = new Bash({
+			fs: agentFs,
+			cwd: "/workspace",
+			customCommands: [agentGit],
+		});
+
+		const result = await agent.exec("git clone vfs://host/myrepo.git", {
+			env: envAt(1000000100),
+		});
+		expect(result.exitCode).toBe(0);
+
+		const readme = await agent.readFile("/workspace/myrepo/README.md");
+		expect(readme).toBe("# Hello");
+	});
+
 	test("resolver is not called for HTTP URLs", async () => {
 		let resolverCalled = false;
 		const git = createGit({

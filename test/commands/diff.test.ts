@@ -781,6 +781,154 @@ describe("git diff", () => {
 		});
 	});
 
+	describe("-M / -C (rename/copy detection flags)", () => {
+		test("-M is accepted without error (rename detection is on by default)", async () => {
+			const bash = createTestBash({ files: BASIC_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec('echo "changed" > /repo/README.md');
+
+			const result = await bash.exec("git diff -M");
+			expect(result.exitCode).toBe(0);
+		});
+
+		test("-C is accepted without error", async () => {
+			const bash = createTestBash({ files: BASIC_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+
+			const result = await bash.exec("git diff -C");
+			expect(result.exitCode).toBe(0);
+		});
+
+		test("-M with --cached shows renames", async () => {
+			const bash = createTestBash({ files: BASIC_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec("git mv README.md DOCS.md");
+
+			const result = await bash.exec("git diff -M --cached --name-status");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("R");
+		});
+	});
+
+	describe("--color / --no-color", () => {
+		test("--color is accepted and produces output", async () => {
+			const bash = createTestBash({ files: BASIC_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec('echo "changed" > /repo/README.md');
+
+			const result = await bash.exec("git diff --color");
+			expect(result.exitCode).toBe(0);
+		});
+
+		test("--no-color is accepted and produces output", async () => {
+			const bash = createTestBash({ files: BASIC_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec('echo "changed" > /repo/README.md');
+
+			const result = await bash.exec("git diff --no-color");
+			expect(result.exitCode).toBe(0);
+		});
+	});
+
+	describe("-U<n> / --unified (context lines)", () => {
+		async function setupMultiLineDiff() {
+			const lines = Array.from({ length: 10 }, (_, i) => `line${i + 1}`).join("\n") + "\n";
+			const bash = createTestBash({ env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.writeFile("/repo/file.txt", lines);
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			const modified = lines.replace("line5", "LINE5_CHANGED");
+			await bash.writeFile("/repo/file.txt", modified);
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "modify line5"');
+			return bash;
+		}
+
+		function contextLine(stdout: string, text: string): boolean {
+			return stdout.split("\n").some((l) => l === ` ${text}`);
+		}
+
+		test("-U0 shows no context lines", async () => {
+			const bash = await setupMultiLineDiff();
+			const result = await bash.exec("git diff -U0 HEAD~1 HEAD");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("-line5");
+			expect(result.stdout).toContain("+LINE5_CHANGED");
+			expect(contextLine(result.stdout, "line4")).toBe(false);
+			expect(contextLine(result.stdout, "line6")).toBe(false);
+		});
+
+		test("-U1 shows 1 context line on each side", async () => {
+			const bash = await setupMultiLineDiff();
+			const result = await bash.exec("git diff -U1 HEAD~1 HEAD");
+			expect(result.exitCode).toBe(0);
+			expect(contextLine(result.stdout, "line4")).toBe(true);
+			expect(contextLine(result.stdout, "line6")).toBe(true);
+			expect(contextLine(result.stdout, "line3")).toBe(false);
+			expect(contextLine(result.stdout, "line7")).toBe(false);
+		});
+
+		test("-U5 shows 5 context lines", async () => {
+			const bash = await setupMultiLineDiff();
+			const result = await bash.exec("git diff -U5 HEAD~1 HEAD");
+			expect(result.exitCode).toBe(0);
+			expect(contextLine(result.stdout, "line1")).toBe(true);
+			expect(contextLine(result.stdout, "line10")).toBe(true);
+		});
+
+		test("--unified=2 works as long form", async () => {
+			const bash = await setupMultiLineDiff();
+			const result = await bash.exec("git diff --unified=2 HEAD~1 HEAD");
+			expect(result.exitCode).toBe(0);
+			expect(contextLine(result.stdout, "line3")).toBe(true);
+			expect(contextLine(result.stdout, "line7")).toBe(true);
+			expect(contextLine(result.stdout, "line2")).toBe(false);
+			expect(contextLine(result.stdout, "line8")).toBe(false);
+		});
+
+		test("default (no -U) shows 3 context lines", async () => {
+			const bash = await setupMultiLineDiff();
+			const result = await bash.exec("git diff HEAD~1 HEAD");
+			expect(result.exitCode).toBe(0);
+			expect(contextLine(result.stdout, "line2")).toBe(true);
+			expect(contextLine(result.stdout, "line8")).toBe(true);
+			expect(contextLine(result.stdout, "line1")).toBe(false);
+			expect(contextLine(result.stdout, "line9")).toBe(false);
+		});
+
+		test("-U0 hunk header shows correct funcname context for pure insertions", async () => {
+			const bash = createTestBash({ env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.writeFile("/repo/file.txt", "line1\nline2\nline3\nline4\nline5\n");
+			await bash.exec("git add . && git commit -m 'initial'");
+			await bash.writeFile("/repo/file.txt", "line1\nline2\nINSERTED\nline3\nline4\nline5\n");
+			await bash.exec("git add . && git commit -m 'insert'");
+
+			const result = await bash.exec("git diff -U0 HEAD~1 HEAD");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("@@ -2,0 +3 @@ line2");
+		});
+
+		test("-U with negative value produces valid output", async () => {
+			const bash = await setupMultiLineDiff();
+			const result = await bash.exec("git diff -U0 HEAD~1 HEAD");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("-line5");
+			expect(result.stdout).toContain("+LINE5_CHANGED");
+		});
+	});
+
 	describe("error cases", () => {
 		test("bad revision", async () => {
 			const bash = createTestBash({ files: BASIC_REPO, env: TEST_ENV });

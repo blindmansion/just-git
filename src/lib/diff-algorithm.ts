@@ -1015,6 +1015,7 @@ const CONTEXT_LINES = 3;
  * Group an edit script into hunks with surrounding context lines.
  */
 function buildHunks(edits: Edit[], contextLines = CONTEXT_LINES): Hunk[] {
+	contextLines = Math.max(0, contextLines);
 	if (edits.length === 0) return [];
 
 	// Find the indices of non-"keep" edits
@@ -1158,6 +1159,8 @@ interface FormatOptions {
 	isNew?: boolean;
 	/** Explicit deleted-file flag (overrides empty-newContent heuristic). */
 	isDeleted?: boolean;
+	/** Number of context lines around each change (default 3). */
+	contextLines?: number;
 }
 
 function formatHashForIndexLine(hash?: string): string {
@@ -1276,7 +1279,7 @@ export function formatUnifiedDiff(opts: FormatOptions): string {
 			}
 		}
 	}
-	const hunks = buildHunks(edits);
+	const hunks = buildHunks(edits, opts.contextLines);
 
 	if (hunks.length === 0 && !isRename) return "";
 
@@ -1335,7 +1338,8 @@ export function formatUnifiedDiff(opts: FormatOptions): string {
 		// that begins with a letter, $, or _ (git's default funcname pattern).
 		// Git uses XDL_MAX_FUNCNAME (80), showing up to 79 chars.
 		let funcCtx = "";
-		for (let i = hunk.oldStart - 2; i >= 0; i--) {
+		const scanFrom = hunk.oldCount === 0 ? hunk.oldStart - 1 : hunk.oldStart - 2;
+		for (let i = scanFrom; i >= 0; i--) {
 			const line = oldLines[i];
 			if (line && /^[a-zA-Z$_]/.test(line)) {
 				funcCtx = ` ${line.trimEnd().slice(0, 79)}`;

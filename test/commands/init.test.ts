@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { Bash } from "just-bash";
+import { createGit } from "../../src/index.ts";
 import { BASIC_REPO, EMPTY_REPO, TEST_ENV } from "../fixtures";
 import { createTestBash, isDirectory, isFile, quickExec, readFile } from "../util";
 
@@ -179,6 +181,46 @@ describe("git init", () => {
 			const r = await bash.exec("git init my-project");
 			expect(r.exitCode).toBe(0);
 			expect(r.stdout).toContain("Reinitialized existing Git repository");
+		});
+	});
+
+	describe("init.defaultBranch config override", () => {
+		test("uses init.defaultBranch from config defaults when -b is not specified", async () => {
+			const git = createGit({
+				config: { defaults: { "init.defaultBranch": "develop" } },
+			});
+			const bash = new Bash({ cwd: "/repo", customCommands: [git] });
+			await bash.exec("git init");
+			const head = await bash.readFile("/repo/.git/HEAD");
+			expect(head.trim()).toBe("ref: refs/heads/develop");
+		});
+
+		test("-b flag takes precedence over init.defaultBranch config default", async () => {
+			const git = createGit({
+				config: { defaults: { "init.defaultBranch": "develop" } },
+			});
+			const bash = new Bash({ cwd: "/repo", customCommands: [git] });
+			await bash.exec("git init -b trunk");
+			const head = await bash.readFile("/repo/.git/HEAD");
+			expect(head.trim()).toBe("ref: refs/heads/trunk");
+		});
+
+		test("init.defaultBranch from locked config overrides", async () => {
+			const git = createGit({
+				config: { locked: { "init.defaultBranch": "locked-branch" } },
+			});
+			const bash = new Bash({ cwd: "/repo", customCommands: [git] });
+			await bash.exec("git init");
+			const head = await bash.readFile("/repo/.git/HEAD");
+			expect(head.trim()).toBe("ref: refs/heads/locked-branch");
+		});
+
+		test("defaults to main when no config override is set", async () => {
+			const git = createGit();
+			const bash = new Bash({ cwd: "/repo", customCommands: [git] });
+			await bash.exec("git init");
+			const head = await bash.readFile("/repo/.git/HEAD");
+			expect(head.trim()).toBe("ref: refs/heads/main");
 		});
 	});
 

@@ -420,13 +420,18 @@ Arguments:
   commits...
 
 Options:
-  --cached       Show staged changes (index vs HEAD)
-  --staged       Synonym for --cached
-  --stat         Show diffstat summary
-  --name-only    Show only names of changed files
-  --name-status  Show names and status of changed files
-  --shortstat    Show only the shortstat summary line
-  --numstat      Machine-readable insertions/deletions per file
+  --cached                Show staged changes (index vs HEAD)
+  --staged                Synonym for --cached
+  --stat                  Show diffstat summary
+  --name-only             Show only names of changed files
+  --name-status           Show names and status of changed files
+  --shortstat             Show only the shortstat summary line
+  --numstat               Machine-readable insertions/deletions per file
+  -U, --unified <number>  Generate diffs with <n> lines of context
+  -M, --find-renames      Detect renames (enabled by default)
+  -C, --find-copies       Detect copies (accepted for compatibility)
+  --color                 Show colored diff (accepted for compatibility)
+  --no-color              Turn off colored diff (accepted for compatibility)
 ```
 
 ## git fetch
@@ -565,6 +570,7 @@ Options:
   --numstat                 Machine-readable insertions/deletions per file
   --graph                   Draw text-based graph of the commit history
   --first-parent            Follow only the first parent of merge commits
+  --date <string>           Date format: short, iso, iso-strict, relative, rfc, raw, unix, local, human, default
 ```
 
 ## git ls-files

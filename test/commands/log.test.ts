@@ -1294,4 +1294,101 @@ describe("git log", () => {
 			expect(output).toContain("feature-2");
 		});
 	});
+
+	describe("--date", () => {
+		async function setupRepo() {
+			const { results, bash } = await runScenario(
+				["git init", "git add .", 'git commit -m "test commit"'],
+				{ files: BASIC_REPO, env: TEST_ENV },
+			);
+			expect(results[2]!.exitCode).toBe(0);
+			return bash;
+		}
+
+		test("--date=short shows YYYY-MM-DD only", async () => {
+			const bash = await setupRepo();
+			const result = await bash.exec("git log -1 --date=short");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toMatch(/Date:\s+\d{4}-\d{2}-\d{2}\n/);
+			expect(result.stdout).toContain("Date:   2001-09-09");
+		});
+
+		test("--date=iso shows ISO-like format", async () => {
+			const bash = await setupRepo();
+			const result = await bash.exec("git log -1 --date=iso");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("2001-09-09 01:46:40 +0000");
+		});
+
+		test("--date=iso-strict shows strict ISO 8601 with Z for UTC", async () => {
+			const bash = await setupRepo();
+			const result = await bash.exec("git log -1 --date=iso-strict");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("2001-09-09T01:46:40Z");
+		});
+
+		test("--date=raw shows timestamp and timezone", async () => {
+			const bash = await setupRepo();
+			const result = await bash.exec("git log -1 --date=raw");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("Date:   1000000000 +0000");
+		});
+
+		test("--date=unix shows bare timestamp", async () => {
+			const bash = await setupRepo();
+			const result = await bash.exec("git log -1 --date=unix");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toMatch(/Date:\s+1000000000\n/);
+		});
+
+		test("--date=rfc shows RFC 2822 format", async () => {
+			const bash = await setupRepo();
+			const result = await bash.exec("git log -1 --date=rfc");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toMatch(/Date:\s+Sun, 9 Sep 2001 01:46:40 \+0000/);
+		});
+
+		test("--date=relative shows relative time", async () => {
+			const bash = await setupRepo();
+			const result = await bash.exec("git log -1 --date=relative");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toMatch(/Date:\s+\d+ years/);
+		});
+
+		test("--date=default shows standard git date", async () => {
+			const bash = await setupRepo();
+			const result = await bash.exec("git log -1 --date=default");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("Sun Sep 9 01:46:40 2001 +0000");
+		});
+
+		test("--date=local shows date in local timezone without tz suffix", async () => {
+			const bash = await setupRepo();
+			const result = await bash.exec("git log -1 --date=local");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toMatch(/Date:\s+\w{3} \w{3} \d+ \d{2}:\d{2}:\d{2} \d{4}\n/);
+			expect(result.stdout).not.toMatch(/\+0000\n/);
+		});
+
+		test("--date affects %ad in custom format", async () => {
+			const bash = await setupRepo();
+			const result = await bash.exec('git log -1 --format="%ad" --date=short');
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout.trim()).toBe("2001-09-09");
+		});
+
+		test("--date does not affect %aI (always ISO strict)", async () => {
+			const bash = await setupRepo();
+			const result = await bash.exec('git log -1 --format="%aI" --date=short');
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout.trim()).toBe("2001-09-09T01:46:40Z");
+		});
+
+		test("invalid --date value returns error", async () => {
+			const bash = await setupRepo();
+			const result = await bash.exec("git log -1 --date=bogus");
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("unknown date format bogus");
+		});
+	});
 });

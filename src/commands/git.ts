@@ -118,7 +118,7 @@ export const KNOWN_UNIMPLEMENTED_COMMANDS = new Set([
 ]);
 
 const COMMAND_REGISTRY: Record<GitCommandName, (git: Command, ext?: GitExtensions) => void> = {
-	init: (g) => registerInitCommand(g),
+	init: (g, e) => registerInitCommand(g, e),
 	clone: (g, e) => registerCloneCommand(g, e),
 	fetch: (g, e) => registerFetchCommand(g, e),
 	pull: (g, e) => registerPullCommand(g, e),

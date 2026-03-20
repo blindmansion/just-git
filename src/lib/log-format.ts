@@ -2,11 +2,24 @@ import { abbreviateHash, firstLine } from "./command-utils.ts";
 import { formatDate } from "./date.ts";
 import type { Commit, ObjectId } from "./types.ts";
 
+export type DateMode =
+	| "default"
+	| "short"
+	| "iso"
+	| "iso-strict"
+	| "relative"
+	| "rfc"
+	| "raw"
+	| "unix"
+	| "local"
+	| "human";
+
 export interface FormatContext {
 	hash: ObjectId;
 	commit: Commit;
 	decorations?: (hash: ObjectId) => string;
 	decorationsRaw?: (hash: ObjectId) => string;
+	dateMode?: DateMode;
 }
 
 /**
@@ -64,7 +77,7 @@ export function expandFormat(fmt: string, ctx: FormatContext): string {
 						i += 3;
 						continue;
 					case "d":
-						result += formatDate(id.timestamp, id.timezone);
+						result += formatDateByMode(id.timestamp, id.timezone, ctx.dateMode);
 						i += 3;
 						continue;
 					case "D":
@@ -253,10 +266,12 @@ export function formatPreset(
 				lines.push(`Merge: ${commit.parents.map(abbreviateHash).join(" ")}`);
 			}
 			lines.push(`Author:     ${commit.author.name} <${commit.author.email}>`);
-			lines.push(`AuthorDate: ${formatDate(commit.author.timestamp, commit.author.timezone)}`);
+			lines.push(
+				`AuthorDate: ${formatDateByMode(commit.author.timestamp, commit.author.timezone, ctx.dateMode)}`,
+			);
 			lines.push(`Commit:     ${commit.committer.name} <${commit.committer.email}>`);
 			lines.push(
-				`CommitDate: ${formatDate(commit.committer.timestamp, commit.committer.timezone)}`,
+				`CommitDate: ${formatDateByMode(commit.committer.timestamp, commit.committer.timezone, ctx.dateMode)}`,
 			);
 			lines.push("");
 			const msg = commit.message.replace(/\n$/, "");
@@ -313,7 +328,9 @@ function formatMedium(ctx: FormatContext, isFirst: boolean): string {
 		lines.push(`Merge: ${commit.parents.map(abbreviateHash).join(" ")}`);
 	}
 	lines.push(`Author: ${commit.author.name} <${commit.author.email}>`);
-	lines.push(`Date:   ${formatDate(commit.author.timestamp, commit.author.timezone)}`);
+	lines.push(
+		`Date:   ${formatDateByMode(commit.author.timestamp, commit.author.timezone, ctx.dateMode)}`,
+	);
 	lines.push("");
 	const msg = commit.message.replace(/\n$/, "");
 	for (const line of msg.split("\n")) {
@@ -368,7 +385,8 @@ function formatISO8601Strict(timestamp: number, timezone: string): string {
 	const h = String(d.getUTCHours()).padStart(2, "0");
 	const mi = String(d.getUTCMinutes()).padStart(2, "0");
 	const s = String(d.getUTCSeconds()).padStart(2, "0");
-	return `${y}-${mo}-${day}T${h}:${mi}:${s}${tzColonFormat(timezone)}`;
+	const tz = timezone === "+0000" || timezone === "-0000" ? "Z" : tzColonFormat(timezone);
+	return `${y}-${mo}-${day}T${h}:${mi}:${s}${tz}`;
 }
 
 /** ISO 8601 like: `2001-09-09 01:46:40 +0000` */
@@ -423,6 +441,63 @@ function formatRelativeDate(timestamp: number): string {
 		return `${yLabel}, ${mLabel} ago`;
 	}
 	return years === 1 ? "1 year ago" : `${years} years ago`;
+}
+
+/** Short date: `2001-09-09` */
+function formatShortDate(timestamp: number, timezone: string): string {
+	const d = applyTz(timestamp, timezone);
+	const y = d.getUTCFullYear();
+	const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
+	const day = String(d.getUTCDate()).padStart(2, "0");
+	return `${y}-${mo}-${day}`;
+}
+
+/** Raw date: `<timestamp> <tz>` */
+function formatRawDate(timestamp: number, timezone: string): string {
+	return `${timestamp} ${timezone}`;
+}
+
+/** Unix date: just the timestamp. */
+function formatUnixDate(timestamp: number): string {
+	return timestamp.toString();
+}
+
+/** Local date: default format converted to the runtime's local timezone. */
+function formatLocalDate(timestamp: number, _timezone: string): string {
+	const d = new Date(timestamp * 1000);
+	const dayName = DAYS_FULL[d.getDay()]?.slice(0, 3);
+	const month = MONTHS_SHORT[d.getMonth()];
+	const dayOfMonth = d.getDate();
+	const h = String(d.getHours()).padStart(2, "0");
+	const mi = String(d.getMinutes()).padStart(2, "0");
+	const s = String(d.getSeconds()).padStart(2, "0");
+	const y = d.getFullYear();
+	return `${dayName} ${month} ${dayOfMonth} ${h}:${mi}:${s} ${y}`;
+}
+
+/** Format a date according to a --date= mode. */
+function formatDateByMode(timestamp: number, timezone: string, mode: DateMode | undefined): string {
+	switch (mode) {
+		case "short":
+			return formatShortDate(timestamp, timezone);
+		case "iso":
+			return formatISO8601(timestamp, timezone);
+		case "iso-strict":
+			return formatISO8601Strict(timestamp, timezone);
+		case "relative":
+		case "human":
+			return formatRelativeDate(timestamp);
+		case "rfc":
+			return formatRFC2822(timestamp, timezone);
+		case "raw":
+			return formatRawDate(timestamp, timezone);
+		case "unix":
+			return formatUnixDate(timestamp);
+		case "local":
+			return formatLocalDate(timestamp, timezone);
+		default:
+			return formatDate(timestamp, timezone);
+	}
 }
 
 /** RFC 2822: `Thu, 1 Jan 1970 00:00:00 +0000` */
