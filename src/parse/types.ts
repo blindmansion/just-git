@@ -29,6 +29,7 @@ export interface OptionDef<TOut = unknown> {
 	readonly default?: unknown;
 	readonly env?: string;
 	readonly required?: boolean;
+	readonly repeatable?: boolean;
 }
 
 export interface FlagDef {

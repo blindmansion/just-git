@@ -45,6 +45,7 @@ Commands:
   repack       Pack unpacked objects in a repository
   gc           Cleanup unnecessary files and optimize the local repository
   bisect       Use binary search to find the commit that introduced a bug
+  grep         Print lines matching a pattern
   help         Display help information
 ```
 
@@ -380,7 +381,7 @@ Usage:
   git commit [options]
 
 Options:
-  -m, --message <string>  Commit message
+  -m, --message <string>  Commit message (repeatable)
   -F, --file <string>     Read commit message from file ('-' for stdin)
   --allow-empty           Allow creating an empty commit
   --amend                 Amend the previous commit
@@ -458,6 +459,44 @@ Usage:
 
 Options:
   --aggressive  More aggressively optimize the repository
+```
+
+## git grep
+
+```
+git grep - Print lines matching a pattern
+
+Usage:
+  git grep [options] [args...]
+
+Arguments:
+  args...
+
+Options:
+  --cached                       Search blobs registered in the index
+  -n, --line-number              Prefix the line number to matching lines
+  -l, --files-with-matches       Show only filenames
+  -L, --files-without-match      Show only filenames without matches
+  -c, --count                    Show count of matching lines per file
+  -i, --ignore-case              Case insensitive matching
+  -w, --word-regexp              Match whole words only
+  -v, --invert-match             Invert the sense of matching
+  -F, --fixed-strings            Interpret pattern as fixed string
+  -E, --extended-regexp          Interpret pattern as extended regexp
+  -G, --basic-regexp             Interpret pattern as basic regexp
+  -h, --suppress-filename        Suppress filename prefix
+  -H, --force-filename           Force filename prefix
+  --full-name                    Force paths to be output relative to project top
+  -q, --quiet                    Do not output matched lines; exit with status 0 on match
+  --all-match                    Require all patterns to match in a file
+  --max-depth <number>           Descend at most <n> levels of directories
+  -m, --max-count <number>       Maximum number of matches per file
+  -A, --after-context <number>   Show <n> lines after match
+  -B, --before-context <number>  Show <n> lines before match
+  -C, --context <number>         Show <n> lines before and after match
+  --heading                      Show filename above matches
+  --break                        Print empty line between results from different files
+  -e, --pattern <string>         Match <pattern> (repeatable)
 ```
 
 ## git help

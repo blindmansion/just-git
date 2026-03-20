@@ -39,68 +39,11 @@ import { buildTreeFromIndex } from "../lib/tree-ops.ts";
 import { diffIndexToWorkTree, stageFile } from "../lib/worktree.ts";
 import { type Command, f, o } from "../parse/index.ts";
 
-/**
- * Pre-process tokens to collect multiple `-m` / `--message` values and
- * join them with `\n\n`, matching real git's behavior.
- */
-function collectMessages(tokens: string[]): string[] {
-	const messages: string[] = [];
-	const result: string[] = [];
-	let i = 0;
-	while (i < tokens.length) {
-		const t = tokens[i]!;
-		if (t === "--") {
-			for (; i < tokens.length; i++) result.push(tokens[i]!);
-			break;
-		}
-		if (t === "-m" || t === "--message") {
-			if (i + 1 < tokens.length) {
-				messages.push(tokens[i + 1]!);
-				i += 2;
-			} else {
-				result.push(t);
-				i++;
-			}
-			continue;
-		}
-		if (t.startsWith("--message=")) {
-			messages.push(t.slice("--message=".length));
-			i++;
-			continue;
-		}
-		if (t.startsWith("-") && !t.startsWith("--") && t.length > 1) {
-			const chars = t.slice(1);
-			const mIdx = chars.indexOf("m");
-			if (mIdx !== -1) {
-				const before = chars.slice(0, mIdx);
-				const after = chars.slice(mIdx + 1);
-				if (before.length > 0) result.push(`-${before}`);
-				if (after.length > 0) {
-					messages.push(after);
-				} else if (i + 1 < tokens.length) {
-					messages.push(tokens[i + 1]!);
-					i += 2;
-					continue;
-				}
-				i++;
-				continue;
-			}
-		}
-		result.push(t);
-		i++;
-	}
-	if (messages.length > 0) {
-		result.push("-m", messages.join("\n\n"));
-	}
-	return result;
-}
-
 export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("commit", {
 		description: "Record changes to the repository",
-		transformArgs: collectMessages,
 		options: {
-			message: o.string().alias("m").describe("Commit message"),
+			message: o.string().alias("m").repeatable().describe("Commit message"),
 			file: o.string().alias("F").describe("Read commit message from file ('-' for stdin)"),
 			allowEmpty: f().describe("Allow creating an empty commit"),
 			amend: f().describe("Amend the previous commit"),
@@ -108,7 +51,8 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 			all: f().alias("a").describe("Auto-stage modified and deleted tracked files"),
 		},
 		handler: async (args, ctx) => {
-			if (args.message !== undefined && args.file !== undefined) {
+			const messages = args.message as string[];
+			if (messages.length > 0 && args.file !== undefined) {
 				return fatal("options '-m' and '-F' cannot be used together");
 			}
 
@@ -212,7 +156,7 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 			const oldCommit = isAmend && headHash ? await readCommit(gitCtx, headHash) : null;
 
 			// Resolve commit message: -m / -F flags take priority, then amend's old message, then MERGE_MSG
-			let messageText: string | undefined = args.message;
+			let messageText: string | undefined = messages.length > 0 ? messages.join("\n\n") : undefined;
 			if (messageText !== undefined) {
 				messageText = stripCommentLines(messageText);
 				if (!messageText) {

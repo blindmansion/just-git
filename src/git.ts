@@ -72,7 +72,8 @@ export type GitCommandName =
 	| "reflog"
 	| "repack"
 	| "gc"
-	| "bisect";
+	| "bisect"
+	| "grep";
 
 /**
  * Configuration for a {@link Git} instance.

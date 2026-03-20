@@ -119,7 +119,12 @@ export function parseArgs(
 
 			const parsed = coerce(rawValue, (entry.def as OptionDef<any>).type, entry.key, errors);
 			if (parsed !== undefined) {
-				result[entry.key] = parsed;
+				if ((entry.def as OptionDef<any>).repeatable) {
+					if (!Array.isArray(result[entry.key])) result[entry.key] = [];
+					(result[entry.key] as unknown[]).push(parsed);
+				} else {
+					result[entry.key] = parsed;
+				}
 			}
 			i++;
 			continue;
@@ -166,7 +171,12 @@ export function parseArgs(
 
 				const parsed = coerce(rawValue, (entry.def as OptionDef<any>).type, entry.key, errors);
 				if (parsed !== undefined) {
-					result[entry.key] = parsed;
+					if ((entry.def as OptionDef<any>).repeatable) {
+						if (!Array.isArray(result[entry.key])) result[entry.key] = [];
+						(result[entry.key] as unknown[]).push(parsed);
+					} else {
+						result[entry.key] = parsed;
+					}
 				}
 				break; // rest was consumed as value
 			}

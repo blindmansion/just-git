@@ -51,6 +51,18 @@ export class OptionBuilder<TOut, THasDefault extends boolean = false> {
 			true
 		>;
 	}
+
+	/** Allow multiple values — accumulates into an array, defaults to [] */
+	repeatable(): OptionBuilder<Exclude<TOut, undefined>[], true> {
+		return new OptionBuilder({
+			...this._def,
+			repeatable: true,
+			default: [],
+		} as unknown as OptionDef<Exclude<TOut, undefined>[]>) as unknown as OptionBuilder<
+			Exclude<TOut, undefined>[],
+			true
+		>;
+	}
 }
 
 // ============================================================================

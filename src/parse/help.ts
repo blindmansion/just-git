@@ -151,8 +151,10 @@ function formatOptionsTable(schema: OptionsSchema, header?: string): string[] {
 
 			const descParts: string[] = [];
 			if (opt.description) descParts.push(opt.description);
+			if (opt.repeatable) descParts.push("(repeatable)");
 			if (opt.required) descParts.push("(required)");
-			if (opt.default !== undefined) descParts.push(`(default: ${JSON.stringify(opt.default)})`);
+			if (opt.default !== undefined && !opt.repeatable)
+				descParts.push(`(default: ${JSON.stringify(opt.default)})`);
 			if (opt.env) descParts.push(`[env: ${opt.env}]`);
 
 			rows.push([parts.join(" "), descParts.join(" ")]);

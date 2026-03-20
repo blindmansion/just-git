@@ -14,6 +14,7 @@ import { registerConfigCommand } from "./config.ts";
 import { registerDiffCommand } from "./diff.ts";
 import { registerFetchCommand } from "./fetch.ts";
 import { registerGcCommand } from "./gc.ts";
+import { registerGrepCommand } from "./grep.ts";
 import { registerInitCommand } from "./init.ts";
 import { registerLogCommand } from "./log.ts";
 import { registerLsFilesCommand } from "./ls-files.ts";
@@ -151,6 +152,7 @@ const COMMAND_REGISTRY: Record<GitCommandName, (git: Command, ext?: GitExtension
 	repack: (g, e) => registerRepackCommand(g, e),
 	gc: (g, e) => registerGcCommand(g, e),
 	bisect: (g, e) => registerBisectCommand(g, e),
+	grep: (g, e) => registerGrepCommand(g, e),
 };
 
 export function createGitCommand(ext?: GitExtensions): Command {

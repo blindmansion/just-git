@@ -453,5 +453,5 @@ export function command<TOpts extends OptionsInput = {}, const TArgs extends Arg
 // ============================================================================
 
 function hasHelpFlag(tokens: readonly string[]): boolean {
-	return tokens.some((t) => t === "--help" || t === "-h");
+	return tokens.some((t) => t === "--help");
 }
