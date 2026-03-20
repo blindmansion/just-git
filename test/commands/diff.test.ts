@@ -387,6 +387,101 @@ describe("git diff", () => {
 		});
 	});
 
+	describe("commit-to-worktree shows new files", () => {
+		test("new staged file appears as A", async () => {
+			const bash = createTestBash({ files: { "/repo/a.txt": "a\n" }, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec('echo "b" > /repo/b.txt');
+			await bash.exec("git add /repo/b.txt");
+
+			const result = await bash.exec("git diff HEAD --name-status");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("A\tb.txt");
+		});
+
+		test("M + D + A all appear together", async () => {
+			const bash = createTestBash({
+				files: { "/repo/a.txt": "a\n", "/repo/b.txt": "b\n" },
+				env: TEST_ENV,
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec('echo "c" > /repo/c.txt');
+			await bash.exec("git add /repo/c.txt");
+			await bash.exec("git rm /repo/b.txt");
+			await bash.exec('echo "aa" > /repo/a.txt');
+
+			const result = await bash.exec("git diff HEAD --name-status");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toBe("M\ta.txt\nD\tb.txt\nA\tc.txt\n");
+		});
+
+		test("new file shows 'new file mode' header in unified diff", async () => {
+			const bash = createTestBash({ files: { "/repo/a.txt": "a\n" }, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec('echo "new" > /repo/new.txt');
+			await bash.exec("git add /repo/new.txt");
+
+			const result = await bash.exec("git diff HEAD -- new.txt");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("new file mode");
+			expect(result.stdout).toContain("--- /dev/null");
+			expect(result.stdout).toContain("+++ b/new.txt");
+		});
+
+		test("untracked files do not appear", async () => {
+			const bash = createTestBash({ files: { "/repo/a.txt": "a\n" }, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec('echo "tracked" > /repo/tracked.txt');
+			await bash.exec("git add /repo/tracked.txt");
+			await bash.exec('echo "untracked" > /repo/untracked.txt');
+
+			const result = await bash.exec("git diff HEAD --name-status");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("A\ttracked.txt");
+			expect(result.stdout).not.toContain("untracked.txt");
+		});
+
+		test("diff against older commit shows files added across multiple commits", async () => {
+			const bash = createTestBash({ files: { "/repo/a.txt": "a\n" }, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "c1"');
+			await bash.exec("git tag v1");
+			await bash.exec('echo "b" > /repo/b.txt');
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "c2"');
+			await bash.exec('echo "c" > /repo/c.txt');
+			await bash.exec("git add /repo/c.txt");
+
+			const result = await bash.exec("git diff v1 --name-status");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("A\tb.txt");
+			expect(result.stdout).toContain("A\tc.txt");
+		});
+
+		test("pathspec filter works on new files", async () => {
+			const bash = createTestBash({ files: { "/repo/a.txt": "a\n" }, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec('echo "b" > /repo/b.txt');
+			await bash.exec('echo "c" > /repo/c.txt');
+			await bash.exec("git add .");
+
+			const result = await bash.exec("git diff HEAD --name-status -- c.txt");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toBe("A\tc.txt\n");
+		});
+	});
+
 	describe("commit-to-worktree with format flags", () => {
 		test("--name-only against a commit", async () => {
 			const bash = createTestBash({ files: BASIC_REPO, env: TEST_ENV });

@@ -486,6 +486,8 @@ async function collectCommitToWorkTree(
 
 	const workTree = gitCtx.workTree as string;
 	const commitMap = await flattenTreeToMap(gitCtx, result.commit.tree);
+	const index = await readIndex(gitCtx);
+	const indexMap = new Map(getStage0Entries(index).map((e) => [e.path, e]));
 
 	const items: DiffFileResult[] = [];
 
@@ -517,6 +519,24 @@ async function collectCommitToWorkTree(
 				newFromWorkTree: true,
 			});
 		}
+	}
+
+	for (const [path, entry] of indexMap) {
+		if (commitMap.has(path)) continue;
+		if (pathFilter && !matchPathspecs(pathFilter, path)) continue;
+		const fullPath = join(workTree, path);
+		if (!(await gitCtx.fs.exists(fullPath))) continue;
+
+		const content = await gitCtx.fs.readFileBuffer(fullPath);
+		const newHash = await hashObject("blob", content);
+
+		items.push({
+			path,
+			status: "A",
+			newHash,
+			newMode: fmtMode(entry.mode),
+			newFromWorkTree: true,
+		});
 	}
 
 	items.sort((a, b) => comparePaths(a.path, b.path));

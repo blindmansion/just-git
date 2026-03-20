@@ -1025,5 +1025,5 @@ Options:
   -m, --message <string>  Tag message
   -d, --delete            Delete a tag
   -f, --force             Replace an existing tag
-  -l, --list <string>     List tags matching pattern
+  -l, --list              List tags matching pattern
 ```

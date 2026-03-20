@@ -234,6 +234,42 @@ describe("git tag", () => {
 	});
 
 	describe("list with pattern (-l)", () => {
+		test("-l with no pattern lists all tags", async () => {
+			const { results } = await runScenario(
+				[
+					"git init",
+					"git add .",
+					'git commit -m "first"',
+					"git tag v1.0",
+					"git tag v2.0",
+					"git tag alpha",
+					"git tag -l",
+				],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			const output = results[6].stdout;
+			expect(results[6].exitCode).toBe(0);
+			expect(output).toBe("alpha\nv1.0\nv2.0\n");
+		});
+
+		test("--list with no pattern lists all tags", async () => {
+			const { results } = await runScenario(
+				[
+					"git init",
+					"git add .",
+					'git commit -m "first"',
+					"git tag v1.0",
+					"git tag v2.0",
+					"git tag alpha",
+					"git tag --list",
+				],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			const output = results[6].stdout;
+			expect(results[6].exitCode).toBe(0);
+			expect(output).toBe("alpha\nv1.0\nv2.0\n");
+		});
+
 		test("filters tags by glob pattern", async () => {
 			const { results } = await runScenario(
 				[

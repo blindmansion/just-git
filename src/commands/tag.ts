@@ -27,7 +27,7 @@ export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 			message: o.string().alias("m").describe("Tag message"),
 			delete: f().alias("d").describe("Delete a tag"),
 			force: f().alias("f").describe("Replace an existing tag"),
-			list: o.string().alias("l").describe("List tags matching pattern"),
+			list: f().alias("l").describe("List tags matching pattern"),
 		},
 		handler: async (args, ctx) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
@@ -54,9 +54,9 @@ export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 				};
 			}
 
-			// ── List tags with pattern (-l <pattern>) ──────────────────
-			if (args.list !== undefined) {
-				return listTags(gitCtx, args.list || undefined);
+			// ── List tags with pattern (-l [<pattern>]) ─────────────────
+			if (args.list) {
+				return listTags(gitCtx, args.name || undefined);
 			}
 
 			// ── Create tag ──────────────────────────────────────────────
