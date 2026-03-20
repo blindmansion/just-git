@@ -62,5 +62,14 @@ export type {
 	RefStore,
 	RemoteResolver,
 } from "./lib/types";
-export type { HttpAuth } from "./lib/transport/transport";
+export type { HttpAuth, ShallowFetchOptions } from "./lib/transport/transport";
 export { findRepo } from "./lib/repo";
+export {
+	INFINITE_DEPTH,
+	readShallowCommits,
+	writeShallowCommits,
+	isShallowRepo,
+	applyShallowUpdates,
+	computeShallowBoundary,
+} from "./lib/shallow";
+export type { ShallowUpdate } from "./lib/shallow";

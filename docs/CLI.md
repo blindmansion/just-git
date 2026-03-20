@@ -367,6 +367,7 @@ Arguments:
 Options:
   --bare                 Create a bare clone
   -b, --branch <string>  Checkout this branch instead of HEAD
+  --depth <number>       Create a shallow clone with history truncated to N commits
 ```
 
 ## git commit
@@ -438,9 +439,11 @@ Arguments:
   refspec...  Refspec(s) to fetch
 
 Options:
-  --all        Fetch from all remotes
-  -p, --prune  Remove stale remote-tracking refs
-  --tags       Also fetch tags
+  --all             Fetch from all remotes
+  -p, --prune       Remove stale remote-tracking refs
+  --tags            Also fetch tags
+  --depth <number>  Limit fetching to the specified number of commits
+  --unshallow       Convert a shallow repository to a complete one
 ```
 
 ## git gc
@@ -581,10 +584,12 @@ Arguments:
   branch  Remote branch
 
 Options:
-  -r, --rebase  Rebase instead of merge
-  --no-rebase   Merge instead of rebase
-  --ff-only     Only fast-forward
-  --no-ff       Create a merge commit even for fast-forwards
+  -r, --rebase      Rebase instead of merge
+  --no-rebase       Merge instead of rebase
+  --ff-only         Only fast-forward
+  --no-ff           Create a merge commit even for fast-forwards
+  --depth <number>  Limit fetching to the specified number of commits
+  --unshallow       Convert a shallow repository to a complete one
 ```
 
 ## git push

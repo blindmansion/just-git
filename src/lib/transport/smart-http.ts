@@ -11,7 +11,7 @@ import {
 	pktLineText,
 } from "./pkt-line.ts";
 import type { FetchFunction } from "../../hooks.ts";
-import type { RemoteRef } from "./transport.ts";
+import type { RemoteRef, ShallowFetchOptions } from "./transport.ts";
 import { ZERO_HASH } from "../hex.ts";
 
 // ── Auth ─────────────────────────────────────────────────────────────
@@ -149,12 +149,15 @@ const WANTED_FETCH_CAPS = [
 	"side-band-64k",
 	"ofs-delta",
 	"include-tag",
+	"shallow",
 ];
 
 interface FetchPackResult {
 	packData: Uint8Array;
 	acks: string[];
 	progress: string[];
+	shallowLines: string[];
+	unshallowLines: string[];
 }
 
 export async function fetchPack(
@@ -164,6 +167,7 @@ export async function fetchPack(
 	serverCaps: string[],
 	auth?: HttpAuth,
 	fetchFn: FetchFunction = globalThis.fetch,
+	shallow?: ShallowFetchOptions,
 ): Promise<FetchPackResult> {
 	if (wants.length === 0) {
 		throw new Error("fetchPack requires at least one want");
@@ -171,14 +175,23 @@ export async function fetchPack(
 
 	const clientCaps = negotiateCapabilities(serverCaps, WANTED_FETCH_CAPS);
 
-	// Build request body
 	const lines: Uint8Array[] = [];
 
-	// First want with capabilities
 	lines.push(encodePktLine(`want ${wants[0]} ${clientCaps.join(" ")}\n`));
 	for (let i = 1; i < wants.length; i++) {
 		lines.push(encodePktLine(`want ${wants[i]}\n`));
 	}
+
+	if (shallow?.existingShallows) {
+		for (const hash of shallow.existingShallows) {
+			lines.push(encodePktLine(`shallow ${hash}\n`));
+		}
+	}
+
+	if (shallow?.depth !== undefined) {
+		lines.push(encodePktLine(`deepen ${shallow.depth}\n`));
+	}
+
 	lines.push(flushPkt());
 
 	for (const have of haves) {
@@ -210,8 +223,9 @@ export async function fetchPack(
 function parseFetchResponse(body: Uint8Array, useSideband: boolean): FetchPackResult {
 	const pktLines = parsePktLineStream(body);
 	const acks: string[] = [];
+	const shallowLines: string[] = [];
+	const unshallowLines: string[] = [];
 
-	// Consume ACK/NAK lines before pack data
 	let packStartIdx = 0;
 	for (let i = 0; i < pktLines.length; i++) {
 		const line = pktLines[i];
@@ -222,11 +236,16 @@ function parseFetchResponse(body: Uint8Array, useSideband: boolean): FetchPackRe
 		if (line.type !== "data") continue;
 
 		const text = pktLineText(line);
-		if (text.startsWith("ACK ") || text === "NAK") {
+		if (text.startsWith("shallow ")) {
+			shallowLines.push(text.slice(8));
+			packStartIdx = i + 1;
+		} else if (text.startsWith("unshallow ")) {
+			unshallowLines.push(text.slice(10));
+			packStartIdx = i + 1;
+		} else if (text.startsWith("ACK ") || text === "NAK") {
 			acks.push(text);
 			packStartIdx = i + 1;
 		} else {
-			// Non-ACK/NAK data means we've reached sideband/pack data
 			packStartIdx = i;
 			break;
 		}
@@ -239,10 +258,9 @@ function parseFetchResponse(body: Uint8Array, useSideband: boolean): FetchPackRe
 		if (errors.length > 0) {
 			throw new Error(`Remote error: ${errors.join("")}`);
 		}
-		return { packData, acks, progress };
+		return { packData, acks, progress, shallowLines, unshallowLines };
 	}
 
-	// No sideband: remaining data is raw pack
 	let totalSize = 0;
 	for (const line of remaining) {
 		if (line.type === "data") totalSize += line.data.byteLength;
@@ -256,7 +274,7 @@ function parseFetchResponse(body: Uint8Array, useSideband: boolean): FetchPackRe
 		}
 	}
 
-	return { packData, acks, progress: [] };
+	return { packData, acks, progress: [], shallowLines, unshallowLines };
 }
 
 // ── Push pack ────────────────────────────────────────────────────────

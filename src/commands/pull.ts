@@ -22,11 +22,17 @@ import { join } from "../lib/path.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 import { appendReflog } from "../lib/reflog.ts";
 import { branchNameFromRef, listRefs, readHead, resolveRef, updateRef } from "../lib/refs.ts";
+import {
+	applyShallowUpdates,
+	INFINITE_DEPTH,
+	isShallowRepo,
+	readShallowCommits,
+} from "../lib/shallow.ts";
 import { mapRefspec, parseRefspec } from "../lib/transport/refspec.ts";
 import { resolveRemoteTransport } from "../lib/transport/remote.ts";
-import type { RemoteRef } from "../lib/transport/transport.ts";
+import type { RemoteRef, ShallowFetchOptions } from "../lib/transport/transport.ts";
 import type { ObjectId } from "../lib/types.ts";
-import { a, type Command, f } from "../parse/index.ts";
+import { a, type Command, f, o } from "../parse/index.ts";
 import { performRebase } from "./rebase.ts";
 
 export function registerPullCommand(parent: Command, ext?: GitExtensions) {
@@ -41,11 +47,25 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			noRebase: f().describe("Merge instead of rebase"),
 			ffOnly: f().describe("Only fast-forward"),
 			noFf: f().describe("Create a merge commit even for fast-forwards"),
+			depth: o.number().describe("Limit fetching to the specified number of commits"),
+			unshallow: f().describe("Convert a shallow repository to a complete one"),
 		},
 		handler: async (args, ctx) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
 			const gitCtx = gitCtxOrError;
+
+			if (args.depth !== undefined && args.unshallow) {
+				return fatal("--depth and --unshallow cannot be used together");
+			}
+			if (args.unshallow && !(await isShallowRepo(gitCtx))) {
+				return fatal("--unshallow on a complete repository does not make sense");
+			}
+
+			let fetchDepth: number | undefined = args.depth;
+			if (args.unshallow) {
+				fetchDepth = INFINITE_DEPTH;
+			}
 
 			const headHash = await requireHead(gitCtx);
 			if (isCommandError(headHash)) return headHash;
@@ -161,8 +181,21 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			const haveSet = new Set(haves);
 			const filteredWants = wants.filter((w) => !haveSet.has(w));
 
-			if (filteredWants.length > 0) {
-				await transport.fetch(filteredWants, haves);
+			let shallowOpts: ShallowFetchOptions | undefined;
+			const existingShallows =
+				fetchDepth !== undefined ? await readShallowCommits(gitCtx) : undefined;
+			if (fetchDepth !== undefined) {
+				shallowOpts = { depth: fetchDepth, existingShallows };
+			}
+
+			const effectiveWants = filteredWants.length > 0 ? filteredWants : shallowOpts ? wants : [];
+
+			if (effectiveWants.length > 0) {
+				const fetchResult = await transport.fetch(effectiveWants, haves, shallowOpts);
+
+				if (fetchResult.shallowUpdates) {
+					await applyShallowUpdates(gitCtx, fetchResult.shallowUpdates, existingShallows);
+				}
 			}
 
 			// Update remote tracking refs (with reflog)

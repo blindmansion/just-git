@@ -370,8 +370,12 @@ async function* walkCommitsSimplified(
 
 	const enqueue = async (hash: ObjectId) => {
 		if (!visited.has(hash)) {
-			const commit = await readCommit(ctx, hash);
-			queue.push({ hash, commit });
+			try {
+				const commit = await readCommit(ctx, hash);
+				queue.push({ hash, commit });
+			} catch {
+				// Parent object may be missing in a shallow repo
+			}
 		}
 	};
 
@@ -398,9 +402,13 @@ async function* walkCommitsSimplified(
 		if (parents.length === 1) {
 			const p0 = parents[0];
 			if (p0) {
-				const parentCommit = await readCommit(ctx, p0);
-				const diff = await diffTrees(ctx, parentCommit.tree, commit.tree);
-				if (diff.some((e) => matchPathspecs(pathSpecs, e.path))) {
+				try {
+					const parentCommit = await readCommit(ctx, p0);
+					const diff = await diffTrees(ctx, parentCommit.tree, commit.tree);
+					if (diff.some((e) => matchPathspecs(pathSpecs, e.path))) {
+						yield entry;
+					}
+				} catch {
 					yield entry;
 				}
 				await enqueue(p0);
@@ -410,10 +418,14 @@ async function* walkCommitsSimplified(
 
 		const treesameParents: ObjectId[] = [];
 		for (const parentHash of parents) {
-			const parentCommit = await readCommit(ctx, parentHash);
-			const diff = await diffTrees(ctx, parentCommit.tree, commit.tree);
-			if (!diff.some((e) => matchPathspecs(pathSpecs, e.path))) {
-				treesameParents.push(parentHash);
+			try {
+				const parentCommit = await readCommit(ctx, parentHash);
+				const diff = await diffTrees(ctx, parentCommit.tree, commit.tree);
+				if (!diff.some((e) => matchPathspecs(pathSpecs, e.path))) {
+					treesameParents.push(parentHash);
+				}
+			} catch {
+				// Parent missing in shallow repo — not treesame
 			}
 		}
 

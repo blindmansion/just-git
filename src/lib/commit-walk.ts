@@ -93,7 +93,7 @@ export class CommitHeap {
 export async function* walkCommits(
 	ctx: GitRepo,
 	startHash: ObjectId | ObjectId[],
-	opts?: { exclude?: ObjectId[]; topoOrder?: boolean },
+	opts?: { exclude?: ObjectId[]; topoOrder?: boolean; shallowBoundary?: Set<ObjectId> },
 ): AsyncGenerator<CommitEntry> {
 	if (opts?.topoOrder) {
 		yield* walkCommitsTopoOrder(ctx, startHash, opts);
@@ -103,6 +103,7 @@ export async function* walkCommits(
 	const excluded = await buildExcludeSet(ctx, opts?.exclude);
 	const visited = new Set<ObjectId>(excluded);
 	const queue = new CommitHeap();
+	const shallow = opts?.shallowBoundary;
 
 	const starts = Array.isArray(startHash) ? startHash : [startHash];
 	for (const h of starts) {
@@ -118,9 +119,15 @@ export async function* walkCommits(
 
 		yield entry;
 
+		if (shallow?.has(entry.hash)) continue;
+
 		for (const parentHash of entry.commit.parents) {
 			if (!visited.has(parentHash)) {
-				queue.push(await loadCommit(ctx, parentHash));
+				try {
+					queue.push(await loadCommit(ctx, parentHash));
+				} catch {
+					// Parent object may be missing in a shallow repo
+				}
 			}
 		}
 	}
@@ -138,11 +145,12 @@ export async function* walkCommits(
 async function* walkCommitsTopoOrder(
 	ctx: GitRepo,
 	startHash: ObjectId | ObjectId[],
-	opts?: { exclude?: ObjectId[] },
+	opts?: { exclude?: ObjectId[]; shallowBoundary?: Set<ObjectId> },
 ): AsyncGenerator<CommitEntry> {
 	const excluded = await buildExcludeSet(ctx, opts?.exclude);
 	const visited = new Set<ObjectId>(excluded);
 	const queue = new CommitHeap();
+	const shallow = opts?.shallowBoundary;
 
 	const starts = Array.isArray(startHash) ? startHash : [startHash];
 	for (const h of starts) {
@@ -163,9 +171,15 @@ async function* walkCommitsTopoOrder(
 		hashToIdx.set(entry.hash, all.length);
 		all.push(entry);
 
+		if (shallow?.has(entry.hash)) continue;
+
 		for (const parentHash of entry.commit.parents) {
 			if (!visited.has(parentHash)) {
-				queue.push(await loadCommit(ctx, parentHash));
+				try {
+					queue.push(await loadCommit(ctx, parentHash));
+				} catch {
+					// Parent object may be missing in a shallow repo
+				}
 			}
 		}
 	}

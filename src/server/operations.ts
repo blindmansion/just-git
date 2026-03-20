@@ -12,6 +12,7 @@ import { parseTag } from "../lib/objects/tag.ts";
 import { findBestDeltas } from "../lib/pack/delta.ts";
 import type { DeltaPackInput, PackInput } from "../lib/pack/packfile.ts";
 import { writePackDeltified, writePackStreaming } from "../lib/pack/packfile.ts";
+import { computeShallowBoundary } from "../lib/shallow.ts";
 import {
 	collectEnumeration,
 	enumerateObjects,
@@ -19,9 +20,11 @@ import {
 	type WalkObjectWithContent,
 } from "../lib/transport/object-walk.ts";
 import type { GitRepo, ObjectId } from "../lib/types.ts";
+import type { ShallowUpdate } from "../lib/shallow.ts";
 import {
 	type AdvertisedRef,
 	buildRefAdvertisement,
+	buildShallowOnlyResponse,
 	buildUploadPackResponse,
 	buildUploadPackResponseStreaming,
 	parseReceivePackRequest,
@@ -111,6 +114,7 @@ const UPLOAD_PACK_CAPS = [
 	"ofs-delta",
 	"include-tag",
 	"allow-reachable-sha1-in-want",
+	"shallow",
 ];
 
 const RECEIVE_PACK_CAPS = ["report-status", "side-band-64k", "ofs-delta", "delete-refs"];
@@ -241,7 +245,8 @@ export async function handleUploadPack(
 	requestBody: Uint8Array,
 	options?: UploadPackOptions,
 ): Promise<Uint8Array | ReadableStream<Uint8Array>> {
-	const { wants, haves, capabilities } = parseUploadPackRequest(requestBody);
+	const { wants, haves, capabilities, clientShallows, depth, done } =
+		parseUploadPackRequest(requestBody);
 
 	if (wants.length === 0) {
 		return buildUploadPackResponse(new Uint8Array(0), false);
@@ -249,6 +254,38 @@ export async function handleUploadPack(
 
 	const useMultiAck = capabilities.includes("multi_ack_detailed");
 	const useSideband = capabilities.includes("side-band-64k");
+
+	// Compute shallow boundary when client requests a depth limit
+	let shallowInfo: ShallowUpdate | undefined;
+	let shallowBoundary: Set<ObjectId> | undefined;
+	let clientShallowSet: Set<ObjectId> | undefined;
+
+	// Always track client's shallow state — even requests without
+	// "deepen" (e.g. tag auto-follow) need accurate have-walk bounds.
+	if (clientShallows.length > 0) {
+		clientShallowSet = new Set(clientShallows);
+	}
+
+	if (depth !== undefined) {
+		const boundary = await computeShallowBoundary(
+			repo,
+			wants,
+			depth,
+			clientShallowSet ?? new Set(),
+		);
+		shallowInfo = boundary;
+		// Always set shallowBoundary when depth is requested, even for
+		// unshallow (empty set). This signals "deepening mode" to
+		// enumerateObjects so it augments wants with shallow parents.
+		shallowBoundary = new Set(boundary.shallow);
+	}
+
+	// Shallow negotiation phase: when the client sends wants + deepen
+	// without "done", it expects only the shallow-update section back.
+	// The client will send a second request with "done" for the pack.
+	if (shallowInfo && !done) {
+		return buildShallowOnlyResponse(shallowInfo);
+	}
 
 	let commonHashes: string[] | undefined;
 	if (useMultiAck && haves.length > 0) {
@@ -261,9 +298,11 @@ export async function handleUploadPack(
 		if (commonHashes.length === 0) commonHashes = undefined;
 	}
 
-	// Check pack cache (only for full clones — no haves)
+	// Shallow fetches are never cached (boundary depends on client state)
 	const cacheKey =
-		options?.cache && options.cacheKey ? PackCache.key(options.cacheKey, wants, haves) : null;
+		!shallowBoundary && options?.cache && options.cacheKey
+			? PackCache.key(options.cacheKey, wants, haves)
+			: null;
 
 	if (cacheKey && options?.cache) {
 		const cached = options.cache.get(cacheKey);
@@ -273,7 +312,17 @@ export async function handleUploadPack(
 	}
 
 	if (options?.noDelta) {
-		return handleUploadPackStreaming(repo, wants, haves, capabilities, useSideband, commonHashes);
+		return handleUploadPackStreaming(
+			repo,
+			wants,
+			haves,
+			capabilities,
+			useSideband,
+			commonHashes,
+			shallowInfo,
+			shallowBoundary,
+			clientShallowSet,
+		);
 	}
 
 	return handleUploadPackBuffered(
@@ -285,6 +334,9 @@ export async function handleUploadPack(
 		commonHashes,
 		options,
 		cacheKey,
+		shallowInfo,
+		shallowBoundary,
+		clientShallowSet,
 	);
 }
 
@@ -299,11 +351,21 @@ async function handleUploadPackStreaming(
 	capabilities: string[],
 	useSideband: boolean,
 	commonHashes: string[] | undefined,
+	shallowInfo?: ShallowUpdate,
+	shallowBoundary?: Set<ObjectId>,
+	clientShallowBoundary?: Set<ObjectId>,
 ): Promise<ReadableStream<Uint8Array>> {
-	const { count, objects: walkObjects } = await enumerateObjects(repo, wants, haves);
+	const { count, objects: walkObjects } = await enumerateObjects(
+		repo,
+		wants,
+		haves,
+		shallowBoundary,
+		clientShallowBoundary,
+	);
 
 	if (count === 0) {
-		const empty = buildUploadPackResponse(new Uint8Array(0), useSideband, commonHashes);
+		const { data: emptyPack } = await writePackDeltified([]);
+		const empty = buildUploadPackResponse(emptyPack, useSideband, commonHashes, shallowInfo);
 		return new ReadableStream({
 			start(controller) {
 				controller.enqueue(empty);
@@ -349,7 +411,12 @@ async function handleUploadPackStreaming(
 	}
 
 	const packChunks = writePackStreaming(totalCount, streamObjects());
-	const responseChunks = buildUploadPackResponseStreaming(packChunks, useSideband, commonHashes);
+	const responseChunks = buildUploadPackResponseStreaming(
+		packChunks,
+		useSideband,
+		commonHashes,
+		shallowInfo,
+	);
 
 	return new ReadableStream({
 		async pull(controller) {
@@ -376,11 +443,21 @@ async function handleUploadPackBuffered(
 	commonHashes: string[] | undefined,
 	options: UploadPackOptions | undefined,
 	cacheKey: string | null,
+	shallowInfo?: ShallowUpdate,
+	shallowBoundary?: Set<ObjectId>,
+	clientShallowBoundary?: Set<ObjectId>,
 ): Promise<Uint8Array> {
-	const enumResult = await enumerateObjectsWithContent(repo, wants, haves);
+	const enumResult = await enumerateObjectsWithContent(
+		repo,
+		wants,
+		haves,
+		shallowBoundary,
+		clientShallowBoundary,
+	);
 
 	if (enumResult.count === 0) {
-		return buildUploadPackResponse(new Uint8Array(0), useSideband, commonHashes);
+		const { data: emptyPack } = await writePackDeltified([]);
+		return buildUploadPackResponse(emptyPack, useSideband, commonHashes, shallowInfo);
 	}
 
 	const collected: WalkObjectWithContent[] = await collectEnumeration(enumResult);
@@ -424,7 +501,7 @@ async function handleUploadPackBuffered(
 		options.cache.set(cacheKey, { packData, objectCount: collected.length, deltaCount });
 	}
 
-	return buildUploadPackResponse(packData, useSideband, commonHashes);
+	return buildUploadPackResponse(packData, useSideband, commonHashes, shallowInfo);
 }
 
 // ── Receive-pack (push handling) ────────────────────────────────────

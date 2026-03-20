@@ -64,7 +64,12 @@ async function collectAncestors(ctx: GitRepo, hash: ObjectId): Promise<Set<Objec
 		const current = queue[qi++]!;
 		if (ancestors.has(current)) continue;
 		ancestors.add(current);
-		const commit = await readCommit(ctx, current);
+		let commit;
+		try {
+			commit = await readCommit(ctx, current);
+		} catch {
+			continue;
+		}
 		for (const parent of commit.parents) {
 			if (!ancestors.has(parent)) queue.push(parent);
 		}
@@ -91,7 +96,12 @@ export async function isAncestor(
 		if (current === candidate) return true;
 		if (visited.has(current)) continue;
 		visited.add(current);
-		const commit = await readCommit(ctx, current);
+		let commit;
+		try {
+			commit = await readCommit(ctx, current);
+		} catch {
+			continue;
+		}
 		for (const parent of commit.parents) {
 			if (!visited.has(parent)) queue.push(parent);
 		}
@@ -137,7 +147,12 @@ export async function findAllMergeBases(
 			continue;
 		}
 
-		const commit = await readCommit(ctx, current);
+		let commit;
+		try {
+			commit = await readCommit(ctx, current);
+		} catch {
+			continue;
+		}
 		for (const parent of commit.parents) {
 			if (!visitedB.has(parent)) queueB.push(parent);
 		}

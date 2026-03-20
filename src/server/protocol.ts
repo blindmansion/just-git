@@ -12,6 +12,7 @@ import {
 	parsePktLineStream,
 	pktLineText,
 } from "../lib/transport/pkt-line.ts";
+import type { ShallowUpdate } from "../lib/shallow.ts";
 
 const SIDEBAND_MAX_PAYLOAD = 65520 - 4 - 1; // pkt-line max (65520) minus 4-byte header minus 1-byte band = 65515
 
@@ -75,6 +76,12 @@ interface UploadPackRequest {
 	wants: string[];
 	haves: string[];
 	capabilities: string[];
+	/** Commit hashes the client reports as its current shallow boundary. */
+	clientShallows: string[];
+	/** Requested depth limit (from `deepen <N>`). */
+	depth?: number;
+	/** Whether the client sent a `done` line (signals end of negotiation). */
+	done: boolean;
 }
 
 /**
@@ -83,6 +90,8 @@ interface UploadPackRequest {
  * Format:
  *   want <hash> <capabilities>\n   (first want)
  *   want <hash>\n                  (subsequent wants)
+ *   shallow <hash>\n               (client's existing shallow commits)
+ *   deepen <N>\n                   (depth request)
  *   flush
  *   have <hash>\n
  *   ...
@@ -92,7 +101,10 @@ export function parseUploadPackRequest(body: Uint8Array): UploadPackRequest {
 	const pktLines = parsePktLineStream(body);
 	const wants: string[] = [];
 	const haves: string[] = [];
+	const clientShallows: string[] = [];
 	let capabilities: string[] = [];
+	let depth: number | undefined;
+	let done = false;
 
 	for (const line of pktLines) {
 		if (line.type === "flush") continue;
@@ -101,7 +113,6 @@ export function parseUploadPackRequest(body: Uint8Array): UploadPackRequest {
 		if (text.startsWith("want ")) {
 			const rest = text.slice(5);
 			if (wants.length === 0) {
-				// First want may include capabilities after the hash
 				const spaceIdx = rest.indexOf(" ");
 				if (spaceIdx !== -1) {
 					wants.push(rest.slice(0, spaceIdx));
@@ -117,11 +128,17 @@ export function parseUploadPackRequest(body: Uint8Array): UploadPackRequest {
 			}
 		} else if (text.startsWith("have ")) {
 			haves.push(text.slice(5));
+		} else if (text.startsWith("shallow ")) {
+			clientShallows.push(text.slice(8));
+		} else if (text.startsWith("deepen ")) {
+			depth = parseInt(text.slice(7), 10);
+			if (Number.isNaN(depth)) depth = undefined;
+		} else if (text === "done") {
+			done = true;
 		}
-		// "done" and other lines are ignored
 	}
 
-	return { wants, haves, capabilities };
+	return { wants, haves, capabilities, clientShallows, depth, done };
 }
 
 // ── Upload-pack response building ───────────────────────────────────
@@ -134,13 +151,27 @@ export function parseUploadPackRequest(body: Uint8Array): UploadPackRequest {
  * `ACK <last>` to terminate negotiation before pack data.
  * When no common objects exist, sends `NAK` before the pack.
  * Sideband-64k wraps pack data in band-1 pkt-lines.
+ *
+ * When `shallowInfo` is provided, shallow/unshallow lines are
+ * emitted before the ACK/NAK negotiation (per protocol spec).
  */
 export function buildUploadPackResponse(
 	packData: Uint8Array,
 	useSideband: boolean,
 	commonHashes?: string[],
+	shallowInfo?: ShallowUpdate,
 ): Uint8Array {
 	const parts: Uint8Array[] = [];
+
+	if (shallowInfo) {
+		for (const hash of shallowInfo.shallow) {
+			parts.push(encodePktLine(`shallow ${hash}\n`));
+		}
+		for (const hash of shallowInfo.unshallow) {
+			parts.push(encodePktLine(`unshallow ${hash}\n`));
+		}
+		parts.push(flushPkt());
+	}
 
 	if (commonHashes && commonHashes.length > 0) {
 		for (const hash of commonHashes) {
@@ -154,7 +185,6 @@ export function buildUploadPackResponse(
 	}
 
 	if (useSideband) {
-		// Chunk pack data into sideband band-1 packets
 		let offset = 0;
 		while (offset < packData.byteLength) {
 			const chunkSize = Math.min(SIDEBAND_MAX_PAYLOAD, packData.byteLength - offset);
@@ -163,12 +193,28 @@ export function buildUploadPackResponse(
 		}
 		parts.push(flushPkt());
 	} else {
-		// Raw pack data after NAK
 		const line = new Uint8Array(packData.byteLength);
 		line.set(packData);
 		parts.push(line);
 	}
 
+	return concatPktLines(...parts);
+}
+
+/**
+ * Build a response containing only the shallow-update section.
+ * Used during the first phase of shallow HTTP negotiation when the
+ * client has not yet sent "done".
+ */
+export function buildShallowOnlyResponse(shallowInfo: ShallowUpdate): Uint8Array {
+	const parts: Uint8Array[] = [];
+	for (const hash of shallowInfo.shallow) {
+		parts.push(encodePktLine(`shallow ${hash}\n`));
+	}
+	for (const hash of shallowInfo.unshallow) {
+		parts.push(encodePktLine(`unshallow ${hash}\n`));
+	}
+	parts.push(flushPkt());
 	return concatPktLines(...parts);
 }
 
@@ -181,8 +227,20 @@ export async function* buildUploadPackResponseStreaming(
 	packChunks: AsyncIterable<Uint8Array>,
 	useSideband: boolean,
 	commonHashes?: string[],
+	shallowInfo?: ShallowUpdate,
 ): AsyncGenerator<Uint8Array> {
-	// Preamble: ACK/NAK lines
+	if (shallowInfo) {
+		const shallowParts: Uint8Array[] = [];
+		for (const hash of shallowInfo.shallow) {
+			shallowParts.push(encodePktLine(`shallow ${hash}\n`));
+		}
+		for (const hash of shallowInfo.unshallow) {
+			shallowParts.push(encodePktLine(`unshallow ${hash}\n`));
+		}
+		shallowParts.push(flushPkt());
+		yield concatPktLines(...shallowParts);
+	}
+
 	const preamble: Uint8Array[] = [];
 	if (commonHashes && commonHashes.length > 0) {
 		for (const hash of commonHashes) {

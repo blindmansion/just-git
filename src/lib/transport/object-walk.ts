@@ -1,4 +1,4 @@
-import { objectExists, readObject } from "../object-db.ts";
+import { objectExists, readCommit, readObject } from "../object-db.ts";
 import { parseCommit } from "../objects/commit.ts";
 import { parseTag } from "../objects/tag.ts";
 import { parseTree } from "../objects/tree.ts";
@@ -44,16 +44,38 @@ export async function enumerateObjects(
 	ctx: GitRepo,
 	wants: ObjectId[],
 	haves: ObjectId[],
+	shallowBoundary?: Set<ObjectId>,
+	clientShallowBoundary?: Set<ObjectId>,
 ): Promise<EnumerationResult<WalkObject>> {
+	const haveBoundary = clientShallowBoundary ?? shallowBoundary;
 	const haveSet = new Set<ObjectId>();
 	for (const hash of haves) {
-		await walkReachable(ctx, hash, haveSet);
+		await walkReachable(ctx, hash, haveSet, haveBoundary);
+	}
+
+	// When deepening/unshallowing, the client already has commits at
+	// its shallow boundary but is missing their parents. Add those
+	// parents as extra starting points so the want-walk can reach them.
+	// Only augment when shallowBoundary is also set (actual deepening);
+	// plain fetches from shallow clients just need bounded have-walks.
+	const effectiveWants = [...wants];
+	if (clientShallowBoundary && shallowBoundary) {
+		for (const shallowHash of clientShallowBoundary) {
+			try {
+				const commit = await readCommit(ctx, shallowHash);
+				for (const parent of commit.parents) {
+					if (!haveSet.has(parent)) effectiveWants.push(parent);
+				}
+			} catch {
+				// Object may not exist on the server
+			}
+		}
 	}
 
 	const result: WalkObject[] = [];
 	const visited = new Set<ObjectId>();
-	for (const hash of wants) {
-		await collectMissing(ctx, hash, haveSet, visited, result);
+	for (const hash of effectiveWants) {
+		await collectMissing(ctx, hash, haveSet, visited, result, shallowBoundary);
 	}
 
 	return {
@@ -75,8 +97,16 @@ export async function enumerateObjectsWithContent(
 	ctx: GitRepo,
 	wants: ObjectId[],
 	haves: ObjectId[],
+	shallowBoundary?: Set<ObjectId>,
+	clientShallowBoundary?: Set<ObjectId>,
 ): Promise<EnumerationResult<WalkObjectWithContent>> {
-	const { count, objects } = await enumerateObjects(ctx, wants, haves);
+	const { count, objects } = await enumerateObjects(
+		ctx,
+		wants,
+		haves,
+		shallowBoundary,
+		clientShallowBoundary,
+	);
 
 	return {
 		count,
@@ -115,7 +145,12 @@ export async function collectEnumeration<T>(result: EnumerationResult<T>): Promi
 /**
  * Walk all objects reachable from `hash`, adding them to `visited`.
  */
-async function walkReachable(ctx: GitRepo, hash: ObjectId, visited: Set<ObjectId>): Promise<void> {
+async function walkReachable(
+	ctx: GitRepo,
+	hash: ObjectId,
+	visited: Set<ObjectId>,
+	shallowBoundary?: Set<ObjectId>,
+): Promise<void> {
 	if (visited.has(hash)) return;
 	visited.add(hash);
 
@@ -126,22 +161,24 @@ async function walkReachable(ctx: GitRepo, hash: ObjectId, visited: Set<ObjectId
 	switch (raw.type) {
 		case "commit": {
 			const commit = parseCommit(raw.content);
-			await walkReachable(ctx, commit.tree, visited);
-			for (const parent of commit.parents) {
-				await walkReachable(ctx, parent, visited);
+			await walkReachable(ctx, commit.tree, visited, shallowBoundary);
+			if (!shallowBoundary?.has(hash)) {
+				for (const parent of commit.parents) {
+					await walkReachable(ctx, parent, visited, shallowBoundary);
+				}
 			}
 			break;
 		}
 		case "tree": {
 			const tree = parseTree(raw.content);
 			for (const entry of tree.entries) {
-				await walkReachable(ctx, entry.hash, visited);
+				await walkReachable(ctx, entry.hash, visited, shallowBoundary);
 			}
 			break;
 		}
 		case "tag": {
 			const tag = parseTag(raw.content);
-			await walkReachable(ctx, tag.object, visited);
+			await walkReachable(ctx, tag.object, visited, shallowBoundary);
 			break;
 		}
 		case "blob":
@@ -160,6 +197,7 @@ async function collectMissing(
 	haveSet: Set<ObjectId>,
 	visited: Set<ObjectId>,
 	result: WalkObject[],
+	shallowBoundary?: Set<ObjectId>,
 ): Promise<void> {
 	if (visited.has(hash) || haveSet.has(hash)) return;
 	visited.add(hash);
@@ -170,22 +208,24 @@ async function collectMissing(
 	switch (raw.type) {
 		case "commit": {
 			const commit = parseCommit(raw.content);
-			await collectMissing(ctx, commit.tree, haveSet, visited, result);
-			for (const parent of commit.parents) {
-				await collectMissing(ctx, parent, haveSet, visited, result);
+			await collectMissing(ctx, commit.tree, haveSet, visited, result, shallowBoundary);
+			if (!shallowBoundary?.has(hash)) {
+				for (const parent of commit.parents) {
+					await collectMissing(ctx, parent, haveSet, visited, result, shallowBoundary);
+				}
 			}
 			break;
 		}
 		case "tree": {
 			const tree = parseTree(raw.content);
 			for (const entry of tree.entries) {
-				await collectMissing(ctx, entry.hash, haveSet, visited, result);
+				await collectMissing(ctx, entry.hash, haveSet, visited, result, shallowBoundary);
 			}
 			break;
 		}
 		case "tag": {
 			const tag = parseTag(raw.content);
-			await collectMissing(ctx, tag.object, haveSet, visited, result);
+			await collectMissing(ctx, tag.object, haveSet, visited, result, shallowBoundary);
 			break;
 		}
 		case "blob":

@@ -6,12 +6,18 @@ import { getReflogIdentity } from "../lib/identity.ts";
 import { join } from "../lib/path.ts";
 import { appendReflog, ZERO_HASH } from "../lib/reflog.ts";
 import { deleteRef, listRefs, resolveRef, updateRef } from "../lib/refs.ts";
+import {
+	applyShallowUpdates,
+	INFINITE_DEPTH,
+	isShallowRepo,
+	readShallowCommits,
+} from "../lib/shallow.ts";
 import { mapRefspec, parseRefspec, type Refspec } from "../lib/transport/refspec.ts";
 import { resolveRemoteTransport } from "../lib/transport/remote.ts";
-import type { RemoteRef } from "../lib/transport/transport.ts";
+import type { RemoteRef, ShallowFetchOptions } from "../lib/transport/transport.ts";
 import type { ExecResult } from "../hooks.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
-import { a, type Command, f } from "../parse/index.ts";
+import { a, type Command, f, o } from "../parse/index.ts";
 
 export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("fetch", {
@@ -24,11 +30,25 @@ export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 			all: f().describe("Fetch from all remotes"),
 			prune: f().alias("p").describe("Remove stale remote-tracking refs"),
 			tags: f().describe("Also fetch tags"),
+			depth: o.number().describe("Limit fetching to the specified number of commits"),
+			unshallow: f().describe("Convert a shallow repository to a complete one"),
 		},
 		handler: async (args, ctx) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
 			const gitCtx = gitCtxOrError;
+
+			if (args.depth !== undefined && args.unshallow) {
+				return fatal("--depth and --unshallow cannot be used together");
+			}
+			if (args.unshallow && !(await isShallowRepo(gitCtx))) {
+				return fatal("--unshallow on a complete repository does not make sense");
+			}
+
+			let depth: number | undefined = args.depth;
+			if (args.unshallow) {
+				depth = INFINITE_DEPTH;
+			}
 
 			if (args.all) {
 				if (args.remote) {
@@ -54,6 +74,7 @@ export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 						args.tags,
 						ctx.env,
 						ext,
+						depth,
 					);
 					if (result.stderr) allStderr.push(result.stderr);
 					if (result.exitCode !== 0) lastExit = result.exitCode;
@@ -62,7 +83,16 @@ export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			const remoteName = args.remote || "origin";
-			return fetchOneRemote(gitCtx, remoteName, args.refspec, args.prune, args.tags, ctx.env, ext);
+			return fetchOneRemote(
+				gitCtx,
+				remoteName,
+				args.refspec,
+				args.prune,
+				args.tags,
+				ctx.env,
+				ext,
+				depth,
+			);
 		},
 	});
 }
@@ -75,6 +105,7 @@ async function fetchOneRemote(
 	tags: boolean,
 	env: Map<string, string>,
 	ext?: GitExtensions,
+	depth?: number,
 ): Promise<ExecResult> {
 	let resolved;
 	try {
@@ -166,8 +197,22 @@ async function fetchOneRemote(
 	const haveSet = new Set(haves);
 	const filteredWants = wants.filter((w) => !haveSet.has(w));
 
-	if (filteredWants.length > 0) {
-		await transport.fetch(filteredWants, haves);
+	let shallowOpts: ShallowFetchOptions | undefined;
+	const existingShallows = depth !== undefined ? await readShallowCommits(gitCtx) : undefined;
+	if (depth !== undefined) {
+		shallowOpts = { depth, existingShallows };
+	}
+
+	// When depth/unshallow is requested, we must call fetch even with no
+	// new wants so the shallow boundary negotiation can happen.
+	const effectiveWants = filteredWants.length > 0 ? filteredWants : shallowOpts ? wants : [];
+
+	if (effectiveWants.length > 0) {
+		const fetchResult = await transport.fetch(effectiveWants, haves, shallowOpts);
+
+		if (fetchResult.shallowUpdates) {
+			await applyShallowUpdates(gitCtx, fetchResult.shallowUpdates, existingShallows);
+		}
 	}
 
 	const ident = await getReflogIdentity(gitCtx, env);

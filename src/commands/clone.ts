@@ -9,8 +9,9 @@ import { basename, resolve } from "../lib/path.ts";
 import { appendReflog, ZERO_HASH } from "../lib/reflog.ts";
 import { createSymbolicRef, updateRef } from "../lib/refs.ts";
 import { findRepo, initRepository } from "../lib/repo.ts";
+import { applyShallowUpdates } from "../lib/shallow.ts";
 import { createTransportForUrl } from "../lib/transport/remote.ts";
-import type { Transport } from "../lib/transport/transport.ts";
+import type { ShallowFetchOptions, Transport } from "../lib/transport/transport.ts";
 import { flattenTree } from "../lib/tree-ops.ts";
 import type { GitContext, GitRepo, ObjectId } from "../lib/types.ts";
 import { checkoutTree } from "../lib/worktree.ts";
@@ -26,6 +27,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 		options: {
 			bare: f().describe("Create a bare clone"),
 			branch: o.string().alias("b").describe("Checkout this branch instead of HEAD"),
+			depth: o.number().describe("Create a shallow clone with history truncated to N commits"),
 		},
 		handler: async (args, ctx) => {
 			const repository = args.repository;
@@ -154,8 +156,16 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 				}
 			}
 
+			const depthOpt = args.depth;
+			const shallowOpts: ShallowFetchOptions | undefined =
+				depthOpt !== undefined && depthOpt > 0 ? { depth: depthOpt } : undefined;
+
 			if (wants.length > 0) {
-				await transport.fetch(wants, []);
+				const fetchResult = await transport.fetch(wants, [], shallowOpts);
+
+				if (fetchResult.shallowUpdates) {
+					await applyShallowUpdates(newCtx, fetchResult.shallowUpdates);
+				}
 			}
 
 			// Create remote tracking refs and find the default branch

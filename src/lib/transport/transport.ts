@@ -6,6 +6,7 @@ import { findBestDeltas } from "../pack/delta.ts";
 import type { DeltaPackInput } from "../pack/packfile.ts";
 import { writePackDeltified } from "../pack/packfile.ts";
 import { listRefs, readHead, resolveRef } from "../refs.ts";
+import { computeShallowBoundary, type ShallowUpdate } from "../shallow.ts";
 import type { GitContext, GitRepo, ObjectId } from "../types.ts";
 import { collectEnumeration, enumerateObjectsWithContent } from "./object-walk.ts";
 import {
@@ -26,12 +27,22 @@ export interface RemoteRef {
 	peeledHash?: ObjectId;
 }
 
+/** Options for shallow/depth-limited fetches. */
+export interface ShallowFetchOptions {
+	/** Maximum commit depth from the wanted refs. */
+	depth?: number;
+	/** Commits currently in the client's `.git/shallow` file. */
+	existingShallows?: Set<ObjectId>;
+}
+
 /** Result of a fetch operation at the transport level. */
 export interface FetchResult {
 	/** Refs advertised by the remote. */
 	remoteRefs: RemoteRef[];
 	/** Objects received (already unpacked into the local store). */
 	objectCount: number;
+	/** Shallow boundary changes, present when a depth-limited fetch was performed. */
+	shallowUpdates?: ShallowUpdate;
 }
 
 /** Result of a push operation at the transport level. */
@@ -61,8 +72,9 @@ export interface Transport {
 	/**
 	 * Fetch objects from the remote that are reachable from `wants`
 	 * but not from `haves`. Unpacks received objects into the local store.
+	 * Pass `shallow` options for depth-limited fetches.
 	 */
-	fetch(wants: ObjectId[], haves: ObjectId[]): Promise<FetchResult>;
+	fetch(wants: ObjectId[], haves: ObjectId[], shallow?: ShallowFetchOptions): Promise<FetchResult>;
 
 	/**
 	 * Push objects to the remote. Sends all objects reachable from the
@@ -115,20 +127,49 @@ export class LocalTransport implements Transport {
 		return result;
 	}
 
-	async fetch(wants: ObjectId[], haves: ObjectId[]): Promise<FetchResult> {
+	async fetch(
+		wants: ObjectId[],
+		haves: ObjectId[],
+		shallow?: ShallowFetchOptions,
+	): Promise<FetchResult> {
 		const remoteRefs = await this.advertiseRefs();
 
 		if (wants.length === 0) {
 			return { remoteRefs, objectCount: 0 };
 		}
 
-		const packData = await buildDeltifiedPack(this.remote, wants, haves);
+		let shallowBoundary: Set<ObjectId> | undefined;
+		let shallowUpdates: ShallowUpdate | undefined;
+		let clientShallowBoundary: Set<ObjectId> | undefined;
+
+		if (shallow?.depth !== undefined) {
+			const existingShallows = shallow.existingShallows ?? new Set<ObjectId>();
+			const boundary = await computeShallowBoundary(
+				this.remote,
+				wants,
+				shallow.depth,
+				existingShallows,
+			);
+			shallowUpdates = boundary;
+			shallowBoundary = new Set(boundary.shallow);
+			if (existingShallows.size > 0) {
+				clientShallowBoundary = existingShallows;
+			}
+		}
+
+		const packData = await buildDeltifiedPack(
+			this.remote,
+			wants,
+			haves,
+			shallowBoundary,
+			clientShallowBoundary,
+		);
 		if (!packData) {
-			return { remoteRefs, objectCount: 0 };
+			return { remoteRefs, objectCount: 0, shallowUpdates };
 		}
 
 		const objectCount = await ingestPackData(this.local, packData);
-		return { remoteRefs, objectCount };
+		return { remoteRefs, objectCount, shallowUpdates };
 	}
 
 	async push(updates: PushRefUpdate[]): Promise<PushResult> {
@@ -266,21 +307,31 @@ export class SmartHttpTransport implements Transport {
 		return this.cachedPushCaps as string[];
 	}
 
-	async fetch(wants: ObjectId[], haves: ObjectId[]): Promise<FetchResult> {
+	async fetch(
+		wants: ObjectId[],
+		haves: ObjectId[],
+		shallow?: ShallowFetchOptions,
+	): Promise<FetchResult> {
 		const { caps, refs } = await this.ensureFetchDiscovery();
 
 		if (wants.length === 0) {
 			return { remoteRefs: refs, objectCount: 0 };
 		}
 
-		const result = await fetchPack(this.url, wants, haves, caps, this.auth, this.fetchFn);
+		const result = await fetchPack(this.url, wants, haves, caps, this.auth, this.fetchFn, shallow);
 
 		if (result.packData.byteLength === 0) {
 			return { remoteRefs: refs, objectCount: 0 };
 		}
 
 		const objectCount = await ingestPackData(this.local, result.packData);
-		return { remoteRefs: refs, objectCount };
+
+		const shallowUpdates: ShallowUpdate | undefined =
+			result.shallowLines.length > 0 || result.unshallowLines.length > 0
+				? { shallow: result.shallowLines, unshallow: result.unshallowLines }
+				: undefined;
+
+		return { remoteRefs: refs, objectCount, shallowUpdates };
 	}
 
 	async push(updates: PushRefUpdate[]): Promise<PushResult> {
@@ -366,8 +417,16 @@ async function buildDeltifiedPack(
 	ctx: GitRepo,
 	wants: ObjectId[],
 	haves: ObjectId[],
+	shallowBoundary?: Set<ObjectId>,
+	clientShallowBoundary?: Set<ObjectId>,
 ): Promise<Uint8Array | undefined> {
-	const enumResult = await enumerateObjectsWithContent(ctx, wants, haves);
+	const enumResult = await enumerateObjectsWithContent(
+		ctx,
+		wants,
+		haves,
+		shallowBoundary,
+		clientShallowBoundary,
+	);
 	if (enumResult.count === 0) return undefined;
 
 	const objects = await collectEnumeration(enumResult);
