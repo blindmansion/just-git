@@ -681,6 +681,7 @@ describe("toNodeHandler", () => {
 			resolveRepo: async () => {
 				throw new Error("test explosion");
 			},
+			onError: false,
 		});
 		const handler = toNodeHandler(server);
 

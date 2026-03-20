@@ -283,6 +283,8 @@ interface ReceivePackRequest {
 	commands: PushCommand[];
 	packData: Uint8Array;
 	capabilities: string[];
+	/** Whether the parser found a valid flush packet terminating the command section. */
+	sawFlush: boolean;
 }
 
 /**
@@ -302,6 +304,7 @@ export function parseReceivePackRequest(body: Uint8Array): ReceivePackRequest {
 	const commands: PushCommand[] = [];
 	let capabilities: string[] = [];
 	let offset = 0;
+	let sawFlush = false;
 
 	// Parse pkt-line commands until flush
 	while (offset < body.byteLength) {
@@ -314,6 +317,7 @@ export function parseReceivePackRequest(body: Uint8Array): ReceivePackRequest {
 
 		if (len === 0) {
 			// Flush packet -- everything after is raw pack data
+			sawFlush = true;
 			offset += 4;
 			break;
 		}
@@ -347,7 +351,7 @@ export function parseReceivePackRequest(body: Uint8Array): ReceivePackRequest {
 
 	const packData = offset < body.byteLength ? body.subarray(offset) : new Uint8Array(0);
 
-	return { commands, packData, capabilities };
+	return { commands, packData, capabilities, sawFlush };
 }
 
 // ── Report-status response building ─────────────────────────────────

@@ -45,6 +45,15 @@ export interface GitServerConfig {
 		/** Delta window size (default 10). Smaller = faster, worse compression ratio. */
 		deltaWindow?: number;
 	};
+
+	/**
+	 * Called when the server catches an unhandled error.
+	 *
+	 * Defaults to logging `err.message` (no stack trace) to `console.error`.
+	 * Override to integrate with your own logging, or set to `false` to
+	 * suppress all error output.
+	 */
+	onError?: false | ((err: unknown, request: Request) => void);
 }
 
 export interface GitServer {

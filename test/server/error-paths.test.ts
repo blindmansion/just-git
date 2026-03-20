@@ -65,6 +65,7 @@ describe("resolveRepo throws", () => {
 		resolveRepo: async () => {
 			throw new Error("database connection lost");
 		},
+		onError: false,
 	});
 
 	test("info/refs returns 500", async () => {
@@ -100,7 +101,10 @@ describe("resolveRepo throws", () => {
 describe("malformed upload-pack body", () => {
 	test("garbage bytes return 500", async () => {
 		const repo = await setupRepo();
-		const server = createGitServer({ resolveRepo: async () => repo });
+		const server = createGitServer({
+			resolveRepo: async () => repo,
+			onError: false,
+		});
 
 		const garbage = new Uint8Array([0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04]);
 		const res = await server.fetch(
@@ -109,8 +113,7 @@ describe("malformed upload-pack body", () => {
 				body: garbage,
 			}),
 		);
-		// Should return a response (200 with empty pack, or 500), not crash
-		expect([200, 500]).toContain(res.status);
+		expect(res.status).toBe(500);
 	});
 
 	test("empty body (no wants) returns 200 with valid response", async () => {
@@ -130,11 +133,38 @@ describe("malformed upload-pack body", () => {
 });
 
 describe("malformed receive-pack body", () => {
-	test("truncated pkt-line does not crash", async () => {
+	test("garbage bytes return 400", async () => {
 		const repo = await setupRepo();
 		const server = createGitServer({ resolveRepo: async () => repo });
 
-		// pkt-line header says 50 bytes but only 10 are present
+		const garbage = new Uint8Array([0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04]);
+		const res = await server.fetch(
+			new Request("http://localhost/repo/git-receive-pack", {
+				method: "POST",
+				body: garbage,
+			}),
+		);
+		expect(res.status).toBe(400);
+	});
+
+	test("empty body returns 400", async () => {
+		const repo = await setupRepo();
+		const server = createGitServer({ resolveRepo: async () => repo });
+
+		const res = await server.fetch(
+			new Request("http://localhost/repo/git-receive-pack", {
+				method: "POST",
+				body: new Uint8Array(0),
+			}),
+		);
+		expect(res.status).toBe(400);
+	});
+
+	test("truncated pkt-line returns 400", async () => {
+		const repo = await setupRepo();
+		const server = createGitServer({ resolveRepo: async () => repo });
+
+		// pkt-line header says 50 bytes but only 4 are present
 		const truncated = new TextEncoder().encode("0032");
 		const res = await server.fetch(
 			new Request("http://localhost/repo/git-receive-pack", {
@@ -142,7 +172,7 @@ describe("malformed receive-pack body", () => {
 				body: truncated,
 			}),
 		);
-		expect([200, 500]).toContain(res.status);
+		expect(res.status).toBe(400);
 	});
 
 	test("flush-only body (no commands) returns 200", async () => {
@@ -233,6 +263,78 @@ describe("delete non-existent ref", () => {
 			}
 		}
 		expect(foundNg).toBe(true);
+	});
+});
+
+// ── onError callback ────────────────────────────────────────────────
+
+describe("onError callback", () => {
+	test("default onError logs message without stack trace", async () => {
+		const calls: unknown[][] = [];
+		const origError = console.error;
+		console.error = (...args: unknown[]) => calls.push(args);
+
+		try {
+			const server = createGitServer({
+				resolveRepo: async () => {
+					throw new Error("db connection lost");
+				},
+			});
+			const res = await server.fetch(
+				new Request("http://localhost/repo/info/refs?service=git-upload-pack"),
+			);
+			expect(res.status).toBe(500);
+			expect(calls.length).toBe(1);
+
+			const logged = String(calls[0]![0]);
+			expect(logged).toContain("db connection lost");
+			// Should NOT contain a stack trace (no "at " lines)
+			expect(logged).not.toContain("\n");
+		} finally {
+			console.error = origError;
+		}
+	});
+
+	test("custom onError receives error and request", async () => {
+		let captured: { err: unknown; req: Request } | null = null;
+		const server = createGitServer({
+			resolveRepo: async () => {
+				throw new Error("custom error");
+			},
+			onError: (err, request) => {
+				captured = { err, req: request };
+			},
+		});
+
+		const req = new Request("http://localhost/repo/info/refs?service=git-upload-pack");
+		await server.fetch(req);
+
+		expect(captured).not.toBeNull();
+		expect(captured!.err).toBeInstanceOf(Error);
+		expect((captured!.err as Error).message).toBe("custom error");
+		expect(captured!.req.url).toBe(req.url);
+	});
+
+	test("onError: false suppresses all logging", async () => {
+		const calls: unknown[] = [];
+		const origError = console.error;
+		console.error = (...args: unknown[]) => calls.push(args);
+
+		try {
+			const server = createGitServer({
+				resolveRepo: async () => {
+					throw new Error("should not appear");
+				},
+				onError: false,
+			});
+			const res = await server.fetch(
+				new Request("http://localhost/repo/info/refs?service=git-upload-pack"),
+			);
+			expect(res.status).toBe(500);
+			expect(calls.length).toBe(0);
+		} finally {
+			console.error = origError;
+		}
 	});
 });
 

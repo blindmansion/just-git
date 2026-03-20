@@ -38,6 +38,15 @@ export function createGitServer(config: GitServerConfig): GitServer {
 	const packCache =
 		config.packCache === false ? undefined : new PackCache(config.packCache?.maxBytes);
 
+	const onError =
+		config.onError === false
+			? undefined
+			: (config.onError ??
+				((err: unknown) => {
+					const msg = err instanceof Error ? err.message : String(err);
+					console.error(`[server] Internal error: ${msg}`);
+				}));
+
 	return {
 		async fetch(req: Request): Promise<Response> {
 			try {
@@ -121,7 +130,11 @@ export function createGitServer(config: GitServerConfig): GitServer {
 					const repo = repoOrResponse;
 
 					const body = await readRequestBody(req);
-					const { updates, unpackOk, capabilities } = await ingestReceivePack(repo, body);
+					const { updates, unpackOk, capabilities, sawFlush } = await ingestReceivePack(repo, body);
+
+					if (!sawFlush && updates.length === 0) {
+						return new Response("Bad Request", { status: 400 });
+					}
 
 					const useSideband = capabilities.includes("side-band-64k");
 					const useReportStatus = capabilities.includes("report-status");
@@ -232,7 +245,7 @@ export function createGitServer(config: GitServerConfig): GitServer {
 
 				return new Response("Not Found", { status: 404 });
 			} catch (err) {
-				console.error("  [server] Internal error:", err);
+				onError?.(err, req);
 				return new Response("Internal Server Error", { status: 500 });
 			}
 		},

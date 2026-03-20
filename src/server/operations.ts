@@ -510,6 +510,8 @@ export interface ReceivePackResult {
 	updates: RefUpdate[];
 	unpackOk: boolean;
 	capabilities: string[];
+	/** Whether the request body contained a valid pkt-line flush packet. */
+	sawFlush: boolean;
 }
 
 /**
@@ -521,7 +523,7 @@ export async function ingestReceivePack(
 	repo: GitRepo,
 	requestBody: Uint8Array,
 ): Promise<ReceivePackResult> {
-	const { commands, packData, capabilities } = parseReceivePackRequest(requestBody);
+	const { commands, packData, capabilities, sawFlush } = parseReceivePackRequest(requestBody);
 
 	let unpackOk = true;
 	if (packData.byteLength > 0) {
@@ -556,5 +558,5 @@ export async function ingestReceivePack(
 		});
 	}
 
-	return { updates, unpackOk, capabilities };
+	return { updates, unpackOk, capabilities, sawFlush };
 }
