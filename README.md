@@ -19,29 +19,6 @@ npm install just-git
 ### Client
 
 ```ts
-import { createGit, MemoryFileSystem } from "just-git";
-
-const fs = new MemoryFileSystem();
-const git = createGit({
-  identity: { name: "Alice", email: "alice@example.com" },
-  credentials: (url) => ({ type: "bearer", token: process.env.GITHUB_TOKEN! }),
-  hooks: {
-    beforeCommand: ({ command }) => {
-      if (command === "push") return { reject: true, message: "push requires approval" };
-    },
-  },
-});
-
-await git.exec("git init", { fs, cwd: "/repo" });
-await fs.writeFile("/repo/README.md", "# Hello\n");
-await git.exec("git add .", { fs, cwd: "/repo" });
-await git.exec('git commit -m "initial commit"', { fs, cwd: "/repo" });
-await git.exec("git log --oneline", { fs, cwd: "/repo" });
-```
-
-`MemoryFileSystem` is a minimal in-memory filesystem for standalone use. Tokenization handles single and double quotes; pass `env` as a plain object when needed (e.g. `GIT_AUTHOR_NAME`). The `FileSystem` interface is built around [just-bash](https://github.com/vercel-labs/just-bash)'s implementations. For anything beyond bare git commands, it's recommended to use just-git as a custom command in just-bash:
-
-```ts
 import { Bash } from "just-bash";
 import { createGit } from "just-git";
 
@@ -54,76 +31,61 @@ await bash.exec("echo 'hello' > README.md");
 await bash.exec("git add . && git commit -m 'initial commit'");
 ```
 
-### Server
-
-Stand up a git server with built-in storage (SQLite or [PostgreSQL](docs/SERVER.md#pgstorage)), branch protection, and push hooks:
+Register `createGit()` as a custom command in [just-bash](https://github.com/vercel-labs/just-bash) and you get pipes, redirects, `&&` chaining, and the full shell environment alongside git. For standalone use without just-bash, `MemoryFileSystem` provides a minimal in-memory filesystem and `git.exec` accepts a command string with basic quote-aware splitting:
 
 ```ts
-import { createGitServer, BunSqliteStorage } from "just-git/server";
+import { createGit, MemoryFileSystem } from "just-git";
+
+const fs = new MemoryFileSystem();
+const git = createGit({
+  fs,
+  identity: { name: "Alice", email: "alice@example.com" },
+  credentials: (url) => ({ type: "bearer", token: process.env.GITHUB_TOKEN! }),
+  hooks: {
+    beforeCommand: ({ command }) => {
+      if (command === "push") return { reject: true, message: "push requires approval" };
+    },
+  },
+});
+
+await git.exec("git init");
+await fs.writeFile("/README.md", "# Hello\n");
+await git.exec("git add .");
+await git.exec('git commit -m "initial commit"');
+```
+
+`createGit` also supports [command restrictions, network policies, and config overrides](docs/CLIENT.md#options) for sandboxing, a [lifecycle hooks API](docs/CLIENT.md#hooks) covering pre-commit secret scanning to push gating, and [cross-VFS remote resolution](docs/CLIENT.md#multi-agent-collaboration) for multi-agent collaboration. See [CLIENT.md](docs/CLIENT.md) for the full reference.
+
+### Server
+
+Stand up a git server with built-in storage (SQLite or PostgreSQL), branch protection, auth, and push hooks:
+
+```ts
+import { createGitServer, createStandardHooks, BunSqliteStorage } from "just-git/server";
+import { getChangedFiles } from "just-git/repo";
 import { Database } from "bun:sqlite";
 
 const storage = new BunSqliteStorage(new Database("repos.sqlite"));
 
 const server = createGitServer({
   resolveRepo: (path) => storage.repo(path),
-  hooks: {
-    preReceive: ({ updates }) => {
-      if (updates.some((u) => u.ref === "refs/heads/main" && !u.isFF))
-        return { reject: true, message: "no force-push to main" };
+  hooks: createStandardHooks({
+    protectedBranches: ["main"],
+    authorizePush: (request) => request.headers.has("Authorization"),
+    onPush: async ({ repo, repoPath, updates }) => {
+      for (const u of updates) {
+        const files = await getChangedFiles(repo, u.oldHash, u.newHash);
+        console.log(`${repoPath}: ${u.ref} — ${files.length} files changed`);
+      }
     },
-    postReceive: ({ repoPath, updates }) => {
-      console.log(`${repoPath}: ${updates.length} ref(s) updated`);
-    },
-  },
+  }),
 });
 
 Bun.serve({ fetch: server.fetch });
 // git clone http://localhost:3000/my-repo ← works with real git
 ```
 
-Uses web-standard `Request`/`Response`. Works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. For Node.js, use `toNodeHandler(server)` with `http.createServer` and `BetterSqlite3Storage` for `better-sqlite3`. See [SERVER.md](docs/SERVER.md) for the full API.
-
-## createGit options
-
-`createGit(options?)` accepts:
-
-| Option          | Description                                                                                                                                 |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `identity`      | Author/committer override. With `locked: true`, always wins over env vars and git config. Without `locked`, acts as a fallback.             |
-| `credentials`   | `(url) => HttpAuth \| null` callback for Smart HTTP transport auth.                                                                         |
-| `disabled`      | `GitCommandName[]` of subcommands to block (e.g. `["push", "rebase"]`).                                                                     |
-| `network`       | `{ allowed?: string[], fetch? }` to restrict HTTP access. Set to `false` to block all network access.                                       |
-| `config`        | `{ locked?, defaults? }` config overrides. `locked` values always win over `.git/config`; `defaults` supply fallbacks when a key is absent. |
-| `hooks`         | Lifecycle hooks for pre/post command interception, commit gating, message enforcement, and audit logging.                                   |
-| `resolveRemote` | `(url) => GitRepo \| null` callback for cross-VFS remote resolution (multi-agent setups).                                                   |
-
-See [CLIENT.md](docs/CLIENT.md) for detailed usage, config overrides, and multi-agent collaboration.
-
-## Client hooks
-
-Hooks fire at specific points inside command execution. Pre-hooks can reject the operation by returning `{ reject: true, message? }`. Post-hooks are observational. All hook payloads include `repo: GitRepo` for [programmatic repo access](docs/REPO.md).
-
-```ts
-import { createGit } from "just-git";
-import { getChangedFiles } from "just-git/repo";
-
-const git = createGit({
-  hooks: {
-    preCommit: ({ index }) => {
-      const forbidden = index.entries.filter((e) => /\.(env|pem|key)$/.test(e.path));
-      if (forbidden.length) {
-        return { reject: true, message: `Blocked: ${forbidden.map((e) => e.path).join(", ")}` };
-      }
-    },
-    postCommit: async ({ repo, hash, branch, parents }) => {
-      const files = await getChangedFiles(repo, parents[0] ?? null, hash);
-      onAgentCommit({ hash, branch, changedFiles: files });
-    },
-  },
-});
-```
-
-Combine multiple hook sets with `composeGitHooks(auditHooks, policyHooks, loggingHooks)`. See [HOOKS.md](docs/HOOKS.md) for the full type reference and [CLIENT.md](docs/CLIENT.md) for more examples.
+Uses web-standard `Request`/`Response`. Works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. For Node.js, use `toNodeHandler(server)` with `http.createServer` and `BetterSqlite3Storage` for `better-sqlite3`. Use `withAuth` to gate clone and fetch access as well. See [SERVER.md](docs/SERVER.md) for the full API.
 
 ## Repo module
 
@@ -140,10 +102,6 @@ const result = await mergeTrees(repo, oursCommit, theirsCommit);
 ```
 
 See [REPO.md](docs/REPO.md) for the full API, the `GitRepo` interface, and the hybrid worktree pattern.
-
-## Multi-agent collaboration
-
-Multiple agents can clone, fetch, push, and pull across isolated in-memory filesystems within the same process via the `resolveRemote` option, without needing a network or shared filesystem. Concurrent pushes are automatically serialized with proper non-fast-forward rejection. See [CLIENT.md](docs/CLIENT.md#multi-agent-collaboration) and [`examples/multi-agent.ts`](examples/multi-agent.ts).
 
 ## Commands
 

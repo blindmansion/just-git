@@ -8,7 +8,7 @@
 import { Bash, InMemoryFs } from "just-bash";
 import { Database } from "bun:sqlite";
 import { createGit, MemoryFileSystem, composeGitHooks, findRepo } from "../../src";
-import { createGitServer, BunSqliteStorage } from "../../src/server";
+import { createGitServer, createStandardHooks, BunSqliteStorage } from "../../src/server";
 import {
 	readFileAtCommit,
 	getChangedFiles,
@@ -26,34 +26,6 @@ import type { GitHooks } from "../../src";
 // README examples
 // ═══════════════════════════════════════════════════════════════════
 
-// ── README: Quick start (standalone exec) ───────────────────────────
-
-{
-	const fs = new MemoryFileSystem();
-	const git = createGit({
-		identity: { name: "Alice", email: "alice@example.com" },
-		credentials: (_url) => ({ type: "bearer" as const, token: "ghp_test_token" }),
-		hooks: {
-			beforeCommand: ({ command }) => {
-				if (command === "push") return { reject: true, message: "push requires approval" };
-			},
-		},
-	});
-
-	await git.exec("git init", { fs, cwd: "/repo" });
-	await fs.writeFile("/repo/README.md", "hello");
-	await git.exec("git add .", { fs, cwd: "/repo" });
-	await git.exec('git commit -m "initial commit"', { fs, cwd: "/repo" });
-	const log = await git.exec("git log --oneline", { fs, cwd: "/repo" });
-	console.assert(log.exitCode === 0, "standalone exec should succeed");
-
-	// Verify beforeCommand blocks push
-	const push = await git.exec("git push origin main", { fs, cwd: "/repo" });
-	console.assert(push.exitCode !== 0, "push should be blocked by beforeCommand");
-	console.assert(push.stderr.includes("push requires approval"), "should show rejection message");
-	console.log("README standalone:", log.stdout.trim());
-}
-
 // ── README: Quick start (just-bash) ─────────────────────────────────
 
 {
@@ -70,30 +42,91 @@ import type { GitHooks } from "../../src";
 	console.log("README just-bash:", log.stdout.trim());
 }
 
-// ── README: Quick start (server) ────────────────────────────────────
+// ── README: Quick start (standalone exec) ───────────────────────────
 
 {
-	const storage = new BunSqliteStorage(new Database(":memory:"));
-
-	const server = createGitServer({
-		resolveRepo: (path) => storage.repo(path),
+	const fs = new MemoryFileSystem();
+	const git = createGit({
+		fs,
+		identity: { name: "Alice", email: "alice@example.com" },
+		credentials: (_url) => ({ type: "bearer" as const, token: "ghp_test_token" }),
 		hooks: {
-			preReceive: ({ updates }) => {
-				if (updates.some((u) => u.ref === "refs/heads/main" && !u.isFF))
-					return { reject: true, message: "no force-push to main" };
-			},
-			postReceive: ({ repoPath, updates }) => {
-				console.log(`  [server] ${repoPath}: ${updates.length} ref(s) updated`);
+			beforeCommand: ({ command }) => {
+				if (command === "push") return { reject: true, message: "push requires approval" };
 			},
 		},
 	});
 
+	await git.exec("git init");
+	await fs.writeFile("/README.md", "hello");
+	await git.exec("git add .");
+	await git.exec('git commit -m "initial commit"');
+	const log = await git.exec("git log --oneline");
+	console.assert(log.exitCode === 0, "standalone exec should succeed");
+
+	// Verify beforeCommand blocks push
+	const push = await git.exec("git push origin main");
+	console.assert(push.exitCode !== 0, "push should be blocked by beforeCommand");
+	console.assert(push.stderr.includes("push requires approval"), "should show rejection message");
+	console.log("README standalone:", log.stdout.trim());
+}
+
+// ── README: Quick start (server) ────────────────────────────────────
+
+{
+	const changedFileCounts: number[] = [];
+	const storage = new BunSqliteStorage(new Database(":memory:"));
+
+	const server = createGitServer({
+		resolveRepo: (path) => storage.repo(path),
+		hooks: createStandardHooks({
+			protectedBranches: ["main"],
+			authorizePush: (request) => request.headers.has("Authorization"),
+			onPush: async ({ repo, repoPath: _repoPath, updates }) => {
+				for (const u of updates) {
+					const files = await getChangedFiles(repo, u.oldHash, u.newHash);
+					changedFileCounts.push(files.length);
+				}
+			},
+		}),
+	});
+
 	const srv = Bun.serve({ fetch: server.fetch, port: 0 });
-	const git = createGit({ identity: { name: "Alice", email: "alice@example.com" } });
 	const fs = new InMemoryFs();
-	const clone = await git.exec(`clone ${srv.url}test-repo /repo`, { fs, cwd: "/" });
-	console.assert(clone.exitCode === 0, "server clone should succeed");
-	console.log("README server:", clone.exitCode === 0 ? "clone OK" : clone.stderr.trim());
+
+	// Set up a local repo
+	{
+		const git = createGit({ identity: { name: "Alice", email: "alice@example.com" } });
+		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		await bash.exec("git init");
+		await bash.exec("echo 'hello' > README.md");
+		await bash.exec("git add . && git commit -m 'initial'");
+		await bash.exec(`git remote add origin ${srv.url}test-repo`);
+	}
+
+	// Push without Authorization header should be rejected
+	{
+		const git = createGit({ identity: { name: "Alice", email: "alice@example.com" } });
+		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		const noAuth = await bash.exec("git push -u origin main");
+		console.assert(noAuth.exitCode !== 0, "push without auth should fail");
+	}
+
+	// Push with Authorization header should succeed
+	{
+		const git = createGit({
+			identity: { name: "Alice", email: "alice@example.com" },
+			credentials: () => ({ type: "bearer" as const, token: "test-token" }),
+		});
+		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		const withAuth = await bash.exec("git push -u origin main");
+		console.assert(withAuth.exitCode === 0, "push with auth should succeed");
+	}
+
+	// onPush should have fired and getChangedFiles should work
+	console.assert(changedFileCounts.length === 1, "onPush should have fired once");
+	console.assert(changedFileCounts[0] === 1, "should see 1 changed file (README.md)");
+	console.log("README server: createStandardHooks + auth + onPush OK");
 	srv.stop();
 }
 

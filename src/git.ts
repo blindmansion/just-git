@@ -80,6 +80,12 @@ export type GitCommandName =
  * this instance.
  */
 export interface GitOptions {
+	/**
+	 * Default filesystem for {@link Git.exec}. When set, `exec` calls
+	 * don't need to pass `fs` in the context. Ignored by `execute`
+	 * (just-bash always provides its own filesystem).
+	 */
+	fs?: FileSystem;
 	hooks?: GitHooks;
 	credentials?: CredentialProvider;
 	identity?: IdentityOverride;
@@ -129,8 +135,10 @@ export interface GitExtensions {
 
 /** Simplified context for {@link Git.exec}. */
 export interface ExecContext {
-	fs: FileSystem;
-	cwd: string;
+	/** Filesystem to operate on. Falls back to the `fs` set in {@link GitOptions}. */
+	fs?: FileSystem;
+	/** Working directory. Defaults to `"/"`. */
+	cwd?: string;
 	env?: Record<string, string>;
 	stdin?: string;
 }
@@ -143,13 +151,13 @@ export interface ExecContext {
  * to make `git` available inside a virtual shell.
  *
  * ```ts
- * const git = createGit();
- * const fs = new MemoryFileSystem();
- * await git.exec("init", { fs, cwd: "/repo" });
+ * const git = createGit({ fs: new MemoryFileSystem() });
+ * await git.exec("init");
  * ```
  */
 export class Git {
 	readonly name = "git";
+	private defaultFs: FileSystem | undefined;
 	private blocked: Set<string> | null;
 	private hooks: GitHooks | undefined;
 	private inner: { execute: (args: string[], ctx: CommandContext) => Promise<ExecResult> };
@@ -171,6 +179,7 @@ export class Git {
 	}
 
 	constructor(options?: GitOptions) {
+		this.defaultFs = options?.fs;
 		this.hooks = options?.hooks;
 		this.blocked = options?.disabled?.length ? new Set<string>(options.disabled) : null;
 		const network = options?.network;
@@ -196,18 +205,23 @@ export class Git {
 	 * features like pipes, redirections, variable expansion, or `&&`.
 	 *
 	 * ```ts
-	 * await git.exec('commit -m "initial commit"', { fs, cwd: "/repo" });
+	 * await git.exec('commit -m "initial commit"');
 	 * ```
 	 */
-	exec = async (command: string, ctx: ExecContext): Promise<ExecResult> => {
+	exec = async (command: string, ctx?: ExecContext): Promise<ExecResult> => {
+		const fs = ctx?.fs ?? this.defaultFs;
+		if (!fs) {
+			throw new Error("No filesystem: pass `fs` in exec() options or in createGit()");
+		}
+		const cwd = ctx?.cwd ?? "/";
 		const args = tokenizeCommand(command);
 		const env = new Map<string, string>();
-		if (ctx.env) {
+		if (ctx?.env) {
 			for (const [k, v] of Object.entries(ctx.env)) {
 				env.set(k, v);
 			}
 		}
-		return this.execute(args, { fs: ctx.fs, cwd: ctx.cwd, env, stdin: ctx.stdin ?? "" });
+		return this.execute(args, { fs, cwd, env, stdin: ctx?.stdin ?? "" });
 	};
 
 	execute = (args: string[], ctx: CommandContext): Promise<ExecResult> => {
