@@ -1093,6 +1093,123 @@ describe("git log", () => {
 		});
 	});
 
+	describe("--pretty=raw / --format=raw", () => {
+		test("shows tree hash and raw author/committer lines", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "initial commit"', "git log --pretty=raw"],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			const log = results[3];
+			expect(log.exitCode).toBe(0);
+			expect(log.stdout).toMatch(/^commit [a-f0-9]{40}\n/);
+			expect(log.stdout).toMatch(/tree [a-f0-9]{40}/);
+			expect(log.stdout).toMatch(/author Test Author <author@test\.com> 1000000000 \+0000/);
+			expect(log.stdout).toMatch(
+				/committer Test Committer <committer@test\.com> 1000000000 \+0000/,
+			);
+			expect(log.stdout).toContain("    initial commit");
+			expect(log.stdout).not.toContain("Date:");
+			expect(log.stdout).not.toContain("Author:");
+		});
+
+		test("--format=raw is equivalent", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "test"', "git log --format=raw"],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			const log = results[3];
+			expect(log.exitCode).toBe(0);
+			expect(log.stdout).toMatch(/tree [a-f0-9]{40}/);
+			expect(log.stdout).toMatch(/author Test Author <author@test\.com>/);
+		});
+
+		test("root commit has no parent line", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "root"', "git log --pretty=raw"],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			const log = results[3];
+			expect(log.stdout).not.toContain("parent ");
+		});
+
+		test("non-root commit shows parent hash", async () => {
+			const bash = createTestBash({ files: BASIC_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add README.md");
+			await bash.exec('git commit -m "first"');
+			await bash.exec("git add src/main.ts");
+			await bash.exec('git commit -m "second"');
+
+			const log = await bash.exec("git log --pretty=raw -n1");
+			expect(log.stdout).toMatch(/parent [a-f0-9]{40}/);
+		});
+
+		test("merge commit shows two parent lines", async () => {
+			const bash = createTestBash({ files: BASIC_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add README.md");
+			await bash.exec('git commit -m "base"');
+			await bash.exec("git checkout -b feature");
+			await bash.exec("git add src/main.ts");
+			await bash.exec('git commit -m "feature"');
+			await bash.exec("git checkout main");
+			await bash.exec("git add src/util.ts");
+			await bash.exec('git commit -m "main work"');
+			await bash.exec('git merge feature -m "merge"');
+
+			const log = await bash.exec("git log --pretty=raw -n1");
+			const parentLines = log.stdout.split("\n").filter((l) => l.startsWith("parent "));
+			expect(parentLines.length).toBe(2);
+			for (const line of parentLines) {
+				expect(line).toMatch(/^parent [a-f0-9]{40}$/);
+			}
+		});
+	});
+
+	describe("relative date placeholders (%ar, %cr)", () => {
+		test("%ar outputs a relative date string", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "test"', 'git log --format="%ar"'],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			const log = results[3];
+			expect(log.exitCode).toBe(0);
+			expect(log.stdout.trim()).toMatch(/ago$/);
+			expect(log.stdout.trim()).not.toBe("%ar");
+		});
+
+		test("%cr outputs a relative date string", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "test"', 'git log --format="%cr"'],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			const log = results[3];
+			expect(log.exitCode).toBe(0);
+			expect(log.stdout.trim()).toMatch(/ago$/);
+			expect(log.stdout.trim()).not.toBe("%cr");
+		});
+
+		test("%ar and %cr together in format string", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "test"', 'git log --format="a:%ar c:%cr"'],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			const log = results[3];
+			expect(log.exitCode).toBe(0);
+			expect(log.stdout.trim()).toMatch(/^a:.*ago c:.*ago$/);
+		});
+
+		test("%aR and %cR are not valid placeholders (output literally)", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "test"', 'git log --format="%aR %cR"'],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			const log = results[3];
+			expect(log.exitCode).toBe(0);
+			expect(log.stdout.trim()).toBe("%aR %cR");
+		});
+	});
+
 	describe("--first-parent", () => {
 		async function setupMergeHistory() {
 			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });

@@ -71,6 +71,10 @@ export function expandFormat(fmt: string, ctx: FormatContext): string {
 						result += formatRFC2822(id.timestamp, id.timezone);
 						i += 3;
 						continue;
+					case "r":
+						result += formatRelativeDate(id.timestamp);
+						i += 3;
+						continue;
 				}
 			}
 
@@ -182,7 +186,7 @@ export function parseFormatArg(value: string): PresetFormatResult {
 		return { formatStr: value.slice(8), preset: null };
 	}
 
-	const presets = ["oneline", "short", "medium", "full", "fuller"];
+	const presets = ["oneline", "short", "medium", "full", "fuller", "raw"];
 	if (presets.includes(value)) {
 		return { formatStr: null, preset: value };
 	}
@@ -261,10 +265,39 @@ export function formatPreset(
 			}
 			return lines.join("\n");
 		}
+		case "raw":
+			return formatRaw(ctx, isFirst);
 		default:
 			// "medium" — the default format (same as no --format)
 			return formatMedium(ctx, isFirst);
 	}
+}
+
+/** The "raw" format — tree, parent lines, raw author/committer identity strings. */
+function formatRaw(ctx: FormatContext, isFirst: boolean): string {
+	const { hash, commit } = ctx;
+	const lines: string[] = [];
+
+	if (!isFirst) lines.push("");
+
+	lines.push(`commit ${hash}`);
+	lines.push(`tree ${commit.tree}`);
+	for (const parent of commit.parents) {
+		lines.push(`parent ${parent}`);
+	}
+	lines.push(
+		`author ${commit.author.name} <${commit.author.email}> ${commit.author.timestamp} ${commit.author.timezone}`,
+	);
+	lines.push(
+		`committer ${commit.committer.name} <${commit.committer.email}> ${commit.committer.timestamp} ${commit.committer.timezone}`,
+	);
+	lines.push("");
+	const msg = commit.message.replace(/\n$/, "");
+	for (const line of msg.split("\n")) {
+		lines.push(`    ${line}`);
+	}
+
+	return lines.join("\n");
 }
 
 /** The default "medium" format — matches `git log` default output. */
@@ -348,6 +381,48 @@ function formatISO8601(timestamp: number, timezone: string): string {
 	const mi = String(d.getUTCMinutes()).padStart(2, "0");
 	const s = String(d.getUTCSeconds()).padStart(2, "0");
 	return `${y}-${mo}-${day} ${h}:${mi}:${s} ${timezone}`;
+}
+
+/**
+ * Relative date: "5 minutes ago", "3 hours ago", etc.
+ * Matches git's `show_date_relative` thresholds.
+ */
+function formatRelativeDate(timestamp: number): string {
+	const nowSec = Math.floor(Date.now() / 1000);
+	let diff = nowSec - timestamp;
+	if (diff < 0) diff = 0;
+
+	if (diff < 90) {
+		return diff === 1 ? "1 second ago" : `${diff} seconds ago`;
+	}
+	diff = Math.round(diff / 60);
+	if (diff < 90) {
+		return diff === 1 ? "1 minute ago" : `${diff} minutes ago`;
+	}
+	diff = Math.round(diff / 60);
+	if (diff < 36) {
+		return diff === 1 ? "1 hour ago" : `${diff} hours ago`;
+	}
+	diff = Math.round(diff / 24);
+	if (diff < 14) {
+		return diff === 1 ? "1 day ago" : `${diff} days ago`;
+	}
+	if (diff < 70) {
+		const weeks = Math.round(diff / 7);
+		return weeks === 1 ? "1 week ago" : `${weeks} weeks ago`;
+	}
+	if (diff < 365) {
+		const months = Math.round(diff / 30);
+		return months === 1 ? "1 month ago" : `${months} months ago`;
+	}
+	const years = Math.floor(diff / 365);
+	const remainingMonths = Math.round((diff - years * 365) / 30);
+	if (remainingMonths > 0) {
+		const yLabel = years === 1 ? "1 year" : `${years} years`;
+		const mLabel = remainingMonths === 1 ? "1 month" : `${remainingMonths} months`;
+		return `${yLabel}, ${mLabel} ago`;
+	}
+	return years === 1 ? "1 year ago" : `${years} years ago`;
 }
 
 /** RFC 2822: `Thu, 1 Jan 1970 00:00:00 +0000` */
