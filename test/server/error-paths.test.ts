@@ -3,6 +3,7 @@ import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import { createGitServer } from "../../src/server/handler.ts";
+import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import {
 	encodePktLine,
 	flushPkt,
@@ -26,6 +27,25 @@ async function setupRepo() {
 	if (!ctx) throw new Error("no git dir");
 	return ctx;
 }
+
+// ── config validation ───────────────────────────────────────────────
+
+describe("createGitServer config validation", () => {
+	test("passing storage instead of resolveRepo throws descriptive error", () => {
+		const storage = new MemoryStorage();
+		expect(() => createGitServer({ storage } as any)).toThrow(
+			"config.resolveRepo must be a function",
+		);
+	});
+
+	test("passing empty config throws descriptive error", () => {
+		expect(() => createGitServer({} as any)).toThrow("config.resolveRepo must be a function");
+	});
+
+	test("passing null config throws descriptive error", () => {
+		expect(() => createGitServer(null as any)).toThrow("config.resolveRepo must be a function");
+	});
+});
 
 // ── resolveRepo error paths ─────────────────────────────────────────
 

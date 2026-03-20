@@ -34,6 +34,12 @@ import type {
  * ```
  */
 export function createGitServer(config: GitServerConfig): GitServer {
+	if (!config || typeof config.resolveRepo !== "function") {
+		throw new TypeError(
+			"createGitServer: config.resolveRepo must be a function. " +
+				"Example: createGitServer({ resolveRepo: (path) => storage.repo(path) })",
+		);
+	}
 	const { resolveRepo, hooks, basePath } = config;
 
 	const packCache =

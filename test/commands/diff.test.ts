@@ -733,6 +733,54 @@ describe("git diff", () => {
 		});
 	});
 
+	describe("binary files", () => {
+		test("unstaged diff shows 'Binary files differ' for modified binary", async () => {
+			const binaryV1 = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02, 0x03]);
+			const binaryV2 = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe, 0xfd]);
+
+			const bash = createTestBash({ env: TEST_ENV });
+			await bash.fs.writeFile("/repo/foo.bin", binaryV1);
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "add binary"');
+			await bash.fs.writeFile("/repo/foo.bin", binaryV2);
+
+			const result = await bash.exec("git diff");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("Binary files a/foo.bin and b/foo.bin differ");
+		});
+
+		test("staged diff shows 'Binary files differ'", async () => {
+			const binaryV1 = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02, 0x03]);
+			const binaryV2 = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe, 0xfd]);
+
+			const bash = createTestBash({ env: TEST_ENV });
+			await bash.fs.writeFile("/repo/foo.bin", binaryV1);
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "add binary"');
+			await bash.fs.writeFile("/repo/foo.bin", binaryV2);
+			await bash.exec("git add .");
+
+			const result = await bash.exec("git diff --cached");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("Binary files a/foo.bin and b/foo.bin differ");
+		});
+
+		test("new binary file shows 'Binary files differ'", async () => {
+			const binary = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02, 0x03]);
+
+			const bash = createTestBash({ env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/foo.bin", binary);
+			await bash.exec("git add .");
+
+			const result = await bash.exec("git diff --cached");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("Binary files /dev/null and b/foo.bin differ");
+		});
+	});
+
 	describe("error cases", () => {
 		test("bad revision", async () => {
 			const bash = createTestBash({ files: BASIC_REPO, env: TEST_ENV });

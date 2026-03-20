@@ -111,6 +111,21 @@ describe("Git.exec", () => {
 		expect(log.stdout).toContain("my multi-word message");
 	});
 
+	test("preserves double quotes inside single-quoted commit message", async () => {
+		const git = createGit({ identity: { name: "Test", email: "test@test.com" } });
+		const fs = new InMemoryFs();
+		await fs.writeFile("/repo/file.txt", "hello");
+		await git.exec("init", { fs, cwd: "/repo" });
+		await git.exec("add .", { fs, cwd: "/repo" });
+		await git.exec("commit -m 'fix: handle \"quoted\" strings'", {
+			fs,
+			cwd: "/repo",
+			env: TEST_ENV,
+		});
+		const log = await git.exec("log --oneline", { fs, cwd: "/repo" });
+		expect(log.stdout).toContain('"quoted"');
+	});
+
 	test("defaults env to empty map when omitted", async () => {
 		const git = createGit({ identity: { name: "Test", email: "test@test.com" } });
 		const fs = new InMemoryFs();
