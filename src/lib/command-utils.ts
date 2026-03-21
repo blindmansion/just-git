@@ -37,12 +37,27 @@ const NOT_A_WORK_TREE = fatal("this operation must be run in a work tree");
  *
  * When `ext` is provided, the returned GitContext carries operator-level
  * extensions (hooks, credential provider, identity override).
+ *
+ * When extensions carry pre-resolved `objectStore`, `refStore`, and
+ * `gitDir`, filesystem discovery via `findRepo` is skipped entirely —
+ * no `.git` directory needs to exist on the VFS.
  */
 export async function requireGitContext(
 	fs: FileSystem,
 	cwd: string,
 	ext?: GitExtensions,
 ): Promise<GitContext | CommandResult> {
+	if (ext?.objectStore && ext?.refStore && ext?.gitDir) {
+		return {
+			fs,
+			gitDir: ext.gitDir,
+			workTree: ext.workTree ?? cwd,
+			objectStore: ext.objectStore,
+			refStore: ext.refStore,
+			...ext,
+		};
+	}
+
 	const ctx = await findRepo(fs, cwd);
 	if (!ctx) return NOT_A_GIT_REPO;
 	if (!ext) return ctx;

@@ -4,6 +4,7 @@ export {
 	checkoutTo,
 	countAheadBehind,
 	createCommit,
+	createEphemeralWorktree,
 	createWorktree,
 	diffTrees,
 	findMergeBases,

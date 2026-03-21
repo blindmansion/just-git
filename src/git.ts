@@ -109,17 +109,24 @@ export interface GitOptions {
 	 */
 	resolveRemote?: RemoteResolver;
 	/**
-	 * Override the object store discovered by `findRepo`.
-	 * When set, all object reads/writes bypass the VFS `.git/objects/`
-	 * and go through this store instead (e.g. SQLite-backed).
+	 * Object store to use instead of filesystem-backed `.git/objects/`.
+	 * When both `objectStore` and `refStore` are set, `findRepo` is
+	 * skipped entirely — no `.git` directory needs to exist on the VFS.
 	 */
 	objectStore?: ObjectStore;
 	/**
-	 * Override the ref store discovered by `findRepo`.
-	 * When set, all ref reads/writes bypass the VFS `.git/refs/`
-	 * and go through this store instead (e.g. SQLite-backed).
+	 * Ref store to use instead of filesystem-backed `.git/refs/`.
+	 * When both `objectStore` and `refStore` are set, `findRepo` is
+	 * skipped entirely — no `.git` directory needs to exist on the VFS.
 	 */
 	refStore?: RefStore;
+	/**
+	 * Explicit `.git` directory path. When set together with
+	 * `objectStore` and `refStore`, `findRepo` is skipped entirely —
+	 * no `.git` directory needs to exist on the VFS. Index, config,
+	 * reflog, and operation state files are stored under this path.
+	 */
+	gitDir?: string;
 	/**
 	 * Config overrides. `locked` values always win over `.git/config`;
 	 * `defaults` supply fallbacks when a key is absent from config.
@@ -141,6 +148,14 @@ export interface GitExtensions {
 	objectStore?: ObjectStore;
 	refStore?: RefStore;
 	configOverrides?: ConfigOverrides;
+	/**
+	 * Pre-resolved .git directory path. When set together with
+	 * `objectStore` and `refStore`, `requireGitContext` skips
+	 * filesystem discovery (`findRepo`) entirely.
+	 */
+	gitDir?: string;
+	/** Pre-resolved worktree root. Used with `gitDir` to skip discovery. */
+	workTree?: string;
 }
 
 /** Simplified context for {@link Git.exec}. */
@@ -235,6 +250,12 @@ export class Git {
 			resolveRemote: options?.resolveRemote,
 			...(options?.objectStore ? { objectStore: options.objectStore } : {}),
 			...(options?.refStore ? { refStore: options.refStore } : {}),
+			...(options?.gitDir
+				? {
+						gitDir: options.gitDir,
+						workTree: this.defaultCwd,
+					}
+				: {}),
 			...(configOverrides ? { configOverrides } : {}),
 		};
 		this.inner = createGitCommand(extensions).toCommand();
