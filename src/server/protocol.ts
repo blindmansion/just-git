@@ -1,8 +1,9 @@
 /**
- * Server-side Git Smart HTTP protocol helpers.
+ * Server-side Git protocol helpers.
  *
- * Builds response bodies and parses request bodies for the three
- * Smart HTTP endpoints: info/refs, git-upload-pack, git-receive-pack.
+ * Transport-agnostic ref advertisement, upload-pack response building,
+ * and receive-pack request/response parsing. The HTTP-specific service
+ * header wrapping is layered on top of the shared ref list builder.
  */
 
 import {
@@ -24,25 +25,21 @@ export interface AdvertisedRef {
 }
 
 /**
- * Build the response body for `GET /info/refs?service=<service>`.
+ * Build the pkt-line ref list with capabilities. Transport-agnostic —
+ * used directly by SSH/in-process transports and wrapped by
+ * `buildRefAdvertisement` for HTTP.
  *
  * Format:
- *   pkt-line("# service=<service>\n")
- *   flush
  *   pkt-line("<hash> <refname>\0<capabilities>\n")  // first ref
  *   pkt-line("<hash> <refname>\n")                   // subsequent refs
  *   flush
  */
-export function buildRefAdvertisement(
+export function buildRefListPktLines(
 	refs: AdvertisedRef[],
-	service: string,
 	capabilities: string[],
 	headTarget?: string,
 ): Uint8Array {
 	const lines: Uint8Array[] = [];
-
-	lines.push(encodePktLine(`# service=${service}\n`));
-	lines.push(flushPkt());
 
 	const caps = [...capabilities];
 	if (headTarget) {
@@ -52,7 +49,6 @@ export function buildRefAdvertisement(
 	const capStr = caps.join(" ");
 
 	if (refs.length === 0) {
-		// Empty repo: send a capabilities-only line with zero hash
 		const zeroHash = "0000000000000000000000000000000000000000";
 		lines.push(encodePktLine(`${zeroHash} capabilities^{}\0${capStr}\n`));
 	} else {
@@ -68,6 +64,30 @@ export function buildRefAdvertisement(
 
 	lines.push(flushPkt());
 	return concatPktLines(...lines);
+}
+
+/**
+ * Build the HTTP response body for `GET /info/refs?service=<service>`.
+ * Wraps `buildRefListPktLines` with the HTTP-specific service header.
+ *
+ * Format:
+ *   pkt-line("# service=<service>\n")
+ *   flush
+ *   <ref list from buildRefListPktLines>
+ */
+export function buildRefAdvertisement(
+	refs: AdvertisedRef[],
+	service: string,
+	capabilities: string[],
+	headTarget?: string,
+): Uint8Array {
+	const header = concatPktLines(encodePktLine(`# service=${service}\n`), flushPkt());
+	const refList = buildRefListPktLines(refs, capabilities, headTarget);
+
+	const result = new Uint8Array(header.byteLength + refList.byteLength);
+	result.set(header, 0);
+	result.set(refList, header.byteLength);
+	return result;
 }
 
 // ── Upload-pack request parsing ─────────────────────────────────────

@@ -1,17 +1,19 @@
 /**
- * High-level server operations for Git Smart HTTP.
+ * High-level server operations.
  *
- * Each operation accepts a `GitRepo` (ObjectStore + RefStore)
- * and returns protocol-level results. The handler layer is
- * responsible for hook invocation and ref application.
+ * Transport-agnostic: each operation accepts a `GitRepo` and returns
+ * structured results. `applyReceivePack` encapsulates the full push
+ * lifecycle (hooks + ref application) for use by any transport adapter.
  */
 
+import { isRejection } from "../hooks.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 import { isAncestor } from "../lib/merge.ts";
 import { parseTag } from "../lib/objects/tag.ts";
 import { findBestDeltas } from "../lib/pack/delta.ts";
 import type { DeltaPackInput, PackInput } from "../lib/pack/packfile.ts";
 import { writePackDeltified, writePackStreaming } from "../lib/pack/packfile.ts";
+import { checkRefFormat } from "../lib/refs.ts";
 import { computeShallowBoundary } from "../lib/shallow.ts";
 import {
 	collectEnumeration,
@@ -30,7 +32,7 @@ import {
 	parseReceivePackRequest,
 	parseUploadPackRequest,
 } from "./protocol.ts";
-import type { RefAdvertisement, RefUpdate } from "./types.ts";
+import type { RefAdvertisement, RefUpdate, ServerHooks } from "./types.ts";
 
 // ── Pack cache ──────────────────────────────────────────────────────
 
@@ -506,7 +508,7 @@ async function handleUploadPackBuffered(
 
 // ── Receive-pack (push handling) ────────────────────────────────────
 
-interface ReceivePackResult {
+export interface ReceivePackResult {
 	updates: RefUpdate[];
 	unpackOk: boolean;
 	capabilities: string[];
@@ -517,7 +519,7 @@ interface ReceivePackResult {
 /**
  * Ingest a receive-pack request: parse commands, ingest the packfile,
  * and compute enriched RefUpdate objects. Does NOT apply ref updates —
- * the handler runs hooks first, then applies surviving updates.
+ * call `applyReceivePack` to run hooks and apply refs.
  */
 export async function ingestReceivePack(
 	repo: GitRepo,
@@ -559,4 +561,106 @@ export async function ingestReceivePack(
 	}
 
 	return { updates, unpackOk, capabilities, sawFlush };
+}
+
+// ── Receive-pack lifecycle (transport-agnostic) ─────────────────────
+
+export interface ApplyReceivePackOptions {
+	repo: GitRepo;
+	repoPath: string;
+	ingestResult: ReceivePackResult;
+	hooks?: ServerHooks;
+	/** Present when the push arrives over HTTP. */
+	request?: Request;
+}
+
+export interface RefResult {
+	ref: string;
+	ok: boolean;
+	error?: string;
+}
+
+export interface ApplyReceivePackResult {
+	refResults: RefResult[];
+	applied: RefUpdate[];
+}
+
+/**
+ * Run the full receive-pack lifecycle: preReceive hook, per-ref update
+ * hook with ref format validation, CAS ref application, and postReceive
+ * hook. Transport-agnostic — works for HTTP, SSH, or in-process pushes.
+ *
+ * Returns per-ref results and the list of successfully applied updates.
+ * Does NOT handle unpack failures — the caller should check
+ * `ingestResult.unpackOk` and short-circuit before calling this.
+ */
+export async function applyReceivePack(
+	options: ApplyReceivePackOptions,
+): Promise<ApplyReceivePackResult> {
+	const { repo, repoPath, ingestResult, hooks, request } = options;
+	const { updates } = ingestResult;
+
+	// Pre-receive hook: abort entire push on rejection
+	if (hooks?.preReceive) {
+		const result = await hooks.preReceive({ repo, repoPath, updates, request });
+		if (isRejection(result)) {
+			const msg = result.message ?? "pre-receive hook declined";
+			return {
+				refResults: updates.map((u) => ({ ref: u.ref, ok: false, error: msg })),
+				applied: [],
+			};
+		}
+	}
+
+	// Per-ref update hook + ref application
+	const refResults: RefResult[] = [];
+	const applied: RefUpdate[] = [];
+
+	for (const update of updates) {
+		if (!update.isDelete && !checkRefFormat(update.ref)) {
+			refResults.push({ ref: update.ref, ok: false, error: "invalid refname" });
+			continue;
+		}
+
+		if (hooks?.update) {
+			const result = await hooks.update({ repo, repoPath, update, request });
+			if (isRejection(result)) {
+				refResults.push({
+					ref: update.ref,
+					ok: false,
+					error: result.message ?? "update hook declined",
+				});
+				continue;
+			}
+		}
+
+		try {
+			const expectedOld = update.isCreate ? null : update.oldHash;
+			const newRef = update.isDelete ? null : { type: "direct" as const, hash: update.newHash };
+			const ok = await repo.refStore.compareAndSwapRef(update.ref, expectedOld, newRef);
+			if (!ok) {
+				refResults.push({ ref: update.ref, ok: false, error: "failed to lock" });
+				continue;
+			}
+			refResults.push({ ref: update.ref, ok: true });
+			applied.push(update);
+		} catch (err) {
+			refResults.push({
+				ref: update.ref,
+				ok: false,
+				error: err instanceof Error ? err.message : String(err),
+			});
+		}
+	}
+
+	// Post-receive hook (fire-and-forget, only for successful updates)
+	if (hooks?.postReceive && applied.length > 0) {
+		try {
+			await hooks.postReceive({ repo, repoPath, updates: applied, request });
+		} catch {
+			// Post-receive errors don't affect the result
+		}
+	}
+
+	return { refResults, applied };
 }

@@ -93,6 +93,7 @@ export function createStandardHooks(config: StandardHooksConfig): ServerHooks {
 	if (authorizePush || protectedSet.size > 0) {
 		hooks.preReceive = async (event: PreReceiveEvent): Promise<void | Rejection> => {
 			if (authorizePush) {
+				if (!event.request) return { reject: true, message: "unauthorized" };
 				const allowed = await authorizePush(event.request);
 				if (!allowed) return { reject: true, message: "unauthorized" };
 			}

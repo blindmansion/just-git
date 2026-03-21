@@ -4,6 +4,24 @@ export { createGitServer, composeHooks } from "./handler.ts";
 // Node.js adapter
 export { toNodeHandler } from "./handler.ts";
 
+// Transport-agnostic operations
+export {
+	applyReceivePack,
+	collectRefs,
+	buildRefAdvertisementBytes,
+	handleUploadPack,
+	ingestReceivePack,
+} from "./operations.ts";
+export type {
+	ApplyReceivePackOptions,
+	ApplyReceivePackResult,
+	RefResult,
+	ReceivePackResult,
+} from "./operations.ts";
+
+// Transport-agnostic protocol primitives
+export { buildRefListPktLines } from "./protocol.ts";
+
 // Types
 export type {
 	AdvertiseRefsEvent,

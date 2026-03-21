@@ -6,22 +6,16 @@
  */
 
 import { isRejection } from "../hooks.ts";
-import { checkRefFormat } from "../lib/refs.ts";
 import {
 	PackCache,
+	applyReceivePack,
 	buildRefAdvertisementBytes,
 	collectRefs,
 	handleUploadPack,
 	ingestReceivePack,
 } from "./operations.ts";
 import { buildReportStatus } from "./protocol.ts";
-import type {
-	GitServerConfig,
-	GitServer,
-	RefUpdate,
-	ServerHooks,
-	RefAdvertisement,
-} from "./types.ts";
+import type { GitServerConfig, GitServer, ServerHooks, RefAdvertisement } from "./types.ts";
 
 /**
  * Create a Git Smart HTTP server handler.
@@ -137,18 +131,18 @@ export function createGitServer(config: GitServerConfig): GitServer {
 					const repo = repoOrResponse;
 
 					const body = await readRequestBody(req);
-					const { updates, unpackOk, capabilities, sawFlush } = await ingestReceivePack(repo, body);
+					const ingestResult = await ingestReceivePack(repo, body);
 
-					if (!sawFlush && updates.length === 0) {
+					if (!ingestResult.sawFlush && ingestResult.updates.length === 0) {
 						return new Response("Bad Request", { status: 400 });
 					}
 
-					const useSideband = capabilities.includes("side-band-64k");
-					const useReportStatus = capabilities.includes("report-status");
+					const useSideband = ingestResult.capabilities.includes("side-band-64k");
+					const useReportStatus = ingestResult.capabilities.includes("report-status");
 
-					if (!unpackOk) {
+					if (!ingestResult.unpackOk) {
 						if (useReportStatus) {
-							const refResults = updates.map((u) => ({
+							const refResults = ingestResult.updates.map((u) => ({
 								name: u.ref,
 								ok: false,
 								error: "unpack failed",
@@ -162,94 +156,21 @@ export function createGitServer(config: GitServerConfig): GitServer {
 						});
 					}
 
-					// Pre-receive hook: abort entire push on rejection
-					if (hooks?.preReceive) {
-						const result = await hooks.preReceive({ repo, repoPath, updates, request: req });
-						if (isRejection(result)) {
-							if (useReportStatus) {
-								const msg = result.message ?? "pre-receive hook declined";
-								const refResults = updates.map((u) => ({
-									name: u.ref,
-									ok: false,
-									error: msg,
-								}));
-								return new Response(buildReportStatus(true, refResults, useSideband), {
-									headers: { "Content-Type": "application/x-git-receive-pack-result" },
-								});
-							}
-							return new Response(new Uint8Array(0), {
-								headers: { "Content-Type": "application/x-git-receive-pack-result" },
-							});
-						}
-					}
-
-					// Per-ref update hook + ref application
-					const results: { ref: string; ok: boolean; error?: string }[] = [];
-					const applied: RefUpdate[] = [];
-
-					for (const update of updates) {
-						if (!update.isDelete && !checkRefFormat(update.ref)) {
-							results.push({
-								ref: update.ref,
-								ok: false,
-								error: "invalid refname",
-							});
-							continue;
-						}
-
-						if (hooks?.update) {
-							const result = await hooks.update({ repo, repoPath, update, request: req });
-							if (isRejection(result)) {
-								results.push({
-									ref: update.ref,
-									ok: false,
-									error: result.message ?? "update hook declined",
-								});
-								continue;
-							}
-						}
-
-						try {
-							const expectedOld = update.isCreate ? null : update.oldHash;
-							const newRef = update.isDelete
-								? null
-								: { type: "direct" as const, hash: update.newHash };
-							const ok = await repo.refStore.compareAndSwapRef(update.ref, expectedOld, newRef);
-							if (!ok) {
-								results.push({
-									ref: update.ref,
-									ok: false,
-									error: "failed to lock",
-								});
-								continue;
-							}
-							results.push({ ref: update.ref, ok: true });
-							applied.push(update);
-						} catch (err) {
-							results.push({
-								ref: update.ref,
-								ok: false,
-								error: err instanceof Error ? err.message : String(err),
-							});
-						}
-					}
-
-					// Post-receive hook (fire-and-forget, only for successful updates)
-					if (hooks?.postReceive && applied.length > 0) {
-						try {
-							await hooks.postReceive({ repo, repoPath, updates: applied, request: req });
-						} catch {
-							// Post-receive errors don't affect the response
-						}
-					}
+					const { refResults } = await applyReceivePack({
+						repo,
+						repoPath,
+						ingestResult,
+						hooks,
+						request: req,
+					});
 
 					if (useReportStatus) {
-						const refResults = results.map((r) => ({
+						const reportResults = refResults.map((r) => ({
 							name: r.ref,
 							ok: r.ok,
 							error: r.error,
 						}));
-						return new Response(buildReportStatus(true, refResults, useSideband), {
+						return new Response(buildReportStatus(true, reportResults, useSideband), {
 							headers: { "Content-Type": "application/x-git-receive-pack-result" },
 						});
 					}

@@ -117,7 +117,8 @@ export interface PreReceiveEvent {
 	repo: GitRepo;
 	repoPath: string;
 	updates: readonly RefUpdate[];
-	request: Request;
+	/** Present when the push arrives over HTTP. Absent for in-process or SSH transports. */
+	request?: Request;
 }
 
 /** Fired per-ref after preReceive passes. */
@@ -125,7 +126,8 @@ export interface UpdateEvent {
 	repo: GitRepo;
 	repoPath: string;
 	update: RefUpdate;
-	request: Request;
+	/** Present when the push arrives over HTTP. Absent for in-process or SSH transports. */
+	request?: Request;
 }
 
 /** Fired after all ref updates succeed. */
@@ -133,7 +135,8 @@ export interface PostReceiveEvent {
 	repo: GitRepo;
 	repoPath: string;
 	updates: readonly RefUpdate[];
-	request: Request;
+	/** Present when the push arrives over HTTP. Absent for in-process or SSH transports. */
+	request?: Request;
 }
 
 /** Fired during ref advertisement (info/refs). */
@@ -142,7 +145,8 @@ export interface AdvertiseRefsEvent {
 	repoPath: string;
 	refs: RefAdvertisement[];
 	service: "git-upload-pack" | "git-receive-pack";
-	request: Request;
+	/** Present when the request arrives over HTTP. Absent for in-process or SSH transports. */
+	request?: Request;
 }
 
 /** A ref name and hash advertised to clients during fetch/push discovery. */
