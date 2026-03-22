@@ -87,7 +87,7 @@ import type { GitHooks } from "../../src";
 		resolveRepo: (path) => storage.repo(path),
 		hooks: createStandardHooks({
 			protectedBranches: ["main"],
-			authorizePush: (request) => request.headers.has("Authorization"),
+			authorizePush: (session) => session.request?.headers.has("Authorization") ?? false,
 			onPush: async ({ repo, repoPath: _repoPath, updates }) => {
 				for (const u of updates) {
 					const files = await getChangedFiles(repo, u.oldHash, u.newHash);

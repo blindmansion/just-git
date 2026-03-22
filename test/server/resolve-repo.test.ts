@@ -3,6 +3,7 @@ import { InMemoryFs, Bash } from "just-bash";
 import { createGit } from "../../src/index.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import { createGitServer } from "../../src/server/handler.ts";
+import type { Session } from "../../src/server/types.ts";
 
 const TEST_ENV = {
 	GIT_AUTHOR_NAME: "Test",
@@ -26,7 +27,12 @@ async function setupServerRepo() {
 	return ctx;
 }
 
-describe("resolveRepo escape hatch", () => {
+const defaultSshSession = (info: { username?: string }): Session => ({
+	transport: "ssh",
+	username: info.username,
+});
+
+describe("resolveRepo and session auth", () => {
 	test("returns 404 when resolveRepo returns null", async () => {
 		const server = createGitServer({
 			resolveRepo: () => null,
@@ -38,16 +44,20 @@ describe("resolveRepo escape hatch", () => {
 		expect(res.status).toBe(404);
 	});
 
-	test("returns custom Response when resolveRepo returns a Response", async () => {
+	test("session builder returns custom Response for auth failure", async () => {
 		const server = createGitServer({
-			resolveRepo: (_path, req) => {
-				if (req.headers.get("Authorization") !== "Bearer secret") {
-					return new Response("Unauthorized", {
-						status: 401,
-						headers: { "WWW-Authenticate": 'Bearer realm="git"' },
-					});
-				}
-				return null;
+			resolveRepo: () => null,
+			session: {
+				http: (req) => {
+					if (req.headers.get("Authorization") !== "Bearer secret") {
+						return new Response("Unauthorized", {
+							status: 401,
+							headers: { "WWW-Authenticate": 'Bearer realm="git"' },
+						});
+					}
+					return { transport: "http" as const, request: req };
+				},
+				ssh: defaultSshSession,
 			},
 		});
 
@@ -59,9 +69,13 @@ describe("resolveRepo escape hatch", () => {
 		expect(await res.text()).toBe("Unauthorized");
 	});
 
-	test("returns custom Response for upload-pack endpoint", async () => {
+	test("session builder rejects → 403 for upload-pack", async () => {
 		const server = createGitServer({
-			resolveRepo: () => new Response("Forbidden", { status: 403 }),
+			resolveRepo: () => null,
+			session: {
+				http: () => new Response("Forbidden", { status: 403 }),
+				ssh: defaultSshSession,
+			},
 		});
 
 		const res = await server.fetch(
@@ -73,9 +87,13 @@ describe("resolveRepo escape hatch", () => {
 		expect(res.status).toBe(403);
 	});
 
-	test("returns custom Response for receive-pack endpoint", async () => {
+	test("session builder rejects → 403 for receive-pack", async () => {
 		const server = createGitServer({
-			resolveRepo: () => new Response("Forbidden", { status: 403 }),
+			resolveRepo: () => null,
+			session: {
+				http: () => new Response("Forbidden", { status: 403 }),
+				ssh: defaultSshSession,
+			},
 		});
 
 		const res = await server.fetch(
@@ -105,11 +123,15 @@ describe("resolveRepo escape hatch", () => {
 		const repo = await setupServerRepo();
 
 		const server = createGitServer({
-			resolveRepo: (_path, req) => {
-				if (req.headers.get("Authorization") !== "Bearer valid-token") {
-					return new Response("", { status: 401 });
-				}
-				return repo;
+			resolveRepo: () => repo,
+			session: {
+				http: (req) => {
+					if (req.headers.get("Authorization") !== "Bearer valid-token") {
+						return new Response("", { status: 401 });
+					}
+					return { transport: "http" as const, request: req };
+				},
+				ssh: defaultSshSession,
 			},
 		});
 

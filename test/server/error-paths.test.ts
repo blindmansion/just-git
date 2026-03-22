@@ -405,14 +405,14 @@ describe("onError callback", () => {
 		}
 	});
 
-	test("custom onError receives error and request", async () => {
-		let captured: { err: unknown; req: Request } | null = null;
+	test("custom onError receives error and session", async () => {
+		let captured: { err: unknown; session: unknown } | null = null;
 		const server = createGitServer({
 			resolveRepo: async () => {
 				throw new Error("custom error");
 			},
-			onError: (err, request) => {
-				captured = { err, req: request };
+			onError: (err, session) => {
+				captured = { err, session };
 			},
 		});
 
@@ -422,7 +422,9 @@ describe("onError callback", () => {
 		expect(captured).not.toBeNull();
 		expect(captured!.err).toBeInstanceOf(Error);
 		expect((captured!.err as Error).message).toBe("custom error");
-		expect(captured!.req.url).toBe(req.url);
+		const session = captured!.session as { transport: string; request: Request };
+		expect(session.transport).toBe("http");
+		expect(session.request.url).toBe(req.url);
 	});
 
 	test("onError: false suppresses all logging", async () => {

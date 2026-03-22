@@ -3,8 +3,8 @@ import { InMemoryFs, Bash } from "just-bash";
 import { createGit } from "../../src/index.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import type { GitContext } from "../../src/lib/types.ts";
-import { createStandardHooks, withAuth } from "../../src/server/presets.ts";
-import { envAt, createServerClient, startServer } from "./util.ts";
+import { createStandardHooks } from "../../src/server/presets.ts";
+import { envAt, createServerClient, startServer, startServerWithSessionAuth } from "./util.ts";
 
 describe("createStandardHooks", () => {
 	let serverFs: InMemoryFs;
@@ -246,7 +246,7 @@ describe("createStandardHooks", () => {
 	describe("authorizePush", () => {
 		test("rejects push without authorization header", async () => {
 			const hooks = createStandardHooks({
-				authorizePush: (req) => req.headers.has("Authorization"),
+				authorizePush: (session) => session.request?.headers.has("Authorization") ?? false,
 			});
 			const { srv, port } = startServer({ resolveRepo: async () => serverRepo, hooks });
 
@@ -306,13 +306,10 @@ describe("createStandardHooks", () => {
 		});
 	});
 
-	describe("withAuth", () => {
-		test("rejects clone when authorize returns false", async () => {
-			const { srv, port } = startServer({
-				resolveRepo: withAuth(
-					() => false,
-					async () => serverRepo,
-				),
+	describe("session auth", () => {
+		test("rejects clone when session builder rejects", async () => {
+			const { srv, port } = startServerWithSessionAuth(() => false, {
+				resolveRepo: async () => serverRepo,
 			});
 
 			try {
@@ -326,12 +323,9 @@ describe("createStandardHooks", () => {
 			}
 		});
 
-		test("allows clone when authorize returns true", async () => {
-			const { srv, port } = startServer({
-				resolveRepo: withAuth(
-					() => true,
-					async () => serverRepo,
-				),
+		test("allows clone when session builder allows", async () => {
+			const { srv, port } = startServerWithSessionAuth(() => true, {
+				resolveRepo: async () => serverRepo,
 			});
 
 			try {
@@ -345,17 +339,15 @@ describe("createStandardHooks", () => {
 			}
 		});
 
-		test("returns custom Response when authorize returns one", async () => {
-			const { srv, port } = startServer({
-				resolveRepo: withAuth(
-					() =>
-						new Response("Unauthorized", {
-							status: 401,
-							headers: { "WWW-Authenticate": 'Bearer realm="git"' },
-						}),
-					async () => serverRepo,
-				),
-			});
+		test("returns custom Response from session builder", async () => {
+			const { srv, port } = startServerWithSessionAuth(
+				() =>
+					new Response("Unauthorized", {
+						status: 401,
+						headers: { "WWW-Authenticate": 'Bearer realm="git"' },
+					}),
+				{ resolveRepo: async () => serverRepo },
+			);
 
 			try {
 				const res = await fetch(`http://localhost:${port}/repo/info/refs?service=git-upload-pack`);
@@ -366,20 +358,17 @@ describe("createStandardHooks", () => {
 			}
 		});
 
-		test("gates push when authorize rejects", async () => {
-			const { srv, port } = startServer({
-				resolveRepo: withAuth(
-					(req) => req.headers.get("Authorization") === "Bearer secret",
-					async () => serverRepo,
-				),
-			});
+		test("gates push when session builder rejects", async () => {
+			const { srv, port } = startServerWithSessionAuth(
+				(req) => req.headers.get("Authorization") === "Bearer secret",
+				{ resolveRepo: async () => serverRepo },
+			);
 
 			try {
 				const client = createServerClient();
 				await client.exec(`git clone http://localhost:${port}/repo /local`, {
 					env: envAt(1000003200),
 				});
-				// Clone fails because no auth header on the info/refs request
 				const clone = await client.exec(`git clone http://localhost:${port}/repo /local2`, {
 					env: envAt(1000003200),
 				});
@@ -391,11 +380,8 @@ describe("createStandardHooks", () => {
 
 		test("composes with createStandardHooks", async () => {
 			const hooks = createStandardHooks({ protectedBranches: ["main"] });
-			const { srv, port } = startServer({
-				resolveRepo: withAuth(
-					() => true,
-					async () => serverRepo,
-				),
+			const { srv, port } = startServerWithSessionAuth(() => true, {
+				resolveRepo: async () => serverRepo,
 				hooks,
 			});
 

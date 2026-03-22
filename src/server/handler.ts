@@ -1,33 +1,88 @@
 /**
- * Framework-agnostic Git Smart HTTP request handler.
+ * Unified Git server: Smart HTTP + SSH session handling.
  *
- * Uses web-standard Request/Response, works with Bun.serve, Hono,
- * Cloudflare Workers, or any framework that speaks fetch API.
+ * Uses web-standard Request/Response for HTTP, and web-standard
+ * ReadableStream/WritableStream for SSH. Works with Bun.serve, Hono,
+ * Cloudflare Workers, or any framework that speaks fetch API. SSH
+ * works with any SSH library (ssh2, etc.) through a thin adapter.
+ *
+ * ```ts
+ * const server = createGitServer({
+ *   resolveRepo: (path) => storage.repo(path),
+ * });
+ *
+ * // HTTP
+ * Bun.serve({ fetch: server.fetch });
+ *
+ * // SSH (with ssh2)
+ * new Server({ hostKeys: [key] }, (client) => {
+ *   client.on("authentication", (ctx) => { ctx.accept(); });
+ *   client.on("session", (accept) => {
+ *     accept().on("exec", (accept, reject, info) => {
+ *       const stream = accept();
+ *       const channel: SshChannel = {
+ *         readable: new ReadableStream({
+ *           start(c) {
+ *             stream.on("data", (d: Buffer) => c.enqueue(new Uint8Array(d)));
+ *             stream.on("end", () => c.close());
+ *           },
+ *         }),
+ *         writable: new WritableStream({ write(chunk) { stream.write(chunk); } }),
+ *         writeStderr(data) { stream.stderr.write(data); },
+ *       };
+ *       server.handleSession(info.command, channel)
+ *         .then((code) => { stream.exit(code); stream.close(); });
+ *     });
+ *   });
+ * });
+ * ```
  */
 
 import { isRejection } from "../hooks.ts";
 import {
 	PackCache,
+	advertiseRefsWithHooks,
 	applyReceivePack,
 	buildRefAdvertisementBytes,
-	collectRefs,
 	handleUploadPack,
 	ingestReceivePack,
 } from "./operations.ts";
 import { buildReportStatus } from "./protocol.ts";
-import type { GitServerConfig, GitServer, ServerHooks, RefAdvertisement } from "./types.ts";
+import { handleSshSession } from "./ssh-session.ts";
+import type {
+	GitServerConfig,
+	GitServer,
+	NodeHttpRequest,
+	NodeHttpResponse,
+	RefAdvertisement,
+	ServerHooks,
+	Session,
+	SessionBuilder,
+	SshChannel,
+	SshSessionInfo,
+} from "./types.ts";
+
+const defaultSessionBuilder: SessionBuilder<Session> = {
+	http: (request) => ({ transport: "http", request }),
+	ssh: (info) => ({ transport: "ssh", username: info.username }),
+};
 
 /**
- * Create a Git Smart HTTP server handler.
+ * Create a unified Git server that handles both HTTP and SSH.
  *
  * ```ts
  * const server = createGitServer({
- *   resolveRepo: async (repoPath, request) => storage.repo(repoPath),
+ *   resolveRepo: (path) => storage.repo(path),
  * });
+ *
+ * // HTTP — pass to Bun.serve, Hono, Cloudflare Workers, etc.
  * Bun.serve({ fetch: server.fetch });
+ *
+ * // SSH — wire up with ssh2 or any SSH library
+ * server.handleSession(command, channel, { username });
  * ```
  */
-export function createGitServer(config: GitServerConfig): GitServer {
+export function createGitServer<S = Session>(config: GitServerConfig<S>): GitServer {
 	if (!config || typeof config.resolveRepo !== "function") {
 		throw new TypeError(
 			"createGitServer: config.resolveRepo must be a function. " +
@@ -35,6 +90,8 @@ export function createGitServer(config: GitServerConfig): GitServer {
 		);
 	}
 	const { resolveRepo, hooks, basePath } = config;
+	// Safe: when config.session is omitted, S defaults to Session, matching defaultSessionBuilder.
+	const buildSession = (config.session ?? defaultSessionBuilder) as SessionBuilder<S>;
 
 	const packCache =
 		config.packCache === false ? undefined : new PackCache(config.packCache?.maxBytes);
@@ -48,9 +105,14 @@ export function createGitServer(config: GitServerConfig): GitServer {
 					console.error(`[server] Internal error: ${msg}`);
 				}));
 
-	return {
+	const server: GitServer = {
 		async fetch(req: Request): Promise<Response> {
+			let session: S | undefined;
 			try {
+				const sessionOrResponse = await buildSession.http(req);
+				if (sessionOrResponse instanceof Response) return sessionOrResponse;
+				session = sessionOrResponse;
+
 				const url = new URL(req.url);
 				let pathname = decodeURIComponent(url.pathname);
 
@@ -74,26 +136,15 @@ export function createGitServer(config: GitServerConfig): GitServer {
 					}
 
 					const repoPath = extractRepoPath(pathname, "/info/refs");
-					const repoOrResponse = await resolveRepo(repoPath, req);
-					if (repoOrResponse instanceof Response) return repoOrResponse;
-					if (!repoOrResponse) return new Response("Not Found", { status: 404 });
-					const repo = repoOrResponse;
+					const repo = await resolveRepo(repoPath);
+					if (!repo) return new Response("Not Found", { status: 404 });
 
-					const { refs: allRefs, headTarget } = await collectRefs(repo);
-
-					let refs = allRefs;
-					if (hooks?.advertiseRefs) {
-						const filtered = await hooks.advertiseRefs({
-							repo,
-							repoPath,
-							refs: allRefs,
-							service,
-							request: req,
-						});
-						if (filtered) refs = filtered;
+					const adv = await advertiseRefsWithHooks(repo, repoPath, service, hooks, session);
+					if (isRejection(adv)) {
+						return new Response(adv.message ?? "Forbidden", { status: 403 });
 					}
 
-					const body = buildRefAdvertisementBytes(refs, service, headTarget);
+					const body = buildRefAdvertisementBytes(adv.refs, service, adv.headTarget);
 					return new Response(body, {
 						headers: {
 							"Content-Type": `application/x-${service}-advertisement`,
@@ -105,10 +156,8 @@ export function createGitServer(config: GitServerConfig): GitServer {
 				// ── git-upload-pack ─────────────────────────────────
 				if (pathname.endsWith("/git-upload-pack") && req.method === "POST") {
 					const repoPath = extractRepoPath(pathname, "/git-upload-pack");
-					const repoOrResponse = await resolveRepo(repoPath, req);
-					if (repoOrResponse instanceof Response) return repoOrResponse;
-					if (!repoOrResponse) return new Response("Not Found", { status: 404 });
-					const repo = repoOrResponse;
+					const repo = await resolveRepo(repoPath);
+					if (!repo) return new Response("Not Found", { status: 404 });
 
 					const body = await readRequestBody(req);
 					const responseBody = await handleUploadPack(repo, body, {
@@ -125,10 +174,8 @@ export function createGitServer(config: GitServerConfig): GitServer {
 				// ── git-receive-pack ────────────────────────────────
 				if (pathname.endsWith("/git-receive-pack") && req.method === "POST") {
 					const repoPath = extractRepoPath(pathname, "/git-receive-pack");
-					const repoOrResponse = await resolveRepo(repoPath, req);
-					if (repoOrResponse instanceof Response) return repoOrResponse;
-					if (!repoOrResponse) return new Response("Not Found", { status: 404 });
-					const repo = repoOrResponse;
+					const repo = await resolveRepo(repoPath);
+					if (!repo) return new Response("Not Found", { status: 404 });
 
 					const body = await readRequestBody(req);
 					const ingestResult = await ingestReceivePack(repo, body);
@@ -161,7 +208,7 @@ export function createGitServer(config: GitServerConfig): GitServer {
 						repoPath,
 						ingestResult,
 						hooks,
-						request: req,
+						session,
 					});
 
 					if (useReportStatus) {
@@ -182,11 +229,47 @@ export function createGitServer(config: GitServerConfig): GitServer {
 
 				return new Response("Not Found", { status: 404 });
 			} catch (err) {
-				onError?.(err, req);
+				onError?.(err, session);
 				return new Response("Internal Server Error", { status: 500 });
 			}
 		},
+
+		async handleSession(
+			command: string,
+			channel: SshChannel,
+			sshSession?: SshSessionInfo,
+		): Promise<number> {
+			const session = await buildSession.ssh(sshSession ?? {});
+			return handleSshSession(command, channel, {
+				resolveRepo,
+				hooks,
+				packCache,
+				packOptions: config.packOptions,
+				session,
+				onError: onError ? (err) => onError(err, session) : undefined,
+			});
+		},
+
+		nodeHandler(req: NodeHttpRequest, res: NodeHttpResponse): void {
+			const chunks: Uint8Array[] = [];
+			req.on("data", (chunk: Uint8Array) => chunks.push(new Uint8Array(chunk)));
+			req.on("error", () => {
+				res.writeHead(500);
+				res.end("Internal Server Error");
+			});
+			req.on("end", () => {
+				nodeRequestToFetch(server, req, chunks, res).catch(() => {
+					try {
+						res.writeHead(500);
+						res.end("Internal Server Error");
+					} catch {
+						// headers already sent
+					}
+				});
+			});
+		},
 	};
+	return server;
 }
 
 // ── Internal helpers ────────────────────────────────────────────────
@@ -212,55 +295,7 @@ async function readRequestBody(req: Request): Promise<Uint8Array> {
 	return raw;
 }
 
-// ── Node.js adapter ─────────────────────────────────────────────────
-
-export interface NodeHttpRequest {
-	method?: string;
-	url?: string;
-	headers: Record<string, string | string[] | undefined>;
-	on(event: string, listener: (...args: any[]) => void): any;
-}
-
-export interface NodeHttpResponse {
-	writeHead(statusCode: number, headers?: Record<string, string | string[]>): any;
-	write(chunk: any): any;
-	end(data?: string): any;
-}
-
-/**
- * Adapt a `GitServer` to Node.js's `http.createServer` callback.
- *
- * Converts between Node's `IncomingMessage`/`ServerResponse` and the
- * web-standard `Request`/`Response` used by the server handler.
- *
- * ```ts
- * import http from "node:http";
- * const httpServer = http.createServer(toNodeHandler(server));
- * httpServer.listen(4280);
- * ```
- */
-export function toNodeHandler(
-	server: GitServer,
-): (req: NodeHttpRequest, res: NodeHttpResponse) => void {
-	return (req, res) => {
-		const chunks: Uint8Array[] = [];
-		req.on("data", (chunk: Uint8Array) => chunks.push(new Uint8Array(chunk)));
-		req.on("error", () => {
-			res.writeHead(500);
-			res.end("Internal Server Error");
-		});
-		req.on("end", () => {
-			nodeRequestToFetch(server, req, chunks, res).catch(() => {
-				try {
-					res.writeHead(500);
-					res.end("Internal Server Error");
-				} catch {
-					// headers already sent
-				}
-			});
-		});
-	};
-}
+// ── Node.js adapter internals ───────────────────────────────────────
 
 async function nodeRequestToFetch(
 	server: GitServer,
@@ -320,15 +355,17 @@ async function nodeRequestToFetch(
  * - **Post-hooks** (`postReceive`): run all in order. Each is individually
  *   try/caught so one failure doesn't prevent the rest from running.
  * - **Filter hooks** (`advertiseRefs`): chain — each hook receives the
- *   refs returned by the previous one. Returning void passes through
- *   unchanged.
+ *   refs returned by the previous one. Short-circuits on `Rejection`.
+ *   Returning void passes through unchanged.
  */
-export function composeHooks(...hookSets: (ServerHooks | undefined)[]): ServerHooks {
-	const sets = hookSets.filter((h): h is ServerHooks => h != null);
+export function composeHooks<S = Session>(
+	...hookSets: (ServerHooks<S> | undefined)[]
+): ServerHooks<S> {
+	const sets = hookSets.filter((h): h is ServerHooks<S> => h != null);
 	if (sets.length === 0) return {};
 	if (sets.length === 1) return sets[0]!;
 
-	const composed: ServerHooks = {};
+	const composed: ServerHooks<S> = {};
 
 	const preReceiveHandlers = sets.filter((s) => s.preReceive).map((s) => s.preReceive!);
 	if (preReceiveHandlers.length > 0) {
@@ -369,6 +406,7 @@ export function composeHooks(...hookSets: (ServerHooks | undefined)[]): ServerHo
 			let refs: RefAdvertisement[] = event.refs;
 			for (const handler of advertiseRefsHandlers) {
 				const result = await handler({ ...event, refs });
+				if (isRejection(result)) return result;
 				if (result) refs = result;
 			}
 			return refs;

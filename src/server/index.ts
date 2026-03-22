@@ -1,20 +1,12 @@
-// HTTP handler
+// HTTP + SSH handler
 export { createGitServer, composeHooks } from "./handler.ts";
 
-// Node.js adapter
-export { toNodeHandler } from "./handler.ts";
-
-// SSH session handler
-export { createGitSshServer, parseGitSshCommand } from "./ssh-session.ts";
-export type {
-	GitSshServer,
-	GitSshServerConfig,
-	SshChannel,
-	SshSessionInfo,
-} from "./ssh-session.ts";
+// SSH helpers
+export { parseGitSshCommand } from "./ssh-session.ts";
 
 // Transport-agnostic operations
 export {
+	advertiseRefsWithHooks,
 	applyReceivePack,
 	collectRefs,
 	buildRefAdvertisementBytes,
@@ -24,6 +16,7 @@ export {
 	ingestReceivePackFromStream,
 } from "./operations.ts";
 export type {
+	AdvertiseResult,
 	ApplyReceivePackOptions,
 	ApplyReceivePackResult,
 	RefResult,
@@ -38,17 +31,23 @@ export type {
 	AdvertiseRefsEvent,
 	GitServer,
 	GitServerConfig,
+	NodeHttpRequest,
+	NodeHttpResponse,
 	PostReceiveEvent,
 	PreReceiveEvent,
 	RefAdvertisement,
 	RefUpdate,
 	Rejection,
 	ServerHooks,
+	Session,
+	SessionBuilder,
+	SshChannel,
+	SshSessionInfo,
 	UpdateEvent,
 } from "./types.ts";
 
 // Presets
-export { createStandardHooks, withAuth, type StandardHooksConfig } from "./presets.ts";
+export { createStandardHooks, type StandardHooksConfig } from "./presets.ts";
 
 // Storage
 export type { Storage } from "./storage.ts";

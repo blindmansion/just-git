@@ -1,27 +1,141 @@
 import type { GitRepo } from "../lib/types.ts";
 import type { Rejection } from "../hooks.ts";
 
+// ── Session ─────────────────────────────────────────────────────────
+
+/**
+ * Default session type, produced by the built-in session builder when
+ * no custom `session` config is provided to `createGitServer`.
+ *
+ * HTTP requests produce `{ transport: "http", request }`.
+ * SSH sessions produce `{ transport: "ssh", username }`.
+ */
+export interface Session {
+	transport: "http" | "ssh";
+	/** Authenticated username, when available. */
+	username?: string;
+	/** The HTTP request, present only when `transport` is `"http"`. */
+	request?: Request;
+}
+
+/**
+ * User-provided session builder that transforms raw transport input
+ * into a typed session object threaded through all hooks.
+ *
+ * TypeScript infers `S` from the return types of the builder functions,
+ * so hooks receive the custom type without explicit generic annotations.
+ *
+ * ```ts
+ * const server = createGitServer({
+ *   resolveRepo: (path) => storage.repo(path),
+ *   session: {
+ *     http: (req) => ({
+ *       userId: parseJwt(req).sub,
+ *       roles: parseJwt(req).roles,
+ *     }),
+ *     ssh: (info) => ({
+ *       userId: info.username ?? "anonymous",
+ *       roles: (info.metadata?.roles as string[]) ?? [],
+ *     }),
+ *   },
+ *   hooks: {
+ *     preReceive: ({ session }) => {
+ *       // session is { userId: string, roles: string[] } — inferred!
+ *       if (!session?.roles.includes("push"))
+ *         return { reject: true, message: "forbidden" };
+ *     },
+ *   },
+ * });
+ * ```
+ */
+export interface SessionBuilder<S> {
+	/**
+	 * Build a session from an HTTP request.
+	 *
+	 * Return `S` to proceed, or return a `Response` to short-circuit
+	 * the request (e.g. 401 with `WWW-Authenticate` header). This is
+	 * the primary mechanism for HTTP auth — no separate middleware needed.
+	 */
+	http: (request: Request) => S | Response | Promise<S | Response>;
+	/** Build a session from SSH session info. */
+	ssh: (info: SshSessionInfo) => S | Promise<S>;
+}
+
+// ── SSH types ───────────────────────────────────────────────────────
+
+/** Information about the SSH session passed to `handleSession`. */
+export interface SshSessionInfo {
+	/** SSH username from authentication. */
+	username?: string;
+	/**
+	 * Arbitrary metadata from the SSH auth layer.
+	 * Stash key fingerprints, client IPs, roles, etc. here —
+	 * the session builder can extract and type them.
+	 */
+	metadata?: Record<string, unknown>;
+}
+
+/**
+ * Bidirectional channel for SSH session I/O.
+ *
+ * Adapters create this from their SSH library's channel/stream.
+ * The handler reads the client request from `readable` and writes
+ * the server response to `writable`.
+ *
+ * For receive-pack (push), `readable` must close when the client
+ * finishes sending. For upload-pack (fetch/clone), the handler
+ * reads protocol-aware pkt-lines and does not require EOF.
+ */
+export interface SshChannel {
+	/** Client data (from client stdout via SSH channel). */
+	readonly readable: ReadableStream<Uint8Array>;
+	/** Server response (to client stdin via SSH channel). */
+	readonly writable: WritableStream<Uint8Array>;
+	/** Write a diagnostic/error message to the client's stderr. */
+	writeStderr?(data: Uint8Array): void;
+}
+
+// ── Node.js adapter types ───────────────────────────────────────────
+
+/** Node.js `http.IncomingMessage`-compatible request interface. */
+export interface NodeHttpRequest {
+	method?: string;
+	url?: string;
+	headers: Record<string, string | string[] | undefined>;
+	on(event: string, listener: (...args: any[]) => void): any;
+}
+
+/** Node.js `http.ServerResponse`-compatible response interface. */
+export interface NodeHttpResponse {
+	writeHead(statusCode: number, headers?: Record<string, string | string[]>): any;
+	write(chunk: any): any;
+	end(data?: string): any;
+}
+
 // ── Server config ───────────────────────────────────────────────────
 
-export interface GitServerConfig {
+export interface GitServerConfig<S = Session> {
 	/**
-	 * Resolve an incoming request path to a repository.
+	 * Resolve a repo path to a repository.
 	 *
-	 * Return values:
-	 * - `GitRepo` — use this repo for the request
-	 * - `null` — respond with 404
-	 * - `Response` — send this response as-is (useful for 401/403 with
-	 *   custom headers like `WWW-Authenticate`)
+	 * Called for both HTTP and SSH requests. Return `GitRepo` to serve,
+	 * or `null` to respond with 404 / reject.
 	 */
-	resolveRepo: (
-		repoPath: string,
-		request: Request,
-	) => GitRepo | Response | null | Promise<GitRepo | Response | null>;
+	resolveRepo: (repoPath: string) => GitRepo | null | Promise<GitRepo | null>;
 
 	/** Server-side hooks. All optional. */
-	hooks?: ServerHooks;
+	hooks?: ServerHooks<S>;
 
-	/** Base path prefix to strip from URLs (e.g. "/git"). */
+	/**
+	 * Custom session builder. When provided, the server calls
+	 * `session.http(request)` for HTTP and `session.ssh(info)` for SSH
+	 * to produce the session object threaded through all hooks.
+	 *
+	 * When omitted, the built-in `Session` type is used.
+	 */
+	session?: SessionBuilder<S>;
+
+	/** Base path prefix to strip from HTTP URLs (e.g. "/git"). */
 	basePath?: string;
 
 	/**
@@ -53,45 +167,90 @@ export interface GitServerConfig {
 	 * Override to integrate with your own logging, or set to `false` to
 	 * suppress all error output.
 	 */
-	onError?: false | ((err: unknown, request: Request) => void);
+	onError?: false | ((err: unknown, session?: S) => void);
 }
 
 export interface GitServer {
-	/** Standard fetch-API handler: (Request) => Response */
-	fetch: (request: Request) => Promise<Response>;
+	/** Standard fetch-API handler for HTTP: (Request) => Response */
+	fetch(request: Request): Promise<Response>;
+
+	/**
+	 * Handle a single git-over-SSH session.
+	 *
+	 * Call this when the SSH client execs a git command (typically
+	 * `git-upload-pack` or `git-receive-pack`). Returns the exit code
+	 * to send to the client.
+	 *
+	 * ```ts
+	 * import { Server } from "ssh2";
+	 *
+	 * new Server({ hostKeys: [key] }, (client) => {
+	 *   client.on("authentication", (ctx) => { ctx.accept(); });
+	 *   client.on("session", (accept) => {
+	 *     accept().on("exec", (accept, reject, info) => {
+	 *       const stream = accept();
+	 *       const channel: SshChannel = {
+	 *         readable: new ReadableStream({
+	 *           start(c) {
+	 *             stream.on("data", (d: Buffer) => c.enqueue(new Uint8Array(d)));
+	 *             stream.on("end", () => c.close());
+	 *           },
+	 *         }),
+	 *         writable: new WritableStream({ write(chunk) { stream.write(chunk); } }),
+	 *         writeStderr(data) { stream.stderr.write(data); },
+	 *       };
+	 *       server.handleSession(info.command, channel, { username: ctx.username })
+	 *         .then((code) => { stream.exit(code); stream.close(); });
+	 *     });
+	 *   });
+	 * });
+	 * ```
+	 */
+	handleSession(command: string, channel: SshChannel, session?: SshSessionInfo): Promise<number>;
+
+	/**
+	 * Node.js `http.createServer` compatible handler.
+	 *
+	 * ```ts
+	 * import http from "node:http";
+	 * http.createServer(server.nodeHandler).listen(4280);
+	 * ```
+	 */
+	nodeHandler(req: NodeHttpRequest, res: NodeHttpResponse): void;
 }
 
 // ── Hooks ───────────────────────────────────────────────────────────
 
-export interface ServerHooks {
+export interface ServerHooks<S = Session> {
 	/**
 	 * Called after objects are unpacked but before any refs update.
 	 * Receives ALL ref updates as a batch. Return a Rejection to abort
 	 * the entire push. Auth, branch protection, and repo-wide policy
 	 * belong here.
 	 */
-	preReceive?: (event: PreReceiveEvent) => void | Rejection | Promise<void | Rejection>;
+	preReceive?: (event: PreReceiveEvent<S>) => void | Rejection | Promise<void | Rejection>;
 
 	/**
 	 * Called per-ref, after preReceive passes.
 	 * Return a Rejection to block this specific ref update while
 	 * allowing others. Per-branch rules belong here.
 	 */
-	update?: (event: UpdateEvent) => void | Rejection | Promise<void | Rejection>;
+	update?: (event: UpdateEvent<S>) => void | Rejection | Promise<void | Rejection>;
 
 	/**
 	 * Called after all ref updates succeed. Cannot reject.
 	 * CI triggers, webhooks, notifications belong here.
 	 */
-	postReceive?: (event: PostReceiveEvent) => void | Promise<void>;
+	postReceive?: (event: PostReceiveEvent<S>) => void | Promise<void>;
 
 	/**
 	 * Called when a client wants to fetch or push (during ref advertisement).
-	 * Return a filtered ref list to hide branches, or void to advertise all.
+	 * Return a filtered ref list to hide branches, a Rejection to deny
+	 * access entirely, or void to advertise all refs.
 	 */
 	advertiseRefs?: (
-		event: AdvertiseRefsEvent,
-	) => RefAdvertisement[] | void | Promise<RefAdvertisement[] | void>;
+		event: AdvertiseRefsEvent<S>,
+	) => RefAdvertisement[] | void | Rejection | Promise<RefAdvertisement[] | void | Rejection>;
 }
 
 // ── Hook events ─────────────────────────────────────────────────────
@@ -113,40 +272,40 @@ export interface RefUpdate {
 }
 
 /** Fired after objects are unpacked but before refs are updated. */
-export interface PreReceiveEvent {
+export interface PreReceiveEvent<S = Session> {
 	repo: GitRepo;
 	repoPath: string;
 	updates: readonly RefUpdate[];
-	/** Present when the push arrives over HTTP. Absent for in-process or SSH transports. */
-	request?: Request;
+	/** Session info. Present for HTTP and SSH; absent for in-process pushes. */
+	session?: S;
 }
 
 /** Fired per-ref after preReceive passes. */
-export interface UpdateEvent {
+export interface UpdateEvent<S = Session> {
 	repo: GitRepo;
 	repoPath: string;
 	update: RefUpdate;
-	/** Present when the push arrives over HTTP. Absent for in-process or SSH transports. */
-	request?: Request;
+	/** Session info. Present for HTTP and SSH; absent for in-process pushes. */
+	session?: S;
 }
 
 /** Fired after all ref updates succeed. */
-export interface PostReceiveEvent {
+export interface PostReceiveEvent<S = Session> {
 	repo: GitRepo;
 	repoPath: string;
 	updates: readonly RefUpdate[];
-	/** Present when the push arrives over HTTP. Absent for in-process or SSH transports. */
-	request?: Request;
+	/** Session info. Present for HTTP and SSH; absent for in-process pushes. */
+	session?: S;
 }
 
 /** Fired during ref advertisement (info/refs). */
-export interface AdvertiseRefsEvent {
+export interface AdvertiseRefsEvent<S = Session> {
 	repo: GitRepo;
 	repoPath: string;
 	refs: RefAdvertisement[];
 	service: "git-upload-pack" | "git-receive-pack";
-	/** Present when the request arrives over HTTP. Absent for in-process or SSH transports. */
-	request?: Request;
+	/** Session info. Present for HTTP and SSH; absent for in-process requests. */
+	session?: S;
 }
 
 /** A ref name and hash advertised to clients during fetch/push discovery. */

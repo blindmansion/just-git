@@ -221,5 +221,24 @@ describe("server hooks e2e", () => {
 				srv.stop();
 			}
 		});
+
+		test("rejection from advertiseRefs returns 403 over HTTP", async () => {
+			const { srv, port } = startServer({
+				resolveRepo: async () => serverRepo,
+				hooks: {
+					advertiseRefs: async () => {
+						return { reject: true, message: "access denied" };
+					},
+				},
+			});
+
+			try {
+				const res = await fetch(`http://localhost:${port}/repo/info/refs?service=git-upload-pack`);
+				expect(res.status).toBe(403);
+				expect(await res.text()).toBe("access denied");
+			} finally {
+				srv.stop();
+			}
+		});
 	});
 });

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createGit } from "../../src/index.ts";
 import { createGitServer } from "../../src/server/handler.ts";
-import type { GitServerConfig } from "../../src/server/types.ts";
+import type { GitServerConfig, Session } from "../../src/server/types.ts";
 
 // ── Test env ────────────────────────────────────────────────────────
 
@@ -71,6 +71,37 @@ export async function realGit(
 
 export function startServer(config: GitServerConfig) {
 	const server = createGitServer(config);
+	const srv = Bun.serve({ fetch: server.fetch, port: 0 });
+	return { srv, port: srv.port!, stop: () => srv.stop() };
+}
+
+export const defaultSshSession = (info: { username?: string }) =>
+	({ transport: "ssh" as const, username: info.username }) satisfies Session;
+
+export const defaultHttpSession = (req: Request) =>
+	({ transport: "http" as const, request: req }) satisfies Session;
+
+/**
+ * Start a server with session-builder-based HTTP auth.
+ * The authorize callback returns true to allow, false for 403,
+ * or a Response to send directly (e.g. 401).
+ */
+export function startServerWithSessionAuth(
+	authorize: (request: Request) => boolean | Response | Promise<boolean | Response>,
+	config: GitServerConfig,
+) {
+	const server = createGitServer({
+		...config,
+		session: {
+			http: async (req) => {
+				const result = await authorize(req);
+				if (result instanceof Response) return result;
+				if (!result) return new Response("Forbidden", { status: 403 });
+				return defaultHttpSession(req);
+			},
+			ssh: defaultSshSession,
+		},
+	});
 	const srv = Bun.serve({ fetch: server.fetch, port: 0 });
 	return { srv, port: srv.port!, stop: () => srv.stop() };
 }

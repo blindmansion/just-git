@@ -6,7 +6,6 @@ import type { GitServer, GitServerConfig, ServerHooks } from "../server/types.ts
 import { executeMerge, MergeError } from "./pull-requests.ts";
 import { PlatformDb } from "./storage.ts";
 import type {
-	Authorize,
 	CreatePullRequestOptions,
 	ListPullRequestsFilter,
 	MergePullRequestOptions,
@@ -201,22 +200,13 @@ export class Platform {
 
 	// ── Git server integration ──────────────────────────────────────
 
-	gitServer(options?: {
-		hooks?: ServerHooks;
-		basePath?: string;
-		authorize?: Authorize;
-	}): GitServer {
+	gitServer(options?: { hooks?: ServerHooks; basePath?: string }): GitServer {
 		const platform = this;
-		const authorize = options?.authorize;
 
 		const config: GitServerConfig = {
-			resolveRepo: async (repoPath: string, request: Request) => {
+			resolveRepo: async (repoPath: string) => {
 				const repoRecord = platform.platformDb.getRepo(repoPath);
 				if (!repoRecord) return null;
-				if (authorize) {
-					const denied = await authorize(request, repoPath);
-					if (denied) return denied;
-				}
 				return platform.storage.repo(repoPath);
 			},
 
@@ -297,7 +287,7 @@ export class Platform {
 	server(options?: PlatformServerOptions): GitServer {
 		const apiBase = options?.apiBasePath ?? "/api";
 		const authorize = options?.authorize;
-		const git = this.gitServer({ hooks: options?.hooks, authorize });
+		const git = this.gitServer({ hooks: options?.hooks });
 
 		return {
 			fetch: async (req: Request): Promise<Response> => {
@@ -315,9 +305,17 @@ export class Platform {
 					if (apiResponse) return apiResponse;
 					return jsonResponse({ error: "not found" }, 404);
 				}
+				if (authorize) {
+					const repoId = extractRepoIdFromGitPath(pathname);
+					if (repoId) {
+						const denied = await authorize(req, repoId);
+						if (denied) return denied;
+					}
+				}
 				return git.fetch(req);
 			},
-		};
+			handleSession: git.handleSession,
+		} as GitServer;
 	}
 
 	private async handleApiRoute(req: Request, path: string): Promise<Response | null> {
@@ -390,6 +388,19 @@ export class Platform {
 
 		return null;
 	}
+}
+
+const GIT_SUFFIXES = ["/info/refs", "/git-upload-pack", "/git-receive-pack"];
+
+function extractRepoIdFromGitPath(pathname: string): string | null {
+	for (const suffix of GIT_SUFFIXES) {
+		if (pathname.endsWith(suffix)) {
+			let repoPath = pathname.slice(0, -suffix.length);
+			if (repoPath.startsWith("/")) repoPath = repoPath.slice(1);
+			return repoPath || null;
+		}
+	}
+	return null;
 }
 
 function jsonResponse(data: unknown, status = 200): Response {

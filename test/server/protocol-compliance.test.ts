@@ -4,14 +4,14 @@ import { createGit } from "../../src/index.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import { parsePktLineStream, pktLineText } from "../../src/lib/transport/pkt-line.ts";
 import { collectRefs, PackCache } from "../../src/server/operations.ts";
-import {
-	createGitServer,
-	composeHooks,
-	toNodeHandler,
-	type NodeHttpRequest,
-	type NodeHttpResponse,
-} from "../../src/server/handler.ts";
-import type { ServerHooks, RefAdvertisement } from "../../src/server/types.ts";
+import { createGitServer, composeHooks } from "../../src/server/handler.ts";
+import type {
+	ServerHooks,
+	RefAdvertisement,
+	NodeHttpRequest,
+	NodeHttpResponse,
+	Session,
+} from "../../src/server/types.ts";
 import { envAt, createServerClient, startServer } from "./util.ts";
 
 // ── Ref advertisement sorting ───────────────────────────────────────
@@ -354,7 +354,7 @@ describe("composeHooks", () => {
 			repo: {} as any,
 			repoPath: "test",
 			service: "git-upload-pack",
-			request: new Request("http://localhost"),
+			session: { transport: "http", request: new Request("http://localhost") },
 		});
 
 		// "hidden" was removed by hooks1, then hooks2 uppercased remaining
@@ -388,7 +388,7 @@ describe("composeHooks", () => {
 			repo: {} as any,
 			repoPath: "test",
 			service: "git-upload-pack",
-			request: new Request("http://localhost"),
+			session: { transport: "http", request: new Request("http://localhost") },
 		});
 
 		expect(result).toEqual([{ name: "refs/heads/main", hash: "a".repeat(40) }]);
@@ -574,9 +574,9 @@ describe("streaming upload-pack (noDelta)", () => {
 	});
 });
 
-// ── toNodeHandler ───────────────────────────────────────────────────
+// ── nodeHandler ─────────────────────────────────────────────────────
 
-describe("toNodeHandler", () => {
+describe("nodeHandler", () => {
 	function createMockNodeReq(
 		method: string,
 		url: string,
@@ -646,12 +646,11 @@ describe("toNodeHandler", () => {
 		if (!ctx) throw new Error("no repo");
 
 		const server = createGitServer({ resolveRepo: async () => ctx });
-		const handler = toNodeHandler(server);
 
 		const req = createMockNodeReq("GET", "/repo/info/refs?service=git-upload-pack");
 		const res = createMockNodeRes();
 
-		handler(req, res);
+		server.nodeHandler(req, res);
 
 		await new Promise((r) => setTimeout(r, 100));
 
@@ -663,12 +662,11 @@ describe("toNodeHandler", () => {
 
 	test("returns 404 for unknown path", async () => {
 		const server = createGitServer({ resolveRepo: async () => null });
-		const handler = toNodeHandler(server);
 
 		const req = createMockNodeReq("GET", "/repo/info/refs?service=git-upload-pack");
 		const res = createMockNodeRes();
 
-		handler(req, res);
+		server.nodeHandler(req, res);
 
 		await new Promise((r) => setTimeout(r, 50));
 
@@ -683,12 +681,11 @@ describe("toNodeHandler", () => {
 			},
 			onError: false,
 		});
-		const handler = toNodeHandler(server);
 
 		const req = createMockNodeReq("GET", "/repo/info/refs?service=git-upload-pack");
 		const res = createMockNodeRes();
 
-		handler(req, res);
+		server.nodeHandler(req, res);
 
 		await new Promise((r) => setTimeout(r, 50));
 
@@ -699,13 +696,19 @@ describe("toNodeHandler", () => {
 	test("passes array headers through correctly", async () => {
 		let capturedHeaders: Headers | undefined;
 
-		const server: { fetch: (req: Request) => Promise<Response> } = {
-			async fetch(req: Request) {
-				capturedHeaders = req.headers;
-				return new Response("ok", { status: 200 });
+		const server = createGitServer({
+			resolveRepo: async (_path) => {
+				capturedHeaders = undefined;
+				return null;
 			},
-		};
-		const handler = toNodeHandler(server);
+			session: {
+				http: (req): Session => {
+					capturedHeaders = req.headers;
+					return { transport: "http", request: req };
+				},
+				ssh: (info): Session => ({ transport: "ssh", username: info.username }),
+			},
+		});
 
 		const req = createMockNodeReq("GET", "/test", {
 			accept: "text/plain",
@@ -713,7 +716,7 @@ describe("toNodeHandler", () => {
 		});
 		const res = createMockNodeRes();
 
-		handler(req, res);
+		server.nodeHandler(req, res);
 
 		await new Promise((r) => setTimeout(r, 50));
 
@@ -724,33 +727,34 @@ describe("toNodeHandler", () => {
 	test("collects POST body chunks and passes to server", async () => {
 		let capturedBody: Uint8Array | undefined;
 
-		const server: { fetch: (req: Request) => Promise<Response> } = {
-			async fetch(req: Request) {
-				capturedBody = new Uint8Array(await req.arrayBuffer());
-				return new Response("ok", { status: 200 });
+		const server = createGitServer({
+			resolveRepo: async () => null,
+			session: {
+				http: async (req): Promise<Session> => {
+					capturedBody = new Uint8Array(await req.clone().arrayBuffer());
+					return { transport: "http", request: req };
+				},
+				ssh: (info): Session => ({ transport: "ssh", username: info.username }),
 			},
-		};
-		const handler = toNodeHandler(server);
+		});
 
 		const body = new TextEncoder().encode("hello world");
 		const req = createMockNodeReq("POST", "/test", {}, body);
 		const res = createMockNodeRes();
 
-		handler(req, res);
+		server.nodeHandler(req, res);
 
 		await new Promise((r) => setTimeout(r, 50));
 
-		expect(res.statusCode).toBe(200);
+		expect(res.statusCode).toBe(404);
 		expect(capturedBody).toEqual(body);
 	});
 
 	test("handles request error event", async () => {
-		const server: { fetch: (req: Request) => Promise<Response> } = {
-			async fetch() {
-				return new Response("ok", { status: 200 });
-			},
-		};
-		const handler = toNodeHandler(server);
+		const server = createGitServer({
+			resolveRepo: async () => null,
+			onError: false,
+		});
 
 		let errorListener: (() => void) | undefined;
 		const req: NodeHttpRequest = {
@@ -763,7 +767,7 @@ describe("toNodeHandler", () => {
 		};
 		const res = createMockNodeRes();
 
-		handler(req, res);
+		server.nodeHandler(req, res);
 		errorListener!();
 
 		expect(res.statusCode).toBe(500);
@@ -774,14 +778,17 @@ describe("toNodeHandler", () => {
 		let capturedMethod: string | undefined;
 		let capturedUrl: string | undefined;
 
-		const server: { fetch: (req: Request) => Promise<Response> } = {
-			async fetch(req: Request) {
-				capturedMethod = req.method;
-				capturedUrl = new URL(req.url).pathname;
-				return new Response("ok", { status: 200 });
+		const server = createGitServer({
+			resolveRepo: async () => null,
+			session: {
+				http: (req): Session => {
+					capturedMethod = req.method;
+					capturedUrl = new URL(req.url).pathname;
+					return { transport: "http", request: req };
+				},
+				ssh: (info): Session => ({ transport: "ssh", username: info.username }),
 			},
-		};
-		const handler = toNodeHandler(server);
+		});
 
 		const req: NodeHttpRequest = {
 			headers: { host: "localhost" },
@@ -791,7 +798,7 @@ describe("toNodeHandler", () => {
 		};
 		const res = createMockNodeRes();
 
-		handler(req, res);
+		server.nodeHandler(req, res);
 
 		await new Promise((r) => setTimeout(r, 50));
 

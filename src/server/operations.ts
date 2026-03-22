@@ -34,7 +34,7 @@ import {
 	parseReceivePackRequest,
 	parseUploadPackRequest,
 } from "./protocol.ts";
-import type { RefAdvertisement, RefUpdate, ServerHooks } from "./types.ts";
+import type { RefAdvertisement, RefUpdate, Rejection, ServerHooks } from "./types.ts";
 
 // ── Pack cache ──────────────────────────────────────────────────────
 
@@ -236,6 +236,37 @@ export function buildRefListBytes(
 ): Uint8Array {
 	const caps = service === "git-upload-pack" ? UPLOAD_PACK_CAPS : RECEIVE_PACK_CAPS;
 	return buildRefListPktLines(refs as AdvertisedRef[], caps, headTarget);
+}
+
+// ── Ref advertisement with hooks ────────────────────────────────────
+
+export interface AdvertiseResult {
+	refs: RefAdvertisement[];
+	headTarget?: string;
+}
+
+/**
+ * Collect refs and run the `advertiseRefs` hook. Returns either the
+ * (possibly filtered) ref list, or a `Rejection` if the hook denied access.
+ *
+ * Both HTTP and SSH code paths use this — the caller handles the
+ * transport-specific response (HTTP 403 vs SSH exit 128).
+ */
+export async function advertiseRefsWithHooks<S>(
+	repo: GitRepo,
+	repoPath: string,
+	service: "git-upload-pack" | "git-receive-pack",
+	hooks?: ServerHooks<S>,
+	session?: S,
+): Promise<AdvertiseResult | Rejection> {
+	const { refs: allRefs, headTarget } = await collectRefs(repo);
+	let refs = allRefs;
+	if (hooks?.advertiseRefs) {
+		const result = await hooks.advertiseRefs({ repo, repoPath, refs: allRefs, service, session });
+		if (isRejection(result)) return result;
+		if (result) refs = result;
+	}
+	return { refs, headTarget };
 }
 
 // ── Upload-pack (fetch/clone serving) ───────────────────────────────
@@ -624,13 +655,13 @@ async function buildRefUpdates(
 
 // ── Receive-pack lifecycle (transport-agnostic) ─────────────────────
 
-export interface ApplyReceivePackOptions {
+export interface ApplyReceivePackOptions<S = unknown> {
 	repo: GitRepo;
 	repoPath: string;
 	ingestResult: ReceivePackResult;
-	hooks?: ServerHooks;
-	/** Present when the push arrives over HTTP. */
-	request?: Request;
+	hooks?: ServerHooks<S>;
+	/** Session info threaded through to hooks. */
+	session?: S;
 }
 
 export interface RefResult {
@@ -653,15 +684,15 @@ export interface ApplyReceivePackResult {
  * Does NOT handle unpack failures — the caller should check
  * `ingestResult.unpackOk` and short-circuit before calling this.
  */
-export async function applyReceivePack(
-	options: ApplyReceivePackOptions,
+export async function applyReceivePack<S = unknown>(
+	options: ApplyReceivePackOptions<S>,
 ): Promise<ApplyReceivePackResult> {
-	const { repo, repoPath, ingestResult, hooks, request } = options;
+	const { repo, repoPath, ingestResult, hooks, session } = options;
 	const { updates } = ingestResult;
 
 	// Pre-receive hook: abort entire push on rejection
 	if (hooks?.preReceive) {
-		const result = await hooks.preReceive({ repo, repoPath, updates, request });
+		const result = await hooks.preReceive({ repo, repoPath, updates, session });
 		if (isRejection(result)) {
 			const msg = result.message ?? "pre-receive hook declined";
 			return {
@@ -682,7 +713,7 @@ export async function applyReceivePack(
 		}
 
 		if (hooks?.update) {
-			const result = await hooks.update({ repo, repoPath, update, request });
+			const result = await hooks.update({ repo, repoPath, update, session });
 			if (isRejection(result)) {
 				refResults.push({
 					ref: update.ref,
@@ -715,7 +746,7 @@ export async function applyReceivePack(
 	// Post-receive hook (fire-and-forget, only for successful updates)
 	if (hooks?.postReceive && applied.length > 0) {
 		try {
-			await hooks.postReceive({ repo, repoPath, updates: applied, request });
+			await hooks.postReceive({ repo, repoPath, updates: applied, session });
 		} catch {
 			// Post-receive errors don't affect the result
 		}

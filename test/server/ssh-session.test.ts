@@ -5,8 +5,9 @@ import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import type { GitContext } from "../../src/lib/types.ts";
-import { createGitSshServer, type SshChannel } from "../../src/server/ssh-session.ts";
+import { createGitServer } from "../../src/server/handler.ts";
 import { parseGitSshCommand } from "../../src/server/ssh-session.ts";
+import type { SshChannel } from "../../src/server/types.ts";
 import { envAt } from "./util.ts";
 
 // ── ssh2 adapter helper ─────────────────────────────────────────────
@@ -92,15 +93,15 @@ describe("SSH session handler", () => {
 		if (!ctx) throw new Error("repo not found");
 		serverRepo = ctx;
 
-		// Create the SSH git handler
-		const handler = createGitSshServer({
+		// Create the unified server (handles both HTTP and SSH)
+		const server = createGitServer({
 			resolveRepo: (repoPath) => {
 				if (repoPath === "test-repo") return serverRepo;
 				return null;
 			},
 		});
 
-		// Start an ssh2 server
+		// Start an ssh2 server using the unified handler
 		const hostKey = readFileSync("/tmp/just-git-test-host-key");
 
 		sshPort = await new Promise<number>((resolve, reject) => {
@@ -111,7 +112,7 @@ describe("SSH session handler", () => {
 					session.on("exec", (accept, _reject, info) => {
 						const stream = accept();
 						const channel = wrapSsh2Channel(stream);
-						handler
+						server
 							.handleSession(info.command, channel, {
 								username: "test-user",
 							})
@@ -139,8 +140,7 @@ describe("SSH session handler", () => {
 	});
 
 	test("handleSession processes upload-pack", async () => {
-		// Test the handler directly (without ssh2) using in-memory streams
-		const handler = createGitSshServer({
+		const server = createGitServer({
 			resolveRepo: () => serverRepo,
 		});
 
@@ -176,7 +176,7 @@ describe("SSH session handler", () => {
 			}),
 		};
 
-		const exitCode = await handler.handleSession("git-upload-pack '/test-repo'", channel);
+		const exitCode = await server.handleSession("git-upload-pack '/test-repo'", channel);
 
 		expect(exitCode).toBe(0);
 		// Should have ref advertisement + pack response
@@ -189,7 +189,7 @@ describe("SSH session handler", () => {
 	});
 
 	test("handleSession rejects unknown repo", async () => {
-		const handler = createGitSshServer({
+		const server = createGitServer({
 			resolveRepo: () => null,
 			onError: false,
 		});
@@ -207,14 +207,14 @@ describe("SSH session handler", () => {
 			},
 		};
 
-		const exitCode = await handler.handleSession("git-upload-pack '/no-such-repo'", channel);
+		const exitCode = await server.handleSession("git-upload-pack '/no-such-repo'", channel);
 
 		expect(exitCode).toBe(128);
 		expect(stderrOutput).toContain("does not appear to be a git repository");
 	});
 
 	test("handleSession rejects unknown command", async () => {
-		const handler = createGitSshServer({
+		const server = createGitServer({
 			resolveRepo: () => serverRepo,
 			onError: false,
 		});
@@ -232,14 +232,44 @@ describe("SSH session handler", () => {
 			},
 		};
 
-		const exitCode = await handler.handleSession("ls -la", channel);
+		const exitCode = await server.handleSession("ls -la", channel);
 
 		expect(exitCode).toBe(128);
 		expect(stderrOutput).toContain("unrecognized command");
 	});
 
+	test("handleSession rejects when advertiseRefs returns rejection", async () => {
+		const server = createGitServer({
+			resolveRepo: () => serverRepo,
+			hooks: {
+				advertiseRefs: async () => {
+					return { reject: true, message: "no access" };
+				},
+			},
+			onError: false,
+		});
+
+		let stderrOutput = "";
+		const channel: SshChannel = {
+			readable: new ReadableStream({
+				start(c) {
+					c.close();
+				},
+			}),
+			writable: new WritableStream(),
+			writeStderr(data) {
+				stderrOutput += new TextDecoder().decode(data);
+			},
+		};
+
+		const exitCode = await server.handleSession("git-upload-pack '/test-repo'", channel);
+
+		expect(exitCode).toBe(128);
+		expect(stderrOutput).toContain("no access");
+	});
+
 	test("handleSession handles empty upload-pack (ls-remote)", async () => {
-		const handler = createGitSshServer({
+		const server = createGitServer({
 			resolveRepo: () => serverRepo,
 		});
 
@@ -257,7 +287,7 @@ describe("SSH session handler", () => {
 			}),
 		};
 
-		const exitCode = await handler.handleSession("git-upload-pack '/test-repo'", channel);
+		const exitCode = await server.handleSession("git-upload-pack '/test-repo'", channel);
 
 		expect(exitCode).toBe(0);
 		const text = new TextDecoder().decode(concatBytes(...responseChunks));

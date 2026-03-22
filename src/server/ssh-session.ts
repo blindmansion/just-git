@@ -1,253 +1,152 @@
 /**
- * Git-over-SSH session handler.
+ * SSH protocol helpers for the unified Git server.
  *
- * Transport-agnostic: accepts web-standard streams for I/O, works with
- * any SSH library (ssh2, etc.) through a thin adapter layer. The core
- * package remains zero-dependency — SSH library wiring lives outside.
- *
- * ```ts
- * import { Server } from "ssh2";
- * import { createGitSshServer } from "just-git/server";
- *
- * const handler = createGitSshServer({
- *   resolveRepo: (path) => storage.repo(path),
- * });
- *
- * new Server({ hostKeys: [key] }, (client) => {
- *   let username: string | undefined;
- *   client.on("authentication", (ctx) => { username = ctx.username; ctx.accept(); });
- *   client.on("session", (accept) => {
- *     accept().on("exec", (accept, reject, info) => {
- *       const stream = accept();
- *       const channel: SshChannel = {
- *         readable: new ReadableStream({
- *           start(c) {
- *             stream.on("data", (d: Buffer) => c.enqueue(new Uint8Array(d)));
- *             stream.on("end", () => c.close());
- *           },
- *         }),
- *         writable: new WritableStream({ write(chunk) { stream.write(chunk); } }),
- *         writeStderr(data) { stream.stderr.write(data); },
- *       };
- *       handler.handleSession(info.command, channel, { username })
- *         .then((code) => { stream.exit(code); stream.close(); });
- *     });
- *   });
- * });
- * ```
+ * Provides the pkt-line stream reader, command parser, and
+ * receive-pack streaming logic used by `createGitServer`'s
+ * `handleSession` method. Not a public entry point — see
+ * `createGitServer` for usage.
  */
 
+import { isRejection } from "../hooks.ts";
 import type { GitRepo } from "../lib/types.ts";
 import {
 	PackCache,
+	advertiseRefsWithHooks,
 	buildRefListBytes,
-	collectRefs,
 	handleUploadPack,
 	ingestReceivePackFromStream,
 	applyReceivePack,
 } from "./operations.ts";
 import { buildReportStatus, type PushCommand } from "./protocol.ts";
-import type { RefAdvertisement, ServerHooks } from "./types.ts";
+import type { ServerHooks, Session, SshChannel } from "./types.ts";
 
-// ── Types ───────────────────────────────────────────────────────────
+// ── Command parser ──────────────────────────────────────────────────
 
-export interface GitSshServerConfig {
-	/**
-	 * Resolve an SSH exec path to a repository.
-	 *
-	 * Return `GitRepo` to serve, or `null` to reject with
-	 * "repository not found".
-	 */
-	resolveRepo: (
-		repoPath: string,
-		session: SshSessionInfo,
-	) => GitRepo | null | Promise<GitRepo | null>;
-
-	/** Server-side hooks. All optional. */
-	hooks?: ServerHooks;
-
-	/**
-	 * Cache generated packfiles for identical full-clone requests.
-	 * Set to `false` to disable. Default: enabled with 256 MB limit.
-	 */
-	packCache?: false | { maxBytes?: number };
-
-	/** Control delta compression and streaming for upload-pack responses. */
-	packOptions?: {
-		noDelta?: boolean;
-		deltaWindow?: number;
-	};
-
-	/**
-	 * Called on unhandled errors during session handling.
-	 * Set to `false` to suppress. Defaults to console.error.
-	 */
-	onError?: false | ((err: unknown) => void);
-}
-
-/** Information about the SSH session, available to resolveRepo and hooks. */
-export interface SshSessionInfo {
-	/** SSH username from authentication. */
-	username?: string;
-}
+type GitSshService = "git-upload-pack" | "git-receive-pack";
 
 /**
- * Bidirectional channel for SSH session I/O.
+ * Parse a git SSH exec command into service and repo path.
  *
- * Adapters create this from their SSH library's channel/stream.
- * The handler reads the client request from `readable` and writes
- * the server response to `writable`.
- *
- * For receive-pack (push), `readable` must close when the client
- * finishes sending. For upload-pack (fetch/clone), the handler
- * reads protocol-aware pkt-lines and does not require EOF.
+ * Handles `git-upload-pack '/path'`, `git upload-pack '/path'`,
+ * and unquoted variants.
  */
-export interface SshChannel {
-	/** Client data (from client stdout via SSH channel). */
-	readonly readable: ReadableStream<Uint8Array>;
-	/** Server response (to client stdin via SSH channel). */
-	readonly writable: WritableStream<Uint8Array>;
-	/** Write a diagnostic/error message to the client's stderr. */
-	writeStderr?(data: Uint8Array): void;
+export function parseGitSshCommand(
+	command: string,
+): { service: GitSshService; repoPath: string } | null {
+	const match = command.match(/^git[\s-](upload-pack|receive-pack)\s+'?([^']+?)'?\s*$/);
+	if (!match) return null;
+
+	const service = `git-${match[1]}` as GitSshService;
+	let repoPath = match[2]!;
+	if (repoPath.startsWith("/")) repoPath = repoPath.slice(1);
+
+	return { service, repoPath };
 }
 
-export interface GitSshServer {
-	/**
-	 * Handle a single git-over-SSH session.
-	 *
-	 * Call this when the SSH client execs a git command (typically
-	 * `git-upload-pack` or `git-receive-pack`). Returns the exit code
-	 * to send to the client.
-	 *
-	 * After this resolves, the caller should send the exit code via
-	 * the SSH channel and close it.
-	 */
-	handleSession(command: string, channel: SshChannel, session?: SshSessionInfo): Promise<number>;
-}
-
-// ── Factory ─────────────────────────────────────────────────────────
+// ── Session handler (used by createGitServer) ───────────────────────
 
 const encoder = new TextEncoder();
 
+export interface HandleSessionOptions<S = Session> {
+	resolveRepo: (repoPath: string) => GitRepo | null | Promise<GitRepo | null>;
+	hooks?: ServerHooks<S>;
+	packCache?: PackCache;
+	packOptions?: { noDelta?: boolean; deltaWindow?: number };
+	session?: S;
+	onError?: (err: unknown) => void;
+}
+
 /**
- * Create a handler for git-over-SSH sessions.
- *
- * This is the SSH counterpart to `createGitServer` (HTTP). It handles
- * the git pack protocol over bidirectional streams, letting any SSH
- * library act as the transport layer.
+ * Handle a single git-over-SSH session. Called by the unified server's
+ * `handleSession` method — not meant to be used directly.
  */
-export function createGitSshServer(config: GitSshServerConfig): GitSshServer {
-	if (!config || typeof config.resolveRepo !== "function") {
-		throw new TypeError(
-			"createGitSshServer: config.resolveRepo must be a function. " +
-				"Example: createGitSshServer({ resolveRepo: (path) => storage.repo(path) })",
-		);
-	}
+export async function handleSshSession<S = Session>(
+	command: string,
+	channel: SshChannel,
+	options: HandleSessionOptions<S>,
+): Promise<number> {
+	const { resolveRepo, hooks, packCache, packOptions, session } = options;
+	const writer = channel.writable.getWriter();
+	try {
+		const parsed = parseGitSshCommand(command);
+		if (!parsed) {
+			sendStderr(channel, `fatal: unrecognized command '${command}'\n`);
+			return 128;
+		}
 
-	const { resolveRepo, hooks } = config;
+		const { service, repoPath } = parsed;
+		const repo = await resolveRepo(repoPath);
+		if (!repo) {
+			sendStderr(channel, `fatal: '${repoPath}' does not appear to be a git repository\n`);
+			return 128;
+		}
 
-	const packCache =
-		config.packCache === false ? undefined : new PackCache(config.packCache?.maxBytes);
+		const adv = await advertiseRefsWithHooks(repo, repoPath, service, hooks, session);
+		if (isRejection(adv)) {
+			sendStderr(channel, `fatal: ${adv.message ?? "access denied"}\n`);
+			return 128;
+		}
 
-	const onError =
-		config.onError === false
-			? undefined
-			: (config.onError ??
-				((err: unknown) => {
-					const msg = err instanceof Error ? err.message : String(err);
-					console.error(`[ssh] Internal error: ${msg}`);
-				}));
+		await writer.write(buildRefListBytes(adv.refs, service, adv.headTarget));
 
-	return {
-		async handleSession(
-			command: string,
-			channel: SshChannel,
-			session: SshSessionInfo = {},
-		): Promise<number> {
-			const writer = channel.writable.getWriter();
-			try {
-				const parsed = parseGitSshCommand(command);
-				if (!parsed) {
-					sendStderr(channel, `fatal: unrecognized command '${command}'\n`);
-					return 128;
-				}
-
-				const { service, repoPath } = parsed;
-				const repo = await resolveRepo(repoPath, session);
-				if (!repo) {
-					sendStderr(channel, `fatal: '${repoPath}' does not appear to be a git repository\n`);
-					return 128;
-				}
-
-				const { refs: allRefs, headTarget } = await collectRefs(repo);
-				let refs: RefAdvertisement[] = allRefs;
-				if (hooks?.advertiseRefs) {
-					const filtered = await hooks.advertiseRefs({
-						repo,
-						repoPath,
-						refs: allRefs,
-						service,
-					});
-					if (filtered) refs = filtered;
-				}
-
-				await writer.write(buildRefListBytes(refs, service, headTarget));
-
-				const streamReader = new StreamPktLineReader(channel.readable);
-				try {
-					if (service === "git-upload-pack") {
-						const requestBody = await readUploadPackRequest(streamReader);
-						const result = await handleUploadPack(repo, requestBody, {
-							cache: packCache,
-							cacheKey: repoPath,
-							noDelta: config.packOptions?.noDelta,
-							deltaWindow: config.packOptions?.deltaWindow,
-						});
-						await writeResponse(writer, result);
-					} else {
-						const { commands, capabilities } = await readReceivePackCommands(streamReader);
-						const packStream = streamReader.streamRemaining();
-						await serveReceivePackStreaming(
-							writer,
-							repo,
-							repoPath,
-							commands,
-							capabilities,
-							packStream,
-							hooks,
-						);
-					}
-				} finally {
-					streamReader.release();
-				}
-
-				return 0;
-			} catch (err) {
-				onError?.(err);
-				sendStderr(channel, "fatal: internal error\n");
-				return 128;
-			} finally {
-				try {
-					await writer.close();
-				} catch {
-					// Channel may already be closed
-				}
+		const streamReader = new StreamPktLineReader(channel.readable);
+		try {
+			if (service === "git-upload-pack") {
+				const requestBody = await readUploadPackRequest(streamReader);
+				const result = await handleUploadPack(repo, requestBody, {
+					cache: packCache,
+					cacheKey: repoPath,
+					noDelta: packOptions?.noDelta,
+					deltaWindow: packOptions?.deltaWindow,
+				});
+				await writeResponse(writer, result);
+			} else {
+				const { commands, capabilities } = await readReceivePackCommands(streamReader);
+				const packStream = streamReader.streamRemaining();
+				await serveReceivePackStreaming({
+					writer,
+					repo,
+					repoPath,
+					commands,
+					capabilities,
+					packStream,
+					hooks,
+					session,
+				});
 			}
-		},
-	};
+		} finally {
+			streamReader.release();
+		}
+
+		return 0;
+	} catch (err) {
+		options.onError?.(err);
+		sendStderr(channel, "fatal: internal error\n");
+		return 128;
+	} finally {
+		try {
+			await writer.close();
+		} catch {
+			// Channel may already be closed
+		}
+	}
 }
 
 // ── Receive-pack ────────────────────────────────────────────────────
 
-async function serveReceivePackStreaming(
-	writer: WritableStreamDefaultWriter<Uint8Array>,
-	repo: GitRepo,
-	repoPath: string,
-	commands: PushCommand[],
-	capabilities: string[],
-	packStream: AsyncIterable<Uint8Array>,
-	hooks?: ServerHooks,
-): Promise<void> {
+interface ServeReceivePackOptions<S> {
+	writer: WritableStreamDefaultWriter<Uint8Array>;
+	repo: GitRepo;
+	repoPath: string;
+	commands: PushCommand[];
+	capabilities: string[];
+	packStream: AsyncIterable<Uint8Array>;
+	hooks?: ServerHooks<S>;
+	session?: S;
+}
+
+async function serveReceivePackStreaming<S>(options: ServeReceivePackOptions<S>): Promise<void> {
+	const { writer, repo, repoPath, commands, capabilities, packStream, hooks, session } = options;
 	const ingestResult = await ingestReceivePackFromStream(repo, commands, capabilities, packStream);
 	if (ingestResult.updates.length === 0) return;
 
@@ -271,6 +170,7 @@ async function serveReceivePackStreaming(
 		repoPath,
 		ingestResult,
 		hooks,
+		session,
 	});
 
 	if (useReportStatus) {
@@ -284,27 +184,6 @@ async function serveReceivePackStreaming(
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
-type GitSshService = "git-upload-pack" | "git-receive-pack";
-
-/**
- * Parse a git SSH exec command into service and repo path.
- *
- * Handles `git-upload-pack '/path'`, `git upload-pack '/path'`,
- * and unquoted variants.
- */
-export function parseGitSshCommand(
-	command: string,
-): { service: GitSshService; repoPath: string } | null {
-	const match = command.match(/^git[\s-](upload-pack|receive-pack)\s+'?([^']+?)'?\s*$/);
-	if (!match) return null;
-
-	const service = `git-${match[1]}` as GitSshService;
-	let repoPath = match[2]!;
-	if (repoPath.startsWith("/")) repoPath = repoPath.slice(1);
-
-	return { service, repoPath };
-}
 
 function sendStderr(channel: SshChannel, message: string): void {
 	channel.writeStderr?.(encoder.encode(message));

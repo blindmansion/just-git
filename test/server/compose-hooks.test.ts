@@ -17,8 +17,10 @@ function stubRepo(): GitRepo {
 	};
 }
 
-function stubRequest(): Request {
-	return new Request("http://localhost/test");
+import type { Session } from "../../src/server/types.ts";
+
+function stubSession(): Session {
+	return { transport: "http", request: new Request("http://localhost/test") };
 }
 
 function refUpdate(ref = "refs/heads/main"): RefUpdate {
@@ -30,7 +32,7 @@ function preReceiveEvent(overrides?: Partial<PreReceiveEvent>): PreReceiveEvent 
 		repo: stubRepo(),
 		repoPath: "my-repo",
 		updates: [refUpdate()],
-		request: stubRequest(),
+		session: stubSession(),
 		...overrides,
 	};
 }
@@ -40,7 +42,7 @@ function updateEvent(overrides?: Partial<UpdateEvent>): UpdateEvent {
 		repo: stubRepo(),
 		repoPath: "my-repo",
 		update: refUpdate(),
-		request: stubRequest(),
+		session: stubSession(),
 		...overrides,
 	};
 }
@@ -50,7 +52,7 @@ function postReceiveEvent(overrides?: Partial<PostReceiveEvent>): PostReceiveEve
 		repo: stubRepo(),
 		repoPath: "my-repo",
 		updates: [refUpdate()],
-		request: stubRequest(),
+		session: stubSession(),
 		...overrides,
 	};
 }
@@ -64,7 +66,7 @@ function advertiseRefsEvent(overrides?: Partial<AdvertiseRefsEvent>): AdvertiseR
 			{ name: "refs/heads/feature", hash: "bbb" },
 		],
 		service: "git-upload-pack",
-		request: stubRequest(),
+		session: stubSession(),
 		...overrides,
 	};
 }
@@ -246,6 +248,26 @@ describe("composeHooks", () => {
 			);
 			const result = await hooks.advertiseRefs!(advertiseRefsEvent());
 			expect(result).toEqual([{ name: "refs/heads/main", hash: "filtered" }]);
+		});
+
+		test("short-circuits on rejection", async () => {
+			const order: number[] = [];
+			const hooks = composeHooks(
+				{
+					advertiseRefs: async () => {
+						order.push(1);
+						return { reject: true, message: "denied" };
+					},
+				},
+				{
+					advertiseRefs: async () => {
+						order.push(2);
+					},
+				},
+			);
+			const result = await hooks.advertiseRefs!(advertiseRefsEvent());
+			expect(result).toEqual({ reject: true, message: "denied" });
+			expect(order).toEqual([1]);
 		});
 
 		test("void return passes refs through unchanged", async () => {
