@@ -17,6 +17,7 @@ export {
 	listTags,
 	mergeTrees,
 	mergeTreesFromTreeHashes,
+	overlayRepo,
 	readBlob,
 	readBlobText,
 	readCommit,

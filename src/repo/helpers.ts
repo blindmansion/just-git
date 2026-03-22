@@ -348,9 +348,76 @@ export async function readFileAtCommit(
 	return readBlobContent(repo, entry.hash);
 }
 
-// ── Checkout to filesystem ──────────────────────────────────────────
+// ── Internal helpers ────────────────────────────────────────────────
 
 const HEX40 = /^[0-9a-f]{40}$/;
+
+async function resolveToCommitHash(repo: GitRepo, refOrHash: string): Promise<string> {
+	const resolved = await _resolveRef(repo, refOrHash);
+	if (resolved) return resolved;
+	if (HEX40.test(refOrHash) && (await repo.objectStore.exists(refOrHash))) {
+		return refOrHash;
+	}
+	throw new Error(`ref or commit '${refOrHash}' not found`);
+}
+
+async function materializeEntries(
+	repo: GitRepo,
+	entries: FlatTreeEntry[],
+	fs: FileSystem,
+	rootDir: string,
+): Promise<number> {
+	const createdDirs = new Set<string>();
+	let filesWritten = 0;
+
+	for (const entry of entries) {
+		if (!verifyPath(entry.path)) {
+			throw new Error(`refusing to check out unsafe path '${entry.path}'`);
+		}
+		const fullPath = join(rootDir, entry.path);
+		if (!isInsideWorkTree(rootDir, fullPath)) {
+			throw new Error(`refusing to check out path outside target directory: '${entry.path}'`);
+		}
+		const dir = dirname(fullPath);
+
+		if (dir !== rootDir && !createdDirs.has(dir)) {
+			await fs.mkdir(dir, { recursive: true });
+			createdDirs.add(dir);
+		}
+
+		if (isSymlinkMode(entry.mode)) {
+			const target = await readBlobContent(repo, entry.hash);
+			if (!verifySymlinkTarget(target)) {
+				throw new Error(`refusing to create symlink with unsafe target '${target}'`);
+			}
+			if (fs.symlink) {
+				await fs.symlink(target, fullPath);
+			} else {
+				await fs.writeFile(fullPath, target);
+			}
+		} else {
+			const content = await readBlobBytes(repo, entry.hash);
+			await fs.writeFile(fullPath, content);
+		}
+		filesWritten++;
+	}
+
+	return filesWritten;
+}
+
+function indexFromEntries(entries: FlatTreeEntry[]) {
+	return buildIndex(
+		entries.map((e) => ({
+			path: e.path,
+			mode: parseInt(e.mode, 8),
+			hash: e.hash,
+			stage: 0,
+			stat: defaultStat(),
+		})),
+	);
+}
+
+// ── Checkout to filesystem ──────────────────────────────────────────
 
 /** Result of {@link checkoutTo}. */
 export interface CheckoutToResult {
@@ -375,52 +442,10 @@ export async function checkoutTo(
 	fs: FileSystem,
 	targetDir = "/",
 ): Promise<CheckoutToResult> {
-	let commitHash = await _resolveRef(repo, refOrHash);
-	if (!commitHash) {
-		if (HEX40.test(refOrHash) && (await repo.objectStore.exists(refOrHash))) {
-			commitHash = refOrHash;
-		} else {
-			throw new Error(`ref or commit '${refOrHash}' not found`);
-		}
-	}
-
+	const commitHash = await resolveToCommitHash(repo, refOrHash);
 	const commit = await _readCommit(repo, commitHash);
 	const entries = await _flattenTree(repo, commit.tree);
-
-	const createdDirs = new Set<string>();
-	let filesWritten = 0;
-
-	for (const entry of entries) {
-		if (!verifyPath(entry.path)) {
-			throw new Error(`refusing to check out unsafe path '${entry.path}'`);
-		}
-		const fullPath = join(targetDir, entry.path);
-		if (!isInsideWorkTree(targetDir, fullPath)) {
-			throw new Error(`refusing to check out path outside target directory: '${entry.path}'`);
-		}
-		const dir = dirname(fullPath);
-
-		if (dir !== targetDir && !createdDirs.has(dir)) {
-			await fs.mkdir(dir, { recursive: true });
-			createdDirs.add(dir);
-		}
-
-		if (isSymlinkMode(entry.mode)) {
-			const target = await readBlobContent(repo, entry.hash);
-			if (!verifySymlinkTarget(target)) {
-				throw new Error(`refusing to create symlink with unsafe target '${target}'`);
-			}
-			if (fs.symlink) {
-				await fs.symlink(target, fullPath);
-			} else {
-				await fs.writeFile(fullPath, target);
-			}
-		} else {
-			const content = await readBlobBytes(repo, entry.hash);
-			await fs.writeFile(fullPath, content);
-		}
-		filesWritten++;
-	}
+	const filesWritten = await materializeEntries(repo, entries, fs, targetDir);
 
 	return { commitHash, treeHash: commit.tree, filesWritten };
 }
@@ -480,15 +505,7 @@ export async function createWorktree(
 
 	await fs.mkdir(gitDir, { recursive: true });
 
-	let commitHash = await _resolveRef(repo, ref);
-	if (!commitHash) {
-		if (HEX40.test(ref) && (await repo.objectStore.exists(ref))) {
-			commitHash = ref;
-		} else {
-			throw new Error(`ref or commit '${ref}' not found`);
-		}
-	}
-
+	const commitHash = await resolveToCommitHash(repo, ref);
 	const commit = await _readCommit(repo, commitHash);
 	const entries = await _flattenTree(repo, commit.tree);
 
@@ -499,51 +516,8 @@ export async function createWorktree(
 		workTree,
 	};
 
-	const createdDirs = new Set<string>();
-	let filesWritten = 0;
-
-	for (const entry of entries) {
-		if (!verifyPath(entry.path)) {
-			throw new Error(`refusing to check out unsafe path '${entry.path}'`);
-		}
-		const fullPath = join(workTree, entry.path);
-		if (!isInsideWorkTree(workTree, fullPath)) {
-			throw new Error(`refusing to check out path outside worktree: '${entry.path}'`);
-		}
-		const dir = dirname(fullPath);
-
-		if (dir !== workTree && !createdDirs.has(dir)) {
-			await fs.mkdir(dir, { recursive: true });
-			createdDirs.add(dir);
-		}
-
-		if (isSymlinkMode(entry.mode)) {
-			const target = await readBlobContent(repo, entry.hash);
-			if (!verifySymlinkTarget(target)) {
-				throw new Error(`refusing to create symlink with unsafe target '${target}'`);
-			}
-			if (fs.symlink) {
-				await fs.symlink(target, fullPath);
-			} else {
-				await fs.writeFile(fullPath, target);
-			}
-		} else {
-			const content = await readBlobBytes(repo, entry.hash);
-			await fs.writeFile(fullPath, content);
-		}
-		filesWritten++;
-	}
-
-	const index = buildIndex(
-		entries.map((e) => ({
-			path: e.path,
-			mode: parseInt(e.mode, 8),
-			hash: e.hash,
-			stage: 0,
-			stat: defaultStat(),
-		})),
-	);
-	await writeIndex(ctx, index);
+	const filesWritten = await materializeEntries(repo, entries, fs, workTree);
+	await writeIndex(ctx, indexFromEntries(entries));
 
 	return { ctx, commitHash, treeHash: commit.tree, filesWritten };
 }
@@ -1023,21 +997,10 @@ export async function createEphemeralWorktree(
 	const gitDir = options?.gitDir ?? join(workTree, ".git");
 	const ref = options?.ref ?? "HEAD";
 
-	let commitHash = await _resolveRef(overlay, ref);
-	if (!commitHash) {
-		if (HEX40.test(ref) && (await overlay.objectStore.exists(ref))) {
-			commitHash = ref;
-		} else {
-			throw new Error(`ref or commit '${ref}' not found`);
-		}
-	}
-
+	const commitHash = await resolveToCommitHash(overlay, ref);
 	const commit = await _readCommit(overlay, commitHash);
 	const fs = new TreeBackedFs(overlay.objectStore, commit.tree, workTree);
 
-	// HEAD and branch in the overlay store so commands can resolve HEAD.
-	// No .git directory scaffolding needed — requireGitContext skips
-	// findRepo when objectStore + refStore + gitDir are provided.
 	const branchRef = "refs/heads/main";
 	await overlay.refStore.writeRef("HEAD", { type: "symbolic", target: branchRef });
 	await overlay.refStore.writeRef(branchRef, { type: "direct", hash: commitHash });
@@ -1049,18 +1012,8 @@ export async function createEphemeralWorktree(
 		workTree,
 	};
 
-	// Build index from tree (metadata only — no blob reads)
 	const entries = await _flattenTree(overlay, commit.tree);
-	const index = buildIndex(
-		entries.map((e) => ({
-			path: e.path,
-			mode: parseInt(e.mode, 8),
-			hash: e.hash,
-			stage: 0,
-			stat: defaultStat(),
-		})),
-	);
-	await writeIndex(ctx, index);
+	await writeIndex(ctx, indexFromEntries(entries));
 
 	return { ctx, commitHash, treeHash: commit.tree, filesWritten: 0 };
 }
