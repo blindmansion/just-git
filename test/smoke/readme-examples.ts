@@ -1,5 +1,5 @@
 /**
- * Smoke-tests every code example from the docs (README, CLIENT.md, REPO.md)
+ * Smoke-tests every code example from the docs (README, CLIENT.md, REPO.md, SERVER.md)
  * to make sure they actually work.
  *
  * Run: bun test/smoke/readme-examples.ts
@@ -8,10 +8,11 @@
 import { Bash, InMemoryFs } from "just-bash";
 import { Database } from "bun:sqlite";
 import { createGit, MemoryFileSystem, composeGitHooks, findRepo } from "../../src";
-import { createGitServer, createStandardHooks, BunSqliteStorage } from "../../src/server";
+import { createGitServer, BunSqliteStorage } from "../../src/server";
 import {
 	readFileAtCommit,
 	getChangedFiles,
+	getNewCommits,
 	mergeTrees,
 	readCommit,
 	resolveRef,
@@ -85,16 +86,19 @@ import type { GitHooks } from "../../src";
 
 	const server = createGitServer({
 		resolveRepo: (path) => storage.repo(path),
-		hooks: createStandardHooks({
-			protectedBranches: ["main"],
-			authorizePush: (session) => session.request?.headers.has("Authorization") ?? false,
-			onPush: async ({ repo, repoPath: _repoPath, updates }) => {
+		policy: { protectedBranches: ["main"] },
+		hooks: {
+			preReceive: ({ session }) => {
+				if (!session?.request?.headers.has("Authorization"))
+					return { reject: true, message: "unauthorized" };
+			},
+			postReceive: async ({ repo, updates }) => {
 				for (const u of updates) {
 					const files = await getChangedFiles(repo, u.oldHash, u.newHash);
 					changedFileCounts.push(files.length);
 				}
 			},
-		}),
+		},
 	});
 
 	const srv = Bun.serve({ fetch: server.fetch, port: 0 });
@@ -129,10 +133,9 @@ import type { GitHooks } from "../../src";
 		console.assert(withAuth.exitCode === 0, "push with auth should succeed");
 	}
 
-	// onPush should have fired and getChangedFiles should work
-	console.assert(changedFileCounts.length === 1, "onPush should have fired once");
+	console.assert(changedFileCounts.length === 1, "postReceive should have fired once");
 	console.assert(changedFileCounts[0] === 1, "should see 1 changed file (README.md)");
-	console.log("README server: createStandardHooks + auth + onPush OK");
+	console.log("README server: policy + auth + postReceive OK");
 	srv.stop();
 }
 
@@ -555,18 +558,29 @@ import type { GitHooks } from "../../src";
 }
 
 // ── REPO: Usage in hooks (server-side) ──────────────────────────────
+// Exercises getChangedFiles, readFileAtCommit, and getNewCommits
+// inside a postReceive hook (SERVER.md "Working with pushed code")
 
 {
 	const storage = new BunSqliteStorage(new Database(":memory:"));
 	const foundPkg: string[] = [];
+	const changedFilePaths: string[] = [];
+	const commitMessages: string[] = [];
 
 	const server = createGitServer({
 		resolveRepo: (path) => storage.repo(path),
 		hooks: {
 			postReceive: async ({ repo, updates }) => {
 				for (const u of updates) {
+					const files = await getChangedFiles(repo, u.oldHash, u.newHash);
+					changedFilePaths.push(...files.map((f) => f.path));
+
 					const pkg = await readFileAtCommit(repo, u.newHash, "package.json");
 					if (pkg) foundPkg.push(pkg);
+
+					for await (const commit of getNewCommits(repo, u.oldHash, u.newHash)) {
+						commitMessages.push(commit.message.trim());
+					}
 				}
 			},
 		},
@@ -574,7 +588,6 @@ import type { GitHooks } from "../../src";
 
 	const srv = Bun.serve({ fetch: server.fetch, port: 0 });
 
-	// Push a repo with package.json to the server
 	const git = createGit({
 		identity: { name: "Alice", email: "alice@example.com" },
 		credentials: () => null,
@@ -584,11 +597,195 @@ import type { GitHooks } from "../../src";
 	await bash.exec("git init");
 	await bash.exec('echo \'{"name":"test"}\' > package.json');
 	await bash.exec("git add . && git commit -m 'init'");
+	await bash.exec("echo 'v2' > README.md && git add . && git commit -m 'add readme'");
 	await bash.exec(`git remote add origin ${srv.url}test-repo`);
 	await bash.exec("git push -u origin main");
 
 	console.assert(foundPkg.length === 1, "postReceive should find package.json");
-	console.log("REPO hooks (server): postReceive read package.json OK");
+	console.assert(
+		changedFilePaths.includes("package.json"),
+		"getChangedFiles should see package.json",
+	);
+	console.assert(commitMessages.length === 2, "getNewCommits should yield 2 commits");
+	console.assert(commitMessages.includes("init"), "should include 'init' commit");
+	console.assert(commitMessages.includes("add readme"), "should include 'add readme' commit");
+	console.log("REPO hooks (server): getChangedFiles + readFileAtCommit + getNewCommits OK");
+	srv.stop();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SERVER.md examples
+// ═══════════════════════════════════════════════════════════════════
+
+// ── SERVER: Session builder (HTTP auth gate) ────────────────────────
+
+{
+	const storage = new BunSqliteStorage(new Database(":memory:"));
+
+	const server = createGitServer({
+		resolveRepo: (repoPath) => storage.repo(repoPath),
+		session: {
+			http: (request) => {
+				const header = request.headers.get("Authorization");
+				if (!header) {
+					return new Response("Unauthorized", {
+						status: 401,
+						headers: { "WWW-Authenticate": 'Bearer realm="git"' },
+					});
+				}
+				return { userId: header.replace("Bearer ", "") };
+			},
+			ssh: (info) => ({
+				userId: info.username ?? "anonymous",
+			}),
+		},
+		hooks: {
+			preReceive: ({ session }) => {
+				if (!session) return { reject: true, message: "unauthorized" };
+			},
+		},
+	});
+
+	const srv = Bun.serve({ fetch: server.fetch, port: 0 });
+
+	// No auth → 401
+	const noAuth = await server.fetch(
+		new Request(`http://localhost:${srv.port}/repo/info/refs?service=git-upload-pack`),
+	);
+	console.assert(noAuth.status === 401, "session builder should reject without token");
+	console.assert(
+		noAuth.headers.get("WWW-Authenticate") === 'Bearer realm="git"',
+		"should include WWW-Authenticate header",
+	);
+
+	// With auth → 200
+	const withAuth = await server.fetch(
+		new Request(`http://localhost:${srv.port}/repo/info/refs?service=git-upload-pack`, {
+			headers: { Authorization: "Bearer test-token" },
+		}),
+	);
+	console.assert(withAuth.status === 200, "session builder should allow with token");
+
+	console.log("SERVER session builder: HTTP auth gate OK");
+	srv.stop();
+}
+
+// ── SERVER: Custom session type (uniform auth across HTTP + SSH) ─────
+
+{
+	const storage = new BunSqliteStorage(new Database(":memory:"));
+
+	const server = createGitServer({
+		resolveRepo: (repoPath) => storage.repo(repoPath),
+		session: {
+			http: (req) => ({ authorized: req.headers.has("Authorization") }),
+			ssh: (info) => ({ authorized: info.username != null }),
+		},
+		policy: { protectedBranches: ["main"] },
+		hooks: {
+			preReceive: ({ session }) => {
+				if (!session?.authorized) return { reject: true, message: "unauthorized" };
+			},
+		},
+	});
+
+	const srv = Bun.serve({ fetch: server.fetch, port: 0 });
+	const fs = new InMemoryFs();
+
+	{
+		const git = createGit({ identity: { name: "Alice", email: "alice@example.com" } });
+		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		await bash.exec("git init");
+		await bash.exec("echo 'hi' > file.txt && git add . && git commit -m 'init'");
+		await bash.exec(`git remote add origin ${srv.url}test-repo`);
+
+		// Push without auth should fail (session.authorized is false)
+		const noAuth = await bash.exec("git push -u origin main");
+		console.assert(noAuth.exitCode !== 0, "push without auth should fail");
+	}
+	{
+		const git = createGit({
+			identity: { name: "Alice", email: "alice@example.com" },
+			credentials: () => ({ type: "bearer" as const, token: "x" }),
+		});
+		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+
+		// Push with auth should succeed (session.authorized is true)
+		const withAuth = await bash.exec("git push -u origin main");
+		console.assert(withAuth.exitCode === 0, "push with auth should succeed");
+	}
+
+	console.log("SERVER custom session: uniform auth OK");
+	srv.stop();
+}
+
+// ── SERVER: advertiseRefs rejection (per-repo read gate) ────────────
+
+{
+	const storage = new BunSqliteStorage(new Database(":memory:"));
+
+	const server = createGitServer({
+		resolveRepo: (repoPath) => storage.repo(repoPath),
+		hooks: {
+			advertiseRefs: ({ repoPath }) => {
+				if (repoPath.startsWith("private/")) {
+					return { reject: true, message: "authentication required" };
+				}
+			},
+		},
+	});
+
+	const srv = Bun.serve({ fetch: server.fetch, port: 0 });
+
+	// Public repo → 200
+	const pub = await server.fetch(
+		new Request(`http://localhost:${srv.port}/public-repo/info/refs?service=git-upload-pack`),
+	);
+	console.assert(pub.status === 200, "public repo should be accessible");
+
+	// Private repo → 403
+	const priv = await server.fetch(
+		new Request(`http://localhost:${srv.port}/private/secret/info/refs?service=git-upload-pack`),
+	);
+	console.assert(priv.status === 403, "private repo should be rejected");
+	const body = await priv.text();
+	console.assert(body === "authentication required", "should include rejection message");
+
+	console.log("SERVER advertiseRefs: per-repo read gate OK");
+	srv.stop();
+}
+
+// ── SERVER: policy + composeHooks ────────────────────────────────────
+
+{
+	const storage = new BunSqliteStorage(new Database(":memory:"));
+	const pushLog: string[] = [];
+
+	const server = createGitServer({
+		resolveRepo: (repoPath) => storage.repo(repoPath),
+		policy: { protectedBranches: ["main"] },
+		hooks: {
+			postReceive: async ({ repoPath, updates }) => {
+				for (const u of updates) {
+					pushLog.push(`${repoPath}:${u.ref}`);
+				}
+			},
+		},
+	});
+
+	const srv = Bun.serve({ fetch: server.fetch, port: 0 });
+	const fs = new InMemoryFs();
+	const git = createGit({ identity: { name: "Alice", email: "alice@example.com" } });
+	const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+	await bash.exec("git init");
+	await bash.exec("echo 'hi' > file.txt && git add . && git commit -m 'init'");
+	await bash.exec(`git remote add origin ${srv.url}my-repo`);
+	const push = await bash.exec("git push -u origin main");
+	console.assert(push.exitCode === 0, "push should succeed");
+	console.assert(pushLog.length === 1, "postReceive should fire");
+	console.assert(pushLog[0] === "my-repo:refs/heads/main", "should log correct repo:ref");
+
+	console.log("SERVER policy + postReceive: logging OK");
 	srv.stop();
 }
 

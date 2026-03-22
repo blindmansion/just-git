@@ -75,11 +75,15 @@ export function startServer(config: GitServerConfig) {
 	return { srv, port: srv.port!, stop: () => srv.stop() };
 }
 
-export const defaultSshSession = (info: { username?: string }) =>
-	({ transport: "ssh" as const, username: info.username }) satisfies Session;
+export const defaultSshSession = (info: { username?: string }): Session => ({
+	transport: "ssh",
+	username: info.username,
+});
 
-export const defaultHttpSession = (req: Request) =>
-	({ transport: "http" as const, request: req }) satisfies Session;
+export const defaultHttpSession = (req: Request): Session => ({
+	transport: "http",
+	request: req,
+});
 
 /**
  * Start a server with session-builder-based HTTP auth.

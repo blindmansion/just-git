@@ -4,15 +4,15 @@ import { createGit } from "../../src/index.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import { parsePktLineStream, pktLineText } from "../../src/lib/transport/pkt-line.ts";
 import { collectRefs, PackCache } from "../../src/server/operations.ts";
-import { createGitServer, composeHooks } from "../../src/server/handler.ts";
-import type {
-	ServerHooks,
-	RefAdvertisement,
-	NodeHttpRequest,
-	NodeHttpResponse,
-	Session,
-} from "../../src/server/types.ts";
-import { envAt, createServerClient, startServer } from "./util.ts";
+import { createGitServer } from "../../src/server/handler.ts";
+import type { NodeHttpRequest, NodeHttpResponse } from "../../src/server/types.ts";
+import {
+	envAt,
+	createServerClient,
+	startServer,
+	defaultHttpSession,
+	defaultSshSession,
+} from "./util.ts";
 
 // ── Ref advertisement sorting ───────────────────────────────────────
 
@@ -232,166 +232,6 @@ describe("allow-reachable-sha1-in-want", () => {
 			}
 		}
 		expect(capsFound).toBe(true);
-	});
-});
-
-// ── composeHooks ────────────────────────────────────────────────────
-
-describe("composeHooks", () => {
-	test("returns empty object for no inputs", () => {
-		const result = composeHooks();
-		expect(result).toEqual({});
-	});
-
-	test("returns single hook set unchanged", () => {
-		const hooks: ServerHooks = {
-			preReceive: async () => {},
-		};
-		const result = composeHooks(hooks);
-		expect(result.preReceive).toBe(hooks.preReceive);
-	});
-
-	test("skips undefined hook sets", () => {
-		const hooks: ServerHooks = {
-			preReceive: async () => {},
-		};
-		const result = composeHooks(undefined, hooks, undefined);
-		expect(result.preReceive).toBe(hooks.preReceive);
-	});
-
-	test("preReceive hooks chain and short-circuit on rejection", async () => {
-		const order: number[] = [];
-
-		const hooks1: ServerHooks = {
-			preReceive: async () => {
-				order.push(1);
-			},
-		};
-		const hooks2: ServerHooks = {
-			preReceive: async () => {
-				order.push(2);
-				return { reject: true, message: "blocked by hook 2" };
-			},
-		};
-		const hooks3: ServerHooks = {
-			preReceive: async () => {
-				order.push(3);
-			},
-		};
-
-		const composed = composeHooks(hooks1, hooks2, hooks3);
-		const result = await composed.preReceive!({} as any);
-
-		expect(order).toEqual([1, 2]);
-		expect(result).toEqual({ reject: true, message: "blocked by hook 2" });
-	});
-
-	test("update hooks chain and short-circuit on rejection", async () => {
-		const order: number[] = [];
-
-		const hooks1: ServerHooks = {
-			update: async () => {
-				order.push(1);
-				return { reject: true, message: "blocked" };
-			},
-		};
-		const hooks2: ServerHooks = {
-			update: async () => {
-				order.push(2);
-			},
-		};
-
-		const composed = composeHooks(hooks1, hooks2);
-		const result = await composed.update!({} as any);
-
-		expect(order).toEqual([1]);
-		expect(result).toEqual({ reject: true, message: "blocked" });
-	});
-
-	test("postReceive hooks all run even if one throws", async () => {
-		const order: number[] = [];
-
-		const hooks1: ServerHooks = {
-			postReceive: async () => {
-				order.push(1);
-				throw new Error("boom");
-			},
-		};
-		const hooks2: ServerHooks = {
-			postReceive: async () => {
-				order.push(2);
-			},
-		};
-
-		const composed = composeHooks(hooks1, hooks2);
-		await composed.postReceive!({} as any);
-
-		expect(order).toEqual([1, 2]);
-	});
-
-	test("advertiseRefs hooks chain, each receiving the previous output", async () => {
-		const hooks1: ServerHooks = {
-			advertiseRefs: async ({ refs }) => {
-				return refs.filter((r) => r.name !== "refs/heads/hidden");
-			},
-		};
-		const hooks2: ServerHooks = {
-			advertiseRefs: async ({ refs }) => {
-				return refs.map((r) => ({ ...r, name: r.name.toUpperCase() }));
-			},
-		};
-
-		const composed = composeHooks(hooks1, hooks2);
-
-		const inputRefs: RefAdvertisement[] = [
-			{ name: "refs/heads/main", hash: "a".repeat(40) },
-			{ name: "refs/heads/hidden", hash: "b".repeat(40) },
-			{ name: "refs/heads/feature", hash: "c".repeat(40) },
-		];
-
-		const result = await composed.advertiseRefs!({
-			refs: inputRefs,
-			repo: {} as any,
-			repoPath: "test",
-			service: "git-upload-pack",
-			session: { transport: "http", request: new Request("http://localhost") },
-		});
-
-		// "hidden" was removed by hooks1, then hooks2 uppercased remaining
-		expect(result).toEqual([
-			{ name: "REFS/HEADS/MAIN", hash: "a".repeat(40) },
-			{ name: "REFS/HEADS/FEATURE", hash: "c".repeat(40) },
-		]);
-	});
-
-	test("advertiseRefs hook returning void passes refs through", async () => {
-		const hooks1: ServerHooks = {
-			advertiseRefs: async () => {
-				// return void — pass through
-			},
-		};
-		const hooks2: ServerHooks = {
-			advertiseRefs: async ({ refs }) => {
-				return refs.filter((r) => r.name !== "HEAD");
-			},
-		};
-
-		const composed = composeHooks(hooks1, hooks2);
-
-		const inputRefs: RefAdvertisement[] = [
-			{ name: "HEAD", hash: "a".repeat(40) },
-			{ name: "refs/heads/main", hash: "a".repeat(40) },
-		];
-
-		const result = await composed.advertiseRefs!({
-			refs: inputRefs,
-			repo: {} as any,
-			repoPath: "test",
-			service: "git-upload-pack",
-			session: { transport: "http", request: new Request("http://localhost") },
-		});
-
-		expect(result).toEqual([{ name: "refs/heads/main", hash: "a".repeat(40) }]);
 	});
 });
 
@@ -697,16 +537,13 @@ describe("nodeHandler", () => {
 		let capturedHeaders: Headers | undefined;
 
 		const server = createGitServer({
-			resolveRepo: async (_path) => {
-				capturedHeaders = undefined;
-				return null;
-			},
+			resolveRepo: async () => null,
 			session: {
-				http: (req): Session => {
+				http: (req) => {
 					capturedHeaders = req.headers;
-					return { transport: "http", request: req };
+					return defaultHttpSession(req);
 				},
-				ssh: (info): Session => ({ transport: "ssh", username: info.username }),
+				ssh: defaultSshSession,
 			},
 		});
 
@@ -730,11 +567,11 @@ describe("nodeHandler", () => {
 		const server = createGitServer({
 			resolveRepo: async () => null,
 			session: {
-				http: async (req): Promise<Session> => {
+				http: async (req) => {
 					capturedBody = new Uint8Array(await req.clone().arrayBuffer());
-					return { transport: "http", request: req };
+					return defaultHttpSession(req);
 				},
-				ssh: (info): Session => ({ transport: "ssh", username: info.username }),
+				ssh: defaultSshSession,
 			},
 		});
 
@@ -781,12 +618,12 @@ describe("nodeHandler", () => {
 		const server = createGitServer({
 			resolveRepo: async () => null,
 			session: {
-				http: (req): Session => {
+				http: (req) => {
 					capturedMethod = req.method;
 					capturedUrl = new URL(req.url).pathname;
-					return { transport: "http", request: req };
+					return defaultHttpSession(req);
 				},
-				ssh: (info): Session => ({ transport: "ssh", username: info.username }),
+				ssh: defaultSshSession,
 			},
 		});
 

@@ -55,11 +55,14 @@ import type {
 	NodeHttpRequest,
 	NodeHttpResponse,
 	RefAdvertisement,
+	Rejection,
 	ServerHooks,
+	ServerPolicy,
 	Session,
 	SessionBuilder,
 	SshChannel,
 	SshSessionInfo,
+	UpdateEvent,
 } from "./types.ts";
 
 const defaultSessionBuilder: SessionBuilder<Session> = {
@@ -89,7 +92,8 @@ export function createGitServer<S = Session>(config: GitServerConfig<S>): GitSer
 				"Example: createGitServer({ resolveRepo: (path) => storage.repo(path) })",
 		);
 	}
-	const { resolveRepo, hooks, basePath } = config;
+	const { resolveRepo, basePath } = config;
+	const hooks = mergePolicyAndHooks(config.policy, config.hooks);
 	// Safe: when config.session is omitted, S defaults to Session, matching defaultSessionBuilder.
 	const buildSession = (config.session ?? defaultSessionBuilder) as SessionBuilder<S>;
 
@@ -345,6 +349,75 @@ async function nodeRequestToFetch(
 		res.write(responseBody);
 	}
 	res.end();
+}
+
+// ── Policy → hooks ─────────────────────────────────────────────────
+
+function buildPolicyHooks(policy: ServerPolicy): ServerHooks<any> {
+	const {
+		protectedBranches = [],
+		denyNonFastForward = false,
+		denyDeletes = false,
+		denyDeleteTags = false,
+	} = policy;
+
+	const protectedSet = new Set(
+		protectedBranches.map((b) => (b.startsWith("refs/") ? b : `refs/heads/${b}`)),
+	);
+
+	const hooks: ServerHooks<any> = {};
+
+	if (protectedSet.size > 0) {
+		hooks.preReceive = async (event) => {
+			for (const update of event.updates) {
+				if (!protectedSet.has(update.ref)) continue;
+				if (update.isDelete) {
+					return { reject: true, message: `cannot delete protected branch ${update.ref}` };
+				}
+				if (!update.isCreate && !update.isFF) {
+					return {
+						reject: true,
+						message: `non-fast-forward push to protected branch ${update.ref}`,
+					};
+				}
+			}
+		};
+	}
+
+	if (denyNonFastForward || denyDeletes || denyDeleteTags) {
+		hooks.update = async (event: UpdateEvent): Promise<void | Rejection> => {
+			if (denyDeletes && event.update.isDelete) {
+				return { reject: true, message: "ref deletion denied" };
+			}
+			if (denyDeleteTags && event.update.ref.startsWith("refs/tags/")) {
+				if (event.update.isDelete) {
+					return { reject: true, message: "tag deletion denied" };
+				}
+				if (!event.update.isCreate) {
+					return { reject: true, message: "tag overwrite denied" };
+				}
+			}
+			if (
+				denyNonFastForward &&
+				!event.update.isCreate &&
+				!event.update.isDelete &&
+				!event.update.isFF
+			) {
+				return { reject: true, message: "non-fast-forward" };
+			}
+		};
+	}
+
+	return hooks;
+}
+
+function mergePolicyAndHooks<S>(
+	policy: ServerPolicy | undefined,
+	hooks: ServerHooks<S> | undefined,
+): ServerHooks<S> | undefined {
+	const policyHooks = policy ? buildPolicyHooks(policy) : undefined;
+	if (policyHooks && hooks) return composeHooks(policyHooks, hooks);
+	return policyHooks ?? hooks;
 }
 
 /**

@@ -64,7 +64,7 @@ Both `fs` and `cwd` can be set once in `createGit` and overridden per-call. `cwd
 Stand up a git server with built-in storage (SQLite or PostgreSQL), branch protection, auth, and push hooks:
 
 ```ts
-import { createGitServer, createStandardHooks, BunSqliteStorage } from "just-git/server";
+import { createGitServer, BunSqliteStorage } from "just-git/server";
 import { getChangedFiles } from "just-git/repo";
 import { Database } from "bun:sqlite";
 
@@ -72,23 +72,26 @@ const storage = new BunSqliteStorage(new Database("repos.sqlite"));
 
 const server = createGitServer({
   resolveRepo: (path) => storage.repo(path),
-  hooks: createStandardHooks({
-    protectedBranches: ["main"],
-    authorizePush: (request) => request.headers.has("Authorization"),
-    onPush: async ({ repo, repoPath, updates }) => {
+  policy: { protectedBranches: ["main"] },
+  hooks: {
+    preReceive: ({ session }) => {
+      if (!session?.request?.headers.has("Authorization"))
+        return { reject: true, message: "unauthorized" };
+    },
+    postReceive: async ({ repo, repoPath, updates }) => {
       for (const u of updates) {
         const files = await getChangedFiles(repo, u.oldHash, u.newHash);
         console.log(`${repoPath}: ${u.ref} — ${files.length} files changed`);
       }
     },
-  }),
+  },
 });
 
 Bun.serve({ fetch: server.fetch });
 // git clone http://localhost:3000/my-repo ← works with real git
 ```
 
-Uses web-standard `Request`/`Response`. Works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. For Node.js, use `toNodeHandler(server)` with `http.createServer` and `BetterSqlite3Storage` for `better-sqlite3`. Use `withAuth` to gate clone and fetch access as well. See [SERVER.md](docs/SERVER.md) for the full API.
+Uses web-standard `Request`/`Response`. Works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. For Node.js, use `server.nodeHandler` with `http.createServer` and `BetterSqlite3Storage` for `better-sqlite3`. SSH is supported via `server.handleSession`. See [SERVER.md](docs/SERVER.md) for the full API.
 
 ## Repo module
 

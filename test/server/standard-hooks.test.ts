@@ -3,10 +3,9 @@ import { InMemoryFs, Bash } from "just-bash";
 import { createGit } from "../../src/index.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import type { GitContext } from "../../src/lib/types.ts";
-import { createStandardHooks } from "../../src/server/presets.ts";
 import { envAt, createServerClient, startServer, startServerWithSessionAuth } from "./util.ts";
 
-describe("createStandardHooks", () => {
+describe("server policy", () => {
 	let serverFs: InMemoryFs;
 	let serverBash: Bash;
 	let serverRepo: GitContext;
@@ -30,8 +29,10 @@ describe("createStandardHooks", () => {
 
 	describe("protectedBranches", () => {
 		test("blocks force-push to protected branch", async () => {
-			const hooks = createStandardHooks({ protectedBranches: ["main"] });
-			const { srv, port } = startServer({ resolveRepo: async () => serverRepo, hooks });
+			const { srv, port } = startServer({
+				resolveRepo: async () => serverRepo,
+				policy: { protectedBranches: ["main"] },
+			});
 
 			try {
 				const client = createServerClient();
@@ -39,7 +40,6 @@ describe("createStandardHooks", () => {
 					env: envAt(1000000100),
 				});
 
-				// Create a divergent history to force a non-FF push
 				await client.writeFile("/local/diverge.txt", "diverge");
 				await client.exec("git add .", { cwd: "/local" });
 				await client.exec('git commit --amend -m "diverge"', {
@@ -55,8 +55,10 @@ describe("createStandardHooks", () => {
 		});
 
 		test("allows fast-forward push to protected branch", async () => {
-			const hooks = createStandardHooks({ protectedBranches: ["main"] });
-			const { srv, port } = startServer({ resolveRepo: async () => serverRepo, hooks });
+			const { srv, port } = startServer({
+				resolveRepo: async () => serverRepo,
+				policy: { protectedBranches: ["main"] },
+			});
 
 			try {
 				const client = createServerClient();
@@ -79,8 +81,10 @@ describe("createStandardHooks", () => {
 		});
 
 		test("blocks deletion of protected branch", async () => {
-			const hooks = createStandardHooks({ protectedBranches: ["protected-branch"] });
-			const { srv, port } = startServer({ resolveRepo: async () => serverRepo, hooks });
+			const { srv, port } = startServer({
+				resolveRepo: async () => serverRepo,
+				policy: { protectedBranches: ["protected-branch"] },
+			});
 
 			try {
 				const client = createServerClient();
@@ -98,10 +102,11 @@ describe("createStandardHooks", () => {
 		});
 
 		test("allows deletion of non-protected branch", async () => {
-			// Create a temporary branch to delete
 			await serverBash.exec("git branch temp-delete");
-			const hooks = createStandardHooks({ protectedBranches: ["main"] });
-			const { srv, port } = startServer({ resolveRepo: async () => serverRepo, hooks });
+			const { srv, port } = startServer({
+				resolveRepo: async () => serverRepo,
+				policy: { protectedBranches: ["main"] },
+			});
 
 			try {
 				const client = createServerClient();
@@ -119,11 +124,11 @@ describe("createStandardHooks", () => {
 		});
 
 		test("accepts short branch names (without refs/heads/ prefix)", async () => {
-			const hooks = createStandardHooks({ protectedBranches: ["main"] });
-			// The preReceive handler should map "main" → "refs/heads/main" internally
-			expect(hooks.preReceive).toBeDefined();
+			const { srv, port } = startServer({
+				resolveRepo: async () => serverRepo,
+				policy: { protectedBranches: ["main"] },
+			});
 
-			const { srv, port } = startServer({ resolveRepo: async () => serverRepo, hooks });
 			try {
 				const client = createServerClient();
 				await client.exec(`git clone http://localhost:${port}/repo /local`, {
@@ -146,8 +151,10 @@ describe("createStandardHooks", () => {
 	describe("denyNonFastForward", () => {
 		test("rejects non-fast-forward push to any branch", async () => {
 			await serverBash.exec("git branch deny-ff-test");
-			const hooks = createStandardHooks({ denyNonFastForward: true });
-			const { srv, port } = startServer({ resolveRepo: async () => serverRepo, hooks });
+			const { srv, port } = startServer({
+				resolveRepo: async () => serverRepo,
+				policy: { denyNonFastForward: true },
+			});
 
 			try {
 				const client = createServerClient();
@@ -173,8 +180,10 @@ describe("createStandardHooks", () => {
 		});
 
 		test("allows fast-forward push", async () => {
-			const hooks = createStandardHooks({ denyNonFastForward: true });
-			const { srv, port } = startServer({ resolveRepo: async () => serverRepo, hooks });
+			const { srv, port } = startServer({
+				resolveRepo: async () => serverRepo,
+				policy: { denyNonFastForward: true },
+			});
 
 			try {
 				const client = createServerClient();
@@ -200,8 +209,10 @@ describe("createStandardHooks", () => {
 	describe("denyDeletes", () => {
 		test("rejects ref deletion", async () => {
 			await serverBash.exec("git branch deny-del-test");
-			const hooks = createStandardHooks({ denyDeletes: true });
-			const { srv, port } = startServer({ resolveRepo: async () => serverRepo, hooks });
+			const { srv, port } = startServer({
+				resolveRepo: async () => serverRepo,
+				policy: { denyDeletes: true },
+			});
 
 			try {
 				const client = createServerClient();
@@ -219,8 +230,10 @@ describe("createStandardHooks", () => {
 		});
 
 		test("allows non-delete pushes", async () => {
-			const hooks = createStandardHooks({ denyDeletes: true });
-			const { srv, port } = startServer({ resolveRepo: async () => serverRepo, hooks });
+			const { srv, port } = startServer({
+				resolveRepo: async () => serverRepo,
+				policy: { denyDeletes: true },
+			});
 
 			try {
 				const client = createServerClient();
@@ -243,70 +256,78 @@ describe("createStandardHooks", () => {
 		});
 	});
 
-	describe("authorizePush", () => {
-		test("rejects push without authorization header", async () => {
-			const hooks = createStandardHooks({
-				authorizePush: (session) => session.request?.headers.has("Authorization") ?? false,
+	describe("policy + hooks composition", () => {
+		test("policy runs before user hooks", async () => {
+			const hookLog: string[] = [];
+			const { srv, port } = startServer({
+				resolveRepo: async () => serverRepo,
+				policy: { protectedBranches: ["main"] },
+				hooks: {
+					preReceive: () => {
+						hookLog.push("user-preReceive");
+					},
+					postReceive: () => {
+						hookLog.push("user-postReceive");
+					},
+				},
 			});
-			const { srv, port } = startServer({ resolveRepo: async () => serverRepo, hooks });
 
 			try {
 				const client = createServerClient();
 				await client.exec(`git clone http://localhost:${port}/repo /local`, {
-					env: envAt(1000001600),
+					env: envAt(1000002700),
 				});
 
-				await client.writeFile("/local/auth.txt", "auth");
+				// FF push should pass policy, then user preReceive, then postReceive
+				await client.writeFile("/local/compose.txt", "compose");
 				await client.exec("git add .", { cwd: "/local" });
-				await client.exec('git commit -m "auth"', {
+				await client.exec('git commit -m "compose"', {
 					cwd: "/local",
-					env: envAt(1000001700),
+					env: envAt(1000002800),
 				});
-
 				const push = await client.exec("git push origin main", { cwd: "/local" });
-				expect(push.exitCode).not.toBe(0);
+				expect(push.exitCode).toBe(0);
+				expect(hookLog).toContain("user-preReceive");
+				expect(hookLog).toContain("user-postReceive");
 			} finally {
 				srv.stop();
 			}
 		});
-	});
 
-	describe("onPush", () => {
-		test("fires after successful push", async () => {
-			const pushLog: Array<{ repoPath: string; refCount: number }> = [];
-
-			const hooks = createStandardHooks({
-				onPush: async (event) => {
-					pushLog.push({ repoPath: event.repoPath, refCount: event.updates.length });
+		test("policy rejection prevents user hooks from running", async () => {
+			const hookLog: string[] = [];
+			const { srv, port } = startServer({
+				resolveRepo: async () => serverRepo,
+				policy: { protectedBranches: ["main"] },
+				hooks: {
+					preReceive: () => {
+						hookLog.push("user-preReceive");
+					},
 				},
 			});
-			const { srv, port } = startServer({ resolveRepo: async () => serverRepo, hooks });
 
 			try {
 				const client = createServerClient();
-				await client.exec(`git clone http://localhost:${port}/myrepo /local`, {
-					env: envAt(1000001800),
+				await client.exec(`git clone http://localhost:${port}/repo /local`, {
+					env: envAt(1000002900),
 				});
 
-				await client.writeFile("/local/push-log.txt", "log");
+				await client.writeFile("/local/diverge.txt", "diverge");
 				await client.exec("git add .", { cwd: "/local" });
-				await client.exec('git commit -m "push log"', {
+				await client.exec('git commit --amend -m "diverge"', {
 					cwd: "/local",
-					env: envAt(1000001900),
+					env: envAt(1000003000),
 				});
-
-				const push = await client.exec("git push origin main", { cwd: "/local" });
-				expect(push.exitCode).toBe(0);
-				expect(pushLog.length).toBe(1);
-				expect(pushLog[0]!.repoPath).toBe("myrepo");
-				expect(pushLog[0]!.refCount).toBe(1);
+				const push = await client.exec("git push --force origin main", { cwd: "/local" });
+				expect(push.exitCode).not.toBe(0);
+				expect(hookLog).not.toContain("user-preReceive");
 			} finally {
 				srv.stop();
 			}
 		});
 	});
 
-	describe("session auth", () => {
+	describe("session auth via hooks", () => {
 		test("rejects clone when session builder rejects", async () => {
 			const { srv, port } = startServerWithSessionAuth(() => false, {
 				resolveRepo: async () => serverRepo,
@@ -378,11 +399,10 @@ describe("createStandardHooks", () => {
 			}
 		});
 
-		test("composes with createStandardHooks", async () => {
-			const hooks = createStandardHooks({ protectedBranches: ["main"] });
+		test("composes session auth with policy", async () => {
 			const { srv, port } = startServerWithSessionAuth(() => true, {
 				resolveRepo: async () => serverRepo,
-				hooks,
+				policy: { protectedBranches: ["main"] },
 			});
 
 			try {
@@ -408,11 +428,12 @@ describe("createStandardHooks", () => {
 
 	describe("denyDeleteTags", () => {
 		test("blocks tag deletion", async () => {
-			// Create a tag on the server
 			await serverBash.exec('git tag -a v1.0 -m "release"', { env: envAt(1000002000) });
 
-			const hooks = createStandardHooks({ denyDeleteTags: true });
-			const { srv, port } = startServer({ resolveRepo: async () => serverRepo, hooks });
+			const { srv, port } = startServer({
+				resolveRepo: async () => serverRepo,
+				policy: { denyDeleteTags: true },
+			});
 
 			try {
 				const client = createServerClient();
@@ -423,7 +444,6 @@ describe("createStandardHooks", () => {
 				const del = await client.exec("git push origin --delete v1.0", { cwd: "/local" });
 				expect(del.exitCode).not.toBe(0);
 
-				// Tag should still exist on server
 				const tag = await serverRepo.refStore.readRef("refs/tags/v1.0");
 				expect(tag).not.toBeNull();
 			} finally {
@@ -432,8 +452,10 @@ describe("createStandardHooks", () => {
 		});
 
 		test("blocks tag overwrite via force-push", async () => {
-			const hooks = createStandardHooks({ denyDeleteTags: true });
-			const { srv, port } = startServer({ resolveRepo: async () => serverRepo, hooks });
+			const { srv, port } = startServer({
+				resolveRepo: async () => serverRepo,
+				policy: { denyDeleteTags: true },
+			});
 
 			try {
 				const client = createServerClient();
@@ -441,7 +463,6 @@ describe("createStandardHooks", () => {
 					env: envAt(1000002200),
 				});
 
-				// Make a new commit and try to move the tag
 				await client.writeFile("/local/tag-overwrite.txt", "overwrite");
 				await client.exec("git add .", { cwd: "/local" });
 				await client.exec('git commit -m "new commit"', {
@@ -460,8 +481,10 @@ describe("createStandardHooks", () => {
 		});
 
 		test("allows creating new tags", async () => {
-			const hooks = createStandardHooks({ denyDeleteTags: true });
-			const { srv, port } = startServer({ resolveRepo: async () => serverRepo, hooks });
+			const { srv, port } = startServer({
+				resolveRepo: async () => serverRepo,
+				policy: { denyDeleteTags: true },
+			});
 
 			try {
 				const client = createServerClient();
@@ -484,8 +507,10 @@ describe("createStandardHooks", () => {
 
 		test("allows branch operations when only tags are protected", async () => {
 			await serverBash.exec("git branch deleteable-branch");
-			const hooks = createStandardHooks({ denyDeleteTags: true });
-			const { srv, port } = startServer({ resolveRepo: async () => serverRepo, hooks });
+			const { srv, port } = startServer({
+				resolveRepo: async () => serverRepo,
+				policy: { denyDeleteTags: true },
+			});
 
 			try {
 				const client = createServerClient();
@@ -493,7 +518,6 @@ describe("createStandardHooks", () => {
 					env: envAt(1000002500),
 				});
 
-				// Branch push should work
 				await client.writeFile("/local/branch-ok.txt", "ok");
 				await client.exec("git add .", { cwd: "/local" });
 				await client.exec('git commit -m "branch ok"', {
@@ -503,7 +527,6 @@ describe("createStandardHooks", () => {
 				const push = await client.exec("git push origin main", { cwd: "/local" });
 				expect(push.exitCode).toBe(0);
 
-				// Branch deletion should work
 				const del = await client.exec("git push origin --delete deleteable-branch", {
 					cwd: "/local",
 				});

@@ -46,8 +46,8 @@ export type {
 	UpdateEvent,
 } from "./types.ts";
 
-// Presets
-export { createStandardHooks, type StandardHooksConfig } from "./presets.ts";
+// Policy
+export type { ServerPolicy } from "./types.ts";
 
 // Storage
 export type { Storage } from "./storage.ts";

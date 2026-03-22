@@ -3,16 +3,7 @@ import { InMemoryFs, Bash } from "just-bash";
 import { createGit } from "../../src/index.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import { createGitServer } from "../../src/server/handler.ts";
-import type { Session } from "../../src/server/types.ts";
-
-const TEST_ENV = {
-	GIT_AUTHOR_NAME: "Test",
-	GIT_AUTHOR_EMAIL: "test@test.com",
-	GIT_COMMITTER_NAME: "Test",
-	GIT_COMMITTER_EMAIL: "test@test.com",
-	GIT_AUTHOR_DATE: "1000000000",
-	GIT_COMMITTER_DATE: "1000000000",
-};
+import { envAt, defaultHttpSession, defaultSshSession } from "./util.ts";
 
 async function setupServerRepo() {
 	const fs = new InMemoryFs();
@@ -21,16 +12,11 @@ async function setupServerRepo() {
 	await bash.writeFile("/repo/README.md", "hello");
 	await bash.exec("git init");
 	await bash.exec("git add .");
-	await bash.exec('git commit -m "init"', { env: TEST_ENV });
+	await bash.exec('git commit -m "init"', { env: envAt(1000000000) });
 	const ctx = await findRepo(fs, "/repo");
 	if (!ctx) throw new Error("repo not found");
 	return ctx;
 }
-
-const defaultSshSession = (info: { username?: string }): Session => ({
-	transport: "ssh",
-	username: info.username,
-});
 
 describe("resolveRepo and session auth", () => {
 	test("returns 404 when resolveRepo returns null", async () => {
@@ -55,7 +41,7 @@ describe("resolveRepo and session auth", () => {
 							headers: { "WWW-Authenticate": 'Bearer realm="git"' },
 						});
 					}
-					return { transport: "http" as const, request: req };
+					return defaultHttpSession(req);
 				},
 				ssh: defaultSshSession,
 			},
@@ -129,7 +115,7 @@ describe("resolveRepo and session auth", () => {
 					if (req.headers.get("Authorization") !== "Bearer valid-token") {
 						return new Response("", { status: 401 });
 					}
-					return { transport: "http" as const, request: req };
+					return defaultHttpSession(req);
 				},
 				ssh: defaultSshSession,
 			},

@@ -1,8 +1,8 @@
 # Server
 
-Embeddable Git Smart HTTP server. Any standard git client (`git`, VS Code, GitHub Desktop) can clone from, fetch from, and push to repos served by just-git.
+Embeddable Git server with Smart HTTP and SSH support. Any standard git client (`git`, VS Code, GitHub Desktop) can clone from, fetch from, and push to repos served by just-git.
 
-Uses web-standard `Request`/`Response`. Works with Bun, Hono, Cloudflare Workers, Deno, or any fetch-compatible runtime. For Node.js's `http.createServer`, use `toNodeHandler`.
+HTTP uses web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare Workers, Deno, or any fetch-compatible runtime. SSH uses web-standard `ReadableStream`/`WritableStream` — works with any SSH library through a thin adapter. For Node.js's `http.createServer`, use `server.nodeHandler`.
 
 ```ts
 import { createGitServer } from "just-git/server";
@@ -17,26 +17,26 @@ import { Database } from "bun:sqlite";
 const storage = new BunSqliteStorage(new Database("repos.sqlite"));
 
 const server = createGitServer({
-  resolveRepo: async (repoPath) => storage.repo(repoPath),
+  resolveRepo: (repoPath) => storage.repo(repoPath),
 });
 
 Bun.serve({ fetch: server.fetch });
 ```
 
-For Node.js, wrap with `toNodeHandler`:
+For Node.js, use `server.nodeHandler`:
 
 ```ts
 import http from "node:http";
-import { createGitServer, BetterSqlite3Storage, toNodeHandler } from "just-git/server";
+import { createGitServer, BetterSqlite3Storage } from "just-git/server";
 import Database from "better-sqlite3";
 
 const storage = new BetterSqlite3Storage(new Database("repos.sqlite"));
 
 const server = createGitServer({
-  resolveRepo: async (repoPath) => storage.repo(repoPath),
+  resolveRepo: (repoPath) => storage.repo(repoPath),
 });
 
-http.createServer(toNodeHandler(server)).listen(3000);
+http.createServer(server.nodeHandler).listen(3000);
 ```
 
 That's enough for a working server. Clients can clone, fetch, and push:
@@ -47,25 +47,24 @@ git clone http://localhost:3000/my-repo
 
 ## `resolveRepo`
 
-Maps an incoming URL path to a `GitRepo` (object store + ref store). This is the only required config.
+Maps a request path to a `GitRepo`. This is the only required config — the same function handles both HTTP and SSH.
 
 ```ts
-resolveRepo: (repoPath: string, request: Request) => GitRepo | Response | null;
+resolveRepo: (repoPath: string) => GitRepo | null;
 ```
 
 Return values:
 
 - **`GitRepo`**: serve this repository
-- **`null`**: respond with 404
-- **`Response`**: send as-is (useful for 401/403 with custom headers)
+- **`null`**: 404 (HTTP) or exit 128 (SSH)
 
-The `repoPath` is the URL path with the git protocol suffix stripped. For `http://host/org/project/info/refs`, `repoPath` is `"org/project"`.
+The `repoPath` is the URL path with the git protocol suffix stripped. For `http://host/org/project/info/refs`, `repoPath` is `"org/project"`. For SSH `git-upload-pack '/org/project'`, it's `"org/project"`.
 
 ```ts
 const server = createGitServer({
-  resolveRepo: async (repoPath, request) => {
-    const repo = await db.findRepo(repoPath);
-    if (!repo) return null; // 404
+  resolveRepo: async (repoPath) => {
+    const exists = await db.repoExists(repoPath);
+    if (!exists) return null;
     return storage.repo(repoPath);
   },
 });
@@ -73,16 +72,15 @@ const server = createGitServer({
 
 ## Authorization
 
-### `withAuth`: gate all access
+### Session builder
 
-Wraps `resolveRepo` with an auth check that fires on every request (clone, fetch, and push). Return `true` to allow, `false` for 403, or a `Response` for custom error responses.
+The optional `session` config builds a typed session object from each request. The session is available in all hooks. For HTTP, returning a `Response` rejects the request (e.g. 401). For SSH, auth is handled at the transport layer before the session builder runs.
 
 ```ts
-import { createGitServer, withAuth } from "just-git/server";
-
 const server = createGitServer({
-  resolveRepo: withAuth(
-    (request) => {
+  resolveRepo: (repoPath) => storage.repo(repoPath),
+  session: {
+    http: (request) => {
       const header = request.headers.get("Authorization");
       if (!header) {
         return new Response("Unauthorized", {
@@ -90,136 +88,189 @@ const server = createGitServer({
           headers: { "WWW-Authenticate": 'Bearer realm="git"' },
         });
       }
-      return header === `Bearer ${process.env.GIT_TOKEN}`;
+      return { userId: parseToken(header) };
     },
-    (repoPath) => storage.repo(repoPath),
-  ),
+    ssh: (info) => ({ userId: info.username ?? "anonymous" }),
+  },
+  hooks: {
+    preReceive: ({ session }) => {
+      if (!session) return { reject: true, message: "unauthorized" };
+    },
+  },
 });
 ```
+
+When `session` is omitted, the server uses a default `Session` type with `transport`, optional `username`, and optional `request`.
 
 ### Public read, private write
 
-Use `withAuth` for full lockdown, or `authorizePush` (in `createStandardHooks`) for the common pattern where anyone can clone but only authorized users can push:
+Anyone can clone, only authorized users can push:
 
 ```ts
 const server = createGitServer({
-  resolveRepo: (repoPath) => storage.repo(repoPath), // public reads
-  hooks: createStandardHooks({
-    authorizePush: (request) => request.headers.get("Authorization") === `Bearer ${token}`,
-    protectedBranches: ["main"],
-  }),
+  resolveRepo: (repoPath) => storage.repo(repoPath),
+  hooks: {
+    preReceive: ({ session }) => {
+      if (!session?.request?.headers.has("Authorization"))
+        return { reject: true, message: "unauthorized" };
+    },
+  },
 });
 ```
 
-### Layered access control
-
-Combine both for read/write permission tiers: `withAuth` checks read access, `authorizePush` checks write access:
+With a custom session type, auth works uniformly across HTTP and SSH:
 
 ```ts
 const server = createGitServer({
-  resolveRepo: withAuth(checkReadAccess, (repoPath) => storage.repo(repoPath)),
-  hooks: createStandardHooks({
-    authorizePush: checkWriteAccess,
-    protectedBranches: ["main"],
-  }),
+  resolveRepo: (repoPath) => storage.repo(repoPath),
+  session: {
+    http: (req) => ({ authorized: req.headers.has("Authorization") }),
+    ssh: (info) => ({ authorized: info.username != null }),
+  },
+  hooks: {
+    preReceive: ({ session }) => {
+      if (!session?.authorized) return { reject: true, message: "unauthorized" };
+    },
+  },
 });
 ```
+
+## SSH
+
+`server.handleSession` handles git-over-SSH. Call it when the SSH client execs a git command. Returns the exit code to send to the client.
+
+```ts
+import { Server } from "ssh2";
+import { createGitServer, type SshChannel } from "just-git/server";
+
+const server = createGitServer({
+  resolveRepo: (repoPath) => storage.repo(repoPath),
+});
+
+new Server({ hostKeys: [hostKey] }, (client) => {
+  let username: string | undefined;
+  client.on("authentication", (ctx) => {
+    username = ctx.username;
+    ctx.accept();
+  });
+  client.on("session", (accept) => {
+    accept().on("exec", (accept, reject, info) => {
+      const stream = accept();
+      const channel: SshChannel = {
+        readable: new ReadableStream({
+          start(c) {
+            stream.on("data", (d: Buffer) => c.enqueue(new Uint8Array(d)));
+            stream.on("end", () => c.close());
+          },
+        }),
+        writable: new WritableStream({
+          write(chunk) {
+            stream.write(chunk);
+          },
+        }),
+        writeStderr(data) {
+          stream.stderr.write(data);
+        },
+      };
+      server.handleSession(info.command, channel, { username }).then((code) => {
+        stream.exit(code);
+        stream.close();
+      });
+    });
+  });
+}).listen(2222);
+```
+
+`handleSession` takes an optional `SshSessionInfo` with `username` and a `metadata` bag for passing along SSH-layer details (key fingerprint, client IP, etc.) — the session builder can extract and type these.
+
+## Policy
+
+Declarative push rules that run before hooks. These are git-level constraints that don't depend on the session — for auth logic, use [hooks](#hooks).
+
+```ts
+const server = createGitServer({
+  resolveRepo: (repoPath) => storage.repo(repoPath),
+  policy: {
+    protectedBranches: ["main", "production"],
+    denyNonFastForward: true,
+    denyDeletes: true,
+    denyDeleteTags: true,
+  },
+});
+```
+
+| Option               | Effect                                               |
+| -------------------- | ---------------------------------------------------- |
+| `protectedBranches`  | Listed branches cannot be force-pushed to or deleted |
+| `denyNonFastForward` | Reject all non-fast-forward pushes globally          |
+| `denyDeletes`        | Reject all ref deletions globally                    |
+| `denyDeleteTags`     | Tags are immutable — no deletion, no overwrite       |
+
+Policy rules are checked first. If a policy check rejects, user hooks don't run.
 
 ## Hooks
 
-Server hooks fire during push operations. All are optional.
+Server hooks fire during push and ref advertisement. All are optional.
 
 ```ts
 const server = createGitServer({
-  resolveRepo: async (repoPath) => storage.repo(repoPath),
+  resolveRepo: (repoPath) => storage.repo(repoPath),
   hooks: {
-    preReceive: async ({ repo, updates, request }) => {
-      // Reject pushes that delete the default branch
-      for (const u of updates) {
-        if (u.ref === "refs/heads/main" && u.isDelete) {
-          return { reject: true, message: "cannot delete main" };
-        }
-      }
+    preReceive: async ({ repo, updates, session }) => {
+      if (!session?.request?.headers.has("Authorization"))
+        return { reject: true, message: "unauthorized" };
     },
 
     update: async ({ repo, update }) => {
-      // Block force-pushes to protected branches
       if (update.ref === "refs/heads/main" && !update.isFF && !update.isCreate) {
         return { reject: true, message: "non-fast-forward to main" };
       }
     },
 
     postReceive: async ({ repo, repoPath, updates }) => {
-      // Trigger CI, send notifications, inspect pushed code
       for (const u of updates) {
         const files = await getChangedFiles(repo, u.oldHash, u.newHash);
         console.log(`${repoPath}: ${u.ref} updated, ${files.length} files changed`);
       }
     },
 
-    advertiseRefs: async ({ refs, service }) => {
-      // Hide internal refs from clients
+    advertiseRefs: async ({ refs, repoPath, session }) => {
+      if (isPrivateRepo(repoPath) && !session?.token) {
+        return { reject: true, message: "authentication required" };
+      }
       return refs.filter((r) => !r.name.startsWith("refs/internal/"));
     },
   },
 });
 ```
 
-| Hook            | Fires when                                         | Can reject?                    |
-| --------------- | -------------------------------------------------- | ------------------------------ |
-| `preReceive`    | After objects are unpacked, before any ref updates | Yes (aborts entire push)       |
-| `update`        | Per-ref, after `preReceive` passes                 | Yes (blocks this ref only)     |
-| `postReceive`   | After all ref updates succeed                      | No                             |
-| `advertiseRefs` | Client requests ref listing (clone/fetch/push)     | No (returns filtered ref list) |
+| Hook            | Fires when                                         | Can reject?                |
+| --------------- | -------------------------------------------------- | -------------------------- |
+| `preReceive`    | After objects are unpacked, before any ref updates | Yes (aborts entire push)   |
+| `update`        | Per-ref, after `preReceive` passes                 | Yes (blocks this ref only) |
+| `postReceive`   | After all ref updates succeed                      | No                         |
+| `advertiseRefs` | Client requests ref listing (clone/fetch/push)     | Yes (denies repo access)   |
 
-All hook payloads include `repo: GitRepo` and `request: Request`. Pre-hooks return `{ reject: true, message? }` to block the operation, using the same `Rejection` protocol as [client-side hooks](HOOKS.md).
-
-### `createStandardHooks`
-
-Covers common push policies without writing hooks manually:
-
-```ts
-import { createGitServer, createStandardHooks } from "just-git/server";
-
-const server = createGitServer({
-  resolveRepo: async (repoPath) => storage.repo(repoPath),
-  hooks: createStandardHooks({
-    protectedBranches: ["main", "production"],
-    denyNonFastForward: true,
-    denyDeletes: true,
-    denyDeleteTags: true,
-    authorizePush: (request) => request.headers.has("Authorization"),
-    onPush: async ({ repoPath, updates }) => {
-      console.log(`push to ${repoPath}: ${updates.length} refs`);
-    },
-  }),
-});
-```
-
-`authorizePush` only gates push operations; clone and fetch are unaffected. For read access control, use [`withAuth`](#withauth--gate-all-access).
+All hook payloads include `repo: GitRepo` and `session`. Pre-hooks return `{ reject: true, message? }` to block the operation, using the same `Rejection` protocol as [client-side hooks](HOOKS.md).
 
 ### Composing hooks
 
 Combine multiple hook sets with `composeHooks()`. Pre-hooks chain in order and short-circuit on the first rejection. Post-hooks all run regardless.
 
 ```ts
-import { createGitServer, composeHooks, createStandardHooks } from "just-git/server";
+import { createGitServer, composeHooks } from "just-git/server";
 
 const server = createGitServer({
-  resolveRepo: async (repoPath) => storage.repo(repoPath),
-  hooks: composeHooks(
-    createStandardHooks({ protectedBranches: ["main"] }),
-    auditHooks,
-    ciTriggerHooks,
-  ),
+  resolveRepo: (repoPath) => storage.repo(repoPath),
+  hooks: composeHooks(auditHooks, ciTriggerHooks),
 });
 ```
 
 ## Storage backends
 
-All three backends implement the `Storage` interface: `repo(repoId)` returns a `GitRepo`, `deleteRepo(repoId)` removes all data. Multiple repos share one store, partitioned by ID. They also work with `resolveRemote` for in-process cross-VFS transport alongside HTTP access.
+All backends implement the `Storage` interface: `repo(repoId)` returns a `GitRepo`, `deleteRepo(repoId)` removes all data. Multiple repos share one store, partitioned by ID. They also work with `resolveRemote` for in-process cross-VFS transport alongside HTTP access.
 
-> **Note:** All storage backends auto-create repos on first access via `.repo(id)`. If you pass `storage.repo(path)` directly as `resolveRepo`, any URL path will create a repo and accept pushes. For production, validate repo paths in `resolveRepo` or wrap with [`withAuth`](#withauth--gate-all-access) to gate access.
+> **Note:** All storage backends auto-create repos on first access via `.repo(id)`. If you pass `storage.repo(path)` directly as `resolveRepo`, any URL path will create a repo and accept pushes. For production, validate repo paths in `resolveRepo` or gate access with a [session builder](#session-builder), [policy](#policy), and [hooks](#hooks).
 
 ```ts
 import type { Storage } from "just-git/server";
@@ -292,7 +343,7 @@ Use the [repo module](REPO.md) (`just-git/repo`) inside hooks to inspect pushed 
 import { getChangedFiles, readFileAtCommit, getNewCommits } from "just-git/repo";
 
 const server = createGitServer({
-  resolveRepo: async (repoPath) => storage.repo(repoPath),
+  resolveRepo: (repoPath) => storage.repo(repoPath),
   hooks: {
     postReceive: async ({ repo, updates }) => {
       for (const update of updates) {
@@ -317,6 +368,7 @@ const server = createGitServer({
 ```ts
 const server = createGitServer({
   resolveRepo,
+  policy,
   hooks,
 
   // Strip a URL prefix (e.g. mount under /git/)

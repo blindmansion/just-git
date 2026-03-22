@@ -112,6 +112,25 @@ export interface NodeHttpResponse {
 	end(data?: string): any;
 }
 
+// ── Policy ──────────────────────────────────────────────────────────
+
+/**
+ * Declarative push rules applied before user-provided hooks.
+ *
+ * These are git-level constraints that don't depend on the session.
+ * For session-dependent logic (auth, logging), use hooks directly.
+ */
+export interface ServerPolicy {
+	/** Branches that cannot be force-pushed to or deleted. */
+	protectedBranches?: string[];
+	/** Reject all non-fast-forward pushes globally. */
+	denyNonFastForward?: boolean;
+	/** Reject all ref deletions globally. */
+	denyDeletes?: boolean;
+	/** Reject deletion and overwrite of tags. Tags are treated as immutable. */
+	denyDeleteTags?: boolean;
+}
+
 // ── Server config ───────────────────────────────────────────────────
 
 export interface GitServerConfig<S = Session> {
@@ -125,6 +144,13 @@ export interface GitServerConfig<S = Session> {
 
 	/** Server-side hooks. All optional. */
 	hooks?: ServerHooks<S>;
+
+	/**
+	 * Declarative push policy. Rules run before user-provided hooks.
+	 *
+	 * For session-dependent logic (auth, post-push actions), use `hooks`.
+	 */
+	policy?: ServerPolicy;
 
 	/**
 	 * Custom session builder. When provided, the server calls

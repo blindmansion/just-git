@@ -20,11 +20,8 @@ import { Server } from "ssh2";
 import { Database } from "bun:sqlite";
 import {
 	createGitServer,
-	createStandardHooks,
-	composeHooks,
 	BunSqliteStorage,
 	type SshChannel,
-	type ServerHooks,
 	type PostReceiveEvent,
 } from "../src/server"; // "just-git/server"
 
@@ -40,27 +37,6 @@ const HOST_KEY_PATH = process.env.HOST_KEY ?? "host_key";
 const db = new Database(DB_PATH);
 db.run("PRAGMA journal_mode = WAL");
 const storage = new BunSqliteStorage(db);
-
-// ── Shared hooks ────────────────────────────────────────────────────
-
-const policyHooks = createStandardHooks({
-	protectedBranches: ["main", "master"],
-	denyNonFastForward: true,
-	denyDeleteTags: true,
-});
-
-const loggingHooks: ServerHooks = {
-	preReceive: async ({ updates }) => {
-		console.log(`  [pre-receive] ${updates.length} ref update(s)`);
-	},
-	postReceive: async ({ updates }: PostReceiveEvent) => {
-		for (const u of updates) {
-			const old = (u.oldHash ?? "0000000").slice(0, 7);
-			const neu = u.newHash.slice(0, 7);
-			console.log(`  [push] ${u.ref}: ${old}..${neu}`);
-		}
-	},
-};
 
 // ── Single unified server ───────────────────────────────────────────
 
@@ -81,7 +57,23 @@ const server = createGitServer({
 
 		return repo;
 	},
-	hooks: composeHooks(policyHooks, loggingHooks),
+	policy: {
+		protectedBranches: ["main", "master"],
+		denyNonFastForward: true,
+		denyDeleteTags: true,
+	},
+	hooks: {
+		preReceive: async ({ updates }) => {
+			console.log(`  [pre-receive] ${updates.length} ref update(s)`);
+		},
+		postReceive: async ({ updates }: PostReceiveEvent) => {
+			for (const u of updates) {
+				const old = (u.oldHash ?? "0000000").slice(0, 7);
+				const neu = u.newHash.slice(0, 7);
+				console.log(`  [push] ${u.ref}: ${old}..${neu}`);
+			}
+		},
+	},
 });
 
 // ── HTTP ────────────────────────────────────────────────────────────
