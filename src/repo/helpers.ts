@@ -485,7 +485,7 @@ export interface WorktreeResult {
  * command handlers use the shared stores instead of the VFS:
  *
  * ```ts
- * const repo = storage.createRepo("my-repo");
+ * const repo = await storage.createRepo("my-repo");
  * const fs = new InMemoryFs();
  * const { ctx } = await createWorktree(repo, fs);
  * const git = createGit({

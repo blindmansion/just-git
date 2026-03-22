@@ -14,7 +14,7 @@
 import { Database } from "bun:sqlite";
 import { Bash } from "just-bash";
 import { createGit, type GitRepo } from "../src";
-import { createGitServer, BunSqliteStorage } from "../src/server";
+import { createGitServer, createStorage, BunSqliteDriver } from "../src/server";
 import { readFileAtCommit, createSandboxWorktree } from "../src/repo";
 
 const DB_PATH = process.env.DB_PATH ?? ":memory:";
@@ -30,7 +30,7 @@ const CI_ENV = {
 
 const db = new Database(DB_PATH);
 db.run("PRAGMA journal_mode = WAL");
-const storage = new BunSqliteStorage(db);
+const storage = createStorage(new BunSqliteDriver(db));
 
 async function runCIScript(
 	repo: GitRepo,
@@ -74,9 +74,9 @@ async function runCIScript(
 }
 
 const server = createGitServer({
-	resolveRepo: (repoPath) => {
+	resolveRepo: async (repoPath) => {
 		console.log(`  [resolve] ${repoPath}`);
-		return storage.repo(repoPath) ?? storage.createRepo(repoPath);
+		return (await storage.repo(repoPath)) ?? storage.createRepo(repoPath);
 	},
 
 	hooks: {

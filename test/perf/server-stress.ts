@@ -35,7 +35,8 @@ import {
 } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
+import { BunSqliteDriver } from "../../src/server/bun-sqlite-storage.ts";
+import { createStorage } from "../../src/server/storage.ts";
 import { createGitServer } from "../../src/server/handler.ts";
 
 const SOURCE_REPO = process.argv[2] || "https://github.com/DeabLabs/cannoli.git";
@@ -118,7 +119,7 @@ console.log(`  database:   ${DB_PATH === ":memory:" ? "(in-memory)" : DB_PATH}\n
 
 const db = new Database(DB_PATH);
 db.run("PRAGMA journal_mode = WAL");
-const storage = new BunSqliteStorage(db);
+const storage = createStorage(new BunSqliteDriver(db));
 
 let pushCount = 0;
 
@@ -126,7 +127,7 @@ const NO_DELTA = process.env.NO_DELTA === "1";
 if (NO_DELTA) console.log("  mode:       no-delta (streaming)\n");
 
 const server = createGitServer({
-	resolveRepo: (repoPath) => storage.repo(repoPath) ?? storage.createRepo(repoPath),
+	resolveRepo: async (repoPath) => (await storage.repo(repoPath)) ?? storage.createRepo(repoPath),
 	packOptions: NO_DELTA ? { noDelta: true } : undefined,
 	hooks: {
 		postReceive: async (event) => {

@@ -48,7 +48,7 @@ const platform = createPlatform({
 	},
 });
 
-platform.createRepo("my-repo");
+await platform.createRepo("my-repo");
 console.log(`  repo "my-repo" created`);
 
 const server = platform.server();

@@ -5,7 +5,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
+import { BunSqliteDriver } from "../../src/server/bun-sqlite-storage.ts";
+import { createStorage } from "../../src/server/storage.ts";
+import type { Storage } from "../../src/server/storage.ts";
 import {
 	envAt,
 	realGit,
@@ -17,7 +19,7 @@ import {
 
 describe("SQLite-backed server roundtrip", () => {
 	let db: Database;
-	let storage: BunSqliteStorage;
+	let storage: Storage;
 	let srv: ReturnType<typeof Bun.serve>;
 	let port: number;
 	let home: string;
@@ -25,7 +27,7 @@ describe("SQLite-backed server roundtrip", () => {
 	beforeAll(async () => {
 		home = await createRealGitHome();
 		db = new Database(":memory:");
-		storage = new BunSqliteStorage(db);
+		storage = createStorage(new BunSqliteDriver(db));
 
 		const s = startServer({
 			resolveRepo: async (repoPath) => storage.repo(repoPath),
@@ -34,7 +36,7 @@ describe("SQLite-backed server roundtrip", () => {
 		port = s.port;
 
 		// Create the repo record before seeding
-		storage.createRepo("my-repo");
+		await storage.createRepo("my-repo");
 
 		// Seed "my-repo" with initial content via just-git push
 		const seedFs = new InMemoryFs();
@@ -109,7 +111,7 @@ describe("SQLite-backed server roundtrip", () => {
 			const cloneDir = join(sandbox, "local");
 			await realGit(home, sandbox, `clone http://localhost:${port}/my-repo ${cloneDir}`);
 
-			const repo = storage.repo("my-repo")!;
+			const repo = (await storage.repo("my-repo"))!;
 			const mainBefore = await repo.refStore.readRef("refs/heads/main");
 			const hashBefore = mainBefore?.type === "direct" ? mainBefore.hash : null;
 
@@ -177,7 +179,7 @@ describe("SQLite-backed server roundtrip", () => {
 			const pushResult = await realGit(home, cloneDir, "push origin sqlite-feature");
 			expect(pushResult.exitCode).toBe(0);
 
-			const repo = storage.repo("my-repo")!;
+			const repo = (await storage.repo("my-repo"))!;
 			const branchRef = await repo.refStore.readRef("refs/heads/sqlite-feature");
 			expect(branchRef).not.toBeNull();
 
@@ -200,7 +202,7 @@ describe("SQLite-backed server roundtrip", () => {
 		await seedBash.writeFile("/seed2/other.txt", "different repo");
 		await seedBash.exec("git add .");
 		await seedBash.exec('git commit -m "other repo init"', { env: envAt(1000002000) });
-		storage.createRepo("other-repo");
+		await storage.createRepo("other-repo");
 		await seedBash.exec(`git remote add origin http://localhost:${port}/other-repo`);
 		await seedBash.exec("git push -u origin main");
 

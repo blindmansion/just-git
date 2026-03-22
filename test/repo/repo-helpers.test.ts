@@ -23,7 +23,7 @@ function idAt(ts: number): Identity {
 	return { ...ID, timestamp: ts };
 }
 
-function freshRepo(): GitRepo {
+async function freshRepo(): Promise<GitRepo> {
 	const s = new MemoryStorage();
 	return s.createRepo("test");
 }
@@ -50,7 +50,7 @@ async function commitFile(
 
 describe("writeTree auto-detects tree mode", () => {
 	test("subtree entry without explicit mode gets 040000", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 
 		const blobHash = await writeBlob(repo, "hello\n");
 		const subtree = await writeTree(repo, [{ name: "file.txt", hash: blobHash }]);
@@ -69,7 +69,7 @@ describe("writeTree auto-detects tree mode", () => {
 	});
 
 	test("blob entry without explicit mode stays 100644", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const blobHash = await writeBlob(repo, "content\n");
 
 		const tree = await writeTree(repo, [{ name: "file.txt", hash: blobHash }]);
@@ -82,7 +82,7 @@ describe("writeTree auto-detects tree mode", () => {
 	});
 
 	test("explicit mode is preserved even when it could be inferred", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const blobHash = await writeBlob(repo, "#!/bin/sh\necho hello\n");
 
 		const tree = await writeTree(repo, [{ name: "run.sh", hash: blobHash, mode: "100755" }]);
@@ -92,7 +92,7 @@ describe("writeTree auto-detects tree mode", () => {
 	});
 
 	test("deeply nested trees all get correct modes", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const blob = await writeBlob(repo, "deep\n");
 		const inner = await writeTree(repo, [{ name: "deep.txt", hash: blob }]);
 		const middle = await writeTree(repo, [{ name: "inner", hash: inner }]);
@@ -111,7 +111,7 @@ describe("writeTree auto-detects tree mode", () => {
 
 describe("createCommit with branch option", () => {
 	test("advances a branch ref and sets HEAD", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const blob = await writeBlob(repo, "hello\n");
 		const tree = await writeTree(repo, [{ name: "README.md", hash: blob }]);
 
@@ -132,7 +132,7 @@ describe("createCommit with branch option", () => {
 	});
 
 	test("second commit advances the branch without touching HEAD symref", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const blob1 = await writeBlob(repo, "v1\n");
 		const tree1 = await writeTree(repo, [{ name: "f.txt", hash: blob1 }]);
 
@@ -165,7 +165,7 @@ describe("createCommit with branch option", () => {
 	});
 
 	test("without branch option, refs are not updated (existing behavior)", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const blob = await writeBlob(repo, "hello\n");
 		const tree = await writeTree(repo, [{ name: "README.md", hash: blob }]);
 
@@ -185,7 +185,7 @@ describe("createCommit with branch option", () => {
 
 describe("writeRef accepts plain hash strings", () => {
 	test("string argument is treated as direct ref", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const blob = await writeBlob(repo, "x\n");
 		const tree = await writeTree(repo, [{ name: "x.txt", hash: blob }]);
 		const hash = await createCommit(repo, {
@@ -203,7 +203,7 @@ describe("writeRef accepts plain hash strings", () => {
 	});
 
 	test("Ref object still works as before", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const blob = await writeBlob(repo, "x\n");
 		const tree = await writeTree(repo, [{ name: "x.txt", hash: blob }]);
 		const hash = await createCommit(repo, {
@@ -221,7 +221,7 @@ describe("writeRef accepts plain hash strings", () => {
 	});
 
 	test("symbolic ref still works", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 
 		await repo.refStore.writeRef("HEAD", {
 			type: "symbolic",
@@ -237,14 +237,14 @@ describe("writeRef accepts plain hash strings", () => {
 
 describe("countAheadBehind", () => {
 	test("same commit → 0/0", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const c1 = await commitFile(repo, "f.txt", "v1\n", []);
 		const result = await countAheadBehind(repo, c1, c1);
 		expect(result).toEqual({ ahead: 0, behind: 0 });
 	});
 
 	test("linear ahead", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const c1 = await commitFile(repo, "f.txt", "v1\n", [], 1);
 		const c2 = await commitFile(repo, "f.txt", "v2\n", [c1], 2);
 		const c3 = await commitFile(repo, "f.txt", "v3\n", [c2], 3);
@@ -254,7 +254,7 @@ describe("countAheadBehind", () => {
 	});
 
 	test("linear behind", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const c1 = await commitFile(repo, "f.txt", "v1\n", [], 1);
 		const c2 = await commitFile(repo, "f.txt", "v2\n", [c1], 2);
 
@@ -263,7 +263,7 @@ describe("countAheadBehind", () => {
 	});
 
 	test("diverged branches", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		//     c2 (local)
 		//    /
 		// c1
@@ -283,7 +283,7 @@ describe("countAheadBehind", () => {
 
 describe("blame", () => {
 	test("single commit blames all lines to it", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const blob = await writeBlob(repo, "line1\nline2\nline3\n");
 		const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);
 		const hash = await createCommit(repo, {
@@ -307,7 +307,7 @@ describe("blame", () => {
 	});
 
 	test("modified lines blame to the modifying commit", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const blob1 = await writeBlob(repo, "line1\noriginal\nline3\n");
 		const tree1 = await writeTree(repo, [{ name: "file.txt", hash: blob1 }]);
 		const c1 = await createCommit(repo, {
@@ -337,7 +337,7 @@ describe("blame", () => {
 	});
 
 	test("line range restricts output", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const blob = await writeBlob(repo, "a\nb\nc\nd\ne\n");
 		const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);
 		const hash = await createCommit(repo, {
@@ -357,7 +357,7 @@ describe("blame", () => {
 	});
 
 	test("throws for nonexistent path", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const blob = await writeBlob(repo, "x\n");
 		const tree = await writeTree(repo, [{ name: "exists.txt", hash: blob }]);
 		const hash = await createCommit(repo, {
@@ -376,7 +376,7 @@ describe("blame", () => {
 
 describe("walkCommitHistory", () => {
 	test("walks linear history in reverse chronological order", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const c1 = await commitFile(repo, "f.txt", "v1\n", [], 1);
 		const c2 = await commitFile(repo, "f.txt", "v2\n", [c1], 2);
 		const c3 = await commitFile(repo, "f.txt", "v3\n", [c2], 3);
@@ -389,7 +389,7 @@ describe("walkCommitHistory", () => {
 	});
 
 	test("exclude stops traversal", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const c1 = await commitFile(repo, "f.txt", "v1\n", [], 1);
 		const c2 = await commitFile(repo, "f.txt", "v2\n", [c1], 2);
 		const c3 = await commitFile(repo, "f.txt", "v3\n", [c2], 3);
@@ -402,7 +402,7 @@ describe("walkCommitHistory", () => {
 	});
 
 	test("multiple start hashes", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		//     c2 (branch A)
 		//    /
 		// c1
@@ -423,7 +423,7 @@ describe("walkCommitHistory", () => {
 	});
 
 	test("firstParent follows only first parent of merges", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const c1 = await commitFile(repo, "f.txt", "v1\n", [], 1);
 		const c2 = await commitFile(repo, "f.txt", "brA\n", [c1], 2);
 		const c3 = await commitFile(repo, "f.txt", "brB\n", [c1], 3);
@@ -448,7 +448,7 @@ describe("walkCommitHistory", () => {
 	});
 
 	test("yields CommitInfo fields correctly", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const blob = await writeBlob(repo, "hello\n");
 		const tree = await writeTree(repo, [{ name: "readme.md", hash: blob }]);
 		const hash = await createCommit(repo, {

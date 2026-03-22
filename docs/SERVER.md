@@ -11,11 +11,11 @@ import { createGitServer } from "just-git/server";
 ## Quick start
 
 ```ts
-import { createGitServer, BunSqliteStorage } from "just-git/server";
+import { createGitServer, createStorage, BunSqliteDriver } from "just-git/server";
 import { Database } from "bun:sqlite";
 
-const storage = new BunSqliteStorage(new Database("repos.sqlite"));
-storage.createRepo("my-repo");
+const storage = createStorage(new BunSqliteDriver(new Database("repos.sqlite")));
+await storage.createRepo("my-repo");
 
 const server = createGitServer({
   resolveRepo: (repoPath) => storage.repo(repoPath),
@@ -28,11 +28,11 @@ For Node.js, use `server.nodeHandler`:
 
 ```ts
 import http from "node:http";
-import { createGitServer, BetterSqlite3Storage } from "just-git/server";
+import { createGitServer, createStorage, BetterSqlite3Driver } from "just-git/server";
 import Database from "better-sqlite3";
 
-const storage = new BetterSqlite3Storage(new Database("repos.sqlite"));
-storage.createRepo("my-repo");
+const storage = createStorage(new BetterSqlite3Driver(new Database("repos.sqlite")));
+await storage.createRepo("my-repo");
 
 const server = createGitServer({
   resolveRepo: (repoPath) => storage.repo(repoPath),
@@ -74,7 +74,8 @@ To auto-create repos on first access (e.g. for a push-to-create workflow), opt i
 
 ```ts
 const server = createGitServer({
-  resolveRepo: (repoPath) => storage.repo(repoPath) ?? storage.createRepo(repoPath),
+  resolveRepo: async (repoPath) =>
+    (await storage.repo(repoPath)) ?? (await storage.createRepo(repoPath)),
 });
 ```
 
@@ -85,7 +86,7 @@ const server = createGitServer({
 The optional `session` config builds a typed session object from each request. The session is available in all hooks. For HTTP, returning a `Response` rejects the request (e.g. 401). For SSH, auth is handled at the transport layer before the session builder runs.
 
 ```ts
-storage.createRepo("my-repo");
+await storage.createRepo("my-repo");
 
 const server = createGitServer({
   resolveRepo: (repoPath) => storage.repo(repoPath),
@@ -117,7 +118,7 @@ When `session` is omitted, the server uses a default `Session` type with `transp
 Anyone can clone, only authorized users can push:
 
 ```ts
-storage.createRepo("my-repo");
+await storage.createRepo("my-repo");
 
 const server = createGitServer({
   resolveRepo: (repoPath) => storage.repo(repoPath),
@@ -133,7 +134,7 @@ const server = createGitServer({
 With a custom session type, auth works uniformly across HTTP and SSH:
 
 ```ts
-storage.createRepo("my-repo");
+await storage.createRepo("my-repo");
 
 const server = createGitServer({
   resolveRepo: (repoPath) => storage.repo(repoPath),
@@ -157,7 +158,7 @@ const server = createGitServer({
 import { Server } from "ssh2";
 import { createGitServer, type SshChannel } from "just-git/server";
 
-storage.createRepo("my-repo");
+await storage.createRepo("my-repo");
 
 const server = createGitServer({
   resolveRepo: (repoPath) => storage.repo(repoPath),
@@ -292,7 +293,7 @@ All backends implement the `Storage` interface. Repos must be explicitly created
 | `repo(id)`                 | `GitRepo \| null` | Get a repo, or `null` if it hasn't been created.     |
 | `deleteRepo(id)`           | `void`            | Delete all data and the repo record.                 |
 
-To auto-create repos on first access (e.g. push-to-create), use the opt-in pattern `storage.repo(path) ?? storage.createRepo(path)` in `resolveRepo`.
+To auto-create repos on first access (e.g. push-to-create), use the opt-in pattern `(await storage.repo(path)) ?? (await storage.createRepo(path))` in an async `resolveRepo`.
 
 ```ts
 import type { Storage } from "just-git/server";
@@ -303,41 +304,42 @@ import type { Storage } from "just-git/server";
 ```ts
 import { MemoryStorage } from "just-git/server";
 const storage = new MemoryStorage();
-storage.createRepo("my-repo");
+await storage.createRepo("my-repo");
 ```
 
-### `BunSqliteStorage`
+### `BunSqliteDriver`
 
-For Bun. Takes a `bun:sqlite` `Database` directly.
+For Bun. Takes a `bun:sqlite` `Database` directly. Wrap with `createStorage()`.
 
 ```ts
-import { BunSqliteStorage } from "just-git/server";
+import { createStorage, BunSqliteDriver } from "just-git/server";
 import { Database } from "bun:sqlite";
-const storage = new BunSqliteStorage(new Database("repos.sqlite"));
-storage.createRepo("my-repo");
+const storage = createStorage(new BunSqliteDriver(new Database("repos.sqlite")));
+await storage.createRepo("my-repo");
 ```
 
-### `BetterSqlite3Storage`
+### `BetterSqlite3Driver`
 
-For Node.js. Takes a `better-sqlite3` `Database` directly.
+For Node.js. Takes a `better-sqlite3` `Database` directly. Wrap with `createStorage()`.
 
 ```ts
-import { BetterSqlite3Storage } from "just-git/server";
+import { createStorage, BetterSqlite3Driver } from "just-git/server";
 import Database from "better-sqlite3";
-const storage = new BetterSqlite3Storage(new Database("repos.sqlite"));
-storage.createRepo("my-repo");
+const storage = createStorage(new BetterSqlite3Driver(new Database("repos.sqlite")));
+await storage.createRepo("my-repo");
 ```
 
-### `PgStorage`
+### `PgDriver`
 
-Works with `pg` (node-postgres) or any driver matching the `PgDatabase` interface. Use `wrapPgPool` to adapt a `pg` Pool. `create()` is async (runs schema setup).
+Works with `pg` (node-postgres) or any driver matching the `PgDatabase` interface. Use `wrapPgPool` to adapt a `pg` Pool. `PgDriver.create()` is async (runs schema setup).
 
 ```ts
-import { PgStorage, wrapPgPool } from "just-git/server";
+import { createStorage, PgDriver, wrapPgPool } from "just-git/server";
 import { Pool } from "pg";
-const storage = await PgStorage.create(
+const driver = await PgDriver.create(
   wrapPgPool(new Pool({ connectionString: process.env.DATABASE_URL })),
 );
+const storage = createStorage(driver);
 await storage.createRepo("my-repo");
 ```
 
@@ -358,7 +360,7 @@ const db: PgDatabase = {
     }
   },
 };
-const storage = await PgStorage.create(db);
+const storage = createStorage(await PgDriver.create(db));
 await storage.createRepo("my-repo");
 ```
 
@@ -369,7 +371,7 @@ Use the [repo module](REPO.md) (`just-git/repo`) inside hooks to inspect pushed 
 ```ts
 import { getChangedFiles, readFileAtCommit, getNewCommits } from "just-git/repo";
 
-storage.createRepo("my-repo");
+await storage.createRepo("my-repo");
 
 const server = createGitServer({
   resolveRepo: (repoPath) => storage.repo(repoPath),

@@ -1,20 +1,5 @@
-import { ObjectCache } from "../lib/object-cache.ts";
-import { envelope } from "../lib/object-store.ts";
-import type { PackObject } from "../lib/pack/packfile.ts";
-import { readPack } from "../lib/pack/packfile.ts";
-import { sha1 } from "../lib/sha1.ts";
-import { normalizeRef } from "../lib/types.ts";
-import type {
-	ObjectId,
-	ObjectStore,
-	ObjectType,
-	RawObject,
-	Ref,
-	RefEntry,
-	RefStore,
-	GitRepo,
-} from "../lib/types.ts";
-import type { Storage, CreateRepoOptions } from "./storage.ts";
+import type { RawObject, Ref } from "../lib/types.ts";
+import type { StorageDriver, RawRefEntry, RefOps } from "./storage.ts";
 
 // ── Postgres driver interface ───────────────────────────────────────
 
@@ -125,52 +110,37 @@ const SQL = {
 	refDeleteAll: "DELETE FROM git_refs WHERE repo_id = $1",
 } as const;
 
-// ── PgStorage ───────────────────────────────────────────────────────
+// ── PgDriver ────────────────────────────────────────────────────────
 
 /**
- * PostgreSQL-backed git storage with multi-repo support.
- *
- * Creates and manages `repos`, `git_objects`, and `git_refs` tables
- * in the provided database. Multiple repos are partitioned by ID.
+ * PostgreSQL-backed storage driver.
  *
  * Use the static `create` factory (schema setup is async):
  *
  * ```ts
  * import { Pool } from "pg";
  * const pool = new Pool({ connectionString: "..." });
- * const storage = await PgStorage.create(wrapPgPool(pool));
- * await storage.createRepo("my-repo");
+ * const driver = await PgDriver.create(wrapPgPool(pool));
+ * const storage = createStorage(driver);
  * ```
  */
-export class PgStorage implements Storage {
+export class PgDriver implements StorageDriver {
 	private constructor(private db: PgDatabase) {}
 
-	static async create(db: PgDatabase): Promise<PgStorage> {
+	static async create(db: PgDatabase): Promise<PgDriver> {
 		await db.query(SCHEMA);
-		return new PgStorage(db);
+		return new PgDriver(db);
 	}
 
-	async createRepo(repoId: string, options?: CreateRepoOptions): Promise<GitRepo> {
+	// ── Repo ────────────────────────────────────────────────────
+
+	async hasRepo(repoId: string): Promise<boolean> {
 		const { rows } = await this.db.query(SQL.repoExists, [repoId]);
-		if (rows.length > 0) {
-			throw new Error(`repo '${repoId}' already exists`);
-		}
-		const defaultBranch = options?.defaultBranch ?? "main";
+		return rows.length > 0;
+	}
+
+	async insertRepo(repoId: string): Promise<void> {
 		await this.db.query(SQL.repoInsert, [repoId]);
-		await this.db.query(SQL.refWrite, [
-			repoId,
-			"HEAD",
-			"symbolic",
-			null,
-			`refs/heads/${defaultBranch}`,
-		]);
-		return this.buildRepo(repoId);
-	}
-
-	async repo(repoId: string): Promise<GitRepo | null> {
-		const { rows } = await this.db.query(SQL.repoExists, [repoId]);
-		if (rows.length === 0) return null;
-		return this.buildRepo(repoId);
 	}
 
 	async deleteRepo(repoId: string): Promise<void> {
@@ -179,195 +149,94 @@ export class PgStorage implements Storage {
 		await this.db.query(SQL.refDeleteAll, [repoId]);
 	}
 
-	private buildRepo(repoId: string): GitRepo {
-		return {
-			objectStore: new PgObjectStore(this.db, repoId),
-			refStore: new PgRefStore(this.db, repoId),
-		};
-	}
-}
+	// ── Objects ─────────────────────────────────────────────────
 
-// ── PgObjectStore ───────────────────────────────────────────────────
-
-class PgObjectStore implements ObjectStore {
-	private cache: ObjectCache;
-
-	constructor(
-		private db: PgDatabase,
-		private repoId: string,
-	) {
-		this.cache = new ObjectCache();
-	}
-
-	async write(type: ObjectType, content: Uint8Array): Promise<ObjectId> {
-		const data = envelope(type, content);
-		const hash = await sha1(data);
-		await this.db.query(SQL.objInsert, [this.repoId, hash, type, content]);
-		return hash;
-	}
-
-	async read(hash: ObjectId): Promise<RawObject> {
-		const cached = this.cache.get(hash);
-		if (cached) return cached;
-
+	async getObject(repoId: string, hash: string): Promise<RawObject | null> {
 		const { rows } = await this.db.query<{ type: string; content: Uint8Array }>(SQL.objRead, [
-			this.repoId,
+			repoId,
 			hash,
 		]);
 		const row = rows[0];
-		if (!row) {
-			throw new Error(`object ${hash} not found`);
-		}
-		const obj: RawObject = {
-			type: row.type as ObjectType,
-			content: new Uint8Array(row.content),
-		};
-		this.cache.set(hash, obj);
-		return obj;
+		if (!row) return null;
+		return { type: row.type as RawObject["type"], content: new Uint8Array(row.content) };
 	}
 
-	async exists(hash: ObjectId): Promise<boolean> {
-		const { rows } = await this.db.query(SQL.objExists, [this.repoId, hash]);
+	async putObject(repoId: string, hash: string, type: string, content: Uint8Array): Promise<void> {
+		await this.db.query(SQL.objInsert, [repoId, hash, type, content]);
+	}
+
+	async putObjects(
+		repoId: string,
+		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
+	): Promise<void> {
+		await this.db.transaction(async (tx) => {
+			for (const obj of objects) {
+				await tx.query(SQL.objInsert, [repoId, obj.hash, obj.type, obj.content]);
+			}
+		});
+	}
+
+	async hasObject(repoId: string, hash: string): Promise<boolean> {
+		const { rows } = await this.db.query(SQL.objExists, [repoId, hash]);
 		return rows.length > 0;
 	}
 
-	async ingestPack(packData: Uint8Array): Promise<number> {
-		if (packData.byteLength < 32) return 0;
-		const view = new DataView(packData.buffer, packData.byteOffset, packData.byteLength);
-		const numObjects = view.getUint32(8);
-		if (numObjects === 0) return 0;
-
-		const db = this.db;
-		const repoId = this.repoId;
-
-		const entries = await readPack(packData, async (hash) => {
-			const { rows } = await db.query<{ type: string; content: Uint8Array }>(SQL.objRead, [
-				repoId,
-				hash,
-			]);
-			const row = rows[0];
-			if (!row) return null;
-			return { type: row.type as ObjectType, content: new Uint8Array(row.content) };
-		});
-
-		await db.transaction(async (tx) => {
-			for (const entry of entries) {
-				await tx.query(SQL.objInsert, [repoId, entry.hash, entry.type, entry.content]);
-			}
-		});
-
-		return entries.length;
-	}
-
-	async ingestPackStream(entries: AsyncIterable<PackObject>): Promise<number> {
-		const db = this.db;
-		const repoId = this.repoId;
-		let count = 0;
-		await db.transaction(async (tx) => {
-			for await (const entry of entries) {
-				await tx.query(SQL.objInsert, [repoId, entry.hash, entry.type, entry.content]);
-				count++;
-			}
-		});
-		return count;
-	}
-
-	async findByPrefix(prefix: string): Promise<ObjectId[]> {
-		if (prefix.length < 4) return [];
-		const { rows } = await this.db.query<{ hash: string }>(SQL.objPrefix, [
-			this.repoId,
-			`${prefix}%`,
-		]);
+	async findObjectsByPrefix(repoId: string, prefix: string): Promise<string[]> {
+		const { rows } = await this.db.query<{ hash: string }>(SQL.objPrefix, [repoId, `${prefix}%`]);
 		return rows.map((r) => r.hash);
 	}
-}
 
-// ── PgRefStore ──────────────────────────────────────────────────────
+	// ── Refs ────────────────────────────────────────────────────
 
-class PgRefStore implements RefStore {
-	constructor(
-		private db: PgDatabase,
-		private repoId: string,
-	) {}
-
-	async readRef(name: string): Promise<Ref | null> {
-		const { rows } = await this.db.query<RefRow>(SQL.refRead, [this.repoId, name]);
-		const row = rows[0];
-		if (!row) return null;
-		if (row.type === "symbolic") {
-			return { type: "symbolic", target: row.target! };
-		}
-		return { type: "direct", hash: row.hash! };
+	async getRef(repoId: string, name: string): Promise<Ref | null> {
+		const { rows } = await this.db.query<RefRow>(SQL.refRead, [repoId, name]);
+		return rowToRef(rows[0] ?? null);
 	}
 
-	async writeRef(name: string, refOrHash: Ref | string): Promise<void> {
-		const ref = normalizeRef(refOrHash);
+	async putRef(repoId: string, name: string, ref: Ref): Promise<void> {
 		if (ref.type === "symbolic") {
-			await this.db.query(SQL.refWrite, [this.repoId, name, "symbolic", null, ref.target]);
+			await this.db.query(SQL.refWrite, [repoId, name, "symbolic", null, ref.target]);
 		} else {
-			await this.db.query(SQL.refWrite, [this.repoId, name, "direct", ref.hash, null]);
+			await this.db.query(SQL.refWrite, [repoId, name, "direct", ref.hash, null]);
 		}
 	}
 
-	async deleteRef(name: string): Promise<void> {
-		await this.db.query(SQL.refDelete, [this.repoId, name]);
+	async removeRef(repoId: string, name: string): Promise<void> {
+		await this.db.query(SQL.refDelete, [repoId, name]);
 	}
 
-	async compareAndSwapRef(
-		name: string,
-		expectedOldHash: string | null,
-		newRef: Ref | null,
-	): Promise<boolean> {
-		return this.db.transaction(async (tx) => {
-			const { rows } = await tx.query<RefRow>(SQL.refReadForUpdate, [this.repoId, name]);
-			const row = rows[0] ?? null;
-
-			let currentHash: string | null = null;
-			if (row) {
-				if (row.type === "direct") {
-					currentHash = row.hash;
-				} else if (row.type === "symbolic" && row.target) {
-					currentHash = await resolveRefChain(tx, this.repoId, row.target);
-				}
-			}
-
-			if (expectedOldHash === null) {
-				if (row !== null) return false;
-			} else {
-				if (currentHash !== expectedOldHash) return false;
-			}
-
-			if (newRef === null) {
-				await tx.query(SQL.refDelete, [this.repoId, name]);
-			} else if (newRef.type === "symbolic") {
-				await tx.query(SQL.refWrite, [this.repoId, name, "symbolic", null, newRef.target]);
-			} else {
-				await tx.query(SQL.refWrite, [this.repoId, name, "direct", newRef.hash, null]);
-			}
-			return true;
+	async listRefs(repoId: string, prefix?: string): Promise<RawRefEntry[]> {
+		let rows: RefRow[];
+		if (prefix) {
+			({ rows } = await this.db.query<RefRow>(SQL.refList, [repoId, `${prefix}%`]));
+		} else {
+			({ rows } = await this.db.query<RefRow>(SQL.refListAll, [repoId]));
+		}
+		return rows.flatMap((row) => {
+			const ref = rowToRef(row);
+			return ref ? [{ name: row.name, ref }] : [];
 		});
 	}
 
-	async listRefs(prefix?: string): Promise<RefEntry[]> {
-		let rows: RefRow[];
-		if (prefix) {
-			({ rows } = await this.db.query<RefRow>(SQL.refList, [this.repoId, `${prefix}%`]));
-		} else {
-			({ rows } = await this.db.query<RefRow>(SQL.refListAll, [this.repoId]));
-		}
-
-		const results: RefEntry[] = [];
-		for (const row of rows) {
-			if (row.type === "direct" && row.hash) {
-				results.push({ name: row.name, hash: row.hash });
-			} else if (row.type === "symbolic" && row.target) {
-				const resolved = await resolveRefChain(this.db, this.repoId, row.target);
-				if (resolved) {
-					results.push({ name: row.name, hash: resolved });
-				}
-			}
-		}
-		return results;
+	async atomicRefUpdate<T>(repoId: string, fn: (ops: RefOps) => Promise<T> | T): Promise<T> {
+		return this.db.transaction(async (tx) => {
+			return fn({
+				getRef: async (name) => {
+					const { rows } = await tx.query<RefRow>(SQL.refReadForUpdate, [repoId, name]);
+					return rowToRef(rows[0] ?? null);
+				},
+				putRef: async (name, ref) => {
+					if (ref.type === "symbolic") {
+						await tx.query(SQL.refWrite, [repoId, name, "symbolic", null, ref.target]);
+					} else {
+						await tx.query(SQL.refWrite, [repoId, name, "direct", ref.hash, null]);
+					}
+				},
+				removeRef: async (name) => {
+					await tx.query(SQL.refDelete, [repoId, name]);
+				},
+			});
+		});
 	}
 }
 
@@ -375,19 +244,13 @@ class PgRefStore implements RefStore {
 
 type RefRow = { name: string; type: string; hash: string | null; target: string | null };
 
-async function resolveRefChain(
-	db: PgDatabase,
-	repoId: string,
-	target: string,
-	depth = 0,
-): Promise<string | null> {
-	if (depth > 10) return null;
-	const { rows } = await db.query<RefRow>(SQL.refRead, [repoId, target]);
-	const row = rows[0];
+function rowToRef(row: RefRow | null): Ref | null {
 	if (!row) return null;
-	if (row.type === "direct") return row.hash;
 	if (row.type === "symbolic" && row.target) {
-		return resolveRefChain(db, repoId, row.target, depth + 1);
+		return { type: "symbolic", target: row.target };
+	}
+	if (row.type === "direct" && row.hash) {
+		return { type: "direct", hash: row.hash };
 	}
 	return null;
 }

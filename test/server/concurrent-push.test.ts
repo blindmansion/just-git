@@ -4,7 +4,9 @@ import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import type { GitContext } from "../../src/lib/types.ts";
-import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
+import { BunSqliteDriver } from "../../src/server/bun-sqlite-storage.ts";
+import { createStorage } from "../../src/server/storage.ts";
+import type { Storage } from "../../src/server/storage.ts";
 import { envAt, createServerClient, startServer } from "./util.ts";
 
 // ── Concurrent HTTP pushes to a VFS-backed server ────────────────────
@@ -95,14 +97,14 @@ describe("concurrent push safety (VFS-backed server)", () => {
 describe("concurrent push safety (SQLite-backed server)", () => {
 	let srv: ReturnType<typeof Bun.serve>;
 	let db: Database;
-	let storage: BunSqliteStorage;
+	let storage: Storage;
 	let port: number;
 
 	beforeAll(async () => {
 		db = new Database(":memory:");
-		storage = new BunSqliteStorage(db);
+		storage = createStorage(new BunSqliteDriver(db));
 
-		const seedRepo = storage.createRepo("test");
+		const seedRepo = await storage.createRepo("test");
 
 		const seedFs = new InMemoryFs();
 		const seedGit = createGit();
@@ -123,7 +125,7 @@ describe("concurrent push safety (SQLite-backed server)", () => {
 		await pushBash.exec("git push origin main", { env: envAt(1000000000) });
 
 		const s = startServer({
-			resolveRepo: async (path) => storage.repo(path)!,
+			resolveRepo: async (path) => (await storage.repo(path))!,
 		});
 		srv = s.srv;
 		port = s.port;
@@ -167,14 +169,14 @@ describe("concurrent push safety (SQLite-backed server)", () => {
 describe("cross-path push safety (resolveRemote + HTTP)", () => {
 	let srv: ReturnType<typeof Bun.serve>;
 	let db: Database;
-	let storage: BunSqliteStorage;
+	let storage: Storage;
 	let port: number;
 
 	beforeAll(async () => {
 		db = new Database(":memory:");
-		storage = new BunSqliteStorage(db);
+		storage = createStorage(new BunSqliteDriver(db));
 
-		const seedRepo = storage.createRepo("shared");
+		const seedRepo = await storage.createRepo("shared");
 
 		const seedFs = new InMemoryFs();
 		const seedGit = createGit();
@@ -190,7 +192,7 @@ describe("cross-path push safety (resolveRemote + HTTP)", () => {
 		await pushBash.exec("git push origin main", { env: envAt(1000000000) });
 
 		const s = startServer({
-			resolveRepo: async (path) => storage.repo(path)!,
+			resolveRepo: async (path) => (await storage.repo(path))!,
 		});
 		srv = s.srv;
 		port = s.port;
@@ -204,7 +206,7 @@ describe("cross-path push safety (resolveRemote + HTTP)", () => {
 	test("resolveRemote push + HTTP push to same ref — one rejected", async () => {
 		const agentFs = new InMemoryFs();
 		const agentGit = createGit({
-			resolveRemote: () => storage.repo("shared")!,
+			resolveRemote: () => storage.repo("shared"),
 		});
 		const agent = new Bash({ fs: agentFs, cwd: "/", customCommands: [agentGit] });
 		await agent.exec(`git clone http://localhost:${port}/shared /local`, {

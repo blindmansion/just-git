@@ -6,7 +6,9 @@ import { findRepo } from "../../src/lib/repo.ts";
 import { resolveRef } from "../../src/lib/refs.ts";
 import { readCommit } from "../../src/lib/object-db.ts";
 import { flattenTree } from "../../src/lib/tree-ops.ts";
-import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
+import { BunSqliteDriver } from "../../src/server/bun-sqlite-storage.ts";
+import { createStorage } from "../../src/server/storage.ts";
+import type { Storage } from "../../src/server/storage.ts";
 import { createWorktree, readonlyRepo } from "../../src/repo/helpers.ts";
 
 const TEST_ENV = {
@@ -24,13 +26,13 @@ function envAt(ts: number) {
 
 describe("hybrid worktree (VFS + SQLite stores)", () => {
 	let db: Database;
-	let storage: BunSqliteStorage;
+	let storage: Storage;
 
 	beforeAll(async () => {
 		db = new Database(":memory:");
-		storage = new BunSqliteStorage(db);
+		storage = createStorage(new BunSqliteDriver(db));
 
-		const repo = storage.createRepo("test-repo");
+		const repo = await storage.createRepo("test-repo");
 
 		const seedFs = new InMemoryFs();
 		const seedGit = createGit();
@@ -52,7 +54,7 @@ describe("hybrid worktree (VFS + SQLite stores)", () => {
 	afterAll(() => db?.close());
 
 	test("createWorktree populates VFS with worktree files and index", async () => {
-		const repo = storage.repo("test-repo")!;
+		const repo = (await storage.repo("test-repo"))!;
 		const fs = new InMemoryFs();
 
 		const result = await createWorktree(repo, fs, { workTree: "/repo" });
@@ -67,7 +69,7 @@ describe("hybrid worktree (VFS + SQLite stores)", () => {
 	});
 
 	test("agent commits through hybrid context — objects go to SQLite", async () => {
-		const repo = storage.repo("test-repo")!;
+		const repo = (await storage.repo("test-repo"))!;
 		const fs = new InMemoryFs();
 
 		await createWorktree(repo, fs, { workTree: "/repo" });
@@ -98,7 +100,7 @@ describe("hybrid worktree (VFS + SQLite stores)", () => {
 	});
 
 	test("git status works in hybrid context", async () => {
-		const repo = storage.repo("test-repo")!;
+		const repo = (await storage.repo("test-repo"))!;
 		const fs = new InMemoryFs();
 
 		await createWorktree(repo, fs, { workTree: "/repo" });
@@ -120,7 +122,7 @@ describe("hybrid worktree (VFS + SQLite stores)", () => {
 	});
 
 	test("git log works in hybrid context", async () => {
-		const repo = storage.repo("test-repo")!;
+		const repo = (await storage.repo("test-repo"))!;
 		const fs = new InMemoryFs();
 
 		await createWorktree(repo, fs, { workTree: "/repo" });
@@ -137,7 +139,7 @@ describe("hybrid worktree (VFS + SQLite stores)", () => {
 	});
 
 	test("git diff works in hybrid context", async () => {
-		const repo = storage.repo("test-repo")!;
+		const repo = (await storage.repo("test-repo"))!;
 		const fs = new InMemoryFs();
 
 		await createWorktree(repo, fs, { workTree: "/repo" });
@@ -156,7 +158,7 @@ describe("hybrid worktree (VFS + SQLite stores)", () => {
 	});
 
 	test("two agents with separate VFS share the same SQLite store", async () => {
-		const repo = storage.repo("test-repo")!;
+		const repo = (await storage.repo("test-repo"))!;
 
 		const fs1 = new InMemoryFs();
 		await createWorktree(repo, fs1, { workTree: "/repo" });
@@ -189,7 +191,7 @@ describe("hybrid worktree (VFS + SQLite stores)", () => {
 	});
 
 	test("round-trip: checkout → edit → commit → fresh checkout sees changes", async () => {
-		const repo = storage.repo("test-repo")!;
+		const repo = (await storage.repo("test-repo"))!;
 
 		const fs1 = new InMemoryFs();
 		await createWorktree(repo, fs1, { workTree: "/repo" });
@@ -213,7 +215,7 @@ describe("hybrid worktree (VFS + SQLite stores)", () => {
 	});
 
 	test("checkout by commit hash instead of ref", async () => {
-		const repo = storage.repo("test-repo")!;
+		const repo = (await storage.repo("test-repo"))!;
 		const mainHash = await resolveRef(repo, "refs/heads/main");
 		expect(mainHash).toBeTruthy();
 
@@ -228,7 +230,7 @@ describe("hybrid worktree (VFS + SQLite stores)", () => {
 	});
 
 	test("checkout with custom workTree and gitDir paths", async () => {
-		const repo = storage.repo("test-repo")!;
+		const repo = (await storage.repo("test-repo"))!;
 		const fs = new InMemoryFs();
 
 		const result = await createWorktree(repo, fs, {
@@ -243,7 +245,7 @@ describe("hybrid worktree (VFS + SQLite stores)", () => {
 	});
 
 	test("agent can create branches in hybrid context", async () => {
-		const repo = storage.repo("test-repo")!;
+		const repo = (await storage.repo("test-repo"))!;
 		const fs = new InMemoryFs();
 		await createWorktree(repo, fs, { workTree: "/repo" });
 
@@ -270,13 +272,13 @@ describe("hybrid worktree (VFS + SQLite stores)", () => {
 
 describe("readonlyRepo", () => {
 	let db: Database;
-	let storage: BunSqliteStorage;
+	let storage: Storage;
 
 	beforeAll(async () => {
 		db = new Database(":memory:");
-		storage = new BunSqliteStorage(db);
+		storage = createStorage(new BunSqliteDriver(db));
 
-		const repo = storage.createRepo("ro-test");
+		const repo = await storage.createRepo("ro-test");
 
 		const seedFs = new InMemoryFs();
 		const seedGit = createGit();
@@ -295,7 +297,7 @@ describe("readonlyRepo", () => {
 	afterAll(() => db?.close());
 
 	test("createWorktree works with a readonly repo", async () => {
-		const ro = readonlyRepo(storage.repo("ro-test")!);
+		const ro = readonlyRepo((await storage.repo("ro-test"))!);
 		const fs = new InMemoryFs();
 
 		const result = await createWorktree(ro, fs, { workTree: "/repo" });
@@ -304,7 +306,7 @@ describe("readonlyRepo", () => {
 	});
 
 	test("git log and git status work in readonly context", async () => {
-		const ro = readonlyRepo(storage.repo("ro-test")!);
+		const ro = readonlyRepo((await storage.repo("ro-test"))!);
 		const fs = new InMemoryFs();
 		await createWorktree(ro, fs, { workTree: "/repo" });
 
@@ -324,7 +326,7 @@ describe("readonlyRepo", () => {
 	});
 
 	test("git add fails in readonly context", async () => {
-		const ro = readonlyRepo(storage.repo("ro-test")!);
+		const ro = readonlyRepo((await storage.repo("ro-test"))!);
 		const fs = new InMemoryFs();
 		await createWorktree(ro, fs, { workTree: "/repo" });
 
@@ -341,7 +343,7 @@ describe("readonlyRepo", () => {
 	});
 
 	test("git commit fails in readonly context", async () => {
-		const ro = readonlyRepo(storage.repo("ro-test")!);
+		const ro = readonlyRepo((await storage.repo("ro-test"))!);
 		const fs = new InMemoryFs();
 		await createWorktree(ro, fs, { workTree: "/repo" });
 
@@ -359,7 +361,7 @@ describe("readonlyRepo", () => {
 	});
 
 	test("git checkout -b fails in readonly context", async () => {
-		const ro = readonlyRepo(storage.repo("ro-test")!);
+		const ro = readonlyRepo((await storage.repo("ro-test"))!);
 		const fs = new InMemoryFs();
 		await createWorktree(ro, fs, { workTree: "/repo" });
 

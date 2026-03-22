@@ -54,7 +54,7 @@ const bash = new Bash({ cwd: "/repo", customCommands: [git] });
 - `identity` — `IdentityOverride` with `name`, `email`, optional `locked`. When `locked: true`, overrides env vars (`GIT_AUTHOR_NAME`, etc.); when unlocked (default), acts as fallback when env vars and git config are absent. Identity values are surfaced through `git config user.name` / `user.email` reads — locked identity becomes locked config, unlocked becomes default config.
 - `credentials` — `CredentialProvider` callback `(url) => HttpAuth | null`. Provides auth for Smart HTTP transport. Takes precedence over `GIT_HTTP_BEARER_TOKEN`/`GIT_HTTP_USER` env vars.
 - `config` — `ConfigOverrides` with `locked` and `defaults` maps. `locked` values always win over `.git/config` — the agent can run `git config set` but the locked value takes precedence on every read. `defaults` supply fallback values when a key is absent from `.git/config` — the agent _can_ override these with `git config`. Keys are dotted config names (e.g. `"push.default"`, `"merge.ff"`). Applied transparently via `getConfigValue()` so all commands respect overrides automatically.
-- `resolveRemote` — `RemoteResolver` callback `(url) => GitRepo | null`. Resolves non-HTTP remote URLs to a `GitRepo`, enabling cross-VFS transport. Called before local filesystem lookup. Return null to fall back to `findRepo` on the local VFS. Enables multi-agent setups where each agent has its own isolated filesystem but can clone/fetch/push between repos on different VFS instances via `LocalTransport`. Also enables resolving to server-backed repos (e.g. `BunSqliteStorage`) for hybrid in-process/server scenarios.
+- `resolveRemote` — `RemoteResolver` callback `(url) => GitRepo | null`. Resolves non-HTTP remote URLs to a `GitRepo`, enabling cross-VFS transport. Called before local filesystem lookup. Return null to fall back to `findRepo` on the local VFS. Enables multi-agent setups where each agent has its own isolated filesystem but can clone/fetch/push between repos on different VFS instances via `LocalTransport`. Also enables resolving to server-backed repos (e.g. via `createStorage(new BunSqliteDriver(db))`) for hybrid in-process/server scenarios.
 
 **Hooks** (`GitHooks` interface — config-at-construction, named callbacks):
 
@@ -189,12 +189,14 @@ Key behaviors:
 
 `Storage` interface (`server/storage.ts`): `createRepo(repoId, options?) → GitRepo`, `repo(repoId) → GitRepo | null`, `deleteRepo(repoId)`. Repos must be explicitly created via `createRepo` before they can be accessed — `repo()` returns `null` for unknown IDs, making `resolveRepo: (path) => storage.repo(path)` safe by default. `createRepo` writes `HEAD → refs/heads/{defaultBranch}` so the repo is ready to accept its first push. All backends partition multiple repos by ID in a single store. `MemoryStorage` additionally provides `listRepos()` for dev/test convenience.
 
-| Backend                | File                               | Construction                   | Driver interface                                  |
-| ---------------------- | ---------------------------------- | ------------------------------ | ------------------------------------------------- |
-| `MemoryStorage`        | `server/memory-storage.ts`         | `new MemoryStorage()`          | None                                              |
-| `BunSqliteStorage`     | `server/bun-sqlite-storage.ts`     | `new BunSqliteStorage(db)`     | `BunSqliteDatabase` (native `bun:sqlite`)         |
-| `BetterSqlite3Storage` | `server/better-sqlite3-storage.ts` | `new BetterSqlite3Storage(db)` | `BetterSqlite3Database` (native `better-sqlite3`) |
-| `PgStorage`            | `server/pg-storage.ts`             | `await PgStorage.create(db)`   | `PgDatabase` (use `wrapPgPool(pool)` for `pg`)    |
+Storage uses a two-layer architecture: `StorageDriver` (thin raw key-value CRUD) + `createStorage(driver)` (shared adapter with all git-aware logic). Drivers implement raw object/ref I/O and an `atomicRefUpdate` primitive; the adapter handles object hashing, pack ingestion, symref resolution, and CAS semantics. All `StorageDriver` methods use `MaybeAsync<T>` (`T | Promise<T>`) return types so sync (SQLite) and async (Pg) drivers both work.
+
+| Backend               | File                               | Construction                                 | Database interface                                |
+| --------------------- | ---------------------------------- | -------------------------------------------- | ------------------------------------------------- |
+| `MemoryStorage`       | `server/memory-storage.ts`         | `new MemoryStorage()`                        | None                                              |
+| `BunSqliteDriver`     | `server/bun-sqlite-storage.ts`     | `createStorage(new BunSqliteDriver(db))`     | `BunSqliteDatabase` (native `bun:sqlite`)         |
+| `BetterSqlite3Driver` | `server/better-sqlite3-storage.ts` | `createStorage(new BetterSqlite3Driver(db))` | `BetterSqlite3Database` (native `better-sqlite3`) |
+| `PgDriver`            | `server/pg-storage.ts`             | `createStorage(await PgDriver.create(db))`   | `PgDatabase` (use `wrapPgPool(pool)` for `pg`)    |
 
 The server handler (`createGitServer`) is storage-agnostic — it takes a `resolveRepo` callback returning `GitRepo | null`. Storage backends are interchangeable at that boundary.
 

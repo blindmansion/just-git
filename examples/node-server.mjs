@@ -1,13 +1,13 @@
 import http from "node:http";
 import Database from "better-sqlite3";
-import { createGitServer, BetterSqlite3Storage } from "just-git/server";
+import { createGitServer, createStorage, BetterSqlite3Driver } from "just-git/server";
 
 const GIT_TOKEN = process.env.GIT_TOKEN;
 
-const storage = new BetterSqlite3Storage(new Database("repos.sqlite"));
+const storage = createStorage(new BetterSqlite3Driver(new Database("repos.sqlite")));
 
 const server = createGitServer({
-	resolveRepo: (repoPath) => storage.repo(repoPath) ?? storage.createRepo(repoPath),
+	resolveRepo: async (repoPath) => (await storage.repo(repoPath)) ?? storage.createRepo(repoPath),
 
 	session: {
 		http: (request) => {

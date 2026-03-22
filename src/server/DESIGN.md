@@ -10,12 +10,12 @@ The server is a sub-export of just-git (`just-git/server`), not a separate packa
 
 - The server code reaches into 8+ internal `lib/` modules (pkt-line, packfile, object-walk, merge, sha1, tag parsing, hex constants, core types). Extracting it would require either exporting all of those as public API or duplicating them.
 - The server is the mirror of `SmartHttpTransport` — the client side of the Smart HTTP protocol already lives in just-git. They share pkt-line framing, pack format, capability negotiation.
-- The `ObjectStore` and `RefStore` interfaces are the shared abstraction. Both the VFS-backed git commands and the server operate through them. `BunSqliteStorage`/`BetterSqlite3Storage` are just other backing stores — they're extensions of the library, not a separate library.
+- The `ObjectStore` and `RefStore` interfaces are the shared abstraction. Both the VFS-backed git commands and the server operate through them. `BunSqliteDriver`/`BetterSqlite3Driver` (wrapped via `createStorage()`) are just other backing stores — they're extensions of the library, not a separate library.
 - The sub-export (`"./server"` in package.json) means users who only need the VFS git commands never load server code. Tree-shaking works.
 
 ### Relationship to `resolveRemote`
 
-`resolveRemote` handles in-process git transport. An agent's `git clone/fetch/push` resolves the remote URL via a callback that returns a `GitRepo` — which can be another agent's VFS-backed repo, a `BunSqliteStorage.repo()`, or any `ObjectStore + RefStore` pair. Zero HTTP overhead, full CAS-protected push semantics.
+`resolveRemote` handles in-process git transport. An agent's `git clone/fetch/push` resolves the remote URL via a callback that returns a `GitRepo` — which can be another agent's VFS-backed repo, a `storage.repo()`, or any `ObjectStore + RefStore` pair. Zero HTTP overhead, full CAS-protected push semantics.
 
 The server module adds two things `resolveRemote` can't do:
 
@@ -23,7 +23,7 @@ The server module adds two things `resolveRemote` can't do:
 
 2. **Crossing process/network boundaries.** `resolveRemote` requires `GitRepo` instances in the same process (passing object references). The server works over HTTP across machines or deployments.
 
-They're complementary. Both can target the same backing stores (e.g. the same SQLite database via `BunSqliteStorage`). An agent can `resolveRemote` push to a `BunSqliteStorage.repo()` that the server also serves over HTTP. CAS at the `RefStore` level ensures correctness regardless of which path performs the write.
+They're complementary. Both can target the same backing stores (e.g. the same SQLite database via `BunSqliteDriver`). An agent can `resolveRemote` push to a `storage.repo()` that the server also serves over HTTP. CAS at the `RefStore` level ensures correctness regardless of which path performs the write.
 
 ## Target use case
 
@@ -123,9 +123,9 @@ Standalone functions for working with `GitRepo` directly, exported from `just-gi
 
 Declarative push rules on `GitServerConfig.policy`: branch protection, force-push denial, delete denial, tag immutability. Non-generic, session-independent. Internally generates hooks that run before user-provided hooks.
 
-**Storage** (`bun-sqlite-storage.ts`, `better-sqlite3-storage.ts`, `memory-storage.ts`, `pg-storage.ts`)
+**Storage** (`storage.ts`, `bun-sqlite-storage.ts`, `better-sqlite3-storage.ts`, `memory-storage.ts`, `pg-storage.ts`)
 
-`BunSqliteStorage`, `BetterSqlite3Storage`, `MemoryStorage`, and `PgStorage` — multi-repo backends implementing `ObjectStore` and `RefStore`. Multiple repos partitioned by ID in a single store.
+Two-layer architecture: `StorageDriver` implementations (`BunSqliteDriver`, `BetterSqlite3Driver`, `PgDriver`, and `MemoryStorage`'s internal driver) provide raw key-value CRUD. `createStorage(driver)` wraps any driver with shared git-aware logic (object hashing, pack ingestion, symref resolution, CAS) to produce a `Storage`. Multiple repos partitioned by ID in a single store.
 
 Storage backends require explicit repo creation via `.createRepo(id)`. Calling `.repo(id)` returns `null` for unregistered repos, making `resolveRepo: (path) => storage.repo(path)` safe by default — unknown paths get 404 responses. For auto-creation (e.g. dev servers), use `storage.repo(path) ?? storage.createRepo(path)`.
 
@@ -154,7 +154,7 @@ import { createGitServer } from "just-git/server";
 const server = createGitServer({
   resolveRepo: async (repoPath, request) => {
     // Return a GitRepo, or null to 404
-    return storage.repo(repoPath) ?? storage.createRepo(repoPath);
+    return (await storage.repo(repoPath)) ?? (await storage.createRepo(repoPath));
   },
   hooks: {
     /* optional ServerHooks */
@@ -414,7 +414,7 @@ Required on all `RefStore` implementations. Returns `false` when the ref's curre
 
 ### Implementations
 
-- **`SqliteRefStore`** — wraps read + conditional write in a `db.transaction()`. SQLite's write lock serializes concurrent transactions, making this truly atomic across all callers sharing the same database, even from different `SqliteRefStore` instances.
+- **SQLite drivers** — the `atomicRefUpdate` callback runs inside `db.transaction()`. SQLite's write lock serializes concurrent transactions, making CAS truly atomic across all callers sharing the same database.
 
 - **`FileSystemRefStore`** — read-compare-write. Safe for VFS use because the in-memory filesystem has no real I/O concurrency between `await` points.
 

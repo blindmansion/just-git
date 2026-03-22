@@ -1,13 +1,15 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { execSync } from "node:child_process";
 import pg from "pg";
-import { PgStorage } from "../../src/server/pg-storage.ts";
+import { PgDriver } from "../../src/server/pg-storage.ts";
 import { wrapPgPool } from "../../src/server/pg-storage.ts";
+import { createStorage } from "../../src/server/storage.ts";
 import { envelope } from "../../src/lib/object-store.ts";
 import { sha1 } from "../../src/lib/sha1.ts";
 import { writePack } from "../../src/lib/pack/packfile.ts";
 import type { ObjectType } from "../../src/lib/types.ts";
 import type { PgDatabase } from "../../src/server/pg-storage.ts";
+import type { Storage } from "../../src/server/storage.ts";
 
 const encoder = new TextEncoder();
 
@@ -57,7 +59,7 @@ if (!canRun) {
 
 let pool: pg.Pool | null = null;
 let db: PgDatabase | null = null;
-let storage: PgStorage | null = null;
+let storage: Storage | null = null;
 
 async function waitForReady(url: string, maxMs = 20_000): Promise<boolean> {
 	const start = Date.now();
@@ -77,13 +79,14 @@ async function waitForReady(url: string, maxMs = 20_000): Promise<boolean> {
 
 // ── Tests ───────────────────────────────────────────────────────────
 
-describe.skipIf(!canRun)("PgStorage", () => {
+describe.skipIf(!canRun)("PgDriver", () => {
 	beforeAll(async () => {
 		const ready = await waitForReady(connectionUrl!);
 		if (!ready) throw new Error("Postgres not ready after 20s");
 		pool = new pg.Pool({ connectionString: connectionUrl! });
 		db = wrapPgPool(pool);
-		storage = await PgStorage.create(db);
+		const driver = await PgDriver.create(db);
+		storage = createStorage(driver);
 	});
 
 	afterAll(async () => {

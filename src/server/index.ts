@@ -50,20 +50,28 @@ export type {
 export type { ServerPolicy } from "./types.ts";
 
 // Storage
-export type { Storage, CreateRepoOptions } from "./storage.ts";
+export type {
+	Storage,
+	CreateRepoOptions,
+	StorageDriver,
+	RefOps,
+	RawRefEntry,
+	MaybeAsync,
+} from "./storage.ts";
+export { createStorage } from "./storage.ts";
 export { MemoryStorage } from "./memory-storage.ts";
 export {
-	BunSqliteStorage,
+	BunSqliteDriver,
 	type BunSqliteDatabase,
 	type BunSqliteStatement,
 } from "./bun-sqlite-storage.ts";
 export {
-	BetterSqlite3Storage,
+	BetterSqlite3Driver,
 	type BetterSqlite3Database,
 	type BetterSqlite3Statement,
 } from "./better-sqlite3-storage.ts";
 export {
-	PgStorage,
+	PgDriver,
 	wrapPgPool,
 	type PgDatabase,
 	type PgPool,

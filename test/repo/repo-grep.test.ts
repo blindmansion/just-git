@@ -10,7 +10,7 @@ const ID: Identity = {
 	timezone: "+0000",
 };
 
-function freshRepo(): GitRepo {
+async function freshRepo(): Promise<GitRepo> {
 	const s = new MemoryStorage();
 	return s.createRepo("test");
 }
@@ -76,7 +76,7 @@ async function commitTree(
 
 describe("grep", () => {
 	test("finds matching lines in a single file", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitFiles(repo, {
 			"hello.txt": "hello world\ngoodbye world\nhello again\n",
 		});
@@ -90,7 +90,7 @@ describe("grep", () => {
 	});
 
 	test("returns empty array when nothing matches", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitFiles(repo, { "file.txt": "no match here\n" });
 
 		const results = await grep(repo, hash, ["zzz"]);
@@ -98,7 +98,7 @@ describe("grep", () => {
 	});
 
 	test("searches multiple files", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitFiles(repo, {
 			"a.txt": "TODO fix this\n",
 			"b.txt": "all good\n",
@@ -112,7 +112,7 @@ describe("grep", () => {
 	});
 
 	test("results are sorted by path", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitFiles(repo, {
 			"z.txt": "match\n",
 			"a.txt": "match\n",
@@ -126,7 +126,7 @@ describe("grep", () => {
 	// ── Regex patterns ──────────────────────────────────────────────
 
 	test("supports regex patterns as strings", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitFiles(repo, {
 			"file.txt": "foo123\nbar456\nfoo789\n",
 		});
@@ -137,7 +137,7 @@ describe("grep", () => {
 	});
 
 	test("supports RegExp objects directly", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitFiles(repo, {
 			"file.txt": "Hello World\nhello world\n",
 		});
@@ -147,7 +147,7 @@ describe("grep", () => {
 	});
 
 	test("throws on invalid regex string", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitFiles(repo, { "file.txt": "content\n" });
 
 		expect(grep(repo, hash, ["[invalid"])).rejects.toThrow("Invalid pattern");
@@ -156,7 +156,7 @@ describe("grep", () => {
 	// ── Options ─────────────────────────────────────────────────────
 
 	test("fixed strings escapes regex metacharacters", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitFiles(repo, {
 			"file.txt": "price is $10.00\nprice is X10Y00\n",
 		});
@@ -167,7 +167,7 @@ describe("grep", () => {
 	});
 
 	test("ignoreCase", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitFiles(repo, {
 			"file.txt": "Hello\nhello\nHELLO\n",
 		});
@@ -180,7 +180,7 @@ describe("grep", () => {
 	});
 
 	test("wordRegexp matches whole words only", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitFiles(repo, {
 			"file.txt": "cat\nconcatenate\nthe cat sat\n",
 		});
@@ -192,7 +192,7 @@ describe("grep", () => {
 	});
 
 	test("invert returns non-matching lines", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitFiles(repo, {
 			"file.txt": "keep\nremove\nkeep\n",
 		});
@@ -203,7 +203,7 @@ describe("grep", () => {
 	});
 
 	test("maxCount limits matches per file", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitFiles(repo, {
 			"file.txt": "match\nmatch\nmatch\nmatch\nmatch\n",
 		});
@@ -217,7 +217,7 @@ describe("grep", () => {
 	// ── Multi-pattern ───────────────────────────────────────────────
 
 	test("multiple patterns use OR by default", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitFiles(repo, {
 			"file.txt": "alpha\nbeta\ngamma\n",
 		});
@@ -227,7 +227,7 @@ describe("grep", () => {
 	});
 
 	test("allMatch requires all patterns to hit the file", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitFiles(repo, {
 			"both.txt": "alpha line\nbeta line\n",
 			"one.txt": "alpha only\n",
@@ -241,7 +241,7 @@ describe("grep", () => {
 	// ── Path filtering ──────────────────────────────────────────────
 
 	test("paths option filters by glob", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitTree(repo, {
 			"src/app.ts": "TODO: refactor\n",
 			"src/util.ts": "TODO: cleanup\n",
@@ -254,7 +254,7 @@ describe("grep", () => {
 	});
 
 	test("paths with ** glob", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitTree(repo, {
 			"src/app.ts": "match\n",
 			"src/util.js": "match\n",
@@ -269,7 +269,7 @@ describe("grep", () => {
 	// ── maxDepth ────────────────────────────────────────────────────
 
 	test("maxDepth limits directory depth", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitTree(repo, {
 			"root.txt": "match\n",
 			"src/shallow.txt": "match\n",
@@ -282,7 +282,7 @@ describe("grep", () => {
 	});
 
 	test("maxDepth 1 includes one level of nesting", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitTree(repo, {
 			"root.txt": "match\n",
 			"src/file.txt": "match\n",
@@ -295,7 +295,7 @@ describe("grep", () => {
 	// ── Edge cases ──────────────────────────────────────────────────
 
 	test("handles empty files", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitFiles(repo, { "empty.txt": "" });
 
 		const results = await grep(repo, hash, ["anything"]);
@@ -303,7 +303,7 @@ describe("grep", () => {
 	});
 
 	test("handles files without trailing newline", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitFiles(repo, { "file.txt": "line one\nline two" });
 
 		const results = await grep(repo, hash, ["two"]);
@@ -312,7 +312,7 @@ describe("grep", () => {
 	});
 
 	test("line numbers are 1-based", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const hash = await commitFiles(repo, {
 			"file.txt": "first\nsecond\nthird\n",
 		});
@@ -322,7 +322,7 @@ describe("grep", () => {
 	});
 
 	test("works with multiple commits (searches the specified one)", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const c1 = await commitFiles(repo, { "file.txt": "old content\n" });
 		const c2 = await commitFiles(repo, { "file.txt": "new content\n" }, [c1]);
 
@@ -337,7 +337,7 @@ describe("grep", () => {
 	});
 
 	test("skips symlink entries (mode 120000)", async () => {
-		const repo = freshRepo();
+		const repo = await freshRepo();
 		const blobHash = await writeBlob(repo, "match this\n");
 		const linkTarget = await writeBlob(repo, "some/target");
 		const tree = await writeTree(repo, [

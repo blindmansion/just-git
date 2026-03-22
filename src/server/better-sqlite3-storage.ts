@@ -1,20 +1,5 @@
-import { ObjectCache } from "../lib/object-cache.ts";
-import { envelope } from "../lib/object-store.ts";
-import type { PackObject } from "../lib/pack/packfile.ts";
-import { readPack } from "../lib/pack/packfile.ts";
-import { sha1 } from "../lib/sha1.ts";
-import { normalizeRef } from "../lib/types.ts";
-import type {
-	ObjectId,
-	ObjectStore,
-	ObjectType,
-	RawObject,
-	Ref,
-	RefEntry,
-	RefStore,
-	GitRepo,
-} from "../lib/types.ts";
-import type { Storage, CreateRepoOptions } from "./storage.ts";
+import type { RawObject, Ref } from "../lib/types.ts";
+import type { StorageDriver, RawRefEntry, RefOps } from "./storage.ts";
 
 // ── better-sqlite3 driver types ─────────────────────────────────────
 
@@ -59,7 +44,7 @@ CREATE TABLE IF NOT EXISTS git_refs (
 
 // ── Normalized statement interface ──────────────────────────────────
 // better-sqlite3's .get() returns undefined for no match; we normalize
-// to null at preparation time so the storage code can stay uniform.
+// to null at preparation time so the driver code can stay uniform.
 
 interface Statement {
 	run(...params: any[]): void;
@@ -139,30 +124,34 @@ function prepareStatements(db: BetterSqlite3Database): Statements {
 	};
 }
 
-// ── BetterSqlite3Storage ────────────────────────────────────────────
+// ── BetterSqlite3Driver ─────────────────────────────────────────────
 
 /**
- * SQLite-backed git storage using `better-sqlite3`.
+ * SQLite-backed storage driver using `better-sqlite3`.
  *
  * ```ts
  * import Database from "better-sqlite3";
- * const storage = new BetterSqlite3Storage(new Database("repos.db"));
- * storage.createRepo("my-repo");
+ * const storage = createStorage(new BetterSqlite3Driver(new Database("repos.db")));
  * ```
  */
-export class BetterSqlite3Storage implements Storage {
-	private db: BetterSqlite3Database;
+export class BetterSqlite3Driver implements StorageDriver {
 	private stmts: Statements;
-	private ingestTx: (
-		rows: Array<{ repoId: string; hash: string; type: string; content: Uint8Array }>,
+	private batchInsertTx: (
+		rows: ReadonlyArray<{ repoId: string; hash: string; type: string; content: Uint8Array }>,
 	) => void;
 
-	constructor(db: BetterSqlite3Database) {
-		this.db = db;
+	constructor(private db: BetterSqlite3Database) {
 		db.exec(SCHEMA);
 		this.stmts = prepareStatements(db);
-		this.ingestTx = db.transaction(
-			(rows: Array<{ repoId: string; hash: string; type: string; content: Uint8Array }>) => {
+		this.batchInsertTx = db.transaction(
+			(
+				rows: ReadonlyArray<{
+					repoId: string;
+					hash: string;
+					type: string;
+					content: Uint8Array;
+				}>,
+			) => {
 				for (const row of rows) {
 					this.stmts.objInsert.run(row.repoId, row.hash, row.type, row.content);
 				}
@@ -170,19 +159,14 @@ export class BetterSqlite3Storage implements Storage {
 		);
 	}
 
-	createRepo(repoId: string, options?: CreateRepoOptions): GitRepo {
-		if (this.stmts.repoExists.get(repoId)) {
-			throw new Error(`repo '${repoId}' already exists`);
-		}
-		const defaultBranch = options?.defaultBranch ?? "main";
-		this.stmts.repoInsert.run(repoId);
-		this.stmts.refWrite.run(repoId, "HEAD", "symbolic", null, `refs/heads/${defaultBranch}`);
-		return this.buildRepo(repoId);
+	// ── Repo ────────────────────────────────────────────────────
+
+	hasRepo(repoId: string): boolean {
+		return this.stmts.repoExists.get(repoId) !== null;
 	}
 
-	repo(repoId: string): GitRepo | null {
-		if (!this.stmts.repoExists.get(repoId)) return null;
-		return this.buildRepo(repoId);
+	insertRepo(repoId: string): void {
+		this.stmts.repoInsert.run(repoId);
 	}
 
 	deleteRepo(repoId: string): void {
@@ -191,204 +175,84 @@ export class BetterSqlite3Storage implements Storage {
 		this.stmts.refDeleteAll.run(repoId);
 	}
 
-	private buildRepo(repoId: string): GitRepo {
-		return {
-			objectStore: new BetterSqlite3ObjectStore(this.stmts, this.ingestTx, repoId),
-			refStore: new BetterSqlite3RefStore(this.stmts, this.db, repoId),
-		};
-	}
-}
+	// ── Objects ─────────────────────────────────────────────────
 
-// ── BetterSqlite3ObjectStore ────────────────────────────────────────
-
-class BetterSqlite3ObjectStore implements ObjectStore {
-	private cache: ObjectCache;
-
-	constructor(
-		private stmts: Statements,
-		private ingestTx: (
-			rows: Array<{ repoId: string; hash: string; type: string; content: Uint8Array }>,
-		) => void,
-		private repoId: string,
-	) {
-		this.cache = new ObjectCache();
-	}
-
-	async write(type: ObjectType, content: Uint8Array): Promise<ObjectId> {
-		const data = envelope(type, content);
-		const hash = await sha1(data);
-		this.stmts.objInsert.run(this.repoId, hash, type, content);
-		return hash;
-	}
-
-	async read(hash: ObjectId): Promise<RawObject> {
-		const cached = this.cache.get(hash);
-		if (cached) return cached;
-
-		const row = this.stmts.objRead.get(this.repoId, hash) as {
+	getObject(repoId: string, hash: string): RawObject | null {
+		const row = this.stmts.objRead.get(repoId, hash) as {
 			type: string;
 			content: Uint8Array;
 		} | null;
-		if (!row) {
-			throw new Error(`object ${hash} not found`);
-		}
-		const obj: RawObject = {
-			type: row.type as ObjectType,
-			content: new Uint8Array(row.content),
-		};
-		this.cache.set(hash, obj);
-		return obj;
+		if (!row) return null;
+		return { type: row.type as RawObject["type"], content: new Uint8Array(row.content) };
 	}
 
-	async exists(hash: ObjectId): Promise<boolean> {
-		return this.stmts.objExists.get(this.repoId, hash) !== null;
+	putObject(repoId: string, hash: string, type: string, content: Uint8Array): void {
+		this.stmts.objInsert.run(repoId, hash, type, content);
 	}
 
-	async ingestPack(packData: Uint8Array): Promise<number> {
-		if (packData.byteLength < 32) return 0;
-		const view = new DataView(packData.buffer, packData.byteOffset, packData.byteLength);
-		const numObjects = view.getUint32(8);
-		if (numObjects === 0) return 0;
-
-		const entries = await readPack(packData, async (hash) => {
-			const row = this.stmts.objRead.get(this.repoId, hash) as {
-				type: string;
-				content: Uint8Array;
-			} | null;
-			if (!row) return null;
-			return { type: row.type as ObjectType, content: new Uint8Array(row.content) };
-		});
-
-		const rows = entries.map((entry) => ({
-			repoId: this.repoId,
-			hash: entry.hash,
-			type: entry.type,
-			content: entry.content,
-		}));
-
-		this.ingestTx(rows);
-
-		return entries.length;
+	putObjects(
+		repoId: string,
+		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
+	): void {
+		this.batchInsertTx(objects.map((o) => ({ repoId, ...o })));
 	}
 
-	async ingestPackStream(entries: AsyncIterable<PackObject>): Promise<number> {
-		const rows: Array<{ repoId: string; hash: string; type: string; content: Uint8Array }> = [];
-		for await (const entry of entries) {
-			rows.push({
-				repoId: this.repoId,
-				hash: entry.hash,
-				type: entry.type,
-				content: entry.content,
-			});
-		}
-		if (rows.length === 0) return 0;
-		this.ingestTx(rows);
-		return rows.length;
+	hasObject(repoId: string, hash: string): boolean {
+		return this.stmts.objExists.get(repoId, hash) !== null;
 	}
 
-	async findByPrefix(prefix: string): Promise<ObjectId[]> {
-		if (prefix.length < 4) return [];
-		const rows = this.stmts.objPrefix.all(this.repoId, `${prefix}*`) as Array<{
-			hash: string;
-		}>;
+	findObjectsByPrefix(repoId: string, prefix: string): string[] {
+		const rows = this.stmts.objPrefix.all(repoId, `${prefix}*`) as Array<{ hash: string }>;
 		return rows.map((r) => r.hash);
 	}
-}
 
-// ── BetterSqlite3RefStore ───────────────────────────────────────────
+	// ── Refs ────────────────────────────────────────────────────
 
-class BetterSqlite3RefStore implements RefStore {
-	private casTx: (name: string, expectedOldHash: string | null, newRef: Ref | null) => boolean;
-
-	constructor(
-		private stmts: Statements,
-		db: BetterSqlite3Database,
-		private repoId: string,
-	) {
-		const s = stmts;
-		const rid = repoId;
-
-		this.casTx = db.transaction(
-			(name: string, expectedOldHash: string | null, newRef: Ref | null): boolean => {
-				const row = s.refRead.get(rid, name) as RefRow | null;
-
-				let currentHash: string | null = null;
-				if (row) {
-					if (row.type === "direct") {
-						currentHash = row.hash;
-					} else if (row.type === "symbolic" && row.target) {
-						currentHash = resolveRefChainSync(s, rid, row.target);
-					}
-				}
-
-				if (expectedOldHash === null) {
-					if (row !== null) return false;
-				} else {
-					if (currentHash !== expectedOldHash) return false;
-				}
-
-				if (newRef === null) {
-					s.refDelete.run(rid, name);
-				} else if (newRef.type === "symbolic") {
-					s.refWrite.run(rid, name, "symbolic", null, newRef.target);
-				} else {
-					s.refWrite.run(rid, name, "direct", newRef.hash, null);
-				}
-				return true;
-			},
-		);
+	getRef(repoId: string, name: string): Ref | null {
+		const row = this.stmts.refRead.get(repoId, name) as RefRow | null;
+		return rowToRef(row);
 	}
 
-	async readRef(name: string): Promise<Ref | null> {
-		const row = this.stmts.refRead.get(this.repoId, name) as RefRow | null;
-		if (!row) return null;
-		if (row.type === "symbolic") {
-			return { type: "symbolic", target: row.target! };
-		}
-		return { type: "direct", hash: row.hash! };
-	}
-
-	async writeRef(name: string, refOrHash: Ref | string): Promise<void> {
-		const ref = normalizeRef(refOrHash);
+	putRef(repoId: string, name: string, ref: Ref): void {
 		if (ref.type === "symbolic") {
-			this.stmts.refWrite.run(this.repoId, name, "symbolic", null, ref.target);
+			this.stmts.refWrite.run(repoId, name, "symbolic", null, ref.target);
 		} else {
-			this.stmts.refWrite.run(this.repoId, name, "direct", ref.hash, null);
+			this.stmts.refWrite.run(repoId, name, "direct", ref.hash, null);
 		}
 	}
 
-	async deleteRef(name: string): Promise<void> {
-		this.stmts.refDelete.run(this.repoId, name);
+	removeRef(repoId: string, name: string): void {
+		this.stmts.refDelete.run(repoId, name);
 	}
 
-	async compareAndSwapRef(
-		name: string,
-		expectedOldHash: string | null,
-		newRef: Ref | null,
-	): Promise<boolean> {
-		return this.casTx(name, expectedOldHash, newRef);
+	listRefs(repoId: string, prefix?: string): RawRefEntry[] {
+		const rows: RefRow[] = prefix
+			? (this.stmts.refList.all(repoId, `${prefix}*`) as RefRow[])
+			: (this.stmts.refListAll.all(repoId) as RefRow[]);
+		return rows.flatMap((row) => {
+			const ref = rowToRef(row);
+			return ref ? [{ name: row.name, ref }] : [];
+		});
 	}
 
-	async listRefs(prefix?: string): Promise<RefEntry[]> {
-		let rows: Array<RefRow>;
-		if (prefix) {
-			rows = this.stmts.refList.all(this.repoId, `${prefix}*`) as Array<RefRow>;
-		} else {
-			rows = this.stmts.refListAll.all(this.repoId) as Array<RefRow>;
-		}
-
-		const results: RefEntry[] = [];
-		for (const row of rows) {
-			if (row.type === "direct" && row.hash) {
-				results.push({ name: row.name, hash: row.hash });
-			} else if (row.type === "symbolic" && row.target) {
-				const resolved = resolveRefChainSync(this.stmts, this.repoId, row.target);
-				if (resolved) {
-					results.push({ name: row.name, hash: resolved });
-				}
-			}
-		}
-		return results;
+	atomicRefUpdate<T>(repoId: string, fn: (ops: RefOps) => T): T {
+		const stmts = this.stmts;
+		const tx = this.db.transaction(() => {
+			return fn({
+				getRef: (name) => rowToRef(stmts.refRead.get(repoId, name) as RefRow | null),
+				putRef: (name, ref) => {
+					if (ref.type === "symbolic") {
+						stmts.refWrite.run(repoId, name, "symbolic", null, ref.target);
+					} else {
+						stmts.refWrite.run(repoId, name, "direct", ref.hash, null);
+					}
+				},
+				removeRef: (name) => {
+					stmts.refDelete.run(repoId, name);
+				},
+			});
+		});
+		return tx();
 	}
 }
 
@@ -396,18 +260,13 @@ class BetterSqlite3RefStore implements RefStore {
 
 type RefRow = { name: string; type: string; hash: string | null; target: string | null };
 
-function resolveRefChainSync(
-	stmts: Statements,
-	repoId: string,
-	target: string,
-	depth = 0,
-): string | null {
-	if (depth > 10) return null;
-	const row = stmts.refRead.get(repoId, target) as RefRow | null;
+function rowToRef(row: RefRow | null): Ref | null {
 	if (!row) return null;
-	if (row.type === "direct") return row.hash;
 	if (row.type === "symbolic" && row.target) {
-		return resolveRefChainSync(stmts, repoId, row.target, depth + 1);
+		return { type: "symbolic", target: row.target };
+	}
+	if (row.type === "direct" && row.hash) {
+		return { type: "direct", hash: row.hash };
 	}
 	return null;
 }

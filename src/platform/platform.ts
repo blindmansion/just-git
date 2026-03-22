@@ -1,7 +1,9 @@
 import type { GitRepo } from "../lib/types.ts";
 import { composeHooks, createGitServer } from "../server/handler.ts";
 import { resolveRef } from "../repo/helpers.ts";
-import { BunSqliteStorage, type BunSqliteDatabase } from "../server/bun-sqlite-storage.ts";
+import { BunSqliteDriver } from "../server/bun-sqlite-storage.ts";
+import { createStorage, type Storage } from "../server/storage.ts";
+import type { BunSqliteDatabase } from "../server/bun-sqlite-storage.ts";
 import type { GitServer, GitServerConfig, ServerHooks } from "../server/types.ts";
 import { executeMerge, MergeError } from "./pull-requests.ts";
 import { PlatformDb } from "./storage.ts";
@@ -20,7 +22,7 @@ import type {
 } from "./types.ts";
 
 export class Platform {
-	private storage: BunSqliteStorage;
+	private storage: Storage;
 	private platformDb: PlatformDb;
 	private callbacks: PlatformCallbacks;
 
@@ -29,17 +31,17 @@ export class Platform {
 
 	constructor(config: PlatformConfig) {
 		this.db = config.database;
-		this.storage = new BunSqliteStorage(config.database);
+		this.storage = createStorage(new BunSqliteDriver(config.database));
 		this.platformDb = new PlatformDb(config.database);
 		this.callbacks = config.on ?? {};
 	}
 
 	// ── Repo operations ─────────────────────────────────────────────
 
-	createRepo(id: string, options?: { defaultBranch?: string }): Repo {
+	async createRepo(id: string, options?: { defaultBranch?: string }): Promise<Repo> {
 		const defaultBranch = options?.defaultBranch ?? "main";
 		const repo = this.platformDb.createRepo(id, defaultBranch);
-		this.storage.createRepo(id, { defaultBranch });
+		await this.storage.createRepo(id, { defaultBranch });
 		return repo;
 	}
 
@@ -51,14 +53,14 @@ export class Platform {
 		return this.platformDb.listRepos();
 	}
 
-	deleteRepo(id: string): void {
+	async deleteRepo(id: string): Promise<void> {
 		this.platformDb.deleteRepo(id);
-		this.storage.deleteRepo(id);
+		await this.storage.deleteRepo(id);
 	}
 
 	// ── Direct git access ───────────────────────────────────────────
 
-	gitRepo(repoId: string): GitRepo | null {
+	async gitRepo(repoId: string): Promise<GitRepo | null> {
 		return this.storage.repo(repoId);
 	}
 
@@ -70,7 +72,7 @@ export class Platform {
 			throw new Error(`repo '${repoId}' not found`);
 		}
 
-		const gitRepo = this.storage.repo(repoId)!;
+		const gitRepo = (await this.storage.repo(repoId))!;
 
 		const headSha = await resolveRef(gitRepo, `refs/heads/${opts.head}`);
 		if (!headSha) {
@@ -122,7 +124,7 @@ export class Platform {
 		this.platformDb.closePullRequest(repoId, number);
 
 		if (this.callbacks.onPullRequestClosed) {
-			const gitRepo = this.storage.repo(repoId)!;
+			const gitRepo = (await this.storage.repo(repoId))!;
 			const closed = this.platformDb.getPullRequest(repoId, number)!;
 			try {
 				await this.callbacks.onPullRequestClosed({ repo: gitRepo, repoId, pr: closed });
@@ -143,7 +145,7 @@ export class Platform {
 			throw new MergeError(`PR #${number} is already ${pr.state}`, "not_open");
 		}
 
-		const gitRepo = this.storage.repo(repoId)!;
+		const gitRepo = (await this.storage.repo(repoId))!;
 
 		if (this.callbacks.beforeMerge) {
 			const rejection = await this.callbacks.beforeMerge({
@@ -201,7 +203,7 @@ export class Platform {
 			resolveRepo: async (repoPath: string) => {
 				const repoRecord = platform.platformDb.getRepo(repoPath);
 				if (!repoRecord) return null;
-				return platform.storage.repo(repoPath);
+				return await platform.storage.repo(repoPath);
 			},
 
 			hooks: composeHooks(

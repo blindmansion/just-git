@@ -11,7 +11,7 @@
  */
 
 import { Database } from "bun:sqlite";
-import { createGitServer, BunSqliteStorage } from "../src/server"; // "just-git/server"
+import { createGitServer, createStorage, BunSqliteDriver } from "../src/server"; // "just-git/server"
 import { getChangedFiles } from "../src/repo"; // "just-git/repo"
 
 const DB_PATH = process.env.DB_PATH ?? ":memory:";
@@ -19,12 +19,12 @@ const PORT = Number(process.env.PORT ?? 4200);
 
 const db = new Database(DB_PATH);
 db.run("PRAGMA journal_mode = WAL");
-const storage = new BunSqliteStorage(db);
+const storage = createStorage(new BunSqliteDriver(db));
 
 const server = createGitServer({
-	resolveRepo: (repoPath) => {
+	resolveRepo: async (repoPath) => {
 		console.log(`  [resolve] ${repoPath}`);
-		return storage.repo(repoPath) ?? storage.createRepo(repoPath);
+		return (await storage.repo(repoPath)) ?? storage.createRepo(repoPath);
 	},
 
 	hooks: {

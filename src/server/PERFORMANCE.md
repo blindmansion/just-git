@@ -1,7 +1,7 @@
 # Server Performance Analysis
 
 Baseline measurements from stress-testing the SQLite-backed Git server
-(`BunSqliteStorage` + `createGitServer`) against the
+(`BunSqliteDriver` + `createStorage` + `createGitServer`) against the
 [cannoli](https://github.com/DeabLabs/cannoli) repository (~510 commits,
 ~210 files, 4678 objects, 43 MB raw object data).
 
