@@ -66,12 +66,14 @@
 		"@types/bun": "latest",
 		"@types/node": "^25.4.0",
 		"@types/pg": "^8.18.0",
+		"@types/ssh2": "^1.15.5",
 		"better-sqlite3": "^12.8.0",
 		"just-bash": "^2.14.0",
 		"knip": "^5.86.0",
 		"oxfmt": "^0.38.0",
 		"oxlint": "^1.53.0",
 		"pg": "^8.20.0",
+		"ssh2": "^1.17.0",
 		"tsup": "^8.5.1",
 		"typescript": "^5.9.3"
 	}

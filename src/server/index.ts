@@ -4,11 +4,21 @@ export { createGitServer, composeHooks } from "./handler.ts";
 // Node.js adapter
 export { toNodeHandler } from "./handler.ts";
 
+// SSH session handler
+export { createGitSshServer, parseGitSshCommand } from "./ssh-session.ts";
+export type {
+	GitSshServer,
+	GitSshServerConfig,
+	SshChannel,
+	SshSessionInfo,
+} from "./ssh-session.ts";
+
 // Transport-agnostic operations
 export {
 	applyReceivePack,
 	collectRefs,
 	buildRefAdvertisementBytes,
+	buildRefListBytes,
 	handleUploadPack,
 	ingestReceivePack,
 } from "./operations.ts";

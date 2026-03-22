@@ -26,6 +26,7 @@ import type { ShallowUpdate } from "../lib/shallow.ts";
 import {
 	type AdvertisedRef,
 	buildRefAdvertisement,
+	buildRefListPktLines,
 	buildShallowOnlyResponse,
 	buildUploadPackResponse,
 	buildUploadPackResponseStreaming,
@@ -212,7 +213,7 @@ function inferDefaultBranch(
 }
 
 /**
- * Build the wire-format ref advertisement from a (possibly filtered) ref list.
+ * Build the HTTP-wrapped ref advertisement (includes `# service=...` header).
  */
 export function buildRefAdvertisementBytes(
 	refs: RefAdvertisement[],
@@ -221,6 +222,19 @@ export function buildRefAdvertisementBytes(
 ): Uint8Array {
 	const caps = service === "git-upload-pack" ? UPLOAD_PACK_CAPS : RECEIVE_PACK_CAPS;
 	return buildRefAdvertisement(refs as AdvertisedRef[], service, caps, headTarget);
+}
+
+/**
+ * Build the transport-agnostic ref list (no HTTP service header).
+ * Used by SSH and in-process transports.
+ */
+export function buildRefListBytes(
+	refs: RefAdvertisement[],
+	service: "git-upload-pack" | "git-receive-pack",
+	headTarget?: string,
+): Uint8Array {
+	const caps = service === "git-upload-pack" ? UPLOAD_PACK_CAPS : RECEIVE_PACK_CAPS;
+	return buildRefListPktLines(refs as AdvertisedRef[], caps, headTarget);
 }
 
 // ── Upload-pack (fetch/clone serving) ───────────────────────────────
