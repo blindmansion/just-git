@@ -74,14 +74,9 @@ async function runCIScript(
 }
 
 const server = createGitServer({
-	resolveRepo: async (repoPath) => {
-		const repo = storage.repo(repoPath);
-		const head = await repo.refStore.readRef("HEAD");
-		if (!head) {
-			console.log(`  [init] auto-creating repo "${repoPath}"`);
-			await repo.refStore.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
-		}
-		return repo;
+	resolveRepo: (repoPath) => {
+		console.log(`  [resolve] ${repoPath}`);
+		return storage.repo(repoPath) ?? storage.createRepo(repoPath);
 	},
 
 	hooks: {

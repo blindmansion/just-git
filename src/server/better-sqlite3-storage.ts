@@ -14,7 +14,7 @@ import type {
 	RefStore,
 	GitRepo,
 } from "../lib/types.ts";
-import type { Storage } from "./storage.ts";
+import type { Storage, CreateRepoOptions } from "./storage.ts";
 
 // ── better-sqlite3 driver types ─────────────────────────────────────
 
@@ -35,6 +35,12 @@ export interface BetterSqlite3Database {
 // ── Schema ──────────────────────────────────────────────────────────
 
 const SCHEMA = `
+CREATE TABLE IF NOT EXISTS repos (
+  id              TEXT PRIMARY KEY,
+  default_branch  TEXT NOT NULL DEFAULT 'main',
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS git_objects (
   repo_id TEXT NOT NULL,
   hash    TEXT NOT NULL,
@@ -76,6 +82,11 @@ function wrapStmt(raw: BetterSqlite3Statement): Statement {
 // ── Prepared statement cache ────────────────────────────────────────
 
 interface Statements {
+	repoInsert: Statement;
+	repoExists: Statement;
+	repoDelete: Statement;
+	repoList: Statement;
+
 	objInsert: Statement;
 	objRead: Statement;
 	objExists: Statement;
@@ -92,6 +103,11 @@ interface Statements {
 
 function prepareStatements(db: BetterSqlite3Database): Statements {
 	return {
+		repoInsert: wrapStmt(db.prepare("INSERT INTO repos (id, default_branch) VALUES (?, ?)")),
+		repoExists: wrapStmt(db.prepare("SELECT 1 FROM repos WHERE id = ? LIMIT 1")),
+		repoDelete: wrapStmt(db.prepare("DELETE FROM repos WHERE id = ?")),
+		repoList: wrapStmt(db.prepare("SELECT id FROM repos ORDER BY created_at")),
+
 		objInsert: wrapStmt(
 			db.prepare(
 				"INSERT OR IGNORE INTO git_objects (repo_id, hash, type, content) VALUES (?, ?, ?, ?)",
@@ -135,6 +151,7 @@ function prepareStatements(db: BetterSqlite3Database): Statements {
  * ```ts
  * import Database from "better-sqlite3";
  * const storage = new BetterSqlite3Storage(new Database("repos.db"));
+ * storage.createRepo("my-repo");
  * ```
  */
 export class BetterSqlite3Storage implements Storage {
@@ -157,16 +174,36 @@ export class BetterSqlite3Storage implements Storage {
 		);
 	}
 
-	repo(repoId: string): GitRepo {
+	createRepo(repoId: string, options?: CreateRepoOptions): GitRepo {
+		if (this.stmts.repoExists.get(repoId)) {
+			throw new Error(`repo '${repoId}' already exists`);
+		}
+		const defaultBranch = options?.defaultBranch ?? "main";
+		this.stmts.repoInsert.run(repoId, defaultBranch);
+		this.stmts.refWrite.run(repoId, "HEAD", "symbolic", null, `refs/heads/${defaultBranch}`);
+		return this.buildRepo(repoId);
+	}
+
+	repo(repoId: string): GitRepo | null {
+		if (!this.stmts.repoExists.get(repoId)) return null;
+		return this.buildRepo(repoId);
+	}
+
+	deleteRepo(repoId: string): void {
+		this.stmts.repoDelete.run(repoId);
+		this.stmts.objDeleteAll.run(repoId);
+		this.stmts.refDeleteAll.run(repoId);
+	}
+
+	listRepos(): string[] {
+		return (this.stmts.repoList.all() as Array<{ id: string }>).map((r) => r.id);
+	}
+
+	private buildRepo(repoId: string): GitRepo {
 		return {
 			objectStore: new BetterSqlite3ObjectStore(this.stmts, this.ingestTx, repoId),
 			refStore: new BetterSqlite3RefStore(this.stmts, this.db, repoId),
 		};
-	}
-
-	async deleteRepo(repoId: string): Promise<void> {
-		this.stmts.objDeleteAll.run(repoId);
-		this.stmts.refDeleteAll.run(repoId);
 	}
 }
 

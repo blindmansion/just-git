@@ -83,6 +83,7 @@ import type { GitHooks } from "../../src";
 {
 	const changedFileCounts: number[] = [];
 	const storage = new BunSqliteStorage(new Database(":memory:"));
+	storage.createRepo("test-repo");
 
 	const server = createGitServer({
 		resolveRepo: (path) => storage.repo(path),
@@ -457,7 +458,8 @@ import type { GitHooks } from "../../src";
 
 {
 	const storage = new BunSqliteStorage(new Database(":memory:"));
-	const repo = storage.repo("my-repo");
+	storage.createRepo("my-repo");
+	const repo = storage.repo("my-repo")!;
 	console.assert(repo.objectStore !== undefined, "should have objectStore");
 	console.assert(repo.refStore !== undefined, "should have refStore");
 	console.log("REPO storage-backed: BunSqliteStorage.repo() OK");
@@ -469,7 +471,7 @@ import type { GitHooks } from "../../src";
 	const storage = new BunSqliteStorage(new Database(":memory:"));
 
 	// Seed the repo with a commit via the repo API
-	const repo = storage.repo("my-repo");
+	const repo = storage.createRepo("my-repo");
 	const blobHash = await writeBlob(repo, "hello world\n");
 	const treeHash = await (async () => {
 		const { writeTree } = await import("../../src/repo");
@@ -515,7 +517,7 @@ import type { GitHooks } from "../../src";
 
 {
 	const storage = new BunSqliteStorage(new Database(":memory:"));
-	const ro = readonlyRepo(storage.repo("my-repo"));
+	const ro = readonlyRepo(storage.createRepo("my-repo"));
 
 	let threw = false;
 	try {
@@ -563,6 +565,7 @@ import type { GitHooks } from "../../src";
 
 {
 	const storage = new BunSqliteStorage(new Database(":memory:"));
+	storage.createRepo("test-repo");
 	const foundPkg: string[] = [];
 	const changedFilePaths: string[] = [];
 	const commitMessages: string[] = [];
@@ -621,6 +624,7 @@ import type { GitHooks } from "../../src";
 
 {
 	const storage = new BunSqliteStorage(new Database(":memory:"));
+	storage.createRepo("repo");
 
 	const server = createGitServer({
 		resolveRepo: (repoPath) => storage.repo(repoPath),
@@ -674,6 +678,7 @@ import type { GitHooks } from "../../src";
 
 {
 	const storage = new BunSqliteStorage(new Database(":memory:"));
+	storage.createRepo("test-repo");
 
 	const server = createGitServer({
 		resolveRepo: (repoPath) => storage.repo(repoPath),
@@ -723,6 +728,8 @@ import type { GitHooks } from "../../src";
 
 {
 	const storage = new BunSqliteStorage(new Database(":memory:"));
+	storage.createRepo("public-repo");
+	storage.createRepo("private/secret");
 
 	const server = createGitServer({
 		resolveRepo: (repoPath) => storage.repo(repoPath),
@@ -759,6 +766,7 @@ import type { GitHooks } from "../../src";
 
 {
 	const storage = new BunSqliteStorage(new Database(":memory:"));
+	storage.createRepo("my-repo");
 	const pushLog: string[] = [];
 
 	const server = createGitServer({

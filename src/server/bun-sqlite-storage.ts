@@ -14,7 +14,7 @@ import type {
 	RefStore,
 	GitRepo,
 } from "../lib/types.ts";
-import type { Storage } from "./storage.ts";
+import type { Storage, CreateRepoOptions } from "./storage.ts";
 
 // ── bun:sqlite driver types ─────────────────────────────────────────
 
@@ -35,6 +35,12 @@ export interface BunSqliteDatabase {
 // ── Schema ──────────────────────────────────────────────────────────
 
 const SCHEMA = `
+CREATE TABLE IF NOT EXISTS repos (
+  id              TEXT PRIMARY KEY,
+  default_branch  TEXT NOT NULL DEFAULT 'main',
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS git_objects (
   repo_id TEXT NOT NULL,
   hash    TEXT NOT NULL,
@@ -56,6 +62,11 @@ CREATE TABLE IF NOT EXISTS git_refs (
 // ── Prepared statement cache ────────────────────────────────────────
 
 interface Statements {
+	repoInsert: BunSqliteStatement;
+	repoExists: BunSqliteStatement;
+	repoDelete: BunSqliteStatement;
+	repoList: BunSqliteStatement;
+
 	objInsert: BunSqliteStatement;
 	objRead: BunSqliteStatement;
 	objExists: BunSqliteStatement;
@@ -72,6 +83,11 @@ interface Statements {
 
 function prepareStatements(db: BunSqliteDatabase): Statements {
 	return {
+		repoInsert: db.prepare("INSERT INTO repos (id, default_branch) VALUES (?, ?)"),
+		repoExists: db.prepare("SELECT 1 FROM repos WHERE id = ? LIMIT 1"),
+		repoDelete: db.prepare("DELETE FROM repos WHERE id = ?"),
+		repoList: db.prepare("SELECT id FROM repos ORDER BY created_at"),
+
 		objInsert: db.prepare(
 			"INSERT OR IGNORE INTO git_objects (repo_id, hash, type, content) VALUES (?, ?, ?, ?)",
 		),
@@ -101,6 +117,7 @@ function prepareStatements(db: BunSqliteDatabase): Statements {
  * ```ts
  * import { Database } from "bun:sqlite";
  * const storage = new BunSqliteStorage(new Database("repos.db"));
+ * storage.createRepo("my-repo");
  * ```
  */
 export class BunSqliteStorage implements Storage {
@@ -123,16 +140,36 @@ export class BunSqliteStorage implements Storage {
 		);
 	}
 
-	repo(repoId: string): GitRepo {
+	createRepo(repoId: string, options?: CreateRepoOptions): GitRepo {
+		if (this.stmts.repoExists.get(repoId)) {
+			throw new Error(`repo '${repoId}' already exists`);
+		}
+		const defaultBranch = options?.defaultBranch ?? "main";
+		this.stmts.repoInsert.run(repoId, defaultBranch);
+		this.stmts.refWrite.run(repoId, "HEAD", "symbolic", null, `refs/heads/${defaultBranch}`);
+		return this.buildRepo(repoId);
+	}
+
+	repo(repoId: string): GitRepo | null {
+		if (!this.stmts.repoExists.get(repoId)) return null;
+		return this.buildRepo(repoId);
+	}
+
+	deleteRepo(repoId: string): void {
+		this.stmts.repoDelete.run(repoId);
+		this.stmts.objDeleteAll.run(repoId);
+		this.stmts.refDeleteAll.run(repoId);
+	}
+
+	listRepos(): string[] {
+		return (this.stmts.repoList.all() as Array<{ id: string }>).map((r) => r.id);
+	}
+
+	private buildRepo(repoId: string): GitRepo {
 		return {
 			objectStore: new BunSqliteObjectStore(this.stmts, this.ingestTx, repoId),
 			refStore: new BunSqliteRefStore(this.stmts, this.db, repoId),
 		};
-	}
-
-	async deleteRepo(repoId: string): Promise<void> {
-		this.stmts.objDeleteAll.run(repoId);
-		this.stmts.refDeleteAll.run(repoId);
 	}
 }
 

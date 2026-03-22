@@ -38,7 +38,7 @@ function freshPlatform(callbacks?: Parameters<typeof createPlatform>[0]["on"]): 
 
 async function seedRepo(platform: Platform, repoId: string): Promise<{ initialHash: string }> {
 	platform.createRepo(repoId);
-	const repo = platform.gitRepo(repoId);
+	const repo = platform.gitRepo(repoId)!;
 
 	const blobHash = await writeBlob(repo, "initial content\n");
 	const treeHash = await writeTree(repo, [{ name: "README.md", hash: blobHash }]);
@@ -63,7 +63,7 @@ async function addCommitOnBranch(
 	content: string,
 	ts: number,
 ): Promise<string> {
-	const repo = platform.gitRepo(repoId);
+	const repo = platform.gitRepo(repoId)!;
 	const parentHash = await resolveRef(repo, `refs/heads/${branch}`);
 	if (!parentHash) throw new Error(`branch ${branch} not found`);
 
@@ -95,7 +95,7 @@ async function createBranchFromMain(
 	repoId: string,
 	branchName: string,
 ): Promise<void> {
-	const repo = platform.gitRepo(repoId);
+	const repo = platform.gitRepo(repoId)!;
 	const mainHash = await resolveRef(repo, "refs/heads/main");
 	if (!mainHash) throw new Error("main not found");
 	await repo.refStore.writeRef(`refs/heads/${branchName}`, { type: "direct", hash: mainHash });
@@ -160,7 +160,7 @@ describe("Repo CRUD", () => {
 	test("HEAD is set as symbolic ref to default branch on create", async () => {
 		const platform = freshPlatform();
 		platform.createRepo("test-repo");
-		const repo = platform.gitRepo("test-repo");
+		const repo = platform.gitRepo("test-repo")!;
 		const head = await repo.refStore.readRef("HEAD");
 		expect(head).toEqual({ type: "symbolic", target: "refs/heads/main" });
 	});
@@ -211,7 +211,7 @@ describe("PR lifecycle", () => {
 			author: { name: "Test", email: "test@test.com" },
 		});
 
-		const repo = platform.gitRepo("repo");
+		const repo = platform.gitRepo("repo")!;
 		const pullRef = await resolveRef(repo, `refs/pull/${pr.number}/head`);
 		expect(pullRef).toBe(featureHash);
 	});
@@ -379,7 +379,7 @@ describe("merge strategies", () => {
 		expect(result.strategy).toBe("merge");
 		expect(result.sha).toHaveLength(40);
 
-		const repo = platform.gitRepo("repo");
+		const repo = platform.gitRepo("repo")!;
 		const mergeCommit = await readCommit(repo, result.sha);
 		expect(mergeCommit.parents).toHaveLength(2);
 
@@ -412,7 +412,7 @@ describe("merge strategies", () => {
 
 		expect(result.strategy).toBe("squash");
 
-		const repo = platform.gitRepo("repo");
+		const repo = platform.gitRepo("repo")!;
 		const commit = await readCommit(repo, result.sha);
 		expect(commit.parents).toHaveLength(1);
 
@@ -449,7 +449,7 @@ describe("merge strategies", () => {
 		expect(result.strategy).toBe("fast-forward");
 		expect(result.sha).toBe(featureHash);
 
-		const repo = platform.gitRepo("repo");
+		const repo = platform.gitRepo("repo")!;
 		const mainRef = await resolveRef(repo, "refs/heads/main");
 		expect(mainRef).toBe(featureHash);
 	});
@@ -485,7 +485,7 @@ describe("merge strategies", () => {
 		await seedRepo(platform, "repo");
 		await createBranchFromMain(platform, "repo", "feature");
 
-		const repo = platform.gitRepo("repo");
+		const repo = platform.gitRepo("repo")!;
 		const parentHash = await resolveRef(repo, "refs/heads/main");
 
 		const blobA = await writeBlob(repo, "version A\n");
@@ -905,7 +905,7 @@ describe("git server integration", () => {
 			const pr = platform.getPullRequest("repo", 1);
 			expect(pr).not.toBeNull();
 
-			const repo = platform.gitRepo("repo");
+			const repo = platform.gitRepo("repo")!;
 			const featureHash = await resolveRef(repo, "refs/heads/feature");
 			expect(pr!.headSha).toBe(featureHash);
 

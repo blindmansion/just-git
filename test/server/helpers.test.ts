@@ -501,12 +501,7 @@ describe("extractTree", () => {
 	test("works with BunSqliteStorage-backed repos", async () => {
 		const db = new Database(":memory:");
 		const storage = new BunSqliteStorage(db);
-		const repo = storage.repo("test-repo");
-
-		await repo.refStore.writeRef("HEAD", {
-			type: "symbolic",
-			target: "refs/heads/main",
-		});
+		const repo = storage.createRepo("test-repo");
 
 		const readmeBlob = await writeBlob(repo, "# My Project\n");
 		const configBlob = await writeBlob(repo, '{"name": "my-project"}\n');
@@ -564,7 +559,7 @@ describe("extractTree", () => {
 		});
 
 		platform.createRepo("repo");
-		const repo = platform.gitRepo("repo");
+		const repo = platform.gitRepo("repo")!;
 
 		const blob = await writeBlob(repo, "init\n");
 		const tree = await writeTree(repo, [{ name: "README.md", hash: blob }]);
@@ -634,7 +629,7 @@ describe("extractTree", () => {
 		});
 
 		platform.createRepo("repo");
-		const repo = platform.gitRepo("repo");
+		const repo = platform.gitRepo("repo")!;
 
 		const blob = await writeBlob(repo, "init\n");
 		const tree = await writeTree(repo, [{ name: "README.md", hash: blob }]);
@@ -704,7 +699,7 @@ describe("extractTree", () => {
 		});
 
 		platform.createRepo("repo");
-		const repo = platform.gitRepo("repo");
+		const repo = platform.gitRepo("repo")!;
 
 		const blob = await writeBlob(repo, "init\n");
 		const tree = await writeTree(repo, [{ name: "README.md", hash: blob }]);

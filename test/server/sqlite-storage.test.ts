@@ -25,7 +25,8 @@ describe("BunSqliteStorage", () => {
 
 	describe("ObjectStore", () => {
 		test("write and read an object", async () => {
-			const { objectStore: objects } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { objectStore: objects } = storage.repo("test-repo")!;
 			const content = encoder.encode("hello world");
 			const hash = await objects.write("blob", content);
 
@@ -37,7 +38,8 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("write is idempotent", async () => {
-			const { objectStore: objects } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { objectStore: objects } = storage.repo("test-repo")!;
 			const content = encoder.encode("same content");
 			const hash1 = await objects.write("blob", content);
 			const hash2 = await objects.write("blob", content);
@@ -45,13 +47,15 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("read throws for missing object", async () => {
-			const { objectStore: objects } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { objectStore: objects } = storage.repo("test-repo")!;
 			const fakeHash = "0000000000000000000000000000000000000000";
 			expect(objects.read(fakeHash)).rejects.toThrow("not found");
 		});
 
 		test("exists returns true/false", async () => {
-			const { objectStore: objects } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { objectStore: objects } = storage.repo("test-repo")!;
 			const content = encoder.encode("exists test");
 			const hash = await objects.write("blob", content);
 
@@ -60,7 +64,8 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("findByPrefix", async () => {
-			const { objectStore: objects } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { objectStore: objects } = storage.repo("test-repo")!;
 			const content = encoder.encode("prefix test");
 			const hash = await objects.write("blob", content);
 			const prefix = hash.slice(0, 8);
@@ -70,13 +75,15 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("findByPrefix returns empty for short prefix", async () => {
-			const { objectStore: objects } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { objectStore: objects } = storage.repo("test-repo")!;
 			const matches = await objects.findByPrefix("ab");
 			expect(matches).toEqual([]);
 		});
 
 		test("ingestPack stores all objects", async () => {
-			const { objectStore: objects } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { objectStore: objects } = storage.repo("test-repo")!;
 
 			const blob1 = encoder.encode("file one");
 			const blob2 = encoder.encode("file two");
@@ -98,7 +105,8 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("ingestPack handles empty/small data", async () => {
-			const { objectStore: objects } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { objectStore: objects } = storage.repo("test-repo")!;
 			expect(await objects.ingestPack(new Uint8Array(0))).toBe(0);
 			expect(await objects.ingestPack(new Uint8Array(10))).toBe(0);
 		});
@@ -108,7 +116,8 @@ describe("BunSqliteStorage", () => {
 
 	describe("RefStore", () => {
 		test("write and read a direct ref", async () => {
-			const { refStore: refs } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { refStore: refs } = storage.repo("test-repo")!;
 			const hash = "abcdef0123456789abcdef0123456789abcdef01";
 			await refs.writeRef("refs/heads/main", { type: "direct", hash });
 
@@ -117,7 +126,8 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("write and read a symbolic ref", async () => {
-			const { refStore: refs } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { refStore: refs } = storage.repo("test-repo")!;
 			await refs.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
 
 			const ref = await refs.readRef("HEAD");
@@ -125,12 +135,14 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("readRef returns null for missing ref", async () => {
-			const { refStore: refs } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { refStore: refs } = storage.repo("test-repo")!;
 			expect(await refs.readRef("refs/heads/nonexistent")).toBeNull();
 		});
 
 		test("writeRef overwrites existing ref", async () => {
-			const { refStore: refs } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { refStore: refs } = storage.repo("test-repo")!;
 			const hash1 = "1111111111111111111111111111111111111111";
 			const hash2 = "2222222222222222222222222222222222222222";
 
@@ -142,7 +154,8 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("deleteRef removes a ref", async () => {
-			const { refStore: refs } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { refStore: refs } = storage.repo("test-repo")!;
 			await refs.writeRef("refs/heads/main", {
 				type: "direct",
 				hash: "abcdef0123456789abcdef0123456789abcdef01",
@@ -153,12 +166,14 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("deleteRef is a no-op for missing ref", async () => {
-			const { refStore: refs } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { refStore: refs } = storage.repo("test-repo")!;
 			await refs.deleteRef("refs/heads/nonexistent");
 		});
 
 		test("listRefs with prefix", async () => {
-			const { refStore: refs } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { refStore: refs } = storage.repo("test-repo")!;
 			await refs.writeRef("refs/heads/main", {
 				type: "direct",
 				hash: "1111111111111111111111111111111111111111",
@@ -183,7 +198,8 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("listRefs without prefix returns all", async () => {
-			const { refStore: refs } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { refStore: refs } = storage.repo("test-repo")!;
 			await refs.writeRef("refs/heads/main", {
 				type: "direct",
 				hash: "1111111111111111111111111111111111111111",
@@ -195,7 +211,8 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("listRefs resolves symrefs", async () => {
-			const { refStore: refs } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { refStore: refs } = storage.repo("test-repo")!;
 			const hash = "abcdef0123456789abcdef0123456789abcdef01";
 			await refs.writeRef("refs/heads/main", { type: "direct", hash });
 			await refs.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
@@ -215,7 +232,8 @@ describe("BunSqliteStorage", () => {
 		const HASH_C = "cccccccccccccccccccccccccccccccccccccccc";
 
 		test("create succeeds when ref does not exist", async () => {
-			const { refStore } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { refStore } = storage.repo("test-repo")!;
 			const ok = await refStore.compareAndSwapRef("refs/heads/main", null, {
 				type: "direct",
 				hash: HASH_A,
@@ -226,7 +244,8 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("create fails when ref already exists", async () => {
-			const { refStore } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { refStore } = storage.repo("test-repo")!;
 			await refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 
 			const ok = await refStore.compareAndSwapRef("refs/heads/main", null, {
@@ -239,7 +258,8 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("update succeeds with matching expected hash", async () => {
-			const { refStore } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { refStore } = storage.repo("test-repo")!;
 			await refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 
 			const ok = await refStore.compareAndSwapRef("refs/heads/main", HASH_A, {
@@ -252,7 +272,8 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("update fails with wrong expected hash", async () => {
-			const { refStore } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { refStore } = storage.repo("test-repo")!;
 			await refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 
 			const ok = await refStore.compareAndSwapRef("refs/heads/main", HASH_C, {
@@ -265,7 +286,8 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("update fails when ref does not exist", async () => {
-			const { refStore } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { refStore } = storage.repo("test-repo")!;
 			const ok = await refStore.compareAndSwapRef("refs/heads/main", HASH_A, {
 				type: "direct",
 				hash: HASH_B,
@@ -274,7 +296,8 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("conditional delete succeeds with matching hash", async () => {
-			const { refStore } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { refStore } = storage.repo("test-repo")!;
 			await refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 
 			const ok = await refStore.compareAndSwapRef("refs/heads/main", HASH_A, null);
@@ -283,7 +306,8 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("conditional delete fails with wrong hash", async () => {
-			const { refStore } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { refStore } = storage.repo("test-repo")!;
 			await refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 
 			const ok = await refStore.compareAndSwapRef("refs/heads/main", HASH_C, null);
@@ -292,7 +316,8 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("CAS resolves symbolic refs for hash comparison", async () => {
-			const { refStore } = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const { refStore } = storage.repo("test-repo")!;
 			await refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 			await refStore.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
 
@@ -306,8 +331,9 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("two repo instances race — only one CAS wins", async () => {
-			const repo1 = storage.repo("test-repo");
-			const repo2 = storage.repo("test-repo");
+			storage.createRepo("test-repo");
+			const repo1 = storage.repo("test-repo")!;
+			const repo2 = storage.repo("test-repo")!;
 
 			await repo1.refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 
@@ -331,8 +357,10 @@ describe("BunSqliteStorage", () => {
 
 	describe("multi-repo isolation", () => {
 		test("objects are isolated between repos", async () => {
-			const repo1 = storage.repo("repo-1");
-			const repo2 = storage.repo("repo-2");
+			storage.createRepo("repo-1");
+			storage.createRepo("repo-2");
+			const repo1 = storage.repo("repo-1")!;
+			const repo2 = storage.repo("repo-2")!;
 
 			const content = encoder.encode("shared content");
 			const hash = await repo1.objectStore.write("blob", content);
@@ -342,8 +370,10 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("refs are isolated between repos", async () => {
-			const repo1 = storage.repo("repo-1");
-			const repo2 = storage.repo("repo-2");
+			storage.createRepo("repo-1");
+			storage.createRepo("repo-2");
+			const repo1 = storage.repo("repo-1")!;
+			const repo2 = storage.repo("repo-2")!;
 
 			await repo1.refStore.writeRef("refs/heads/main", {
 				type: "direct",
@@ -355,8 +385,10 @@ describe("BunSqliteStorage", () => {
 		});
 
 		test("deleteRepo only affects the target repo", async () => {
-			const repo1 = storage.repo("repo-1");
-			const repo2 = storage.repo("repo-2");
+			storage.createRepo("repo-1");
+			storage.createRepo("repo-2");
+			const repo1 = storage.repo("repo-1")!;
+			const repo2 = storage.repo("repo-2")!;
 
 			const content = encoder.encode("keep this");
 			const hash = await repo1.objectStore.write("blob", content);
@@ -371,6 +403,40 @@ describe("BunSqliteStorage", () => {
 			expect(await repo2.objectStore.exists(hash)).toBe(true);
 			expect(await repo1.refStore.readRef("refs/heads/main")).toBeNull();
 			expect(await repo2.refStore.readRef("refs/heads/main")).not.toBeNull();
+		});
+	});
+
+	// ── Storage API ─────────────────────────────────────────────
+
+	describe("Storage API", () => {
+		test("repo() returns null for unknown repo", () => {
+			expect(storage.repo("nonexistent")).toBeNull();
+		});
+
+		test("createRepo throws on duplicate", () => {
+			storage.createRepo("test-repo");
+			expect(() => storage.createRepo("test-repo")).toThrow("already exists");
+		});
+
+		test("listRepos returns created repo IDs", () => {
+			expect(storage.listRepos()).toEqual([]);
+			storage.createRepo("alpha");
+			storage.createRepo("beta");
+			expect(storage.listRepos()).toEqual(["alpha", "beta"]);
+		});
+
+		test("createRepo initializes HEAD", async () => {
+			storage.createRepo("test-repo");
+			const { refStore } = storage.repo("test-repo")!;
+			const head = await refStore.readRef("HEAD");
+			expect(head).toEqual({ type: "symbolic", target: "refs/heads/main" });
+		});
+
+		test("deleteRepo makes repo() return null", () => {
+			storage.createRepo("test-repo");
+			expect(storage.repo("test-repo")).not.toBeNull();
+			storage.deleteRepo("test-repo");
+			expect(storage.repo("test-repo")).toBeNull();
 		});
 	});
 });

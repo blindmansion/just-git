@@ -50,7 +50,7 @@ export type {
 export type { ServerPolicy } from "./types.ts";
 
 // Storage
-export type { Storage } from "./storage.ts";
+export type { Storage, CreateRepoOptions } from "./storage.ts";
 export { MemoryStorage } from "./memory-storage.ts";
 export {
 	BunSqliteStorage,

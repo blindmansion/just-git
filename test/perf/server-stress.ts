@@ -126,14 +126,7 @@ const NO_DELTA = process.env.NO_DELTA === "1";
 if (NO_DELTA) console.log("  mode:       no-delta (streaming)\n");
 
 const server = createGitServer({
-	resolveRepo: async (repoPath) => {
-		const repo = storage.repo(repoPath);
-		const head = await repo.refStore.readRef("HEAD");
-		if (!head) {
-			await repo.refStore.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
-		}
-		return repo;
-	},
+	resolveRepo: (repoPath) => storage.repo(repoPath) ?? storage.createRepo(repoPath),
 	packOptions: NO_DELTA ? { noDelta: true } : undefined,
 	hooks: {
 		postReceive: async (event) => {

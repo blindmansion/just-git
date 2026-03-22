@@ -37,7 +37,7 @@ const ENV = {
 // ── Seed a repo with the repo helpers ───────────────────────────────
 
 const storage = new MemoryStorage();
-const repo = storage.repo("demo");
+const repo = storage.createRepo("demo");
 
 const readmeBlob = await writeBlob(repo, "# Seeded Repo\n\nCreated with repo helpers.\n");
 const indexBlob = await writeBlob(repo, 'export const greeting = "hello";\n');

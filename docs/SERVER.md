@@ -15,6 +15,7 @@ import { createGitServer, BunSqliteStorage } from "just-git/server";
 import { Database } from "bun:sqlite";
 
 const storage = new BunSqliteStorage(new Database("repos.sqlite"));
+storage.createRepo("my-repo");
 
 const server = createGitServer({
   resolveRepo: (repoPath) => storage.repo(repoPath),
@@ -31,6 +32,7 @@ import { createGitServer, BetterSqlite3Storage } from "just-git/server";
 import Database from "better-sqlite3";
 
 const storage = new BetterSqlite3Storage(new Database("repos.sqlite"));
+storage.createRepo("my-repo");
 
 const server = createGitServer({
   resolveRepo: (repoPath) => storage.repo(repoPath),
@@ -60,13 +62,19 @@ Return values:
 
 The `repoPath` is the URL path with the git protocol suffix stripped. For `http://host/org/project/info/refs`, `repoPath` is `"org/project"`. For SSH `git-upload-pack '/org/project'`, it's `"org/project"`.
 
+Since `storage.repo()` returns `null` for repos that haven't been created via `createRepo`, passing it directly is safe — unknown paths get a 404:
+
 ```ts
 const server = createGitServer({
-  resolveRepo: async (repoPath) => {
-    const exists = await db.repoExists(repoPath);
-    if (!exists) return null;
-    return storage.repo(repoPath);
-  },
+  resolveRepo: (repoPath) => storage.repo(repoPath),
+});
+```
+
+To auto-create repos on first access (e.g. for a push-to-create workflow), opt in explicitly:
+
+```ts
+const server = createGitServer({
+  resolveRepo: (repoPath) => storage.repo(repoPath) ?? storage.createRepo(repoPath),
 });
 ```
 
@@ -77,6 +85,8 @@ const server = createGitServer({
 The optional `session` config builds a typed session object from each request. The session is available in all hooks. For HTTP, returning a `Response` rejects the request (e.g. 401). For SSH, auth is handled at the transport layer before the session builder runs.
 
 ```ts
+storage.createRepo("my-repo");
+
 const server = createGitServer({
   resolveRepo: (repoPath) => storage.repo(repoPath),
   session: {
@@ -107,6 +117,8 @@ When `session` is omitted, the server uses a default `Session` type with `transp
 Anyone can clone, only authorized users can push:
 
 ```ts
+storage.createRepo("my-repo");
+
 const server = createGitServer({
   resolveRepo: (repoPath) => storage.repo(repoPath),
   hooks: {
@@ -121,6 +133,8 @@ const server = createGitServer({
 With a custom session type, auth works uniformly across HTTP and SSH:
 
 ```ts
+storage.createRepo("my-repo");
+
 const server = createGitServer({
   resolveRepo: (repoPath) => storage.repo(repoPath),
   session: {
@@ -142,6 +156,8 @@ const server = createGitServer({
 ```ts
 import { Server } from "ssh2";
 import { createGitServer, type SshChannel } from "just-git/server";
+
+storage.createRepo("my-repo");
 
 const server = createGitServer({
   resolveRepo: (repoPath) => storage.repo(repoPath),
@@ -268,9 +284,16 @@ const server = createGitServer({
 
 ## Storage backends
 
-All backends implement the `Storage` interface: `repo(repoId)` returns a `GitRepo`, `deleteRepo(repoId)` removes all data. Multiple repos share one store, partitioned by ID. They also work with `resolveRemote` for in-process cross-VFS transport alongside HTTP access.
+All backends implement the `Storage` interface. Repos must be explicitly created with `createRepo(id)` before they can be accessed with `repo(id)`. Multiple repos share one store, partitioned by ID. Backends also work with `resolveRemote` for in-process cross-VFS transport alongside HTTP access.
 
-> **Note:** All storage backends auto-create repos on first access via `.repo(id)`. If you pass `storage.repo(path)` directly as `resolveRepo`, any URL path will create a repo and accept pushes. For production, validate repo paths in `resolveRepo` or gate access with a [session builder](#session-builder), [policy](#policy), and [hooks](#hooks).
+| Method                     | Returns           | Description                                          |
+| -------------------------- | ----------------- | ---------------------------------------------------- |
+| `createRepo(id, options?)` | `GitRepo`         | Create a repo and initialize HEAD. Throws if exists. |
+| `repo(id)`                 | `GitRepo \| null` | Get a repo, or `null` if it hasn't been created.     |
+| `deleteRepo(id)`           | `void`            | Delete all data and the repo record.                 |
+| `listRepos()`              | `string[]`        | List all created repo IDs.                           |
+
+To auto-create repos on first access (e.g. push-to-create), use the opt-in pattern `storage.repo(path) ?? storage.createRepo(path)` in `resolveRepo`.
 
 ```ts
 import type { Storage } from "just-git/server";
@@ -281,6 +304,7 @@ import type { Storage } from "just-git/server";
 ```ts
 import { MemoryStorage } from "just-git/server";
 const storage = new MemoryStorage();
+storage.createRepo("my-repo");
 ```
 
 ### `BunSqliteStorage`
@@ -291,6 +315,7 @@ For Bun. Takes a `bun:sqlite` `Database` directly.
 import { BunSqliteStorage } from "just-git/server";
 import { Database } from "bun:sqlite";
 const storage = new BunSqliteStorage(new Database("repos.sqlite"));
+storage.createRepo("my-repo");
 ```
 
 ### `BetterSqlite3Storage`
@@ -301,6 +326,7 @@ For Node.js. Takes a `better-sqlite3` `Database` directly.
 import { BetterSqlite3Storage } from "just-git/server";
 import Database from "better-sqlite3";
 const storage = new BetterSqlite3Storage(new Database("repos.sqlite"));
+storage.createRepo("my-repo");
 ```
 
 ### `PgStorage`
@@ -313,6 +339,7 @@ import { Pool } from "pg";
 const storage = await PgStorage.create(
   wrapPgPool(new Pool({ connectionString: process.env.DATABASE_URL })),
 );
+await storage.createRepo("my-repo");
 ```
 
 For other drivers, construct a `PgDatabase` directly:
@@ -333,6 +360,7 @@ const db: PgDatabase = {
   },
 };
 const storage = await PgStorage.create(db);
+await storage.createRepo("my-repo");
 ```
 
 ## Working with pushed code
@@ -341,6 +369,8 @@ Use the [repo module](REPO.md) (`just-git/repo`) inside hooks to inspect pushed 
 
 ```ts
 import { getChangedFiles, readFileAtCommit, getNewCommits } from "just-git/repo";
+
+storage.createRepo("my-repo");
 
 const server = createGitServer({
   resolveRepo: (repoPath) => storage.repo(repoPath),

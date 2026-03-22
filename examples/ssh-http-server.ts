@@ -43,19 +43,7 @@ const storage = new BunSqliteStorage(db);
 const server = createGitServer({
 	resolveRepo: (repoPath) => {
 		console.log(`  [resolve] ${repoPath}`);
-		const repo = storage.repo(repoPath);
-
-		// Auto-init HEAD so empty repos accept their first push
-		repo.refStore.readRef("HEAD").then((head) => {
-			if (!head) {
-				repo.refStore.writeRef("HEAD", {
-					type: "symbolic",
-					target: "refs/heads/main",
-				});
-			}
-		});
-
-		return repo;
+		return storage.repo(repoPath) ?? storage.createRepo(repoPath);
 	},
 	policy: {
 		protectedBranches: ["main", "master"],

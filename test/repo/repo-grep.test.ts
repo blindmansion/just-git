@@ -11,7 +11,8 @@ const ID: Identity = {
 };
 
 function freshRepo(): GitRepo {
-	return new MemoryStorage().repo("test");
+	const s = new MemoryStorage();
+	return s.createRepo("test");
 }
 
 async function commitFiles(

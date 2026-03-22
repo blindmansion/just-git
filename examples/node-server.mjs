@@ -7,7 +7,7 @@ const GIT_TOKEN = process.env.GIT_TOKEN;
 const storage = new BetterSqlite3Storage(new Database("repos.sqlite"));
 
 const server = createGitServer({
-	resolveRepo: (repoPath) => storage.repo(repoPath),
+	resolveRepo: (repoPath) => storage.repo(repoPath) ?? storage.createRepo(repoPath),
 
 	session: {
 		http: (request) => {

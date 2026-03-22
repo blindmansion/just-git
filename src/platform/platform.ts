@@ -39,13 +39,7 @@ export class Platform {
 	createRepo(id: string, options?: { defaultBranch?: string }): Repo {
 		const defaultBranch = options?.defaultBranch ?? "main";
 		const repo = this.platformDb.createRepo(id, defaultBranch);
-
-		const gitRepo = this.storage.repo(id);
-		gitRepo.refStore.writeRef("HEAD", {
-			type: "symbolic",
-			target: `refs/heads/${defaultBranch}`,
-		});
-
+		this.storage.createRepo(id, { defaultBranch });
 		return repo;
 	}
 
@@ -64,7 +58,7 @@ export class Platform {
 
 	// ── Direct git access ───────────────────────────────────────────
 
-	gitRepo(repoId: string): GitRepo {
+	gitRepo(repoId: string): GitRepo | null {
 		return this.storage.repo(repoId);
 	}
 
@@ -76,7 +70,7 @@ export class Platform {
 			throw new Error(`repo '${repoId}' not found`);
 		}
 
-		const gitRepo = this.storage.repo(repoId);
+		const gitRepo = this.storage.repo(repoId)!;
 
 		const headSha = await resolveRef(gitRepo, `refs/heads/${opts.head}`);
 		if (!headSha) {
@@ -128,7 +122,7 @@ export class Platform {
 		this.platformDb.closePullRequest(repoId, number);
 
 		if (this.callbacks.onPullRequestClosed) {
-			const gitRepo = this.storage.repo(repoId);
+			const gitRepo = this.storage.repo(repoId)!;
 			const closed = this.platformDb.getPullRequest(repoId, number)!;
 			try {
 				await this.callbacks.onPullRequestClosed({ repo: gitRepo, repoId, pr: closed });
@@ -149,7 +143,7 @@ export class Platform {
 			throw new MergeError(`PR #${number} is already ${pr.state}`, "not_open");
 		}
 
-		const gitRepo = this.storage.repo(repoId);
+		const gitRepo = this.storage.repo(repoId)!;
 
 		if (this.callbacks.beforeMerge) {
 			const rejection = await this.callbacks.beforeMerge({

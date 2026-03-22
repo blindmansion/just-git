@@ -127,7 +127,7 @@ Declarative push rules on `GitServerConfig.policy`: branch protection, force-pus
 
 `BunSqliteStorage`, `BetterSqlite3Storage`, `MemoryStorage`, and `PgStorage` — multi-repo backends implementing `ObjectStore` and `RefStore`. Multiple repos partitioned by ID in a single store.
 
-All storage backends auto-create repos on `.repo(id)` — calling `storage.repo("any-string")` returns a functional `GitRepo` backed by lazily-initialized maps/tables, even if no data has ever been written. This is by design for convenience, but means `resolveRepo: (path) => storage.repo(path)` will accept any URL path. For production, validate repo paths in `resolveRepo` or gate access with a session builder and hooks.
+Storage backends require explicit repo creation via `.createRepo(id)`. Calling `.repo(id)` returns `null` for unregistered repos, making `resolveRepo: (path) => storage.repo(path)` safe by default — unknown paths get 404 responses. For auto-creation (e.g. dev servers), use `storage.repo(path) ?? storage.createRepo(path)`.
 
 ### Type hierarchy
 
@@ -154,7 +154,7 @@ import { createGitServer } from "just-git/server";
 const server = createGitServer({
   resolveRepo: async (repoPath, request) => {
     // Return a GitRepo, or null to 404
-    return storage.repo(repoPath);
+    return storage.repo(repoPath) ?? storage.createRepo(repoPath);
   },
   hooks: {
     /* optional ServerHooks */
@@ -198,7 +198,7 @@ interface ServerHooks {
 - **No auth system.** `request` is passed through on every hook event so authors can read headers, but the server has no concept of users, tokens, or permissions. Auth is checked in `preReceive` or `advertiseRefs` against whatever user store the platform uses.
 - **No built-in fast-forward enforcement.** The `isFF` boolean is computed and available on `RefUpdate`, but the server doesn't reject non-FF pushes by default. That's a policy decision — use `policy: { denyNonFastForward: true }` for the common case.
 - **No webhooks/notification system.** `postReceive` is the trigger point; delivery mechanics (HTTP calls, queues, retries) are user-land.
-- **No repo creation/management.** `resolveRepo` returns existing repos. How repos get created, named, or forked is a platform concern.
+- **No repo lifecycle management.** `Storage` provides `createRepo`/`listRepos`/`deleteRepo` for basic CRUD, but higher-level concerns (forking, naming conventions, org hierarchy) are platform concerns.
 - **Events are pure data.** No methods on event payloads — use standalone helpers instead. This keeps events serializable and testable.
 
 ### Hook event payloads

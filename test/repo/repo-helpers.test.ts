@@ -24,7 +24,8 @@ function idAt(ts: number): Identity {
 }
 
 function freshRepo(): GitRepo {
-	return new MemoryStorage().repo("test");
+	const s = new MemoryStorage();
+	return s.createRepo("test");
 }
 
 async function commitFile(

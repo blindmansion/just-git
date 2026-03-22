@@ -31,7 +31,7 @@ const storage = new MemoryStorage();
 const ciLog: string[] = [];
 
 const server = createGitServer({
-	resolveRepo: (path) => storage.repo(path),
+	resolveRepo: (path) => storage.repo(path) ?? storage.createRepo(path),
 	hooks: {
 		async preReceive({ repo, updates }) {
 			for (const update of updates) {
@@ -182,7 +182,9 @@ console.log("Test 1: push that passes all CI checks");
 		"CI ran git log in ephemeral worktree",
 	);
 
-	const serverRef = await storage.repo("good-app").refStore.readRef("refs/heads/main");
+	const goodAppRepo = storage.repo("good-app");
+	assert(goodAppRepo !== null, "server has good-app repo");
+	const serverRef = await goodAppRepo!.refStore.readRef("refs/heads/main");
 	assert(serverRef !== null, "server has refs/heads/main");
 }
 console.log();
@@ -212,8 +214,10 @@ console.log("Test 2: push rejected — FIXME in code");
 		"CI log mentions FIXME",
 	);
 
-	const serverRef = await storage.repo("fixme-app").refStore.readRef("refs/heads/main");
-	assert(serverRef === null, "server does not have ref after rejection");
+	const fixmeRepo = storage.repo("fixme-app");
+	assert(fixmeRepo !== null, "server has fixme-app repo (auto-created)");
+	const fixmeRef = await fixmeRepo!.refStore.readRef("refs/heads/main");
+	assert(fixmeRef === null, "server does not have ref after rejection");
 }
 console.log();
 
@@ -320,7 +324,7 @@ console.log();
 
 console.log("Test 6: storage isolation — CI artifacts don't leak");
 {
-	const goodApp = storage.repo("good-app");
+	const goodApp = storage.repo("good-app")!;
 	const mainHash = await resolveRef(goodApp, "refs/heads/main");
 	assert(mainHash !== null, "good-app main ref still exists");
 
@@ -333,9 +337,10 @@ console.log("Test 6: storage isolation — CI artifacts don't leak");
 
 	// Rejected repos should not have any refs
 	for (const name of ["fixme-app", "no-test-app", "broken-build"]) {
-		const r = storage.repo(name);
+		const r = storage.repo(name)!;
 		const refs = await r.refStore.listRefs();
-		assert(refs.length === 0, `${name} has no refs (push was rejected)`);
+		const nonHeadRefs = refs.filter((ref) => ref.name !== "HEAD");
+		assert(nonHeadRefs.length === 0, `${name} has no refs (push was rejected)`);
 	}
 }
 console.log();

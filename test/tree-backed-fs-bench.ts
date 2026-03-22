@@ -81,7 +81,7 @@ function filePath(i: number, totalFiles: number): string {
 
 async function buildFixture(size: number): Promise<TreeFixture> {
 	const storage = new MemoryStorage();
-	const repo = storage.repo(`bench-${size}`);
+	const repo = storage.createRepo(`bench-${size}`);
 	const files: Record<string, string> = {};
 	const paths: string[] = [];
 

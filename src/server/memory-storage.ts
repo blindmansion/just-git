@@ -13,7 +13,7 @@ import type {
 	RefStore,
 	GitRepo,
 } from "../lib/types.ts";
-import type { Storage } from "./storage.ts";
+import type { Storage, CreateRepoOptions } from "./storage.ts";
 
 // ── MemoryStorage ───────────────────────────────────────────────────
 
@@ -25,27 +25,52 @@ import type { Storage } from "./storage.ts";
  *
  * ```ts
  * const storage = new MemoryStorage();
+ * storage.createRepo("my-repo");
  * const server = createGitServer({
- *   resolveRepo: async (repoPath) => storage.repo(repoPath),
+ *   resolveRepo: (repoPath) => storage.repo(repoPath),
  * });
  * ```
  */
 export class MemoryStorage implements Storage {
 	private objects = new Map<string, Map<string, RawObject>>();
 	private refs = new Map<string, Map<string, Ref>>();
+	private created = new Set<string>();
 
-	repo(repoId: string): GitRepo {
-		return {
-			objectStore: new MemoryObjectStore(this.getObjects(repoId)),
-			refStore: new MemoryRefStore(this.getRefs(repoId)),
-		};
+	createRepo(repoId: string, options?: CreateRepoOptions): GitRepo {
+		if (this.created.has(repoId)) {
+			throw new Error(`repo '${repoId}' already exists`);
+		}
+		this.created.add(repoId);
+		const defaultBranch = options?.defaultBranch ?? "main";
+		this.getRefs(repoId).set("HEAD", {
+			type: "symbolic",
+			target: `refs/heads/${defaultBranch}`,
+		});
+		return this.buildRepo(repoId);
 	}
 
-	async deleteRepo(repoId: string): Promise<void> {
+	repo(repoId: string): GitRepo | null {
+		if (!this.created.has(repoId)) return null;
+		return this.buildRepo(repoId);
+	}
+
+	deleteRepo(repoId: string): void {
+		this.created.delete(repoId);
 		this.objects.get(repoId)?.clear();
 		this.objects.delete(repoId);
 		this.refs.get(repoId)?.clear();
 		this.refs.delete(repoId);
+	}
+
+	listRepos(): string[] {
+		return Array.from(this.created);
+	}
+
+	private buildRepo(repoId: string): GitRepo {
+		return {
+			objectStore: new MemoryObjectStore(this.getObjects(repoId)),
+			refStore: new MemoryRefStore(this.getRefs(repoId)),
+		};
 	}
 
 	private getObjects(repoId: string): Map<string, RawObject> {

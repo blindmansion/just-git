@@ -7,6 +7,7 @@
  * works with any SSH library (ssh2, etc.) through a thin adapter.
  *
  * ```ts
+ * storage.createRepo("my-repo");
  * const server = createGitServer({
  *   resolveRepo: (path) => storage.repo(path),
  * });
@@ -74,6 +75,7 @@ const defaultSessionBuilder: SessionBuilder<Session> = {
  * Create a unified Git server that handles both HTTP and SSH.
  *
  * ```ts
+ * storage.createRepo("my-repo");
  * const server = createGitServer({
  *   resolveRepo: (path) => storage.repo(path),
  * });
@@ -89,7 +91,8 @@ export function createGitServer<S = Session>(config: GitServerConfig<S>): GitSer
 	if (!config || typeof config.resolveRepo !== "function") {
 		throw new TypeError(
 			"createGitServer: config.resolveRepo must be a function. " +
-				"Example: createGitServer({ resolveRepo: (path) => storage.repo(path) })",
+				"Example: createGitServer({ resolveRepo: (path) => storage.repo(path) }). " +
+				"Repos must be created with storage.createRepo() before they can be served.",
 		);
 	}
 	const { resolveRepo, basePath } = config;
