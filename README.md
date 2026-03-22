@@ -64,14 +64,13 @@ Both `fs` and `cwd` can be set once in `createGit` and overridden per-call. `cwd
 Stand up a git server with built-in storage (SQLite or PostgreSQL), branch protection, auth, and push hooks:
 
 ```ts
-import { createGitServer, createStorage, BunSqliteDriver } from "just-git/server";
+import { createGitServer, BunSqliteDriver } from "just-git/server";
 import { getChangedFiles } from "just-git/repo";
 import { Database } from "bun:sqlite";
 
-const storage = createStorage(new BunSqliteDriver(new Database("repos.sqlite")));
-
 const server = createGitServer({
-  resolveRepo: (path) => storage.repo(path),
+  storage: new BunSqliteDriver(new Database("repos.sqlite")),
+  autoCreate: true,
   policy: { protectedBranches: ["main"] },
   hooks: {
     preReceive: ({ session }) => {

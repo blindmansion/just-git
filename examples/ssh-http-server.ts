@@ -20,7 +20,6 @@ import { Server } from "ssh2";
 import { Database } from "bun:sqlite";
 import {
 	createGitServer,
-	createStorage,
 	BunSqliteDriver,
 	type SshChannel,
 	type PostReceiveEvent,
@@ -33,19 +32,14 @@ const SSH_PORT = Number(process.env.SSH_PORT ?? 2222);
 const DB_PATH = process.env.DB_PATH ?? ":memory:";
 const HOST_KEY_PATH = process.env.HOST_KEY ?? "host_key";
 
-// ── Storage ─────────────────────────────────────────────────────────
+// ── Single unified server ───────────────────────────────────────────
 
 const db = new Database(DB_PATH);
 db.run("PRAGMA journal_mode = WAL");
-const storage = createStorage(new BunSqliteDriver(db));
-
-// ── Single unified server ───────────────────────────────────────────
 
 const server = createGitServer({
-	resolveRepo: async (repoPath) => {
-		console.log(`  [resolve] ${repoPath}`);
-		return (await storage.repo(repoPath)) ?? storage.createRepo(repoPath);
-	},
+	storage: new BunSqliteDriver(db),
+	autoCreate: true,
 	policy: {
 		protectedBranches: ["main", "master"],
 		denyNonFastForward: true,

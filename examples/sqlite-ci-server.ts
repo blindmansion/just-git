@@ -14,7 +14,7 @@
 import { Database } from "bun:sqlite";
 import { Bash } from "just-bash";
 import { createGit, type GitRepo } from "../src";
-import { createGitServer, createStorage, BunSqliteDriver } from "../src/server";
+import { createGitServer, BunSqliteDriver } from "../src/server";
 import { readFileAtCommit, createSandboxWorktree } from "../src/repo";
 
 const DB_PATH = process.env.DB_PATH ?? ":memory:";
@@ -30,7 +30,6 @@ const CI_ENV = {
 
 const db = new Database(DB_PATH);
 db.run("PRAGMA journal_mode = WAL");
-const storage = createStorage(new BunSqliteDriver(db));
 
 async function runCIScript(
 	repo: GitRepo,
@@ -74,18 +73,16 @@ async function runCIScript(
 }
 
 const server = createGitServer({
-	resolveRepo: async (repoPath) => {
-		console.log(`  [resolve] ${repoPath}`);
-		return (await storage.repo(repoPath)) ?? storage.createRepo(repoPath);
-	},
+	storage: new BunSqliteDriver(db),
+	autoCreate: true,
 
 	hooks: {
-		preReceive: async ({ repo, updates, repoPath }) => {
+		preReceive: async ({ repo, updates, repoId }) => {
 			for (const update of updates) {
 				if (update.isDelete) continue;
 
 				console.log(
-					`  [CI] ${repoPath} — running ${CI_SCRIPT} for ${update.ref} @ ${update.newHash.slice(0, 7)}`,
+					`  [CI] ${repoId} — running ${CI_SCRIPT} for ${update.ref} @ ${update.newHash.slice(0, 7)}`,
 				);
 				const { passed, output } = await runCIScript(repo, update.newHash);
 
@@ -101,10 +98,10 @@ const server = createGitServer({
 			}
 		},
 
-		postReceive: async ({ updates, repoPath }) => {
+		postReceive: async ({ updates, repoId }) => {
 			for (const u of updates) {
 				console.log(
-					`  [push] ${repoPath} ${u.ref}: ${(u.oldHash ?? "0000000").slice(0, 7)}..${u.newHash.slice(0, 7)}`,
+					`  [push] ${repoId} ${u.ref}: ${(u.oldHash ?? "0000000").slice(0, 7)}..${u.newHash.slice(0, 7)}`,
 				);
 			}
 		},

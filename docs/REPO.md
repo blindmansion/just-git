@@ -31,14 +31,17 @@ import { findRepo } from "just-git";
 const ctx = await findRepo(fs, "/repo"); // GitContext | null
 ```
 
-**From a storage backend**: server storage modules return a bare `GitRepo` backed by the database:
+**From a server**: `createGitServer` returns a server with `repo(id)` to get a `GitRepo` backed by the storage driver:
 
 ```ts
-import { BunSqliteStorage } from "just-git/server";
+import { createGitServer, BunSqliteDriver } from "just-git/server";
 import { Database } from "bun:sqlite";
 
-const storage = new BunSqliteStorage(new Database("repos.sqlite"));
-const repo = storage.repo("my-repo"); // GitRepo
+const server = createGitServer({
+  storage: new BunSqliteDriver(new Database("repos.sqlite")),
+});
+await server.createRepo("my-repo");
+const repo = await server.repo("my-repo"); // GitRepo | null
 ```
 
 **Bridging the two**: `createWorktree` materializes a storage-backed repo onto a VFS, enabling full git command execution against a database backend:
@@ -48,7 +51,7 @@ import { createWorktree } from "just-git/repo";
 import { createGit } from "just-git";
 import { Bash, InMemoryFs } from "just-bash";
 
-const repo = storage.repo("my-repo");
+const repo = (await server.repo("my-repo"))!;
 const fs = new InMemoryFs();
 await createWorktree(repo, fs, { workTree: "/repo" });
 
@@ -72,7 +75,7 @@ Wrap any `GitRepo` with `readonlyRepo` to ensure no writes can occur:
 ```ts
 import { readonlyRepo } from "just-git/repo";
 
-const ro = readonlyRepo(storage.repo("my-repo"));
+const ro = readonlyRepo(repo);
 // ro.objectStore.write(...) and ro.refStore.writeRef(...) will throw
 ```
 
@@ -98,7 +101,7 @@ const git = createGit({
 
 // Server-side hook
 const server = createGitServer({
-  resolveRepo: (path) => storage.repo(path),
+  storage: new BunSqliteDriver(db),
   hooks: {
     postReceive: async ({ repo, updates }) => {
       for (const u of updates) {
@@ -177,4 +180,4 @@ Both return `{ treeHash, clean, conflicts, messages }`. Operates purely on the o
 
 The repo module also re-exports `PackedObjectStore` and `FileSystemRefStore`, the `ObjectStore` and `RefStore` implementations used by VFS-backed repositories. These are what `findRepo` uses internally, and can be used directly for custom storage setups.
 
-Server storage backends (`BunSqliteStorage`, `BetterSqlite3Storage`, `PgStorage`, `MemoryStorage`) provide their own implementations. See [SERVER.md](SERVER.md#storage-backends) for details.
+Server storage drivers (`BunSqliteDriver`, `BetterSqlite3Driver`, `PgDriver`, `MemoryDriver`) provide their own implementations. See [SERVER.md](SERVER.md#storage-drivers) for details.

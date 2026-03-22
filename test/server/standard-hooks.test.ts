@@ -1,36 +1,43 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { InMemoryFs, Bash } from "just-bash";
-import { createGit } from "../../src/index.ts";
-import { findRepo } from "../../src/lib/repo.ts";
-import type { GitContext } from "../../src/lib/types.ts";
+import { MemoryDriver } from "../../src/server/memory-storage.ts";
+import type { GitServer } from "../../src/server/types.ts";
 import { envAt, createServerClient, startServer, startServerWithSessionAuth } from "./util.ts";
 
 describe("server policy", () => {
-	let serverFs: InMemoryFs;
-	let serverBash: Bash;
-	let serverRepo: GitContext;
+	let driver: MemoryDriver;
+	let server: GitServer;
 
 	beforeAll(async () => {
-		serverFs = new InMemoryFs();
-		const git = createGit();
-		serverBash = new Bash({ fs: serverFs, cwd: "/repo", customCommands: [git] });
+		driver = new MemoryDriver();
+		const { server: s, srv: seedSrv, port: seedPort } = startServer({ storage: driver });
+		server = s;
 
-		await serverBash.writeFile("/repo/README.md", "# Test");
-		await serverBash.exec("git init");
-		await serverBash.exec("git add .");
-		await serverBash.exec('git commit -m "initial"', { env: envAt(1000000000) });
+		await server.createRepo("repo");
 
-		await serverBash.exec("git branch protected-branch");
+		const seedClient = createServerClient();
+		await seedClient.exec(`git clone http://localhost:${seedPort}/repo /local`, {
+			env: envAt(1000000000),
+		});
+		await seedClient.writeFile("/local/README.md", "# Test");
+		await seedClient.exec("git add .", { cwd: "/local", env: envAt(1000000000) });
+		await seedClient.exec('git commit -m "initial"', {
+			cwd: "/local",
+			env: envAt(1000000000),
+		});
+		await seedClient.exec("git push origin main", { cwd: "/local" });
 
-		const ctx = await findRepo(serverFs, "/repo");
-		if (!ctx) throw new Error("repo not found");
-		serverRepo = ctx;
+		seedSrv.stop();
+
+		const repo = (await server.repo("repo"))!;
+		const mainRef = await repo.refStore.readRef("refs/heads/main");
+		const mainHash = mainRef!.type === "direct" ? mainRef!.hash : "";
+		await repo.refStore.writeRef("refs/heads/protected-branch", mainHash);
 	});
 
 	describe("protectedBranches", () => {
 		test("blocks force-push to protected branch", async () => {
 			const { srv, port } = startServer({
-				resolveRepo: async () => serverRepo,
+				storage: driver,
 				policy: { protectedBranches: ["main"] },
 			});
 
@@ -56,7 +63,7 @@ describe("server policy", () => {
 
 		test("allows fast-forward push to protected branch", async () => {
 			const { srv, port } = startServer({
-				resolveRepo: async () => serverRepo,
+				storage: driver,
 				policy: { protectedBranches: ["main"] },
 			});
 
@@ -82,7 +89,7 @@ describe("server policy", () => {
 
 		test("blocks deletion of protected branch", async () => {
 			const { srv, port } = startServer({
-				resolveRepo: async () => serverRepo,
+				storage: driver,
 				policy: { protectedBranches: ["protected-branch"] },
 			});
 
@@ -102,9 +109,12 @@ describe("server policy", () => {
 		});
 
 		test("allows deletion of non-protected branch", async () => {
-			await serverBash.exec("git branch temp-delete");
+			const repo = (await server.repo("repo"))!;
+			const mainRef = await repo.refStore.readRef("refs/heads/main");
+			await repo.refStore.writeRef("refs/heads/temp-delete", mainRef!);
+
 			const { srv, port } = startServer({
-				resolveRepo: async () => serverRepo,
+				storage: driver,
 				policy: { protectedBranches: ["main"] },
 			});
 
@@ -125,7 +135,7 @@ describe("server policy", () => {
 
 		test("accepts short branch names (without refs/heads/ prefix)", async () => {
 			const { srv, port } = startServer({
-				resolveRepo: async () => serverRepo,
+				storage: driver,
 				policy: { protectedBranches: ["main"] },
 			});
 
@@ -150,9 +160,12 @@ describe("server policy", () => {
 
 	describe("denyNonFastForward", () => {
 		test("rejects non-fast-forward push to any branch", async () => {
-			await serverBash.exec("git branch deny-ff-test");
+			const repo = (await server.repo("repo"))!;
+			const mainRef = await repo.refStore.readRef("refs/heads/main");
+			await repo.refStore.writeRef("refs/heads/deny-ff-test", mainRef!);
+
 			const { srv, port } = startServer({
-				resolveRepo: async () => serverRepo,
+				storage: driver,
 				policy: { denyNonFastForward: true },
 			});
 
@@ -181,7 +194,7 @@ describe("server policy", () => {
 
 		test("allows fast-forward push", async () => {
 			const { srv, port } = startServer({
-				resolveRepo: async () => serverRepo,
+				storage: driver,
 				policy: { denyNonFastForward: true },
 			});
 
@@ -208,9 +221,12 @@ describe("server policy", () => {
 
 	describe("denyDeletes", () => {
 		test("rejects ref deletion", async () => {
-			await serverBash.exec("git branch deny-del-test");
+			const repo = (await server.repo("repo"))!;
+			const mainRef = await repo.refStore.readRef("refs/heads/main");
+			await repo.refStore.writeRef("refs/heads/deny-del-test", mainRef!);
+
 			const { srv, port } = startServer({
-				resolveRepo: async () => serverRepo,
+				storage: driver,
 				policy: { denyDeletes: true },
 			});
 
@@ -231,7 +247,7 @@ describe("server policy", () => {
 
 		test("allows non-delete pushes", async () => {
 			const { srv, port } = startServer({
-				resolveRepo: async () => serverRepo,
+				storage: driver,
 				policy: { denyDeletes: true },
 			});
 
@@ -260,7 +276,7 @@ describe("server policy", () => {
 		test("policy runs before user hooks", async () => {
 			const hookLog: string[] = [];
 			const { srv, port } = startServer({
-				resolveRepo: async () => serverRepo,
+				storage: driver,
 				policy: { protectedBranches: ["main"] },
 				hooks: {
 					preReceive: () => {
@@ -278,7 +294,6 @@ describe("server policy", () => {
 					env: envAt(1000002700),
 				});
 
-				// FF push should pass policy, then user preReceive, then postReceive
 				await client.writeFile("/local/compose.txt", "compose");
 				await client.exec("git add .", { cwd: "/local" });
 				await client.exec('git commit -m "compose"', {
@@ -297,7 +312,7 @@ describe("server policy", () => {
 		test("policy rejection prevents user hooks from running", async () => {
 			const hookLog: string[] = [];
 			const { srv, port } = startServer({
-				resolveRepo: async () => serverRepo,
+				storage: driver,
 				policy: { protectedBranches: ["main"] },
 				hooks: {
 					preReceive: () => {
@@ -330,7 +345,7 @@ describe("server policy", () => {
 	describe("session auth via hooks", () => {
 		test("rejects clone when session builder rejects", async () => {
 			const { srv, port } = startServerWithSessionAuth(() => false, {
-				resolveRepo: async () => serverRepo,
+				storage: driver,
 			});
 
 			try {
@@ -346,7 +361,7 @@ describe("server policy", () => {
 
 		test("allows clone when session builder allows", async () => {
 			const { srv, port } = startServerWithSessionAuth(() => true, {
-				resolveRepo: async () => serverRepo,
+				storage: driver,
 			});
 
 			try {
@@ -367,7 +382,7 @@ describe("server policy", () => {
 						status: 401,
 						headers: { "WWW-Authenticate": 'Bearer realm="git"' },
 					}),
-				{ resolveRepo: async () => serverRepo },
+				{ storage: driver },
 			);
 
 			try {
@@ -382,7 +397,7 @@ describe("server policy", () => {
 		test("gates push when session builder rejects", async () => {
 			const { srv, port } = startServerWithSessionAuth(
 				(req) => req.headers.get("Authorization") === "Bearer secret",
-				{ resolveRepo: async () => serverRepo },
+				{ storage: driver },
 			);
 
 			try {
@@ -401,7 +416,7 @@ describe("server policy", () => {
 
 		test("composes session auth with policy", async () => {
 			const { srv, port } = startServerWithSessionAuth(() => true, {
-				resolveRepo: async () => serverRepo,
+				storage: driver,
 				policy: { protectedBranches: ["main"] },
 			});
 
@@ -428,10 +443,15 @@ describe("server policy", () => {
 
 	describe("denyDeleteTags", () => {
 		test("blocks tag deletion", async () => {
-			await serverBash.exec('git tag -a v1.0 -m "release"', { env: envAt(1000002000) });
+			const repo = (await server.repo("repo"))!;
+			const mainRef = await repo.refStore.readRef("refs/heads/main");
+			const mainHash = mainRef!.type === "direct" ? mainRef!.hash : "";
+			const tagContent = `object ${mainHash}\ntype commit\ntag v1.0\ntagger Test <test@test.com> 1000002000 +0000\n\nrelease\n`;
+			const tagHash = await repo.objectStore.write("tag", new TextEncoder().encode(tagContent));
+			await repo.refStore.writeRef("refs/tags/v1.0", tagHash);
 
 			const { srv, port } = startServer({
-				resolveRepo: async () => serverRepo,
+				storage: driver,
 				policy: { denyDeleteTags: true },
 			});
 
@@ -444,7 +464,7 @@ describe("server policy", () => {
 				const del = await client.exec("git push origin --delete v1.0", { cwd: "/local" });
 				expect(del.exitCode).not.toBe(0);
 
-				const tag = await serverRepo.refStore.readRef("refs/tags/v1.0");
+				const tag = await repo.refStore.readRef("refs/tags/v1.0");
 				expect(tag).not.toBeNull();
 			} finally {
 				srv.stop();
@@ -453,7 +473,7 @@ describe("server policy", () => {
 
 		test("blocks tag overwrite via force-push", async () => {
 			const { srv, port } = startServer({
-				resolveRepo: async () => serverRepo,
+				storage: driver,
 				policy: { denyDeleteTags: true },
 			});
 
@@ -482,7 +502,7 @@ describe("server policy", () => {
 
 		test("allows creating new tags", async () => {
 			const { srv, port } = startServer({
-				resolveRepo: async () => serverRepo,
+				storage: driver,
 				policy: { denyDeleteTags: true },
 			});
 
@@ -498,7 +518,8 @@ describe("server policy", () => {
 				});
 				expect(push.exitCode).toBe(0);
 
-				const tag = await serverRepo.refStore.readRef("refs/tags/v2.0");
+				const repo = (await server.repo("repo"))!;
+				const tag = await repo.refStore.readRef("refs/tags/v2.0");
 				expect(tag).not.toBeNull();
 			} finally {
 				srv.stop();
@@ -506,9 +527,12 @@ describe("server policy", () => {
 		});
 
 		test("allows branch operations when only tags are protected", async () => {
-			await serverBash.exec("git branch deleteable-branch");
+			const repo = (await server.repo("repo"))!;
+			const mainRef = await repo.refStore.readRef("refs/heads/main");
+			await repo.refStore.writeRef("refs/heads/deleteable-branch", mainRef!);
+
 			const { srv, port } = startServer({
-				resolveRepo: async () => serverRepo,
+				storage: driver,
 				policy: { denyDeleteTags: true },
 			});
 

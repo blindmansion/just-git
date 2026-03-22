@@ -30,7 +30,7 @@ function refUpdate(ref = "refs/heads/main"): RefUpdate {
 function preReceiveEvent(overrides?: Partial<PreReceiveEvent>): PreReceiveEvent {
 	return {
 		repo: stubRepo(),
-		repoPath: "my-repo",
+		repoId: "my-repo",
 		updates: [refUpdate()],
 		session: stubSession(),
 		...overrides,
@@ -40,7 +40,7 @@ function preReceiveEvent(overrides?: Partial<PreReceiveEvent>): PreReceiveEvent 
 function updateEvent(overrides?: Partial<UpdateEvent>): UpdateEvent {
 	return {
 		repo: stubRepo(),
-		repoPath: "my-repo",
+		repoId: "my-repo",
 		update: refUpdate(),
 		session: stubSession(),
 		...overrides,
@@ -50,7 +50,7 @@ function updateEvent(overrides?: Partial<UpdateEvent>): UpdateEvent {
 function postReceiveEvent(overrides?: Partial<PostReceiveEvent>): PostReceiveEvent {
 	return {
 		repo: stubRepo(),
-		repoPath: "my-repo",
+		repoId: "my-repo",
 		updates: [refUpdate()],
 		session: stubSession(),
 		...overrides,
@@ -60,7 +60,7 @@ function postReceiveEvent(overrides?: Partial<PostReceiveEvent>): PostReceiveEve
 function advertiseRefsEvent(overrides?: Partial<AdvertiseRefsEvent>): AdvertiseRefsEvent {
 	return {
 		repo: stubRepo(),
-		repoPath: "my-repo",
+		repoId: "my-repo",
 		refs: [
 			{ name: "refs/heads/main", hash: "aaa" },
 			{ name: "refs/heads/feature", hash: "bbb" },

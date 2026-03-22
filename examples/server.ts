@@ -6,8 +6,9 @@
  */
 
 import { Bash, InMemoryFs } from "just-bash";
-import { createGit, findRepo } from "../src"; // "just-git"
-import { createGitServer } from "../src/server"; // "just-git/server"
+import { createGit } from "../src"; // "just-git"
+import { createGitServer, MemoryDriver } from "../src/server"; // "just-git/server"
+import { writeBlob, writeTree, createCommit } from "../src/repo"; // "just-git/repo"
 
 const ENV = {
 	GIT_AUTHOR_NAME: "Test",
@@ -16,37 +17,21 @@ const ENV = {
 	GIT_COMMITTER_EMAIL: "test@test.com",
 };
 
-// ── 1. Create a server-side repo ────────────────────────────────────
+const ID = {
+	name: "Test",
+	email: "test@test.com",
+	timestamp: 1000000000,
+	timezone: "+0000",
+};
+
+// ── 1. Create server and seed a repo ────────────────────────────────
 
 console.log("═══ 1. Setting up server-side repo ═══\n");
-
-const serverFs = new InMemoryFs();
-const serverGit = createGit();
-const serverBash = new Bash({ fs: serverFs, cwd: "/repo", customCommands: [serverGit] });
-
-await serverBash.writeFile("/repo/README.md", "# My Project\n\nA repo served by just-git.");
-await serverBash.writeFile("/repo/src/index.ts", 'export const greeting = "hello";');
-await serverBash.exec("git init");
-await serverBash.exec("git add .");
-await serverBash.exec('git commit -m "initial commit"', { env: ENV });
-await serverBash.exec("git tag v0.1.0");
-
-const repo = await findRepo(serverFs, "/repo");
-if (!repo) throw new Error("repo not found");
-
-console.log("  Server repo initialized with 1 commit and tag v0.1.0\n");
-
-// ── 2. Start the server ─────────────────────────────────────────────
-
-console.log("═══ 2. Starting Git server ═══\n");
 
 const pushLog: string[] = [];
 
 const server = createGitServer({
-	resolveRepo: async (repoPath) => {
-		console.log(`  [resolve] ${repoPath}`);
-		return repo;
-	},
+	storage: new MemoryDriver(),
 
 	hooks: {
 		preReceive: async (event) => {
@@ -62,6 +47,34 @@ const server = createGitServer({
 		},
 	},
 });
+
+const repo = await server.createRepo("my-project");
+
+const readmeBlob = await writeBlob(repo, "# My Project\n\nA repo served by just-git.");
+const indexBlob = await writeBlob(repo, 'export const greeting = "hello";');
+const srcTree = await writeTree(repo, [{ name: "index.ts", hash: indexBlob }]);
+const rootTree = await writeTree(repo, [
+	{ name: "README.md", hash: readmeBlob },
+	{ name: "src", hash: srcTree },
+]);
+
+const seedHash = await createCommit(repo, {
+	tree: rootTree,
+	parents: [],
+	author: ID,
+	committer: ID,
+	message: "initial commit\n",
+	branch: "main",
+});
+
+// Tag via ref
+await repo.refStore.writeRef("refs/tags/v0.1.0", { type: "direct", hash: seedHash });
+
+console.log("  Server repo initialized with 1 commit and tag v0.1.0\n");
+
+// ── 2. Start the server ─────────────────────────────────────────────
+
+console.log("═══ 2. Starting Git server ═══\n");
 
 const srv = Bun.serve({ fetch: server.fetch, port: 0 });
 const url = `http://localhost:${srv.port}`;
@@ -96,7 +109,8 @@ await client.exec('git commit -m "update greeting"', { cwd: "/work", env: ENV })
 const pushResult = await client.exec("git push origin main", { cwd: "/work" });
 console.log(`  Push exit: ${pushResult.exitCode}`);
 
-const mainRef = await repo.refStore.readRef("refs/heads/main");
+const updatedRepo = (await server.repo("my-project"))!;
+const mainRef = await updatedRepo.refStore.readRef("refs/heads/main");
 console.log(`  Server main ref: ${mainRef?.type === "direct" ? mainRef.hash.slice(0, 12) : "?"}…`);
 console.log(`  Push log: ${pushLog.join(", ")}\n`);
 
@@ -112,10 +126,11 @@ await client.exec('git commit -m "feat: add awesome module"', { cwd: "/work", en
 const branchPush = await client.exec("git push origin feature/awesome", { cwd: "/work" });
 console.log(`  Push exit: ${branchPush.exitCode}`);
 
-const featureRef = await repo.refStore.readRef("refs/heads/feature/awesome");
+const repoAfterPush = (await server.repo("my-project"))!;
+const featureRef = await repoAfterPush.refStore.readRef("refs/heads/feature/awesome");
 console.log(`  Server has feature/awesome: ${featureRef !== null}`);
 
-const allRefs = await repo.refStore.listRefs("refs/heads");
+const allRefs = await repoAfterPush.refStore.listRefs("refs/heads");
 console.log(
 	`  Server branches: ${allRefs.map((r) => r.name.replace("refs/heads/", "")).join(", ")}\n`,
 );

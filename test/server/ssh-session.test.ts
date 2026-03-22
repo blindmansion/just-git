@@ -1,14 +1,18 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { Server, type ServerChannel } from "ssh2";
-import { Bash, InMemoryFs } from "just-bash";
-import { createGit } from "../../src/index.ts";
-import { findRepo } from "../../src/lib/repo.ts";
-import type { GitContext } from "../../src/lib/types.ts";
+import { createCommit, writeBlob, writeTree } from "../../src/repo/helpers.ts";
 import { createGitServer } from "../../src/server/handler.ts";
+import { MemoryDriver } from "../../src/server/memory-storage.ts";
 import { parseGitSshCommand } from "../../src/server/ssh-session.ts";
-import type { SshChannel } from "../../src/server/types.ts";
-import { envAt } from "./util.ts";
+import type { GitServer, SshChannel } from "../../src/server/types.ts";
+
+const TEST_IDENTITY = {
+	name: "Test",
+	email: "test@test.com",
+	timestamp: 1000000000,
+	timezone: "+0000",
+};
 
 // ── ssh2 adapter helper ─────────────────────────────────────────────
 
@@ -72,36 +76,31 @@ describe("parseGitSshCommand", () => {
 describe("SSH session handler", () => {
 	let sshServer: Server;
 	let sshPort: number;
-	let serverFs: InMemoryFs;
-	let serverBash: Bash;
-	let serverRepo: GitContext;
+	let driver: MemoryDriver;
+	let server: GitServer;
 
 	beforeAll(async () => {
-		// Set up a server-side repo with some content
-		serverFs = new InMemoryFs();
-		const git = createGit();
-		serverBash = new Bash({ fs: serverFs, cwd: "/repo", customCommands: [git] });
+		driver = new MemoryDriver();
+		server = createGitServer({ storage: driver });
+		const repo = await server.createRepo("test-repo");
 
-		await serverBash.writeFile("/repo/README.md", "# SSH Test");
-		await serverBash.writeFile("/repo/src/index.ts", "export const x = 1;");
-		await serverBash.exec("git init");
-		await serverBash.exec("git add .");
-		await serverBash.exec('git commit -m "initial"', { env: envAt(1000000000) });
-		await serverBash.exec("git tag v1.0");
-
-		const ctx = await findRepo(serverFs, "/repo");
-		if (!ctx) throw new Error("repo not found");
-		serverRepo = ctx;
-
-		// Create the unified server (handles both HTTP and SSH)
-		const server = createGitServer({
-			resolveRepo: (repoPath) => {
-				if (repoPath === "test-repo") return serverRepo;
-				return null;
-			},
+		const readmeBlob = await writeBlob(repo, "# SSH Test");
+		const indexBlob = await writeBlob(repo, "export const x = 1;");
+		const srcTree = await writeTree(repo, [{ name: "index.ts", hash: indexBlob }]);
+		const rootTree = await writeTree(repo, [
+			{ name: "README.md", hash: readmeBlob },
+			{ name: "src", hash: srcTree, mode: "40000" },
+		]);
+		const commitHash = await createCommit(repo, {
+			tree: rootTree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "initial\n",
 		});
+		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commitHash });
+		await repo.refStore.writeRef("refs/tags/v1.0", { type: "direct", hash: commitHash });
 
-		// Start an ssh2 server using the unified handler
 		const hostKey = readFileSync("/tmp/just-git-test-host-key");
 
 		sshPort = await new Promise<number>((resolve, reject) => {
@@ -140,19 +139,15 @@ describe("SSH session handler", () => {
 	});
 
 	test("handleSession processes upload-pack", async () => {
-		const server = createGitServer({
-			resolveRepo: () => serverRepo,
-		});
+		const testServer = createGitServer({ storage: driver });
 
-		// Build a minimal upload-pack exchange:
-		// Client sends wants + done, server should respond with pack data
+		const repo = (await testServer.repo("test-repo"))!;
 		const { refs: allRefs } = await import("../../src/server/operations.ts").then((m) =>
-			m.collectRefs(serverRepo),
+			m.collectRefs(repo),
 		);
 		const headRef = allRefs.find((r) => r.name === "HEAD");
 		expect(headRef).toBeTruthy();
 
-		// Encode a minimal upload-pack request
 		const wantLine = `want ${headRef!.hash}\n`;
 		const wantPkt = encodePktLine(wantLine);
 		const flushPkt = new Uint8Array([0x30, 0x30, 0x30, 0x30]);
@@ -160,7 +155,6 @@ describe("SSH session handler", () => {
 
 		const requestBytes = concatBytes(wantPkt, flushPkt, donePkt);
 
-		// Create channel with the request data
 		const responseChunks: Uint8Array[] = [];
 		const channel: SshChannel = {
 			readable: new ReadableStream({
@@ -176,21 +170,20 @@ describe("SSH session handler", () => {
 			}),
 		};
 
-		const exitCode = await server.handleSession("git-upload-pack '/test-repo'", channel);
+		const exitCode = await testServer.handleSession("git-upload-pack '/test-repo'", channel);
 
 		expect(exitCode).toBe(0);
-		// Should have ref advertisement + pack response
 		expect(responseChunks.length).toBeGreaterThan(0);
 
 		const totalResponse = concatBytes(...responseChunks);
 		const text = new TextDecoder().decode(totalResponse);
-		// Ref advertisement should contain HEAD
 		expect(text).toContain("HEAD");
 	});
 
 	test("handleSession rejects unknown repo", async () => {
-		const server = createGitServer({
-			resolveRepo: () => null,
+		const testServer = createGitServer({
+			storage: new MemoryDriver(),
+			resolve: () => null,
 			onError: false,
 		});
 
@@ -207,15 +200,15 @@ describe("SSH session handler", () => {
 			},
 		};
 
-		const exitCode = await server.handleSession("git-upload-pack '/no-such-repo'", channel);
+		const exitCode = await testServer.handleSession("git-upload-pack '/no-such-repo'", channel);
 
 		expect(exitCode).toBe(128);
 		expect(stderrOutput).toContain("does not appear to be a git repository");
 	});
 
 	test("handleSession rejects unknown command", async () => {
-		const server = createGitServer({
-			resolveRepo: () => serverRepo,
+		const testServer = createGitServer({
+			storage: driver,
 			onError: false,
 		});
 
@@ -232,15 +225,15 @@ describe("SSH session handler", () => {
 			},
 		};
 
-		const exitCode = await server.handleSession("ls -la", channel);
+		const exitCode = await testServer.handleSession("ls -la", channel);
 
 		expect(exitCode).toBe(128);
 		expect(stderrOutput).toContain("unrecognized command");
 	});
 
 	test("handleSession rejects when advertiseRefs returns rejection", async () => {
-		const server = createGitServer({
-			resolveRepo: () => serverRepo,
+		const testServer = createGitServer({
+			storage: driver,
 			hooks: {
 				advertiseRefs: async () => {
 					return { reject: true, message: "no access" };
@@ -262,16 +255,14 @@ describe("SSH session handler", () => {
 			},
 		};
 
-		const exitCode = await server.handleSession("git-upload-pack '/test-repo'", channel);
+		const exitCode = await testServer.handleSession("git-upload-pack '/test-repo'", channel);
 
 		expect(exitCode).toBe(128);
 		expect(stderrOutput).toContain("no access");
 	});
 
 	test("handleSession handles empty upload-pack (ls-remote)", async () => {
-		const server = createGitServer({
-			resolveRepo: () => serverRepo,
-		});
+		const testServer = createGitServer({ storage: driver });
 
 		const responseChunks: Uint8Array[] = [];
 		const channel: SshChannel = {
@@ -287,7 +278,7 @@ describe("SSH session handler", () => {
 			}),
 		};
 
-		const exitCode = await server.handleSession("git-upload-pack '/test-repo'", channel);
+		const exitCode = await testServer.handleSession("git-upload-pack '/test-repo'", channel);
 
 		expect(exitCode).toBe(0);
 		const text = new TextDecoder().decode(concatBytes(...responseChunks));
@@ -321,7 +312,6 @@ describe("SSH session handler", () => {
 		const { join } = await import("node:path");
 		const { readFileSync: readFs, writeFileSync: writeFs } = await import("node:fs");
 
-		// Clone
 		const clone = Bun.spawn(["git", "clone", `ssh://test@127.0.0.1/test-repo`, "work"], {
 			cwd: workDir,
 			env,
@@ -332,7 +322,6 @@ describe("SSH session handler", () => {
 
 		const repoDir = join(workDir, "work");
 
-		// Make a change and commit
 		writeFs(join(repoDir, "new-file.txt"), "pushed via SSH");
 		const add = Bun.spawn(["git", "add", "."], {
 			cwd: repoDir,
@@ -357,7 +346,6 @@ describe("SSH session handler", () => {
 		});
 		expect((await collectProc(commit)).exitCode).toBe(0);
 
-		// Push
 		const push = Bun.spawn(["git", "push", "origin", "main"], {
 			cwd: repoDir,
 			env,
@@ -367,11 +355,10 @@ describe("SSH session handler", () => {
 		const pushResult = await collectProc(push);
 		expect(pushResult.exitCode).toBe(0);
 
-		// Verify the server-side repo got the new commit
-		const mainRef = await serverRepo.refStore.readRef("refs/heads/main");
+		const repo = (await server.repo("test-repo"))!;
+		const mainRef = await repo.refStore.readRef("refs/heads/main");
 		expect(mainRef).toBeTruthy();
 
-		// Clone again to verify the push landed
 		const clone2 = Bun.spawn(["git", "clone", `ssh://test@127.0.0.1/test-repo`, "verify"], {
 			cwd: workDir,
 			env,

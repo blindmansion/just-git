@@ -10,7 +10,7 @@
  */
 
 import { createGit } from "../../src/index.ts";
-import { createGitServer, MemoryStorage } from "../../src/server/index.ts";
+import { createGitServer, MemoryDriver } from "../../src/server/index.ts";
 import {
 	writeBlob,
 	writeTree,
@@ -36,8 +36,9 @@ const ENV = {
 
 // ── Seed a repo with the repo helpers ───────────────────────────────
 
-const storage = new MemoryStorage();
-const repo = await storage.createRepo("demo");
+const driver = new MemoryDriver();
+const gitServer = createGitServer({ storage: driver });
+const repo = await gitServer.createRepo("demo");
 
 const readmeBlob = await writeBlob(repo, "# Seeded Repo\n\nCreated with repo helpers.\n");
 const indexBlob = await writeBlob(repo, 'export const greeting = "hello";\n');
@@ -71,10 +72,6 @@ console.log(
 
 // ── Serve it ────────────────────────────────────────────────────────
 
-const gitServer = createGitServer({
-	resolveRepo: async () => repo,
-});
-
 const srv = Bun.serve({ port: 0, fetch: gitServer.fetch });
 const port = srv.port;
 
@@ -105,7 +102,8 @@ console.log("push:", r.exitCode === 0 ? "OK" : "FAIL");
 if (r.exitCode !== 0) console.log("  stderr:", r.stderr);
 
 // Verify push landed on server
-const newHead = await resolveRef(repo, "refs/heads/main");
+const updatedRepo = (await gitServer.repo("demo"))!;
+const newHead = await resolveRef(updatedRepo, "refs/heads/main");
 console.log("server ref advanced:", newHead !== commitHash ? "OK" : "FAIL");
 
 srv.stop(true);

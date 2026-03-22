@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createGit } from "../../src/index.ts";
 import { createGitServer } from "../../src/server/handler.ts";
+import { MemoryDriver } from "../../src/server/memory-storage.ts";
 import type { GitServerConfig, Session } from "../../src/server/types.ts";
 
 // ── Test env ────────────────────────────────────────────────────────
@@ -72,7 +73,7 @@ export async function realGit(
 export function startServer(config: GitServerConfig) {
 	const server = createGitServer(config);
 	const srv = Bun.serve({ fetch: server.fetch, port: 0 });
-	return { srv, port: srv.port!, stop: () => srv.stop() };
+	return { server, srv, port: srv.port!, stop: () => srv.stop() };
 }
 
 export const defaultSshSession = (info: { username?: string }): Session => ({
@@ -107,7 +108,53 @@ export function startServerWithSessionAuth(
 		},
 	});
 	const srv = Bun.serve({ fetch: server.fetch, port: 0 });
-	return { srv, port: srv.port!, stop: () => srv.stop() };
+	return { server, srv, port: srv.port!, stop: () => srv.stop() };
+}
+
+/**
+ * Create a MemoryDriver-backed server with a pre-created (empty) repo.
+ * Returns the server, HTTP port, and stop function.
+ */
+export async function startMemoryServer(
+	repoId = "test-repo",
+	configOverrides?: Partial<GitServerConfig>,
+) {
+	const driver = new MemoryDriver();
+	const config: GitServerConfig = {
+		storage: driver,
+		...configOverrides,
+	};
+	const server = createGitServer(config);
+	await server.createRepo(repoId);
+	const srv = Bun.serve({ fetch: server.fetch, port: 0 });
+	return { server, srv, port: srv.port!, stop: () => srv.stop() };
+}
+
+/**
+ * Create a MemoryDriver-backed server, create a repo, and seed it
+ * with initial content by pushing from a virtual client.
+ */
+export async function createSeededServer(
+	files: Record<string, string> = { "README.md": "# Test" },
+	repoId = "test-repo",
+	configOverrides?: Partial<GitServerConfig>,
+) {
+	const { server, srv, port, stop } = await startMemoryServer(repoId, configOverrides);
+
+	const client = createServerClient();
+	const url = `http://localhost:${port}/${repoId}`;
+
+	await client.exec(`git clone ${url} /repo`, { env: SERVER_TEST_ENV });
+	for (const [path, content] of Object.entries(files)) {
+		const dir = path.includes("/") ? path.split("/").slice(0, -1).join("/") : "";
+		if (dir) await client.exec(`mkdir -p /repo/${dir}`, { env: SERVER_TEST_ENV });
+		await client.writeFile(`/repo/${path}`, content);
+	}
+	await client.exec("git add .", { cwd: "/repo", env: SERVER_TEST_ENV });
+	await client.exec('git commit -m "initial"', { cwd: "/repo", env: SERVER_TEST_ENV });
+	await client.exec("git push origin main", { cwd: "/repo", env: SERVER_TEST_ENV });
+
+	return { server, srv, port, stop };
 }
 
 // ── Temp dir helper ─────────────────────────────────────────────────

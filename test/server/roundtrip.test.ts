@@ -1,51 +1,59 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { Bash, InMemoryFs } from "just-bash";
-import { createGit } from "../../src/index.ts";
-import { findRepo } from "../../src/lib/repo.ts";
-import type { GitContext } from "../../src/lib/types.ts";
+import { InMemoryFs } from "just-bash";
+import { MemoryDriver } from "../../src/server/memory-storage.ts";
 import { createGitServer } from "../../src/server/handler.ts";
+import type { GitServer } from "../../src/server/types.ts";
 import { envAt, createServerClient, startServer } from "./util.ts";
 
 describe("server roundtrip", () => {
 	let srv: ReturnType<typeof Bun.serve>;
-	let serverFs: InMemoryFs;
-	let serverBash: Bash;
-	let serverRepo: GitContext;
+	let server: GitServer;
+	let driver: MemoryDriver;
 	let port: number;
 
 	beforeAll(async () => {
-		serverFs = new InMemoryFs();
-		const git = createGit();
-		serverBash = new Bash({
-			fs: serverFs,
-			cwd: "/repo",
-			customCommands: [git],
+		driver = new MemoryDriver();
+		const s = startServer({ storage: driver });
+		server = s.server;
+		srv = s.srv;
+		port = s.port;
+
+		await server.createRepo("repo");
+
+		const seedClient = createServerClient();
+		await seedClient.exec(`git clone http://localhost:${port}/repo /local`, {
+			env: envAt(1000000000),
 		});
 
-		await serverBash.writeFile("/repo/README.md", "# Hello World");
-		await serverBash.writeFile("/repo/src/main.ts", 'console.log("hello");');
-		await serverBash.exec("git init");
-		await serverBash.exec("git add .");
-		await serverBash.exec('git commit -m "initial commit"', { env: envAt(1000000000) });
+		await seedClient.writeFile("/local/README.md", "# Hello World");
+		await seedClient.writeFile("/local/src/main.ts", 'console.log("hello");');
+		await seedClient.exec("git add .", { cwd: "/local", env: envAt(1000000000) });
+		await seedClient.exec('git commit -m "initial commit"', {
+			cwd: "/local",
+			env: envAt(1000000000),
+		});
+		await seedClient.exec("git push origin main", { cwd: "/local" });
 
-		await serverBash.writeFile("/repo/src/util.ts", "export const VERSION = 1;");
-		await serverBash.exec("git add .");
-		await serverBash.exec('git commit -m "add util"', { env: envAt(1000000100) });
-
-		await serverBash.exec("git tag v1.0");
-		await serverBash.exec('git tag -a v1.0-annotated -m "release v1.0"', {
+		await seedClient.writeFile("/local/src/util.ts", "export const VERSION = 1;");
+		await seedClient.exec("git add .", { cwd: "/local", env: envAt(1000000100) });
+		await seedClient.exec('git commit -m "add util"', {
+			cwd: "/local",
 			env: envAt(1000000100),
 		});
 
-		await serverBash.exec("git branch feature");
+		await seedClient.exec("git push origin main", { cwd: "/local" });
 
-		const ctx = await findRepo(serverFs, "/repo");
-		if (!ctx) throw new Error("failed to find git dir");
-		serverRepo = ctx;
+		await seedClient.exec("git tag v1.0", { cwd: "/local" });
+		await seedClient.exec('git tag -a v1.0-annotated -m "release v1.0"', {
+			cwd: "/local",
+			env: envAt(1000000100),
+		});
+		await seedClient.exec("git push origin --tags", { cwd: "/local" });
 
-		const s = startServer({ resolveRepo: async () => serverRepo });
-		srv = s.srv;
-		port = s.port;
+		const repo = (await server.repo("repo"))!;
+		const mainRef = await repo.refStore.readRef("refs/heads/main");
+		const mainHash = mainRef!.type === "direct" ? mainRef!.hash : "";
+		await repo.refStore.writeRef("refs/heads/feature", mainHash);
 	});
 
 	afterAll(() => {
@@ -90,7 +98,8 @@ describe("server roundtrip", () => {
 			env: envAt(1000000300),
 		});
 
-		const mainBefore = await serverRepo.refStore.readRef("refs/heads/main");
+		const repo = (await server.repo("repo"))!;
+		const mainBefore = await repo.refStore.readRef("refs/heads/main");
 		expect(mainBefore).not.toBeNull();
 		const hashBefore = mainBefore!.type === "direct" ? mainBefore!.hash : null;
 
@@ -104,13 +113,13 @@ describe("server roundtrip", () => {
 		const pushResult = await client.exec("git push origin main", { cwd: "/local" });
 		expect(pushResult.exitCode).toBe(0);
 
-		const mainAfter = await serverRepo.refStore.readRef("refs/heads/main");
+		const mainAfter = await repo.refStore.readRef("refs/heads/main");
 		expect(mainAfter).not.toBeNull();
 		const hashAfter = mainAfter!.type === "direct" ? mainAfter!.hash : null;
 		expect(hashAfter).not.toBe(hashBefore);
 
 		expect(hashAfter).toBeTruthy();
-		const exists = await serverRepo.objectStore.exists(hashAfter!);
+		const exists = await repo.objectStore.exists(hashAfter!);
 		expect(exists).toBe(true);
 	});
 
@@ -124,9 +133,17 @@ describe("server roundtrip", () => {
 
 		const trackingBefore = await clientFs.readFile("/local/.git/refs/remotes/origin/main");
 
-		await serverBash.writeFile("/repo/server-change.txt", "server side");
-		await serverBash.exec("git add .");
-		await serverBash.exec('git commit -m "server commit"', { env: envAt(1000000600) });
+		const pusher = createServerClient();
+		await pusher.exec(`git clone http://localhost:${port}/repo /push-local`, {
+			env: envAt(1000000550),
+		});
+		await pusher.writeFile("/push-local/server-change.txt", "server side");
+		await pusher.exec("git add .", { cwd: "/push-local" });
+		await pusher.exec('git commit -m "server commit"', {
+			cwd: "/push-local",
+			env: envAt(1000000600),
+		});
+		await pusher.exec("git push origin main", { cwd: "/push-local" });
 
 		const fetchResult = await client.exec("git fetch origin", { cwd: "/local" });
 		expect(fetchResult.exitCode).toBe(0);
@@ -158,13 +175,15 @@ describe("server roundtrip", () => {
 		const pushResult = await client.exec("git push origin new-feature", { cwd: "/local" });
 		expect(pushResult.exitCode).toBe(0);
 
-		const newBranch = await serverRepo.refStore.readRef("refs/heads/new-feature");
+		const repo = (await server.repo("repo"))!;
+		const newBranch = await repo.refStore.readRef("refs/heads/new-feature");
 		expect(newBranch).not.toBeNull();
 		expect(newBranch!.type).toBe("direct");
 	});
 
 	test("delete remote branch via push", async () => {
-		const before = await serverRepo.refStore.readRef("refs/heads/feature");
+		const repo = (await server.repo("repo"))!;
+		const before = await repo.refStore.readRef("refs/heads/feature");
 		expect(before).not.toBeNull();
 
 		const client = createServerClient();
@@ -178,18 +197,18 @@ describe("server roundtrip", () => {
 		});
 		expect(deleteResult.exitCode).toBe(0);
 
-		const after = await serverRepo.refStore.readRef("refs/heads/feature");
+		const after = await repo.refStore.readRef("refs/heads/feature");
 		expect(after).toBeNull();
 	});
 
-	test("postReceive hook is called with repoPath", async () => {
-		const pushEvents: Array<{ refCount: number; repoPath: string }> = [];
+	test("postReceive hook is called with repoId", async () => {
+		const pushEvents: Array<{ refCount: number; repoId: string }> = [];
 
 		const hookedServer = createGitServer({
-			resolveRepo: async () => serverRepo,
+			storage: driver,
 			hooks: {
 				postReceive: async (event) => {
-					pushEvents.push({ refCount: event.updates.length, repoPath: event.repoPath });
+					pushEvents.push({ refCount: event.updates.length, repoId: event.repoId });
 				},
 			},
 		});
@@ -202,7 +221,7 @@ describe("server roundtrip", () => {
 		try {
 			const client = createServerClient();
 
-			await client.exec(`git clone http://localhost:${hookedSrv.port}/myrepo /local`, {
+			await client.exec(`git clone http://localhost:${hookedSrv.port}/repo /local`, {
 				env: envAt(1000001000),
 			});
 
@@ -217,20 +236,20 @@ describe("server roundtrip", () => {
 
 			expect(pushEvents.length).toBe(1);
 			expect(pushEvents[0]!.refCount).toBe(1);
-			expect(pushEvents[0]!.repoPath).toBe("myrepo");
+			expect(pushEvents[0]!.repoId).toBe("repo");
 		} finally {
 			hookedSrv.stop();
 		}
 	});
 
-	test("preReceive hook receives repoPath", async () => {
-		let capturedRepoPath: string | undefined;
+	test("preReceive hook receives repoId", async () => {
+		let capturedRepoId: string | undefined;
 
 		const hookedServer = createGitServer({
-			resolveRepo: async () => serverRepo,
+			storage: driver,
 			hooks: {
 				preReceive: async (event) => {
-					capturedRepoPath = event.repoPath;
+					capturedRepoId = event.repoId;
 				},
 			},
 		});
@@ -243,7 +262,7 @@ describe("server roundtrip", () => {
 		try {
 			const client = createServerClient();
 
-			await client.exec(`git clone http://localhost:${hookedSrv.port}/myrepo /local`, {
+			await client.exec(`git clone http://localhost:${hookedSrv.port}/repo /local`, {
 				env: envAt(1000001000),
 			});
 
@@ -256,7 +275,7 @@ describe("server roundtrip", () => {
 
 			await client.exec("git push origin main", { cwd: "/local" });
 
-			expect(capturedRepoPath).toBe("myrepo");
+			expect(capturedRepoId).toBe("repo");
 		} finally {
 			hookedSrv.stop();
 		}
@@ -264,7 +283,7 @@ describe("server roundtrip", () => {
 
 	test("preReceive hook can reject a push", async () => {
 		const authServer = createGitServer({
-			resolveRepo: async () => serverRepo,
+			storage: driver,
 			hooks: {
 				preReceive: async () => {
 					return { reject: true, message: "Push not allowed" };

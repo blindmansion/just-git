@@ -89,7 +89,7 @@ HTTP/2 streaming. Not a necessity at current repo sizes.
 
 ### Pack cache
 
-Added `PackCache` in `operations.ts`, keyed on `(repoPath, sorted wants)`
+Added `PackCache` in `operations.ts`, keyed on `(repoId, sorted wants)`
 for full-clone requests (0 haves). Integrated into the handler via
 `GitServerConfig.packCache`. Defaults to 256 MB limit.
 

@@ -51,15 +51,13 @@ export type { ServerPolicy } from "./types.ts";
 
 // Storage
 export type {
-	Storage,
 	CreateRepoOptions,
 	StorageDriver,
 	RefOps,
 	RawRefEntry,
 	MaybeAsync,
 } from "./storage.ts";
-export { createStorage } from "./storage.ts";
-export { MemoryStorage } from "./memory-storage.ts";
+export { MemoryDriver, MemoryStorage } from "./memory-storage.ts";
 export {
 	BunSqliteDriver,
 	type BunSqliteDatabase,

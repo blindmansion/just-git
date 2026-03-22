@@ -7,39 +7,19 @@
  * works with any SSH library (ssh2, etc.) through a thin adapter.
  *
  * ```ts
- * await storage.createRepo("my-repo");
  * const server = createGitServer({
- *   resolveRepo: (path) => storage.repo(path),
+ *   storage: new MemoryDriver(),
+ *   autoCreate: true,
  * });
+ * await server.createRepo("my-repo");
  *
  * // HTTP
  * Bun.serve({ fetch: server.fetch });
- *
- * // SSH (with ssh2)
- * new Server({ hostKeys: [key] }, (client) => {
- *   client.on("authentication", (ctx) => { ctx.accept(); });
- *   client.on("session", (accept) => {
- *     accept().on("exec", (accept, reject, info) => {
- *       const stream = accept();
- *       const channel: SshChannel = {
- *         readable: new ReadableStream({
- *           start(c) {
- *             stream.on("data", (d: Buffer) => c.enqueue(new Uint8Array(d)));
- *             stream.on("end", () => c.close());
- *           },
- *         }),
- *         writable: new WritableStream({ write(chunk) { stream.write(chunk); } }),
- *         writeStderr(data) { stream.stderr.write(data); },
- *       };
- *       server.handleSession(info.command, channel)
- *         .then((code) => { stream.exit(code); stream.close(); });
- *     });
- *   });
- * });
  * ```
  */
 
 import { isRejection } from "../hooks.ts";
+import type { GitRepo } from "../lib/types.ts";
 import {
 	PackCache,
 	advertiseRefsWithHooks,
@@ -50,6 +30,7 @@ import {
 } from "./operations.ts";
 import { buildReportStatus } from "./protocol.ts";
 import { handleSshSession } from "./ssh-session.ts";
+import { createStorage, type CreateRepoOptions } from "./storage.ts";
 import type {
 	GitServerConfig,
 	GitServer,
@@ -75,10 +56,11 @@ const defaultSessionBuilder: SessionBuilder<Session> = {
  * Create a unified Git server that handles both HTTP and SSH.
  *
  * ```ts
- * await storage.createRepo("my-repo");
  * const server = createGitServer({
- *   resolveRepo: (path) => storage.repo(path),
+ *   storage: new MemoryDriver(),
+ *   autoCreate: true,
  * });
+ * await server.createRepo("my-repo");
  *
  * // HTTP — pass to Bun.serve, Hono, Cloudflare Workers, etc.
  * Bun.serve({ fetch: server.fetch });
@@ -88,14 +70,28 @@ const defaultSessionBuilder: SessionBuilder<Session> = {
  * ```
  */
 export function createGitServer<S = Session>(config: GitServerConfig<S>): GitServer {
-	if (!config || typeof config.resolveRepo !== "function") {
+	if (!config || !config.storage) {
 		throw new TypeError(
-			"createGitServer: config.resolveRepo must be a function. " +
-				"Example: createGitServer({ resolveRepo: (path) => storage.repo(path) }). " +
-				"Repos must be created with storage.createRepo() before they can be served.",
+			"createGitServer: config.storage is required. " +
+				"Example: createGitServer({ storage: new MemoryDriver() })",
 		);
 	}
-	const { resolveRepo, basePath } = config;
+
+	const storage = createStorage(config.storage);
+	const resolve = config.resolve ?? ((path: string) => path);
+	const autoCreate = config.autoCreate;
+	const { basePath } = config;
+
+	async function resolveRepo(path: string): Promise<{ repo: GitRepo; repoId: string } | null> {
+		const id = await resolve(path);
+		if (id == null) return null;
+		const repo = await storage.repo(id);
+		if (repo) return { repo, repoId: id };
+		if (!autoCreate) return null;
+		const opts: CreateRepoOptions | undefined =
+			typeof autoCreate === "object" ? { defaultBranch: autoCreate.defaultBranch } : undefined;
+		return { repo: await storage.createRepo(id, opts), repoId: id };
+	}
 	const hooks = mergePolicyAndHooks(config.policy, config.hooks);
 	// Safe: when config.session is omitted, S defaults to Session, matching defaultSessionBuilder.
 	const buildSession = (config.session ?? defaultSessionBuilder) as SessionBuilder<S>;
@@ -142,11 +138,17 @@ export function createGitServer<S = Session>(config: GitServerConfig<S>): GitSer
 						return new Response("Unsupported service", { status: 403 });
 					}
 
-					const repoPath = extractRepoPath(pathname, "/info/refs");
-					const repo = await resolveRepo(repoPath);
-					if (!repo) return new Response("Not Found", { status: 404 });
+					const requestPath = extractRepoPath(pathname, "/info/refs");
+					const resolved = await resolveRepo(requestPath);
+					if (!resolved) return new Response("Not Found", { status: 404 });
 
-					const adv = await advertiseRefsWithHooks(repo, repoPath, service, hooks, session);
+					const adv = await advertiseRefsWithHooks(
+						resolved.repo,
+						resolved.repoId,
+						service,
+						hooks,
+						session,
+					);
 					if (isRejection(adv)) {
 						return new Response(adv.message ?? "Forbidden", { status: 403 });
 					}
@@ -162,14 +164,14 @@ export function createGitServer<S = Session>(config: GitServerConfig<S>): GitSer
 
 				// ── git-upload-pack ─────────────────────────────────
 				if (pathname.endsWith("/git-upload-pack") && req.method === "POST") {
-					const repoPath = extractRepoPath(pathname, "/git-upload-pack");
-					const repo = await resolveRepo(repoPath);
-					if (!repo) return new Response("Not Found", { status: 404 });
+					const requestPath = extractRepoPath(pathname, "/git-upload-pack");
+					const resolved = await resolveRepo(requestPath);
+					if (!resolved) return new Response("Not Found", { status: 404 });
 
 					const body = await readRequestBody(req);
-					const responseBody = await handleUploadPack(repo, body, {
+					const responseBody = await handleUploadPack(resolved.repo, body, {
 						cache: packCache,
-						cacheKey: repoPath,
+						cacheKey: resolved.repoId,
 						noDelta: config.packOptions?.noDelta,
 						deltaWindow: config.packOptions?.deltaWindow,
 					});
@@ -180,12 +182,12 @@ export function createGitServer<S = Session>(config: GitServerConfig<S>): GitSer
 
 				// ── git-receive-pack ────────────────────────────────
 				if (pathname.endsWith("/git-receive-pack") && req.method === "POST") {
-					const repoPath = extractRepoPath(pathname, "/git-receive-pack");
-					const repo = await resolveRepo(repoPath);
-					if (!repo) return new Response("Not Found", { status: 404 });
+					const requestPath = extractRepoPath(pathname, "/git-receive-pack");
+					const resolved = await resolveRepo(requestPath);
+					if (!resolved) return new Response("Not Found", { status: 404 });
 
 					const body = await readRequestBody(req);
-					const ingestResult = await ingestReceivePack(repo, body);
+					const ingestResult = await ingestReceivePack(resolved.repo, body);
 
 					if (!ingestResult.sawFlush && ingestResult.updates.length === 0) {
 						return new Response("Bad Request", { status: 400 });
@@ -211,8 +213,8 @@ export function createGitServer<S = Session>(config: GitServerConfig<S>): GitSer
 					}
 
 					const { refResults } = await applyReceivePack({
-						repo,
-						repoPath,
+						repo: resolved.repo,
+						repoId: resolved.repoId,
 						ingestResult,
 						hooks,
 						session,
@@ -275,6 +277,10 @@ export function createGitServer<S = Session>(config: GitServerConfig<S>): GitSer
 				});
 			});
 		},
+
+		createRepo: (id, options) => storage.createRepo(id, options) as Promise<GitRepo>,
+		repo: (id) => storage.repo(id) as Promise<GitRepo | null>,
+		deleteRepo: (id) => storage.deleteRepo(id) as Promise<void>,
 	};
 	return server;
 }

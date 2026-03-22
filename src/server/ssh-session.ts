@@ -48,7 +48,9 @@ export function parseGitSshCommand(
 const encoder = new TextEncoder();
 
 export interface HandleSessionOptions<S = Session> {
-	resolveRepo: (repoPath: string) => GitRepo | null | Promise<GitRepo | null>;
+	resolveRepo: (
+		path: string,
+	) => { repo: GitRepo; repoId: string } | null | Promise<{ repo: GitRepo; repoId: string } | null>;
 	hooks?: ServerHooks<S>;
 	packCache?: PackCache;
 	packOptions?: { noDelta?: boolean; deltaWindow?: number };
@@ -74,14 +76,15 @@ export async function handleSshSession<S = Session>(
 			return 128;
 		}
 
-		const { service, repoPath } = parsed;
-		const repo = await resolveRepo(repoPath);
-		if (!repo) {
-			sendStderr(channel, `fatal: '${repoPath}' does not appear to be a git repository\n`);
+		const { service, repoPath: requestPath } = parsed;
+		const resolved = await resolveRepo(requestPath);
+		if (!resolved) {
+			sendStderr(channel, `fatal: '${requestPath}' does not appear to be a git repository\n`);
 			return 128;
 		}
+		const { repo, repoId } = resolved;
 
-		const adv = await advertiseRefsWithHooks(repo, repoPath, service, hooks, session);
+		const adv = await advertiseRefsWithHooks(repo, repoId, service, hooks, session);
 		if (isRejection(adv)) {
 			sendStderr(channel, `fatal: ${adv.message ?? "access denied"}\n`);
 			return 128;
@@ -95,7 +98,7 @@ export async function handleSshSession<S = Session>(
 				const requestBody = await readUploadPackRequest(streamReader);
 				const result = await handleUploadPack(repo, requestBody, {
 					cache: packCache,
-					cacheKey: repoPath,
+					cacheKey: repoId,
 					noDelta: packOptions?.noDelta,
 					deltaWindow: packOptions?.deltaWindow,
 				});
@@ -106,7 +109,7 @@ export async function handleSshSession<S = Session>(
 				await serveReceivePackStreaming({
 					writer,
 					repo,
-					repoPath,
+					repoId,
 					commands,
 					capabilities,
 					packStream,
@@ -137,7 +140,7 @@ export async function handleSshSession<S = Session>(
 interface ServeReceivePackOptions<S> {
 	writer: WritableStreamDefaultWriter<Uint8Array>;
 	repo: GitRepo;
-	repoPath: string;
+	repoId: string;
 	commands: PushCommand[];
 	capabilities: string[];
 	packStream: AsyncIterable<Uint8Array>;
@@ -146,7 +149,7 @@ interface ServeReceivePackOptions<S> {
 }
 
 async function serveReceivePackStreaming<S>(options: ServeReceivePackOptions<S>): Promise<void> {
-	const { writer, repo, repoPath, commands, capabilities, packStream, hooks, session } = options;
+	const { writer, repo, repoId, commands, capabilities, packStream, hooks, session } = options;
 	const ingestResult = await ingestReceivePackFromStream(repo, commands, capabilities, packStream);
 	if (ingestResult.updates.length === 0) return;
 
@@ -167,7 +170,7 @@ async function serveReceivePackStreaming<S>(options: ServeReceivePackOptions<S>)
 
 	const { refResults } = await applyReceivePack({
 		repo,
-		repoPath,
+		repoId,
 		ingestResult,
 		hooks,
 		session,

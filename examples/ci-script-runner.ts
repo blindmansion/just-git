@@ -12,9 +12,9 @@
  */
 
 import { Bash, InMemoryFs } from "just-bash";
-import { createGit, findRepo, type GitRepo } from "../src";
-import { createGitServer } from "../src/server";
-import { readFileAtCommit } from "../src/repo";
+import { createGit, type GitRepo } from "../src";
+import { createGitServer, MemoryDriver } from "../src/server";
+import { readFileAtCommit, writeBlob, writeTree, createCommit } from "../src/repo";
 
 const ENV = {
 	GIT_AUTHOR_NAME: "Dev",
@@ -44,52 +44,11 @@ async function cloneIntoSandbox(repo: GitRepo) {
 
 console.log("═══ 1. Setting up server repo ═══\n");
 
-const serverFs = new InMemoryFs();
-const serverBash = new Bash({
-	fs: serverFs,
-	cwd: "/repo",
-	customCommands: [createGit()],
-});
-
-await serverBash.exec("git init");
-await serverBash.writeFile("/repo/README.md", "# CI Runner Demo");
-await serverBash.writeFile(
-	"/repo/.ci/test.sh",
-	[
-		"#!/bin/bash",
-		"set -e",
-		"",
-		"echo '=== Running CI checks ==='",
-		"",
-		"# These all work because the sandbox has full git history",
-		"git log --oneline",
-		"git status",
-		"git diff --stat HEAD~1 HEAD 2>/dev/null || echo 'First commit'",
-		"",
-		"if [ ! -f README.md ]; then",
-		'  echo "ERROR: README.md missing" >&2',
-		"  exit 1",
-		"fi",
-		"",
-		"echo '=== CI checks passed ==='",
-	].join("\n"),
-);
-await serverBash.exec("git add .");
-await serverBash.exec('git commit -m "initial: add CI script"', { env: ENV });
-
-const serverRepo = await findRepo(serverFs, "/repo");
-if (!serverRepo) throw new Error("repo not found");
-
-console.log("  Server repo ready with .ci/test.sh\n");
-
-// ── 2. Start the server with a CI-running postReceive hook ──────────
-
-console.log("═══ 2. Starting server with CI hook ═══\n");
-
 const ciResults: { ref: string; passed: boolean; output: string }[] = [];
+const driver = new MemoryDriver();
 
 const server = createGitServer({
-	resolveRepo: async () => serverRepo,
+	storage: driver,
 
 	hooks: {
 		postReceive: async ({ repo, updates }) => {
@@ -104,7 +63,6 @@ const server = createGitServer({
 					continue;
 				}
 
-				// Clone into an isolated sandbox and run the CI script
 				const sandbox = await cloneIntoSandbox(repo);
 				const result = await sandbox.exec("bash .ci/test.sh", {
 					cwd: "/workspace",
@@ -125,6 +83,49 @@ const server = createGitServer({
 		},
 	},
 });
+
+const serverRepo = await server.createRepo("repo");
+
+const ID = { name: "Dev", email: "dev@test.com", timestamp: 1000000000, timezone: "+0000" };
+
+const readmeBlob = await writeBlob(serverRepo, "# CI Runner Demo");
+const ciScriptContent = [
+	"#!/bin/bash",
+	"set -e",
+	"",
+	"echo '=== Running CI checks ==='",
+	"",
+	"git log --oneline",
+	"git status",
+	"git diff --stat HEAD~1 HEAD 2>/dev/null || echo 'First commit'",
+	"",
+	"if [ ! -f README.md ]; then",
+	'  echo "ERROR: README.md missing" >&2',
+	"  exit 1",
+	"fi",
+	"",
+	"echo '=== CI checks passed ==='",
+].join("\n");
+const ciBlob = await writeBlob(serverRepo, ciScriptContent);
+const ciTree = await writeTree(serverRepo, [{ name: "test.sh", hash: ciBlob }]);
+const rootTree = await writeTree(serverRepo, [
+	{ name: ".ci", hash: ciTree },
+	{ name: "README.md", hash: readmeBlob },
+]);
+await createCommit(serverRepo, {
+	tree: rootTree,
+	parents: [],
+	author: ID,
+	committer: ID,
+	message: "initial: add CI script\n",
+	branch: "main",
+});
+
+console.log("  Server repo ready with .ci/test.sh\n");
+
+// ── 2. Start the HTTP server ────────────────────────────────────────
+
+console.log("═══ 2. Starting server ═══\n");
 
 const srv = Bun.serve({ fetch: server.fetch, port: 0 });
 const url = `http://localhost:${srv.port}`;
@@ -179,7 +180,7 @@ console.log("═══ 5. PreReceive rejection variant ═══\n");
 const rejectResults: string[] = [];
 
 const strictServer = createGitServer({
-	resolveRepo: async () => serverRepo,
+	storage: driver,
 
 	hooks: {
 		preReceive: async ({ repo, updates }) => {

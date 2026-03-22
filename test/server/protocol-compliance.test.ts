@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { Bash, InMemoryFs } from "just-bash";
-import { createGit } from "../../src/index.ts";
-import { findRepo } from "../../src/lib/repo.ts";
+import type { Identity } from "../../src/lib/types.ts";
 import { parsePktLineStream, pktLineText } from "../../src/lib/transport/pkt-line.ts";
+import { createCommit, writeBlob, writeTree } from "../../src/repo/helpers.ts";
 import { collectRefs, PackCache } from "../../src/server/operations.ts";
 import { createGitServer } from "../../src/server/handler.ts";
+import { MemoryDriver } from "../../src/server/memory-storage.ts";
+import { createStorage } from "../../src/server/storage.ts";
 import type { NodeHttpRequest, NodeHttpResponse } from "../../src/server/types.ts";
+import { pathExists, readFile } from "../util.ts";
 import {
 	envAt,
 	createServerClient,
@@ -14,71 +16,75 @@ import {
 	defaultSshSession,
 } from "./util.ts";
 
+const TEST_IDENTITY: Identity = {
+	name: "Test",
+	email: "test@test.com",
+	timestamp: 1000000000,
+	timezone: "+0000",
+};
+
 // ── Ref advertisement sorting ───────────────────────────────────────
 
 describe("ref advertisement sorting", () => {
 	test("collectRefs returns refs sorted by name (C locale)", async () => {
-		const fs = new InMemoryFs();
-		const git = createGit();
-		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		const driver = new MemoryDriver();
+		const storage = createStorage(driver);
+		const repo = await storage.createRepo("repo");
+		const blob = await writeBlob(repo, "content");
+		const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);
+		const commitHash = await createCommit(repo, {
+			tree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "init\n",
+		});
+		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commitHash });
+		await repo.refStore.writeRef("refs/heads/zebra", { type: "direct", hash: commitHash });
+		await repo.refStore.writeRef("refs/heads/alpha", { type: "direct", hash: commitHash });
+		await repo.refStore.writeRef("refs/heads/middle", { type: "direct", hash: commitHash });
+		await repo.refStore.writeRef("refs/tags/z-tag", { type: "direct", hash: commitHash });
+		await repo.refStore.writeRef("refs/tags/a-tag", { type: "direct", hash: commitHash });
 
-		await bash.writeFile("/repo/file.txt", "content");
-		await bash.exec("git init");
-		await bash.exec("git add .");
-		await bash.exec('git commit -m "init"', { env: envAt(1000000000) });
+		const { refs } = await collectRefs(repo);
 
-		// Create branches in non-alphabetical order
-		await bash.exec("git branch zebra");
-		await bash.exec("git branch alpha");
-		await bash.exec("git branch middle");
-		await bash.exec("git tag z-tag");
-		await bash.exec("git tag a-tag");
-
-		const ctx = await findRepo(fs, "/repo");
-		if (!ctx) throw new Error("no repo");
-
-		const { refs } = await collectRefs(ctx);
-
-		// HEAD should be first
 		expect(refs[0]!.name).toBe("HEAD");
 
-		// Remaining refs (after HEAD) should be sorted
 		const refNames = refs.slice(1).map((r) => r.name);
 		const sorted = refNames.slice().sort();
 		expect(refNames).toEqual(sorted);
 	});
 
 	test("refs in info/refs response are sorted by name", async () => {
-		const fs = new InMemoryFs();
-		const git = createGit();
-		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		const driver = new MemoryDriver();
+		const storage = createStorage(driver);
+		const repo = await storage.createRepo("repo");
+		const blob = await writeBlob(repo, "content");
+		const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);
+		const commitHash = await createCommit(repo, {
+			tree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "init\n",
+		});
+		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commitHash });
+		await repo.refStore.writeRef("refs/heads/zebra", { type: "direct", hash: commitHash });
+		await repo.refStore.writeRef("refs/heads/alpha", { type: "direct", hash: commitHash });
+		await repo.refStore.writeRef("refs/heads/middle", { type: "direct", hash: commitHash });
 
-		await bash.writeFile("/repo/file.txt", "content");
-		await bash.exec("git init");
-		await bash.exec("git add .");
-		await bash.exec('git commit -m "init"', { env: envAt(1000000000) });
-
-		await bash.exec("git branch zebra");
-		await bash.exec("git branch alpha");
-		await bash.exec("git branch middle");
-
-		const ctx = await findRepo(fs, "/repo");
-		if (!ctx) throw new Error("no repo");
-
-		const server = createGitServer({ resolveRepo: async () => ctx });
+		const server = createGitServer({ storage: driver });
 		const res = await server.fetch(
 			new Request("http://localhost/repo/info/refs?service=git-upload-pack"),
 		);
 		const body = new Uint8Array(await res.arrayBuffer());
 		const lines = parsePktLineStream(body);
 
-		// Extract ref names from the advertisement (skip service line, flush, and final flush)
 		const refNames: string[] = [];
 		for (const line of lines) {
 			if (line.type === "flush") continue;
 			const text = pktLineText(line);
 			if (text.startsWith("#")) continue;
-			// Strip capabilities from first ref line
 			const nulIdx = text.indexOf("\0");
 			const refPart = nulIdx >= 0 ? text.slice(0, nulIdx) : text;
 			const match = refPart.match(/^[0-9a-f]{40} (.+)$/);
@@ -93,25 +99,31 @@ describe("ref advertisement sorting", () => {
 	});
 
 	test("peeled tags follow immediately after their tag ref in sorted order", async () => {
-		const fs = new InMemoryFs();
-		const git = createGit();
-		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		const driver = new MemoryDriver();
+		const storage = createStorage(driver);
+		const repo = await storage.createRepo("repo");
+		const blob = await writeBlob(repo, "content");
+		const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);
+		const commitHash = await createCommit(repo, {
+			tree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "init\n",
+		});
+		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commitHash });
 
-		await bash.writeFile("/repo/file.txt", "content");
-		await bash.exec("git init");
-		await bash.exec("git add .");
-		await bash.exec('git commit -m "init"', { env: envAt(1000000000) });
+		const zTagContent = `object ${commitHash}\ntype commit\ntag z-tag\ntagger Test <test@test.com> 1000000000 +0000\n\nz tag\n`;
+		const zTagHash = await repo.objectStore.write("tag", new TextEncoder().encode(zTagContent));
+		await repo.refStore.writeRef("refs/tags/z-tag", { type: "direct", hash: zTagHash });
 
-		await bash.exec('git tag -a z-tag -m "z tag"', { env: envAt(1000000000) });
-		await bash.exec('git tag -a a-tag -m "a tag"', { env: envAt(1000000000) });
+		const aTagContent = `object ${commitHash}\ntype commit\ntag a-tag\ntagger Test <test@test.com> 1000000000 +0000\n\na tag\n`;
+		const aTagHash = await repo.objectStore.write("tag", new TextEncoder().encode(aTagContent));
+		await repo.refStore.writeRef("refs/tags/a-tag", { type: "direct", hash: aTagHash });
 
-		const ctx = await findRepo(fs, "/repo");
-		if (!ctx) throw new Error("no repo");
-
-		const { refs } = await collectRefs(ctx);
+		const { refs } = await collectRefs(repo);
 		const refNames = refs.map((r) => r.name);
 
-		// a-tag should come before z-tag
 		const aIdx = refNames.indexOf("refs/tags/a-tag");
 		const aPeelIdx = refNames.indexOf("refs/tags/a-tag^{}");
 		const zIdx = refNames.indexOf("refs/tags/z-tag");
@@ -128,69 +140,72 @@ describe("ref advertisement sorting", () => {
 
 describe("include-tag via server", () => {
 	test("annotated tag objects are included when their target is in the pack", async () => {
-		const fs = new InMemoryFs();
-		const git = createGit();
-		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		const driver = new MemoryDriver();
+		const storage = createStorage(driver);
+		const repo = await storage.createRepo("repo");
+		const blob = await writeBlob(repo, "content");
+		const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);
+		const commitHash = await createCommit(repo, {
+			tree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "init\n",
+		});
+		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commitHash });
 
-		await bash.writeFile("/repo/file.txt", "content");
-		await bash.exec("git init");
-		await bash.exec("git add .");
-		await bash.exec('git commit -m "init"', { env: envAt(1000000000) });
-		await bash.exec('git tag -a v1.0 -m "release 1.0"', { env: envAt(1000000000) });
+		const tagContent = `object ${commitHash}\ntype commit\ntag v1.0\ntagger Test <test@test.com> 1000000000 +0000\n\nrelease 1.0\n`;
+		const tagHash = await repo.objectStore.write("tag", new TextEncoder().encode(tagContent));
+		await repo.refStore.writeRef("refs/tags/v1.0", { type: "direct", hash: tagHash });
 
-		const ctx = await findRepo(fs, "/repo");
-		if (!ctx) throw new Error("no repo");
-
-		const { srv, port } = startServer({ resolveRepo: async () => ctx });
+		const { port, stop } = startServer({ storage: driver });
 
 		try {
 			const client = createServerClient();
-			const clientFs = client.fs as InMemoryFs;
 
 			const result = await client.exec(`git clone http://localhost:${port}/repo /local`, {
 				env: envAt(1000000100),
 			});
 			expect(result.exitCode).toBe(0);
 
-			// The annotated tag should be present after clone
-			expect(await clientFs.exists("/local/.git/refs/tags/v1.0")).toBe(true);
+			expect(await pathExists(client.fs, "/local/.git/refs/tags/v1.0")).toBe(true);
 
-			// The tag object should be readable (not just a lightweight tag)
 			const showResult = await client.exec("git show v1.0", { cwd: "/local" });
 			expect(showResult.exitCode).toBe(0);
 			expect(showResult.stdout).toContain("release 1.0");
 		} finally {
-			srv.stop();
+			stop();
 		}
 	});
 
 	test("lightweight tags don't generate extra tag objects", async () => {
-		const fs = new InMemoryFs();
-		const git = createGit();
-		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		const driver = new MemoryDriver();
+		const storage = createStorage(driver);
+		const repo = await storage.createRepo("repo");
+		const blob = await writeBlob(repo, "content");
+		const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);
+		const commitHash = await createCommit(repo, {
+			tree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "init\n",
+		});
+		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commitHash });
+		await repo.refStore.writeRef("refs/tags/v1.0-light", { type: "direct", hash: commitHash });
 
-		await bash.writeFile("/repo/file.txt", "content");
-		await bash.exec("git init");
-		await bash.exec("git add .");
-		await bash.exec('git commit -m "init"', { env: envAt(1000000000) });
-		await bash.exec("git tag v1.0-light");
-
-		const ctx = await findRepo(fs, "/repo");
-		if (!ctx) throw new Error("no repo");
-
-		const { srv, port } = startServer({ resolveRepo: async () => ctx });
+		const { port, stop } = startServer({ storage: driver });
 
 		try {
 			const client = createServerClient();
-			const clientFs = client.fs as InMemoryFs;
 
 			const result = await client.exec(`git clone http://localhost:${port}/repo /local`, {
 				env: envAt(1000000100),
 			});
 			expect(result.exitCode).toBe(0);
-			expect(await clientFs.exists("/local/.git/refs/tags/v1.0-light")).toBe(true);
+			expect(await pathExists(client.fs, "/local/.git/refs/tags/v1.0-light")).toBe(true);
 		} finally {
-			srv.stop();
+			stop();
 		}
 	});
 });
@@ -199,26 +214,27 @@ describe("include-tag via server", () => {
 
 describe("allow-reachable-sha1-in-want", () => {
 	test("capability is advertised for upload-pack", async () => {
-		const fs = new InMemoryFs();
-		const git = createGit();
-		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		const driver = new MemoryDriver();
+		const storage = createStorage(driver);
+		const repo = await storage.createRepo("repo");
+		const blob = await writeBlob(repo, "content");
+		const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);
+		const commitHash = await createCommit(repo, {
+			tree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "init\n",
+		});
+		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commitHash });
 
-		await bash.writeFile("/repo/file.txt", "content");
-		await bash.exec("git init");
-		await bash.exec("git add .");
-		await bash.exec('git commit -m "init"', { env: envAt(1000000000) });
-
-		const ctx = await findRepo(fs, "/repo");
-		if (!ctx) throw new Error("no repo");
-
-		const server = createGitServer({ resolveRepo: async () => ctx });
+		const server = createGitServer({ storage: driver });
 		const res = await server.fetch(
 			new Request("http://localhost/repo/info/refs?service=git-upload-pack"),
 		);
 		const body = new Uint8Array(await res.arrayBuffer());
 		const lines = parsePktLineStream(body);
 
-		// Find capabilities in the first ref line
 		let capsFound = false;
 		for (const line of lines) {
 			if (line.type === "flush") continue;
@@ -286,7 +302,6 @@ describe("PackCache", () => {
 		expect(cache.get("key1")).toBeDefined();
 
 		cache.set("key2", entry2);
-		// key1 should have been evicted to make room
 		expect(cache.get("key1")).toBeUndefined();
 		expect(cache.get("key2")).toBeDefined();
 	});
@@ -306,7 +321,6 @@ describe("PackCache", () => {
 		cache.set("key1", entry1);
 		cache.set("key1", entry2);
 
-		// First one should still be there
 		expect(cache.get("key1")!.objectCount).toBe(1);
 	});
 
@@ -315,9 +329,9 @@ describe("PackCache", () => {
 		const entry = { packData: new Uint8Array([1]), objectCount: 1, deltaCount: 0 };
 		cache.set("key1", entry);
 
-		cache.get("key1"); // hit
-		cache.get("key1"); // hit
-		cache.get("missing"); // miss
+		cache.get("key1");
+		cache.get("key1");
+		cache.get("missing");
 
 		expect(cache.stats.hits).toBe(2);
 		expect(cache.stats.misses).toBe(1);
@@ -330,64 +344,80 @@ describe("PackCache", () => {
 
 describe("streaming upload-pack (noDelta)", () => {
 	test("clone succeeds with noDelta pack option", async () => {
-		const fs = new InMemoryFs();
-		const git = createGit();
-		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		const driver = new MemoryDriver();
+		const storage = createStorage(driver);
+		const repo = await storage.createRepo("repo");
+		const fileBlob = await writeBlob(repo, "content");
+		const mainBlob = await writeBlob(repo, 'console.log("hello");');
+		const srcTree = await writeTree(repo, [{ name: "main.ts", hash: mainBlob }]);
+		const tree1 = await writeTree(repo, [
+			{ name: "file.txt", hash: fileBlob },
+			{ name: "src", hash: srcTree },
+		]);
+		const commit1 = await createCommit(repo, {
+			tree: tree1,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "init\n",
+		});
+		const file2Blob = await writeBlob(repo, "more content");
+		const tree2 = await writeTree(repo, [
+			{ name: "file.txt", hash: fileBlob },
+			{ name: "file2.txt", hash: file2Blob },
+			{ name: "src", hash: srcTree },
+		]);
+		const commit2 = await createCommit(repo, {
+			tree: tree2,
+			parents: [commit1],
+			author: { ...TEST_IDENTITY, timestamp: 1000000100 },
+			committer: { ...TEST_IDENTITY, timestamp: 1000000100 },
+			message: "second\n",
+		});
+		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commit2 });
 
-		await bash.writeFile("/repo/file.txt", "content");
-		await bash.writeFile("/repo/src/main.ts", 'console.log("hello");');
-		await bash.exec("git init");
-		await bash.exec("git add .");
-		await bash.exec('git commit -m "init"', { env: envAt(1000000000) });
-
-		await bash.writeFile("/repo/file2.txt", "more content");
-		await bash.exec("git add .");
-		await bash.exec('git commit -m "second"', { env: envAt(1000000100) });
-
-		const ctx = await findRepo(fs, "/repo");
-		if (!ctx) throw new Error("no repo");
-
-		const { srv, port } = startServer({
-			resolveRepo: async () => ctx,
+		const { port, stop } = startServer({
+			storage: driver,
 			packOptions: { noDelta: true },
 		});
 
 		try {
 			const client = createServerClient();
-			const clientFs = client.fs as InMemoryFs;
 
 			const result = await client.exec(`git clone http://localhost:${port}/repo /local`, {
 				env: envAt(1000000200),
 			});
 			expect(result.exitCode).toBe(0);
 
-			expect(await clientFs.readFile("/local/file.txt")).toBe("content");
-			expect(await clientFs.readFile("/local/file2.txt")).toBe("more content");
-			expect(await clientFs.readFile("/local/src/main.ts")).toBe('console.log("hello");');
+			expect(await readFile(client.fs, "/local/file.txt")).toBe("content");
+			expect(await readFile(client.fs, "/local/file2.txt")).toBe("more content");
+			expect(await readFile(client.fs, "/local/src/main.ts")).toBe('console.log("hello");');
 
 			const log = await client.exec("git log --oneline", { cwd: "/local" });
 			expect(log.stdout).toContain("second");
 			expect(log.stdout).toContain("init");
 		} finally {
-			srv.stop();
+			stop();
 		}
 	});
 
 	test("incremental fetch works with noDelta", async () => {
-		const fs = new InMemoryFs();
-		const git = createGit();
-		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		const driver = new MemoryDriver();
+		const storage = createStorage(driver);
+		const repo = await storage.createRepo("repo");
+		const blob = await writeBlob(repo, "content");
+		const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);
+		const commitHash = await createCommit(repo, {
+			tree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "init\n",
+		});
+		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commitHash });
 
-		await bash.writeFile("/repo/file.txt", "content");
-		await bash.exec("git init");
-		await bash.exec("git add .");
-		await bash.exec('git commit -m "init"', { env: envAt(1000000000) });
-
-		const ctx = await findRepo(fs, "/repo");
-		if (!ctx) throw new Error("no repo");
-
-		const { srv, port } = startServer({
-			resolveRepo: async () => ctx,
+		const { port, stop } = startServer({
+			storage: driver,
 			packOptions: { noDelta: true },
 		});
 
@@ -398,10 +428,21 @@ describe("streaming upload-pack (noDelta)", () => {
 				env: envAt(1000000100),
 			});
 
-			// Add a new commit on the server
-			await bash.writeFile("/repo/new.txt", "new file");
-			await bash.exec("git add .");
-			await bash.exec('git commit -m "server update"', { env: envAt(1000000200) });
+			const repo2 = (await storage.repo("repo"))!;
+			const newBlob = await writeBlob(repo2, "new file");
+			const existingBlob = await writeBlob(repo2, "content");
+			const newTree = await writeTree(repo2, [
+				{ name: "file.txt", hash: existingBlob },
+				{ name: "new.txt", hash: newBlob },
+			]);
+			const newCommit = await createCommit(repo2, {
+				tree: newTree,
+				parents: [commitHash],
+				author: { ...TEST_IDENTITY, timestamp: 1000000200 },
+				committer: { ...TEST_IDENTITY, timestamp: 1000000200 },
+				message: "server update\n",
+			});
+			await repo2.refStore.writeRef("refs/heads/main", { type: "direct", hash: newCommit });
 
 			const fetch = await client.exec("git fetch origin", { cwd: "/local" });
 			expect(fetch.exitCode).toBe(0);
@@ -409,7 +450,7 @@ describe("streaming upload-pack (noDelta)", () => {
 			const log = await client.exec("git log origin/main --oneline", { cwd: "/local" });
 			expect(log.stdout).toContain("server update");
 		} finally {
-			srv.stop();
+			stop();
 		}
 	});
 });
@@ -473,19 +514,21 @@ describe("nodeHandler", () => {
 	}
 
 	test("converts GET request and returns correct status and headers", async () => {
-		const fs = new InMemoryFs();
-		const git = createGit();
-		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		const driver = new MemoryDriver();
+		const storage = createStorage(driver);
+		const repo = await storage.createRepo("repo");
+		const blob = await writeBlob(repo, "content");
+		const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);
+		const commitHash = await createCommit(repo, {
+			tree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "init\n",
+		});
+		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commitHash });
 
-		await bash.writeFile("/repo/file.txt", "content");
-		await bash.exec("git init");
-		await bash.exec("git add .");
-		await bash.exec('git commit -m "init"', { env: envAt(1000000000) });
-
-		const ctx = await findRepo(fs, "/repo");
-		if (!ctx) throw new Error("no repo");
-
-		const server = createGitServer({ resolveRepo: async () => ctx });
+		const server = createGitServer({ storage: driver });
 
 		const req = createMockNodeReq("GET", "/repo/info/refs?service=git-upload-pack");
 		const res = createMockNodeRes();
@@ -501,7 +544,7 @@ describe("nodeHandler", () => {
 	});
 
 	test("returns 404 for unknown path", async () => {
-		const server = createGitServer({ resolveRepo: async () => null });
+		const server = createGitServer({ storage: new MemoryDriver(), resolve: () => null });
 
 		const req = createMockNodeReq("GET", "/repo/info/refs?service=git-upload-pack");
 		const res = createMockNodeRes();
@@ -516,7 +559,8 @@ describe("nodeHandler", () => {
 
 	test("returns 500 when server handler throws", async () => {
 		const server = createGitServer({
-			resolveRepo: async () => {
+			storage: new MemoryDriver(),
+			resolve: async () => {
 				throw new Error("test explosion");
 			},
 			onError: false,
@@ -537,7 +581,8 @@ describe("nodeHandler", () => {
 		let capturedHeaders: Headers | undefined;
 
 		const server = createGitServer({
-			resolveRepo: async () => null,
+			storage: new MemoryDriver(),
+			resolve: () => null,
 			session: {
 				http: (req) => {
 					capturedHeaders = req.headers;
@@ -565,7 +610,8 @@ describe("nodeHandler", () => {
 		let capturedBody: Uint8Array | undefined;
 
 		const server = createGitServer({
-			resolveRepo: async () => null,
+			storage: new MemoryDriver(),
+			resolve: () => null,
 			session: {
 				http: async (req) => {
 					capturedBody = new Uint8Array(await req.clone().arrayBuffer());
@@ -589,7 +635,8 @@ describe("nodeHandler", () => {
 
 	test("handles request error event", async () => {
 		const server = createGitServer({
-			resolveRepo: async () => null,
+			storage: new MemoryDriver(),
+			resolve: () => null,
 			onError: false,
 		});
 
@@ -616,7 +663,8 @@ describe("nodeHandler", () => {
 		let capturedUrl: string | undefined;
 
 		const server = createGitServer({
-			resolveRepo: async () => null,
+			storage: new MemoryDriver(),
+			resolve: () => null,
 			session: {
 				http: (req) => {
 					capturedMethod = req.method;

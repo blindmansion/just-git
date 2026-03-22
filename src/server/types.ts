@@ -1,5 +1,6 @@
 import type { GitRepo } from "../lib/types.ts";
 import type { Rejection } from "../hooks.ts";
+import type { StorageDriver, CreateRepoOptions } from "./storage.ts";
 
 // ── Session ─────────────────────────────────────────────────────────
 
@@ -27,7 +28,7 @@ export interface Session {
  *
  * ```ts
  * const server = createGitServer({
- *   resolveRepo: (path) => storage.repo(path),
+ *   storage: new BunSqliteDriver(db),
  *   session: {
  *     http: (req) => ({
  *       userId: parseJwt(req).sub,
@@ -135,12 +136,32 @@ export interface ServerPolicy {
 
 export interface GitServerConfig<S = Session> {
 	/**
-	 * Resolve a repo path to a repository.
+	 * Storage driver for git object and ref persistence.
 	 *
-	 * Called for both HTTP and SSH requests. Return `GitRepo` to serve,
-	 * or `null` to respond with 404 / reject.
+	 * The server calls `createStorage(storage)` internally to build the
+	 * git-aware adapter. Users provide the raw driver; they never see
+	 * the `Storage` interface.
 	 */
-	resolveRepo: (repoPath: string) => GitRepo | null | Promise<GitRepo | null>;
+	storage: StorageDriver;
+
+	/**
+	 * Map a request path to a repo ID.
+	 *
+	 * Called for both HTTP and SSH requests. Return a string repo ID
+	 * to serve, or `null` to respond with 404 / reject.
+	 *
+	 * Default: identity — the URL path segment is the repo ID.
+	 */
+	resolve?: (path: string) => string | null | Promise<string | null>;
+
+	/**
+	 * Automatically create repos on first access.
+	 *
+	 * When `true`, uses `"main"` as the default branch.
+	 * When `{ defaultBranch }`, uses the specified branch name.
+	 * When `false` or omitted, unknown repos return 404.
+	 */
+	autoCreate?: boolean | { defaultBranch?: string };
 
 	/** Server-side hooks. All optional. */
 	hooks?: ServerHooks<S>;
@@ -243,6 +264,15 @@ export interface GitServer {
 	 * ```
 	 */
 	nodeHandler(req: NodeHttpRequest, res: NodeHttpResponse): void;
+
+	/** Create a new repo. Throws if the repo already exists. */
+	createRepo(id: string, options?: CreateRepoOptions): Promise<GitRepo>;
+
+	/** Get a repo by ID, or `null` if it doesn't exist. */
+	repo(id: string): Promise<GitRepo | null>;
+
+	/** Delete a repo and all its data. */
+	deleteRepo(id: string): Promise<void>;
 }
 
 // ── Hooks ───────────────────────────────────────────────────────────
@@ -300,7 +330,8 @@ export interface RefUpdate {
 /** Fired after objects are unpacked but before refs are updated. */
 export interface PreReceiveEvent<S = Session> {
 	repo: GitRepo;
-	repoPath: string;
+	/** Resolved repo ID (the value returned by `resolve`, or the raw path when `resolve` is not set). */
+	repoId: string;
 	updates: readonly RefUpdate[];
 	/** Session info. Present for HTTP and SSH; absent for in-process pushes. */
 	session?: S;
@@ -309,7 +340,8 @@ export interface PreReceiveEvent<S = Session> {
 /** Fired per-ref after preReceive passes. */
 export interface UpdateEvent<S = Session> {
 	repo: GitRepo;
-	repoPath: string;
+	/** Resolved repo ID (the value returned by `resolve`, or the raw path when `resolve` is not set). */
+	repoId: string;
 	update: RefUpdate;
 	/** Session info. Present for HTTP and SSH; absent for in-process pushes. */
 	session?: S;
@@ -318,7 +350,8 @@ export interface UpdateEvent<S = Session> {
 /** Fired after all ref updates succeed. */
 export interface PostReceiveEvent<S = Session> {
 	repo: GitRepo;
-	repoPath: string;
+	/** Resolved repo ID (the value returned by `resolve`, or the raw path when `resolve` is not set). */
+	repoId: string;
 	updates: readonly RefUpdate[];
 	/** Session info. Present for HTTP and SSH; absent for in-process pushes. */
 	session?: S;
@@ -327,7 +360,8 @@ export interface PostReceiveEvent<S = Session> {
 /** Fired during ref advertisement (info/refs). */
 export interface AdvertiseRefsEvent<S = Session> {
 	repo: GitRepo;
-	repoPath: string;
+	/** Resolved repo ID (the value returned by `resolve`, or the raw path when `resolve` is not set). */
+	repoId: string;
 	refs: RefAdvertisement[];
 	service: "git-upload-pack" | "git-receive-pack";
 	/** Session info. Present for HTTP and SSH; absent for in-process requests. */

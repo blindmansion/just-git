@@ -1,27 +1,39 @@
 import { describe, expect, test } from "bun:test";
-import { InMemoryFs, Bash } from "just-bash";
-import { createGit } from "../../src/index.ts";
-import { findRepo } from "../../src/lib/repo.ts";
+import { createCommit, writeBlob, writeTree } from "../../src/repo/helpers.ts";
 import { createGitServer } from "../../src/server/handler.ts";
-import { envAt, defaultHttpSession, defaultSshSession } from "./util.ts";
+import { MemoryDriver } from "../../src/server/memory-storage.ts";
+import type { GitServerConfig } from "../../src/server/types.ts";
+import { defaultHttpSession, defaultSshSession } from "./util.ts";
 
-async function setupServerRepo() {
-	const fs = new InMemoryFs();
-	const git = createGit();
-	const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
-	await bash.writeFile("/repo/README.md", "hello");
-	await bash.exec("git init");
-	await bash.exec("git add .");
-	await bash.exec('git commit -m "init"', { env: envAt(1000000000) });
-	const ctx = await findRepo(fs, "/repo");
-	if (!ctx) throw new Error("repo not found");
-	return ctx;
+const TEST_IDENTITY = {
+	name: "Test",
+	email: "test@test.com",
+	timestamp: 1000000000,
+	timezone: "+0000",
+};
+
+async function setupServerRepo(options?: Pick<GitServerConfig, "session">) {
+	const driver = new MemoryDriver();
+	const server = createGitServer({ storage: driver, ...options });
+	const repo = await server.createRepo("test");
+	const blobHash = await writeBlob(repo, "hello");
+	const treeHash = await writeTree(repo, [{ name: "README.md", hash: blobHash }]);
+	await createCommit(repo, {
+		tree: treeHash,
+		parents: [],
+		message: "init",
+		author: TEST_IDENTITY,
+		committer: TEST_IDENTITY,
+		branch: "main",
+	});
+	return { server, driver };
 }
 
 describe("resolveRepo and session auth", () => {
 	test("returns 404 when resolveRepo returns null", async () => {
 		const server = createGitServer({
-			resolveRepo: () => null,
+			storage: new MemoryDriver(),
+			resolve: () => null,
 		});
 
 		const res = await server.fetch(
@@ -32,7 +44,8 @@ describe("resolveRepo and session auth", () => {
 
 	test("session builder returns custom Response for auth failure", async () => {
 		const server = createGitServer({
-			resolveRepo: () => null,
+			storage: new MemoryDriver(),
+			resolve: () => null,
 			session: {
 				http: (req) => {
 					if (req.headers.get("Authorization") !== "Bearer secret") {
@@ -57,7 +70,8 @@ describe("resolveRepo and session auth", () => {
 
 	test("session builder rejects → 403 for upload-pack", async () => {
 		const server = createGitServer({
-			resolveRepo: () => null,
+			storage: new MemoryDriver(),
+			resolve: () => null,
 			session: {
 				http: () => new Response("Forbidden", { status: 403 }),
 				ssh: defaultSshSession,
@@ -75,7 +89,8 @@ describe("resolveRepo and session auth", () => {
 
 	test("session builder rejects → 403 for receive-pack", async () => {
 		const server = createGitServer({
-			resolveRepo: () => null,
+			storage: new MemoryDriver(),
+			resolve: () => null,
 			session: {
 				http: () => new Response("Forbidden", { status: 403 }),
 				ssh: defaultSshSession,
@@ -92,11 +107,7 @@ describe("resolveRepo and session auth", () => {
 	});
 
 	test("proceeds normally when resolveRepo returns a GitRepo", async () => {
-		const repo = await setupServerRepo();
-
-		const server = createGitServer({
-			resolveRepo: () => repo,
-		});
+		const server = (await setupServerRepo()).server;
 
 		const res = await server.fetch(
 			new Request("http://localhost/test/info/refs?service=git-upload-pack"),
@@ -106,20 +117,19 @@ describe("resolveRepo and session auth", () => {
 	});
 
 	test("auth gate: rejects without token, allows with token", async () => {
-		const repo = await setupServerRepo();
-
-		const server = createGitServer({
-			resolveRepo: () => repo,
-			session: {
-				http: (req) => {
-					if (req.headers.get("Authorization") !== "Bearer valid-token") {
-						return new Response("", { status: 401 });
-					}
-					return defaultHttpSession(req);
+		const server = (
+			await setupServerRepo({
+				session: {
+					http: (req) => {
+						if (req.headers.get("Authorization") !== "Bearer valid-token") {
+							return new Response("", { status: 401 });
+						}
+						return defaultHttpSession(req);
+					},
+					ssh: defaultSshSession,
 				},
-				ssh: defaultSshSession,
-			},
-		});
+			})
+		).server;
 
 		const rejected = await server.fetch(
 			new Request("http://localhost/test/info/refs?service=git-upload-pack"),

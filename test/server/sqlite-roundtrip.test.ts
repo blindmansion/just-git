@@ -3,11 +3,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Bash, InMemoryFs } from "just-bash";
-import { createGit } from "../../src/index.ts";
+import { InMemoryFs } from "just-bash";
 import { BunSqliteDriver } from "../../src/server/bun-sqlite-storage.ts";
-import { createStorage } from "../../src/server/storage.ts";
-import type { Storage } from "../../src/server/storage.ts";
+import type { GitServer } from "../../src/server/types.ts";
 import {
 	envAt,
 	realGit,
@@ -19,7 +17,7 @@ import {
 
 describe("SQLite-backed server roundtrip", () => {
 	let db: Database;
-	let storage: Storage;
+	let server: GitServer;
 	let srv: ReturnType<typeof Bun.serve>;
 	let port: number;
 	let home: string;
@@ -27,36 +25,34 @@ describe("SQLite-backed server roundtrip", () => {
 	beforeAll(async () => {
 		home = await createRealGitHome();
 		db = new Database(":memory:");
-		storage = createStorage(new BunSqliteDriver(db));
 
-		const s = startServer({
-			resolveRepo: async (repoPath) => storage.repo(repoPath),
-		});
+		const s = startServer({ storage: new BunSqliteDriver(db) });
+		server = s.server;
 		srv = s.srv;
 		port = s.port;
 
-		// Create the repo record before seeding
-		await storage.createRepo("my-repo");
+		await server.createRepo("my-repo");
 
-		// Seed "my-repo" with initial content via just-git push
-		const seedFs = new InMemoryFs();
-		const seedGit = createGit();
-		const seedBash = new Bash({ fs: seedFs, cwd: "/seed", customCommands: [seedGit] });
-
-		await seedBash.exec("git init");
-		await seedBash.writeFile("/seed/README.md", "# SQLite Test Repo");
-		await seedBash.writeFile("/seed/src/index.ts", "export const x = 1;");
-		await seedBash.exec("git add .");
-		await seedBash.exec('git commit -m "initial commit"', { env: envAt(1000000000) });
-		await seedBash.exec("git tag v0.1");
-		await seedBash.writeFile("/seed/src/util.ts", "export const y = 2;");
-		await seedBash.exec("git add .");
-		await seedBash.exec('git commit -m "add util"', { env: envAt(1000000100) });
-		await seedBash.exec(`git remote add origin http://localhost:${port}/my-repo`);
-		const pushResult = await seedBash.exec("git push -u origin main");
+		const seedClient = createServerClient();
+		await seedClient.exec("git init /seed");
+		await seedClient.writeFile("/seed/README.md", "# SQLite Test Repo");
+		await seedClient.writeFile("/seed/src/index.ts", "export const x = 1;");
+		await seedClient.exec("git add .", { cwd: "/seed", env: envAt(1000000000) });
+		await seedClient.exec('git commit -m "initial commit"', {
+			cwd: "/seed",
+			env: envAt(1000000000),
+		});
+		await seedClient.exec("git tag v0.1", { cwd: "/seed" });
+		await seedClient.writeFile("/seed/src/util.ts", "export const y = 2;");
+		await seedClient.exec("git add .", { cwd: "/seed", env: envAt(1000000100) });
+		await seedClient.exec('git commit -m "add util"', { cwd: "/seed", env: envAt(1000000100) });
+		await seedClient.exec(`git remote add origin http://localhost:${port}/my-repo`, {
+			cwd: "/seed",
+		});
+		const pushResult = await seedClient.exec("git push -u origin main", { cwd: "/seed" });
 		expect(pushResult.exitCode).toBe(0);
 
-		await seedBash.exec("git push origin v0.1");
+		await seedClient.exec("git push origin v0.1", { cwd: "/seed" });
 	});
 
 	afterAll(async () => {
@@ -111,7 +107,7 @@ describe("SQLite-backed server roundtrip", () => {
 			const cloneDir = join(sandbox, "local");
 			await realGit(home, sandbox, `clone http://localhost:${port}/my-repo ${cloneDir}`);
 
-			const repo = (await storage.repo("my-repo"))!;
+			const repo = (await server.repo("my-repo"))!;
 			const mainBefore = await repo.refStore.readRef("refs/heads/main");
 			const hashBefore = mainBefore?.type === "direct" ? mainBefore.hash : null;
 
@@ -122,10 +118,11 @@ describe("SQLite-backed server roundtrip", () => {
 			const pushResult = await realGit(home, cloneDir, "push origin main");
 			expect(pushResult.exitCode).toBe(0);
 
-			const mainAfter = await repo.refStore.readRef("refs/heads/main");
+			const repoAfter = (await server.repo("my-repo"))!;
+			const mainAfter = await repoAfter.refStore.readRef("refs/heads/main");
 			const hashAfter = mainAfter?.type === "direct" ? mainAfter.hash : null;
 			expect(hashAfter).not.toBe(hashBefore);
-			expect(await repo.objectStore.exists(hashAfter!)).toBe(true);
+			expect(await repoAfter.objectStore.exists(hashAfter!)).toBe(true);
 		} finally {
 			await rm(sandbox, { recursive: true, force: true });
 		}
@@ -179,14 +176,15 @@ describe("SQLite-backed server roundtrip", () => {
 			const pushResult = await realGit(home, cloneDir, "push origin sqlite-feature");
 			expect(pushResult.exitCode).toBe(0);
 
-			const repo = (await storage.repo("my-repo"))!;
+			const repo = (await server.repo("my-repo"))!;
 			const branchRef = await repo.refStore.readRef("refs/heads/sqlite-feature");
 			expect(branchRef).not.toBeNull();
 
 			const deleteResult = await realGit(home, cloneDir, "push origin --delete sqlite-feature");
 			expect(deleteResult.exitCode).toBe(0);
 
-			const afterDelete = await repo.refStore.readRef("refs/heads/sqlite-feature");
+			const repoAfter = (await server.repo("my-repo"))!;
+			const afterDelete = await repoAfter.refStore.readRef("refs/heads/sqlite-feature");
 			expect(afterDelete).toBeNull();
 		} finally {
 			await rm(sandbox, { recursive: true, force: true });
@@ -194,17 +192,19 @@ describe("SQLite-backed server roundtrip", () => {
 	});
 
 	test("multiple repos in same database", async () => {
-		const seedFs = new InMemoryFs();
-		const seedGit = createGit();
-		const seedBash = new Bash({ fs: seedFs, cwd: "/seed2", customCommands: [seedGit] });
-
-		await seedBash.exec("git init");
-		await seedBash.writeFile("/seed2/other.txt", "different repo");
-		await seedBash.exec("git add .");
-		await seedBash.exec('git commit -m "other repo init"', { env: envAt(1000002000) });
-		await storage.createRepo("other-repo");
-		await seedBash.exec(`git remote add origin http://localhost:${port}/other-repo`);
-		await seedBash.exec("git push -u origin main");
+		const seedClient = createServerClient();
+		await seedClient.exec("git init /seed2");
+		await seedClient.writeFile("/seed2/other.txt", "different repo");
+		await seedClient.exec("git add .", { cwd: "/seed2", env: envAt(1000002000) });
+		await seedClient.exec('git commit -m "other repo init"', {
+			cwd: "/seed2",
+			env: envAt(1000002000),
+		});
+		await server.createRepo("other-repo");
+		await seedClient.exec(`git remote add origin http://localhost:${port}/other-repo`, {
+			cwd: "/seed2",
+		});
+		await seedClient.exec("git push -u origin main", { cwd: "/seed2" });
 
 		const client1 = createServerClient();
 		const client1Fs = client1.fs as InMemoryFs;

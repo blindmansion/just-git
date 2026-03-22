@@ -1,13 +1,12 @@
 import http from "node:http";
 import Database from "better-sqlite3";
-import { createGitServer, createStorage, BetterSqlite3Driver } from "just-git/server";
+import { createGitServer, BetterSqlite3Driver } from "just-git/server";
 
 const GIT_TOKEN = process.env.GIT_TOKEN;
 
-const storage = createStorage(new BetterSqlite3Driver(new Database("repos.sqlite")));
-
 const server = createGitServer({
-	resolveRepo: async (repoPath) => (await storage.repo(repoPath)) ?? storage.createRepo(repoPath),
+	storage: new BetterSqlite3Driver(new Database("repos.sqlite")),
+	autoCreate: true,
 
 	session: {
 		http: (request) => {
@@ -43,10 +42,10 @@ const server = createGitServer({
 	},
 
 	hooks: {
-		postReceive: ({ repoPath, updates }) => {
+		postReceive: ({ repoId, updates }) => {
 			for (const u of updates) {
 				console.log(
-					`[push] ${repoPath}: ${u.ref} ${u.oldHash?.slice(0, 7) ?? "(new)"} → ${u.newHash.slice(0, 7)}`,
+					`[push] ${repoId}: ${u.ref} ${u.oldHash?.slice(0, 7) ?? "(new)"} → ${u.newHash.slice(0, 7)}`,
 				);
 			}
 		},

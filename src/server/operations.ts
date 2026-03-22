@@ -47,7 +47,7 @@ interface PackCacheEntry {
 /**
  * Bounded LRU-ish cache for generated packfiles.
  *
- * Keyed on `(repoPath, sorted wants)` — only caches full clones
+ * Keyed on `(repoId, sorted wants)` — only caches full clones
  * (requests with no `have` lines). Incremental fetches always
  * compute fresh packs.
  *
@@ -67,10 +67,10 @@ export class PackCache {
 	}
 
 	/** Build a cache key. Returns null for requests with haves (not cacheable). */
-	static key(repoPath: string, wants: string[], haves: string[]): string | null {
+	static key(repoId: string, wants: string[], haves: string[]): string | null {
 		if (haves.length > 0) return null;
 		const sorted = wants.slice().sort();
-		return `${repoPath}\0${sorted.join(",")}`;
+		return `${repoId}\0${sorted.join(",")}`;
 	}
 
 	get(key: string): PackCacheEntry | undefined {
@@ -254,7 +254,7 @@ export interface AdvertiseResult {
  */
 export async function advertiseRefsWithHooks<S>(
 	repo: GitRepo,
-	repoPath: string,
+	repoId: string,
 	service: "git-upload-pack" | "git-receive-pack",
 	hooks?: ServerHooks<S>,
 	session?: S,
@@ -262,7 +262,7 @@ export async function advertiseRefsWithHooks<S>(
 	const { refs: allRefs, headTarget } = await collectRefs(repo);
 	let refs = allRefs;
 	if (hooks?.advertiseRefs) {
-		const result = await hooks.advertiseRefs({ repo, repoPath, refs: allRefs, service, session });
+		const result = await hooks.advertiseRefs({ repo, repoId, refs: allRefs, service, session });
 		if (isRejection(result)) return result;
 		if (result) refs = result;
 	}
@@ -657,7 +657,7 @@ async function buildRefUpdates(
 
 export interface ApplyReceivePackOptions<S = unknown> {
 	repo: GitRepo;
-	repoPath: string;
+	repoId: string;
 	ingestResult: ReceivePackResult;
 	hooks?: ServerHooks<S>;
 	/** Session info threaded through to hooks. */
@@ -687,12 +687,12 @@ export interface ApplyReceivePackResult {
 export async function applyReceivePack<S = unknown>(
 	options: ApplyReceivePackOptions<S>,
 ): Promise<ApplyReceivePackResult> {
-	const { repo, repoPath, ingestResult, hooks, session } = options;
+	const { repo, repoId, ingestResult, hooks, session } = options;
 	const { updates } = ingestResult;
 
 	// Pre-receive hook: abort entire push on rejection
 	if (hooks?.preReceive) {
-		const result = await hooks.preReceive({ repo, repoPath, updates, session });
+		const result = await hooks.preReceive({ repo, repoId, updates, session });
 		if (isRejection(result)) {
 			const msg = result.message ?? "pre-receive hook declined";
 			return {
@@ -713,7 +713,7 @@ export async function applyReceivePack<S = unknown>(
 		}
 
 		if (hooks?.update) {
-			const result = await hooks.update({ repo, repoPath, update, session });
+			const result = await hooks.update({ repo, repoId, update, session });
 			if (isRejection(result)) {
 				refResults.push({
 					ref: update.ref,
@@ -746,7 +746,7 @@ export async function applyReceivePack<S = unknown>(
 	// Post-receive hook (fire-and-forget, only for successful updates)
 	if (hooks?.postReceive && applied.length > 0) {
 		try {
-			await hooks.postReceive({ repo, repoPath, updates: applied, session });
+			await hooks.postReceive({ repo, repoId, updates: applied, session });
 		} catch {
 			// Post-receive errors don't affect the result
 		}

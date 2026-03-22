@@ -2,38 +2,34 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { findRepo } from "../../src/lib/repo.ts";
-import type { GitContext } from "../../src/lib/types.ts";
 import { BunSqliteDriver } from "../../src/server/bun-sqlite-storage.ts";
-import { createStorage } from "../../src/server/storage.ts";
-import type { Storage } from "../../src/server/storage.ts";
+import { MemoryDriver } from "../../src/server/memory-storage.ts";
+import type { GitServer } from "../../src/server/types.ts";
 import { envAt, createServerClient, startServer } from "./util.ts";
 
 // ── Concurrent HTTP pushes to a VFS-backed server ────────────────────
 
 describe("concurrent push safety (VFS-backed server)", () => {
 	let srv: ReturnType<typeof Bun.serve>;
-	let serverFs: InMemoryFs;
-	let serverRepo: GitContext;
 	let port: number;
+	let server: GitServer;
 
 	beforeAll(async () => {
-		serverFs = new InMemoryFs();
-		const git = createGit();
-		const bash = new Bash({ fs: serverFs, cwd: "/repo", customCommands: [git] });
-
-		await bash.writeFile("/repo/README.md", "# Hello");
-		await bash.exec("git init");
-		await bash.exec("git add .");
-		await bash.exec('git commit -m "initial"', { env: envAt(1000000000) });
-
-		const ctx = await findRepo(serverFs, "/repo");
-		if (!ctx) throw new Error("failed to find git dir");
-		serverRepo = ctx;
-
-		const s = startServer({ resolveRepo: async () => serverRepo });
+		const driver = new MemoryDriver();
+		const s = startServer({ storage: driver });
 		srv = s.srv;
 		port = s.port;
+		server = s.server;
+		await server.createRepo("repo");
+
+		const seed = createServerClient();
+		await seed.exec(`git clone http://localhost:${port}/repo /seed`, {
+			env: envAt(1000000000),
+		});
+		await seed.writeFile("/seed/README.md", "# Hello");
+		await seed.exec("git add .", { cwd: "/seed" });
+		await seed.exec('git commit -m "initial"', { cwd: "/seed", env: envAt(1000000000) });
+		await seed.exec("git push origin main", { cwd: "/seed", env: envAt(1000000000) });
 	});
 
 	afterAll(() => srv?.stop());
@@ -42,8 +38,12 @@ describe("concurrent push safety (VFS-backed server)", () => {
 		const alice = createServerClient();
 		const bob = createServerClient();
 
-		await alice.exec(`git clone http://localhost:${port}/repo /local`, { env: envAt(1000000100) });
-		await bob.exec(`git clone http://localhost:${port}/repo /local`, { env: envAt(1000000100) });
+		await alice.exec(`git clone http://localhost:${port}/repo /local`, {
+			env: envAt(1000000100),
+		});
+		await bob.exec(`git clone http://localhost:${port}/repo /local`, {
+			env: envAt(1000000100),
+		});
 
 		await alice.writeFile("/local/alice.txt", "alice");
 		await alice.exec("git add .", { cwd: "/local" });
@@ -69,8 +69,12 @@ describe("concurrent push safety (VFS-backed server)", () => {
 		const alice = createServerClient();
 		const bob = createServerClient();
 
-		await alice.exec(`git clone http://localhost:${port}/repo /local`, { env: envAt(1000000400) });
-		await bob.exec(`git clone http://localhost:${port}/repo /local`, { env: envAt(1000000400) });
+		await alice.exec(`git clone http://localhost:${port}/repo /local`, {
+			env: envAt(1000000400),
+		});
+		await bob.exec(`git clone http://localhost:${port}/repo /local`, {
+			env: envAt(1000000400),
+		});
 
 		await alice.exec("git checkout -b feat-a", { cwd: "/local", env: envAt(1000000500) });
 		await alice.writeFile("/local/a.txt", "a");
@@ -97,38 +101,25 @@ describe("concurrent push safety (VFS-backed server)", () => {
 describe("concurrent push safety (SQLite-backed server)", () => {
 	let srv: ReturnType<typeof Bun.serve>;
 	let db: Database;
-	let storage: Storage;
 	let port: number;
+	let server: GitServer;
 
 	beforeAll(async () => {
 		db = new Database(":memory:");
-		storage = createStorage(new BunSqliteDriver(db));
-
-		const seedRepo = await storage.createRepo("test");
-
-		const seedFs = new InMemoryFs();
-		const seedGit = createGit();
-		const seedBash = new Bash({ fs: seedFs, cwd: "/repo", customCommands: [seedGit] });
-		await seedBash.writeFile("/repo/README.md", "# Hello");
-		await seedBash.exec("git init");
-		await seedBash.exec("git add .");
-		await seedBash.exec('git commit -m "initial"', { env: envAt(1000000000) });
-
-		const seedCtx = await findRepo(seedFs, "/repo");
-		if (!seedCtx) throw new Error("failed to set up seed repo");
-
-		const seedGitForPush = createGit({
-			resolveRemote: () => seedRepo,
-		});
-		const pushBash = new Bash({ fs: seedFs, cwd: "/repo", customCommands: [seedGitForPush] });
-		await pushBash.exec("git remote add origin sqlite://test");
-		await pushBash.exec("git push origin main", { env: envAt(1000000000) });
-
-		const s = startServer({
-			resolveRepo: async (path) => (await storage.repo(path))!,
-		});
+		const s = startServer({ storage: new BunSqliteDriver(db) });
 		srv = s.srv;
 		port = s.port;
+		server = s.server;
+		await server.createRepo("test");
+
+		const seed = createServerClient();
+		await seed.exec(`git clone http://localhost:${port}/test /seed`, {
+			env: envAt(1000000000),
+		});
+		await seed.writeFile("/seed/README.md", "# Hello");
+		await seed.exec("git add .", { cwd: "/seed" });
+		await seed.exec('git commit -m "initial"', { cwd: "/seed", env: envAt(1000000000) });
+		await seed.exec("git push origin main", { cwd: "/seed", env: envAt(1000000000) });
 	});
 
 	afterAll(() => {
@@ -140,8 +131,12 @@ describe("concurrent push safety (SQLite-backed server)", () => {
 		const alice = createServerClient();
 		const bob = createServerClient();
 
-		await alice.exec(`git clone http://localhost:${port}/test /local`, { env: envAt(1000000100) });
-		await bob.exec(`git clone http://localhost:${port}/test /local`, { env: envAt(1000000100) });
+		await alice.exec(`git clone http://localhost:${port}/test /local`, {
+			env: envAt(1000000100),
+		});
+		await bob.exec(`git clone http://localhost:${port}/test /local`, {
+			env: envAt(1000000100),
+		});
 
 		await alice.writeFile("/local/alice.txt", "alice");
 		await alice.exec("git add .", { cwd: "/local" });
@@ -169,33 +164,25 @@ describe("concurrent push safety (SQLite-backed server)", () => {
 describe("cross-path push safety (resolveRemote + HTTP)", () => {
 	let srv: ReturnType<typeof Bun.serve>;
 	let db: Database;
-	let storage: Storage;
 	let port: number;
+	let server: GitServer;
 
 	beforeAll(async () => {
 		db = new Database(":memory:");
-		storage = createStorage(new BunSqliteDriver(db));
-
-		const seedRepo = await storage.createRepo("shared");
-
-		const seedFs = new InMemoryFs();
-		const seedGit = createGit();
-		const seedBash = new Bash({ fs: seedFs, cwd: "/repo", customCommands: [seedGit] });
-		await seedBash.writeFile("/repo/README.md", "# Shared");
-		await seedBash.exec("git init");
-		await seedBash.exec("git add .");
-		await seedBash.exec('git commit -m "initial"', { env: envAt(1000000000) });
-
-		const seedPushGit = createGit({ resolveRemote: () => seedRepo });
-		const pushBash = new Bash({ fs: seedFs, cwd: "/repo", customCommands: [seedPushGit] });
-		await pushBash.exec("git remote add origin sqlite://shared");
-		await pushBash.exec("git push origin main", { env: envAt(1000000000) });
-
-		const s = startServer({
-			resolveRepo: async (path) => (await storage.repo(path))!,
-		});
+		const s = startServer({ storage: new BunSqliteDriver(db) });
 		srv = s.srv;
 		port = s.port;
+		server = s.server;
+		await server.createRepo("shared");
+
+		const seed = createServerClient();
+		await seed.exec(`git clone http://localhost:${port}/shared /seed`, {
+			env: envAt(1000000000),
+		});
+		await seed.writeFile("/seed/README.md", "# Shared");
+		await seed.exec("git add .", { cwd: "/seed" });
+		await seed.exec('git commit -m "initial"', { cwd: "/seed", env: envAt(1000000000) });
+		await seed.exec("git push origin main", { cwd: "/seed", env: envAt(1000000000) });
 	});
 
 	afterAll(() => {
@@ -206,7 +193,7 @@ describe("cross-path push safety (resolveRemote + HTTP)", () => {
 	test("resolveRemote push + HTTP push to same ref — one rejected", async () => {
 		const agentFs = new InMemoryFs();
 		const agentGit = createGit({
-			resolveRemote: () => storage.repo("shared"),
+			resolveRemote: () => server.repo("shared"),
 		});
 		const agent = new Bash({ fs: agentFs, cwd: "/", customCommands: [agentGit] });
 		await agent.exec(`git clone http://localhost:${port}/shared /local`, {

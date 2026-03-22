@@ -4,7 +4,7 @@ import { createStorage } from "./storage.ts";
 
 // ── MemoryDriver ────────────────────────────────────────────────────
 
-class MemoryDriver implements StorageDriver {
+export class MemoryDriver implements StorageDriver {
 	private repos = new Set<string>();
 	private objects = new Map<string, Map<string, RawObject>>();
 	private refs = new Map<string, Map<string, Ref>>();
@@ -131,11 +131,10 @@ class MemoryDriver implements StorageDriver {
  * Data is lost when the process exits.
  *
  * ```ts
- * const storage = new MemoryStorage();
- * storage.createRepo("my-repo");
  * const server = createGitServer({
- *   resolveRepo: (repoPath) => storage.repo(repoPath),
+ *   storage: new MemoryDriver(),
  * });
+ * await server.createRepo("my-repo");
  * ```
  */
 export class MemoryStorage implements Storage {

@@ -14,10 +14,9 @@ import {
 	pktLineText,
 } from "../../src/lib/transport/pkt-line.ts";
 import { createGitServer } from "../../src/server/handler.ts";
-import { findRepo } from "../../src/lib/repo.ts";
-import { InMemoryFs, Bash } from "just-bash";
-import { createGit } from "../../src/index.ts";
-import { envAt } from "./util.ts";
+import { MemoryDriver } from "../../src/server/memory-storage.ts";
+import { createStorage } from "../../src/server/storage.ts";
+import { writeBlob, writeTree, createCommit } from "../../src/repo/helpers.ts";
 
 // ── Protocol codec tests ────────────────────────────────────────────
 
@@ -278,26 +277,31 @@ describe("buildUploadPackResponse", () => {
 
 // ── Handler HTTP conformance tests ──────────────────────────────────
 
+const TEST_IDENTITY = {
+	name: "Test",
+	email: "test@test.com",
+	timestamp: 1000000000,
+	timezone: "+0000",
+};
+
 describe("handler HTTP conformance", () => {
 	let serverFetch: (req: Request) => Promise<Response>;
 
-	// Set up a minimal server with a real repo for handler-level tests
 	const setup = async () => {
-		const fs = new InMemoryFs();
-		const git = createGit();
-		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
-
-		await bash.writeFile("/repo/README.md", "# test");
-		await bash.exec("git init");
-		await bash.exec("git add .");
-		await bash.exec('git commit -m "init"', { env: envAt(1000000000) });
-
-		const ctx = await findRepo(fs, "/repo");
-		if (!ctx) throw new Error("no git dir");
-
-		const server = createGitServer({
-			resolveRepo: async () => ctx,
+		const driver = new MemoryDriver();
+		const storage = createStorage(driver);
+		const repo = await storage.createRepo("repo");
+		const blob = await writeBlob(repo, "# test");
+		const tree = await writeTree(repo, [{ name: "README.md", hash: blob }]);
+		const commit = await createCommit(repo, {
+			tree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "init\n",
 		});
+		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commit });
+		const server = createGitServer({ storage: driver });
 		serverFetch = server.fetch;
 	};
 
@@ -410,22 +414,20 @@ describe("handler HTTP conformance", () => {
 	});
 
 	test("basePath stripping works correctly", async () => {
-		const fs = new InMemoryFs();
-		const git = createGit();
-		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
-
-		await bash.writeFile("/repo/README.md", "# test");
-		await bash.exec("git init");
-		await bash.exec("git add .");
-		await bash.exec('git commit -m "init"', { env: envAt(1000000000) });
-
-		const ctx = await findRepo(fs, "/repo");
-		if (!ctx) throw new Error("no git dir");
-
-		const server = createGitServer({
-			resolveRepo: async () => ctx,
-			basePath: "/git",
+		const driver = new MemoryDriver();
+		const storage = createStorage(driver);
+		const repo = await storage.createRepo("repo");
+		const blob = await writeBlob(repo, "# test");
+		const tree = await writeTree(repo, [{ name: "README.md", hash: blob }]);
+		const commit = await createCommit(repo, {
+			tree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "init\n",
 		});
+		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commit });
+		const server = createGitServer({ storage: driver, basePath: "/git" });
 
 		// Without basePath prefix → 404
 		const res404 = await server.fetch(

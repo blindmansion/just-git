@@ -6,8 +6,9 @@
  * Run: deno run --allow-all examples/deno-server.mjs   (requires `bun run build` first)
  */
 
-import { createGit, findRepo } from "../../dist/index.js";
-import { createGitServer } from "../../dist/server/index.js";
+import { createGit } from "../../dist/index.js";
+import { createGitServer, MemoryDriver } from "../../dist/server/index.js";
+import { writeBlob, writeTree, createCommit } from "../../dist/repo/index.js";
 import { Bash, InMemoryFs } from "just-bash";
 
 const ENV = {
@@ -17,25 +18,29 @@ const ENV = {
 	GIT_COMMITTER_EMAIL: "test@test.com",
 };
 
-// ── Set up server repo ──────────────────────────────────────────────
+const ID = { name: "Test", email: "test@test.com", timestamp: 1000000000, timezone: "+0000" };
 
-const serverFs = new InMemoryFs();
-const serverGit = createGit();
-const serverBash = new Bash({ fs: serverFs, cwd: "/repo", customCommands: [serverGit] });
+// ── Set up server ───────────────────────────────────────────────────
 
-await serverBash.writeFile("/repo/README.md", "# Hello from Deno");
-await serverBash.writeFile("/repo/src/index.ts", "export const x = 1;");
-await serverBash.exec("git init");
-await serverBash.exec("git add .");
-let r = await serverBash.exec('git commit -m "init"', { env: ENV });
-console.log("commit:", r.exitCode === 0 ? "OK" : "FAIL");
-if (r.exitCode !== 0) {
-	console.log("  stderr:", r.stderr);
-	Deno.exit(1);
-}
+const gitServer = createGitServer({ storage: new MemoryDriver() });
+const repo = await gitServer.createRepo("repo");
 
-const repo = await findRepo(serverFs, "/repo");
-const gitServer = createGitServer({ resolveRepo: async () => repo });
+const readmeBlob = await writeBlob(repo, "# Hello from Deno");
+const indexBlob = await writeBlob(repo, "export const x = 1;");
+const srcTree = await writeTree(repo, [{ name: "index.ts", hash: indexBlob }]);
+const rootTree = await writeTree(repo, [
+	{ name: "README.md", hash: readmeBlob },
+	{ name: "src", hash: srcTree },
+]);
+await createCommit(repo, {
+	tree: rootTree,
+	parents: [],
+	author: ID,
+	committer: ID,
+	message: "init\n",
+	branch: "main",
+});
+console.log("commit: OK");
 
 // ── Start Deno HTTP server ──────────────────────────────────────────
 
@@ -56,7 +61,7 @@ const clientFs = new InMemoryFs();
 const clientGit = createGit();
 const client = new Bash({ fs: clientFs, cwd: "/", customCommands: [clientGit] });
 
-r = await client.exec(`git clone http://localhost:${port}/repo /work`, { env: ENV });
+let r = await client.exec(`git clone http://localhost:${port}/repo /work`, { env: ENV });
 console.log("clone:", r.exitCode === 0 ? "OK" : "FAIL", r.stderr.trim());
 
 const readme = await clientFs.readFile("/work/README.md");
