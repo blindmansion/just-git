@@ -187,7 +187,7 @@ Key behaviors:
 
 ### Storage backends (`server/`)
 
-`Storage` interface (`server/storage.ts`): `createRepo(repoId, options?) → GitRepo`, `repo(repoId) → GitRepo | null`, `deleteRepo(repoId)`, `listRepos()`. Repos must be explicitly created via `createRepo` before they can be accessed — `repo()` returns `null` for unknown IDs, making `resolveRepo: (path) => storage.repo(path)` safe by default. `createRepo` writes `HEAD → refs/heads/{defaultBranch}` so the repo is ready to accept its first push. All backends partition multiple repos by ID in a single store.
+`Storage` interface (`server/storage.ts`): `createRepo(repoId, options?) → GitRepo`, `repo(repoId) → GitRepo | null`, `deleteRepo(repoId)`. Repos must be explicitly created via `createRepo` before they can be accessed — `repo()` returns `null` for unknown IDs, making `resolveRepo: (path) => storage.repo(path)` safe by default. `createRepo` writes `HEAD → refs/heads/{defaultBranch}` so the repo is ready to accept its first push. All backends partition multiple repos by ID in a single store. `MemoryStorage` additionally provides `listRepos()` for dev/test convenience.
 
 | Backend                | File                               | Construction                   | Driver interface                                  |
 | ---------------------- | ---------------------------------- | ------------------------------ | ------------------------------------------------- |

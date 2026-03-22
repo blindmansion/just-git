@@ -418,13 +418,6 @@ describe("BunSqliteStorage", () => {
 			expect(() => storage.createRepo("test-repo")).toThrow("already exists");
 		});
 
-		test("listRepos returns created repo IDs", () => {
-			expect(storage.listRepos()).toEqual([]);
-			storage.createRepo("alpha");
-			storage.createRepo("beta");
-			expect(storage.listRepos()).toEqual(["alpha", "beta"]);
-		});
-
 		test("createRepo initializes HEAD", async () => {
 			storage.createRepo("test-repo");
 			const { refStore } = storage.repo("test-repo")!;

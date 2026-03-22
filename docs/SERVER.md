@@ -291,7 +291,6 @@ All backends implement the `Storage` interface. Repos must be explicitly created
 | `createRepo(id, options?)` | `GitRepo`         | Create a repo and initialize HEAD. Throws if exists. |
 | `repo(id)`                 | `GitRepo \| null` | Get a repo, or `null` if it hasn't been created.     |
 | `deleteRepo(id)`           | `void`            | Delete all data and the repo record.                 |
-| `listRepos()`              | `string[]`        | List all created repo IDs.                           |
 
 To auto-create repos on first access (e.g. push-to-create), use the opt-in pattern `storage.repo(path) ?? storage.createRepo(path)` in `resolveRepo`.
 

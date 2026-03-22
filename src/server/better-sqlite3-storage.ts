@@ -36,9 +36,7 @@ export interface BetterSqlite3Database {
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS repos (
-  id              TEXT PRIMARY KEY,
-  default_branch  TEXT NOT NULL DEFAULT 'main',
-  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+  id TEXT PRIMARY KEY
 );
 
 CREATE TABLE IF NOT EXISTS git_objects (
@@ -85,7 +83,6 @@ interface Statements {
 	repoInsert: Statement;
 	repoExists: Statement;
 	repoDelete: Statement;
-	repoList: Statement;
 
 	objInsert: Statement;
 	objRead: Statement;
@@ -103,10 +100,9 @@ interface Statements {
 
 function prepareStatements(db: BetterSqlite3Database): Statements {
 	return {
-		repoInsert: wrapStmt(db.prepare("INSERT INTO repos (id, default_branch) VALUES (?, ?)")),
+		repoInsert: wrapStmt(db.prepare("INSERT INTO repos (id) VALUES (?)")),
 		repoExists: wrapStmt(db.prepare("SELECT 1 FROM repos WHERE id = ? LIMIT 1")),
 		repoDelete: wrapStmt(db.prepare("DELETE FROM repos WHERE id = ?")),
-		repoList: wrapStmt(db.prepare("SELECT id FROM repos ORDER BY created_at")),
 
 		objInsert: wrapStmt(
 			db.prepare(
@@ -179,7 +175,7 @@ export class BetterSqlite3Storage implements Storage {
 			throw new Error(`repo '${repoId}' already exists`);
 		}
 		const defaultBranch = options?.defaultBranch ?? "main";
-		this.stmts.repoInsert.run(repoId, defaultBranch);
+		this.stmts.repoInsert.run(repoId);
 		this.stmts.refWrite.run(repoId, "HEAD", "symbolic", null, `refs/heads/${defaultBranch}`);
 		return this.buildRepo(repoId);
 	}
@@ -193,10 +189,6 @@ export class BetterSqlite3Storage implements Storage {
 		this.stmts.repoDelete.run(repoId);
 		this.stmts.objDeleteAll.run(repoId);
 		this.stmts.refDeleteAll.run(repoId);
-	}
-
-	listRepos(): string[] {
-		return (this.stmts.repoList.all() as Array<{ id: string }>).map((r) => r.id);
 	}
 
 	private buildRepo(repoId: string): GitRepo {

@@ -198,7 +198,7 @@ interface ServerHooks {
 - **No auth system.** `request` is passed through on every hook event so authors can read headers, but the server has no concept of users, tokens, or permissions. Auth is checked in `preReceive` or `advertiseRefs` against whatever user store the platform uses.
 - **No built-in fast-forward enforcement.** The `isFF` boolean is computed and available on `RefUpdate`, but the server doesn't reject non-FF pushes by default. That's a policy decision — use `policy: { denyNonFastForward: true }` for the common case.
 - **No webhooks/notification system.** `postReceive` is the trigger point; delivery mechanics (HTTP calls, queues, retries) are user-land.
-- **No repo lifecycle management.** `Storage` provides `createRepo`/`listRepos`/`deleteRepo` for basic CRUD, but higher-level concerns (forking, naming conventions, org hierarchy) are platform concerns.
+- **No repo lifecycle management.** `Storage` provides `createRepo`/`deleteRepo` for basic CRUD, but higher-level concerns (forking, naming conventions, org hierarchy, listing/querying repos) are platform concerns.
 - **Events are pure data.** No methods on event payloads — use standalone helpers instead. This keeps events serializable and testable.
 
 ### Hook event payloads

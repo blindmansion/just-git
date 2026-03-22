@@ -32,7 +32,4 @@ export interface Storage {
 
 	/** Delete all objects, refs, and the repo record. */
 	deleteRepo(repoId: string): void | Promise<void>;
-
-	/** List all created repo IDs. */
-	listRepos(): string[] | Promise<string[]>;
 }

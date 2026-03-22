@@ -36,9 +36,7 @@ export interface BunSqliteDatabase {
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS repos (
-  id              TEXT PRIMARY KEY,
-  default_branch  TEXT NOT NULL DEFAULT 'main',
-  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+  id TEXT PRIMARY KEY
 );
 
 CREATE TABLE IF NOT EXISTS git_objects (
@@ -65,7 +63,6 @@ interface Statements {
 	repoInsert: BunSqliteStatement;
 	repoExists: BunSqliteStatement;
 	repoDelete: BunSqliteStatement;
-	repoList: BunSqliteStatement;
 
 	objInsert: BunSqliteStatement;
 	objRead: BunSqliteStatement;
@@ -83,10 +80,9 @@ interface Statements {
 
 function prepareStatements(db: BunSqliteDatabase): Statements {
 	return {
-		repoInsert: db.prepare("INSERT INTO repos (id, default_branch) VALUES (?, ?)"),
+		repoInsert: db.prepare("INSERT INTO repos (id) VALUES (?)"),
 		repoExists: db.prepare("SELECT 1 FROM repos WHERE id = ? LIMIT 1"),
 		repoDelete: db.prepare("DELETE FROM repos WHERE id = ?"),
-		repoList: db.prepare("SELECT id FROM repos ORDER BY created_at"),
 
 		objInsert: db.prepare(
 			"INSERT OR IGNORE INTO git_objects (repo_id, hash, type, content) VALUES (?, ?, ?, ?)",
@@ -145,7 +141,7 @@ export class BunSqliteStorage implements Storage {
 			throw new Error(`repo '${repoId}' already exists`);
 		}
 		const defaultBranch = options?.defaultBranch ?? "main";
-		this.stmts.repoInsert.run(repoId, defaultBranch);
+		this.stmts.repoInsert.run(repoId);
 		this.stmts.refWrite.run(repoId, "HEAD", "symbolic", null, `refs/heads/${defaultBranch}`);
 		return this.buildRepo(repoId);
 	}
@@ -159,10 +155,6 @@ export class BunSqliteStorage implements Storage {
 		this.stmts.repoDelete.run(repoId);
 		this.stmts.objDeleteAll.run(repoId);
 		this.stmts.refDeleteAll.run(repoId);
-	}
-
-	listRepos(): string[] {
-		return (this.stmts.repoList.all() as Array<{ id: string }>).map((r) => r.id);
 	}
 
 	private buildRepo(repoId: string): GitRepo {

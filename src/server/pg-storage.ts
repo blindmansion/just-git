@@ -79,9 +79,7 @@ export function wrapPgPool(pool: PgPool): PgDatabase {
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS repos (
-  id              TEXT PRIMARY KEY,
-  default_branch  TEXT NOT NULL DEFAULT 'main',
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+  id TEXT PRIMARY KEY
 );
 
 CREATE TABLE IF NOT EXISTS git_objects (
@@ -105,10 +103,9 @@ CREATE TABLE IF NOT EXISTS git_refs (
 // ── SQL queries ─────────────────────────────────────────────────────
 
 const SQL = {
-	repoInsert: "INSERT INTO repos (id, default_branch) VALUES ($1, $2)",
+	repoInsert: "INSERT INTO repos (id) VALUES ($1)",
 	repoExists: "SELECT 1 FROM repos WHERE id = $1 LIMIT 1",
 	repoDelete: "DELETE FROM repos WHERE id = $1",
-	repoList: "SELECT id FROM repos ORDER BY created_at",
 
 	objInsert:
 		"INSERT INTO git_objects (repo_id, hash, type, content) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
@@ -146,27 +143,20 @@ const SQL = {
  * ```
  */
 export class PgStorage implements Storage {
-	private knownRepos: Set<string>;
-
-	private constructor(
-		private db: PgDatabase,
-		knownRepos: Set<string>,
-	) {
-		this.knownRepos = knownRepos;
-	}
+	private constructor(private db: PgDatabase) {}
 
 	static async create(db: PgDatabase): Promise<PgStorage> {
 		await db.query(SCHEMA);
-		const { rows } = await db.query<{ id: string }>(SQL.repoList);
-		return new PgStorage(db, new Set(rows.map((r) => r.id)));
+		return new PgStorage(db);
 	}
 
 	async createRepo(repoId: string, options?: CreateRepoOptions): Promise<GitRepo> {
-		if (this.knownRepos.has(repoId)) {
+		const { rows } = await this.db.query(SQL.repoExists, [repoId]);
+		if (rows.length > 0) {
 			throw new Error(`repo '${repoId}' already exists`);
 		}
 		const defaultBranch = options?.defaultBranch ?? "main";
-		await this.db.query(SQL.repoInsert, [repoId, defaultBranch]);
+		await this.db.query(SQL.repoInsert, [repoId]);
 		await this.db.query(SQL.refWrite, [
 			repoId,
 			"HEAD",
@@ -174,12 +164,12 @@ export class PgStorage implements Storage {
 			null,
 			`refs/heads/${defaultBranch}`,
 		]);
-		this.knownRepos.add(repoId);
 		return this.buildRepo(repoId);
 	}
 
-	repo(repoId: string): GitRepo | null {
-		if (!this.knownRepos.has(repoId)) return null;
+	async repo(repoId: string): Promise<GitRepo | null> {
+		const { rows } = await this.db.query(SQL.repoExists, [repoId]);
+		if (rows.length === 0) return null;
 		return this.buildRepo(repoId);
 	}
 
@@ -187,12 +177,6 @@ export class PgStorage implements Storage {
 		await this.db.query(SQL.repoDelete, [repoId]);
 		await this.db.query(SQL.objDeleteAll, [repoId]);
 		await this.db.query(SQL.refDeleteAll, [repoId]);
-		this.knownRepos.delete(repoId);
-	}
-
-	async listRepos(): Promise<string[]> {
-		const { rows } = await this.db.query<{ id: string }>(SQL.repoList);
-		return rows.map((r) => r.id);
 	}
 
 	private buildRepo(repoId: string): GitRepo {

@@ -102,7 +102,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 	describe("ObjectStore", () => {
 		test("write and read an object", async () => {
 			await storage!.createRepo("test-repo-obj-1");
-			const { objectStore: objects } = storage!.repo("test-repo-obj-1")!;
+			const { objectStore: objects } = (await storage!.repo("test-repo-obj-1"))!;
 			const content = encoder.encode("hello world");
 			const hash = await objects.write("blob", content);
 
@@ -115,7 +115,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("write is idempotent", async () => {
 			await storage!.createRepo("test-repo-obj-2");
-			const { objectStore: objects } = storage!.repo("test-repo-obj-2")!;
+			const { objectStore: objects } = (await storage!.repo("test-repo-obj-2"))!;
 			const content = encoder.encode("same content");
 			const hash1 = await objects.write("blob", content);
 			const hash2 = await objects.write("blob", content);
@@ -124,14 +124,14 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("read throws for missing object", async () => {
 			await storage!.createRepo("test-repo-obj-3");
-			const { objectStore: objects } = storage!.repo("test-repo-obj-3")!;
+			const { objectStore: objects } = (await storage!.repo("test-repo-obj-3"))!;
 			const fakeHash = "0000000000000000000000000000000000000000";
 			expect(objects.read(fakeHash)).rejects.toThrow("not found");
 		});
 
 		test("exists returns true/false", async () => {
 			await storage!.createRepo("test-repo-obj-4");
-			const { objectStore: objects } = storage!.repo("test-repo-obj-4")!;
+			const { objectStore: objects } = (await storage!.repo("test-repo-obj-4"))!;
 			const content = encoder.encode("exists test");
 			const hash = await objects.write("blob", content);
 
@@ -141,7 +141,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("findByPrefix", async () => {
 			await storage!.createRepo("test-repo-obj-5");
-			const { objectStore: objects } = storage!.repo("test-repo-obj-5")!;
+			const { objectStore: objects } = (await storage!.repo("test-repo-obj-5"))!;
 			const content = encoder.encode("prefix test");
 			const hash = await objects.write("blob", content);
 			const prefix = hash.slice(0, 8);
@@ -152,14 +152,14 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("findByPrefix returns empty for short prefix", async () => {
 			await storage!.createRepo("test-repo-obj-6");
-			const { objectStore: objects } = storage!.repo("test-repo-obj-6")!;
+			const { objectStore: objects } = (await storage!.repo("test-repo-obj-6"))!;
 			const matches = await objects.findByPrefix("ab");
 			expect(matches).toEqual([]);
 		});
 
 		test("ingestPack stores all objects", async () => {
 			await storage!.createRepo("test-repo-obj-7");
-			const { objectStore: objects } = storage!.repo("test-repo-obj-7")!;
+			const { objectStore: objects } = (await storage!.repo("test-repo-obj-7"))!;
 
 			const blob1 = encoder.encode("file one");
 			const blob2 = encoder.encode("file two");
@@ -182,7 +182,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("ingestPack handles empty/small data", async () => {
 			await storage!.createRepo("test-repo-obj-8");
-			const { objectStore: objects } = storage!.repo("test-repo-obj-8")!;
+			const { objectStore: objects } = (await storage!.repo("test-repo-obj-8"))!;
 			expect(await objects.ingestPack(new Uint8Array(0))).toBe(0);
 			expect(await objects.ingestPack(new Uint8Array(10))).toBe(0);
 		});
@@ -193,7 +193,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 	describe("RefStore", () => {
 		test("write and read a direct ref", async () => {
 			await storage!.createRepo("test-repo-ref-1");
-			const { refStore: refs } = storage!.repo("test-repo-ref-1")!;
+			const { refStore: refs } = (await storage!.repo("test-repo-ref-1"))!;
 			const hash = "abcdef0123456789abcdef0123456789abcdef01";
 			await refs.writeRef("refs/heads/main", { type: "direct", hash });
 
@@ -203,7 +203,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("write and read a symbolic ref", async () => {
 			await storage!.createRepo("test-repo-ref-2");
-			const { refStore: refs } = storage!.repo("test-repo-ref-2")!;
+			const { refStore: refs } = (await storage!.repo("test-repo-ref-2"))!;
 			await refs.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
 
 			const ref = await refs.readRef("HEAD");
@@ -212,13 +212,13 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("readRef returns null for missing ref", async () => {
 			await storage!.createRepo("test-repo-ref-3");
-			const { refStore: refs } = storage!.repo("test-repo-ref-3")!;
+			const { refStore: refs } = (await storage!.repo("test-repo-ref-3"))!;
 			expect(await refs.readRef("refs/heads/nonexistent")).toBeNull();
 		});
 
 		test("writeRef overwrites existing ref", async () => {
 			await storage!.createRepo("test-repo-ref-4");
-			const { refStore: refs } = storage!.repo("test-repo-ref-4")!;
+			const { refStore: refs } = (await storage!.repo("test-repo-ref-4"))!;
 			const hash1 = "1111111111111111111111111111111111111111";
 			const hash2 = "2222222222222222222222222222222222222222";
 
@@ -231,7 +231,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("deleteRef removes a ref", async () => {
 			await storage!.createRepo("test-repo-ref-5");
-			const { refStore: refs } = storage!.repo("test-repo-ref-5")!;
+			const { refStore: refs } = (await storage!.repo("test-repo-ref-5"))!;
 			await refs.writeRef("refs/heads/main", {
 				type: "direct",
 				hash: "abcdef0123456789abcdef0123456789abcdef01",
@@ -243,13 +243,13 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("deleteRef is a no-op for missing ref", async () => {
 			await storage!.createRepo("test-repo-ref-6");
-			const { refStore: refs } = storage!.repo("test-repo-ref-6")!;
+			const { refStore: refs } = (await storage!.repo("test-repo-ref-6"))!;
 			await refs.deleteRef("refs/heads/nonexistent");
 		});
 
 		test("listRefs with prefix", async () => {
 			await storage!.createRepo("test-repo-ref-7");
-			const { refStore: refs } = storage!.repo("test-repo-ref-7")!;
+			const { refStore: refs } = (await storage!.repo("test-repo-ref-7"))!;
 			await refs.writeRef("refs/heads/main", {
 				type: "direct",
 				hash: "1111111111111111111111111111111111111111",
@@ -275,7 +275,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("listRefs without prefix returns all", async () => {
 			await storage!.createRepo("test-repo-ref-8");
-			const { refStore: refs } = storage!.repo("test-repo-ref-8")!;
+			const { refStore: refs } = (await storage!.repo("test-repo-ref-8"))!;
 			await refs.writeRef("refs/heads/main", {
 				type: "direct",
 				hash: "1111111111111111111111111111111111111111",
@@ -288,7 +288,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("listRefs resolves symrefs", async () => {
 			await storage!.createRepo("test-repo-ref-9");
-			const { refStore: refs } = storage!.repo("test-repo-ref-9")!;
+			const { refStore: refs } = (await storage!.repo("test-repo-ref-9"))!;
 			const hash = "abcdef0123456789abcdef0123456789abcdef01";
 			await refs.writeRef("refs/heads/main", { type: "direct", hash });
 			await refs.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
@@ -309,7 +309,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("create succeeds when ref does not exist", async () => {
 			await storage!.createRepo("test-repo-cas-1");
-			const { refStore } = storage!.repo("test-repo-cas-1")!;
+			const { refStore } = (await storage!.repo("test-repo-cas-1"))!;
 			const ok = await refStore.compareAndSwapRef("refs/heads/main", null, {
 				type: "direct",
 				hash: HASH_A,
@@ -321,7 +321,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("create fails when ref already exists", async () => {
 			await storage!.createRepo("test-repo-cas-2");
-			const { refStore } = storage!.repo("test-repo-cas-2")!;
+			const { refStore } = (await storage!.repo("test-repo-cas-2"))!;
 			await refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 
 			const ok = await refStore.compareAndSwapRef("refs/heads/main", null, {
@@ -335,7 +335,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("update succeeds with matching expected hash", async () => {
 			await storage!.createRepo("test-repo-cas-3");
-			const { refStore } = storage!.repo("test-repo-cas-3")!;
+			const { refStore } = (await storage!.repo("test-repo-cas-3"))!;
 			await refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 
 			const ok = await refStore.compareAndSwapRef("refs/heads/main", HASH_A, {
@@ -349,7 +349,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("update fails with wrong expected hash", async () => {
 			await storage!.createRepo("test-repo-cas-4");
-			const { refStore } = storage!.repo("test-repo-cas-4")!;
+			const { refStore } = (await storage!.repo("test-repo-cas-4"))!;
 			await refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 
 			const ok = await refStore.compareAndSwapRef("refs/heads/main", HASH_C, {
@@ -363,7 +363,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("update fails when ref does not exist", async () => {
 			await storage!.createRepo("test-repo-cas-5");
-			const { refStore } = storage!.repo("test-repo-cas-5")!;
+			const { refStore } = (await storage!.repo("test-repo-cas-5"))!;
 			const ok = await refStore.compareAndSwapRef("refs/heads/main", HASH_A, {
 				type: "direct",
 				hash: HASH_B,
@@ -373,7 +373,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("conditional delete succeeds with matching hash", async () => {
 			await storage!.createRepo("test-repo-cas-6");
-			const { refStore } = storage!.repo("test-repo-cas-6")!;
+			const { refStore } = (await storage!.repo("test-repo-cas-6"))!;
 			await refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 
 			const ok = await refStore.compareAndSwapRef("refs/heads/main", HASH_A, null);
@@ -383,7 +383,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("conditional delete fails with wrong hash", async () => {
 			await storage!.createRepo("test-repo-cas-7");
-			const { refStore } = storage!.repo("test-repo-cas-7")!;
+			const { refStore } = (await storage!.repo("test-repo-cas-7"))!;
 			await refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 
 			const ok = await refStore.compareAndSwapRef("refs/heads/main", HASH_C, null);
@@ -396,7 +396,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("CAS resolves symbolic refs for hash comparison", async () => {
 			await storage!.createRepo("test-repo-cas-8");
-			const { refStore } = storage!.repo("test-repo-cas-8")!;
+			const { refStore } = (await storage!.repo("test-repo-cas-8"))!;
 			await refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 			await refStore.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
 
@@ -411,8 +411,8 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("two repo instances race — only one CAS wins", async () => {
 			await storage!.createRepo("test-repo-cas-9");
-			const repo1 = storage!.repo("test-repo-cas-9")!;
-			const repo2 = storage!.repo("test-repo-cas-9")!;
+			const repo1 = (await storage!.repo("test-repo-cas-9"))!;
+			const repo2 = (await storage!.repo("test-repo-cas-9"))!;
 
 			await repo1.refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 
@@ -438,8 +438,8 @@ describe.skipIf(!canRun)("PgStorage", () => {
 		test("objects are isolated between repos", async () => {
 			await storage!.createRepo("test-repo-iso-obj-1");
 			await storage!.createRepo("test-repo-iso-obj-2");
-			const repo1 = storage!.repo("test-repo-iso-obj-1")!;
-			const repo2 = storage!.repo("test-repo-iso-obj-2")!;
+			const repo1 = (await storage!.repo("test-repo-iso-obj-1"))!;
+			const repo2 = (await storage!.repo("test-repo-iso-obj-2"))!;
 
 			const content = encoder.encode("shared content");
 			const hash = await repo1.objectStore.write("blob", content);
@@ -451,8 +451,8 @@ describe.skipIf(!canRun)("PgStorage", () => {
 		test("refs are isolated between repos", async () => {
 			await storage!.createRepo("test-repo-iso-ref-1");
 			await storage!.createRepo("test-repo-iso-ref-2");
-			const repo1 = storage!.repo("test-repo-iso-ref-1")!;
-			const repo2 = storage!.repo("test-repo-iso-ref-2")!;
+			const repo1 = (await storage!.repo("test-repo-iso-ref-1"))!;
+			const repo2 = (await storage!.repo("test-repo-iso-ref-2"))!;
 
 			await repo1.refStore.writeRef("refs/heads/main", {
 				type: "direct",
@@ -466,8 +466,8 @@ describe.skipIf(!canRun)("PgStorage", () => {
 		test("deleteRepo only affects the target repo", async () => {
 			await storage!.createRepo("test-repo-iso-del-1");
 			await storage!.createRepo("test-repo-iso-del-2");
-			const repo1 = storage!.repo("test-repo-iso-del-1")!;
-			const repo2 = storage!.repo("test-repo-iso-del-2")!;
+			const repo1 = (await storage!.repo("test-repo-iso-del-1"))!;
+			const repo2 = (await storage!.repo("test-repo-iso-del-2"))!;
 
 			const content = encoder.encode("keep this");
 			const hash = await repo1.objectStore.write("blob", content);
@@ -488,21 +488,13 @@ describe.skipIf(!canRun)("PgStorage", () => {
 	// ── Storage API ─────────────────────────────────────────────
 
 	describe("Storage API", () => {
-		test("repo() returns null for unknown repo", () => {
-			expect(storage!.repo("nonexistent-repo-xyz")).toBeNull();
+		test("repo() returns null for unknown repo", async () => {
+			expect(await storage!.repo("nonexistent-repo-xyz")).toBeNull();
 		});
 
 		test("createRepo throws on duplicate", async () => {
 			await storage!.createRepo("test-repo-dup");
 			expect(storage!.createRepo("test-repo-dup")).rejects.toThrow("already exists");
-		});
-
-		test("listRepos returns created repo IDs", async () => {
-			await storage!.createRepo("test-repo-list-a");
-			await storage!.createRepo("test-repo-list-b");
-			const repos = await storage!.listRepos();
-			expect(repos).toContain("test-repo-list-a");
-			expect(repos).toContain("test-repo-list-b");
 		});
 
 		test("createRepo initializes HEAD", async () => {
@@ -513,9 +505,9 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 		test("deleteRepo makes repo() return null", async () => {
 			await storage!.createRepo("test-repo-del-null");
-			expect(storage!.repo("test-repo-del-null")).not.toBeNull();
+			expect(await storage!.repo("test-repo-del-null")).not.toBeNull();
 			await storage!.deleteRepo("test-repo-del-null");
-			expect(storage!.repo("test-repo-del-null")).toBeNull();
+			expect(await storage!.repo("test-repo-del-null")).toBeNull();
 		});
 	});
 });
