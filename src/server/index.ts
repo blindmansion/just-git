@@ -21,6 +21,7 @@ export {
 	buildRefListBytes,
 	handleUploadPack,
 	ingestReceivePack,
+	ingestReceivePackFromStream,
 } from "./operations.ts";
 export type {
 	ApplyReceivePackOptions,

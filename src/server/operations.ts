@@ -12,7 +12,7 @@ import { isAncestor } from "../lib/merge.ts";
 import { parseTag } from "../lib/objects/tag.ts";
 import { findBestDeltas } from "../lib/pack/delta.ts";
 import type { DeltaPackInput, PackInput } from "../lib/pack/packfile.ts";
-import { writePackDeltified, writePackStreaming } from "../lib/pack/packfile.ts";
+import { readPackStreaming, writePackDeltified, writePackStreaming } from "../lib/pack/packfile.ts";
 import { checkRefFormat } from "../lib/refs.ts";
 import { computeShallowBoundary } from "../lib/shallow.ts";
 import {
@@ -25,6 +25,7 @@ import type { GitRepo, ObjectId } from "../lib/types.ts";
 import type { ShallowUpdate } from "../lib/shallow.ts";
 import {
 	type AdvertisedRef,
+	type PushCommand,
 	buildRefAdvertisement,
 	buildRefListPktLines,
 	buildShallowOnlyResponse,
@@ -548,6 +549,65 @@ export async function ingestReceivePack(
 		} catch {
 			unpackOk = false;
 		}
+	}
+
+	const updates: RefUpdate[] = [];
+	for (const cmd of commands) {
+		const isCreate = cmd.oldHash === ZERO_HASH;
+		const isDelete = cmd.newHash === ZERO_HASH;
+		let isFF = false;
+
+		if (!isCreate && !isDelete && unpackOk) {
+			try {
+				isFF = await isAncestor(repo, cmd.oldHash, cmd.newHash);
+			} catch {
+				// Ancestry check failed; leave isFF false
+			}
+		}
+
+		updates.push({
+			ref: cmd.refName,
+			oldHash: isCreate ? null : cmd.oldHash,
+			newHash: cmd.newHash,
+			isFF,
+			isCreate,
+			isDelete,
+		});
+	}
+
+	return { updates, unpackOk, capabilities, sawFlush };
+}
+
+/**
+ * Streaming variant of `ingestReceivePack`. Accepts pre-parsed push
+ * commands and a raw pack byte stream. Uses `readPackStreaming` →
+ * `ingestPackStream` so pack bytes are consumed incrementally without
+ * buffering the entire pack in memory.
+ *
+ * The HTTP handler continues using `ingestReceivePack` (runtime buffers
+ * POST bodies anyway). The SSH handler calls this directly after parsing
+ * pkt-line commands.
+ */
+export async function ingestReceivePackFromStream(
+	repo: GitRepo,
+	commands: PushCommand[],
+	capabilities: string[],
+	packStream: AsyncIterable<Uint8Array>,
+	sawFlush = true,
+): Promise<ReceivePackResult> {
+	let unpackOk = true;
+	try {
+		const externalBase = async (hash: string) => {
+			try {
+				return await repo.objectStore.read(hash);
+			} catch {
+				return null;
+			}
+		};
+		const entries = readPackStreaming(packStream, externalBase);
+		await repo.objectStore.ingestPackStream(entries);
+	} catch {
+		unpackOk = false;
 	}
 
 	const updates: RefUpdate[] = [];

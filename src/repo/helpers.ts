@@ -47,6 +47,7 @@ import type {
 import type { FileSystem } from "../fs.ts";
 import { envelope } from "../lib/object-store.ts";
 import { sha1 } from "../lib/sha1.ts";
+import type { PackObject } from "../lib/pack/packfile.ts";
 import { readPack } from "../lib/pack/packfile.ts";
 import { TreeBackedFs } from "../tree-backed-fs.ts";
 
@@ -595,6 +596,9 @@ class ReadonlyObjectStore implements ObjectStore {
 	ingestPack(_packData: Uint8Array): Promise<number> {
 		throw new Error("cannot ingest pack: object store is read-only");
 	}
+	ingestPackStream(_entries: AsyncIterable<PackObject>): Promise<number> {
+		throw new Error("cannot ingest pack: object store is read-only");
+	}
 	findByPrefix(prefix: string): Promise<ObjectId[]> {
 		return this.inner.findByPrefix(prefix);
 	}
@@ -829,6 +833,18 @@ class OverlayObjectStore implements ObjectStore {
 			}
 		}
 		return entries.length;
+	}
+
+	async ingestPackStream(entries: AsyncIterable<PackObject>): Promise<number> {
+		const store = this.overlay;
+		let count = 0;
+		for await (const entry of entries) {
+			if (!store.has(entry.hash)) {
+				store.set(entry.hash, { type: entry.type as ObjectType, content: entry.content });
+			}
+			count++;
+		}
+		return count;
 	}
 
 	async findByPrefix(prefix: string): Promise<ObjectId[]> {

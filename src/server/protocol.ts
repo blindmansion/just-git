@@ -293,7 +293,7 @@ export async function* buildUploadPackResponseStreaming(
 
 // ── Receive-pack request parsing ────────────────────────────────────
 
-interface PushCommand {
+export interface PushCommand {
 	oldHash: string;
 	newHash: string;
 	refName: string;

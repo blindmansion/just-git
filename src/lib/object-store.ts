@@ -3,6 +3,8 @@ import { bytesToHex } from "./hex.ts";
 import { ObjectCache } from "./object-cache.ts";
 import { buildPackIndex, PackIndex } from "./pack/pack-index.ts";
 import { PackReader } from "./pack/pack-reader.ts";
+import type { PackObject } from "./pack/packfile.ts";
+import { writePack } from "./pack/packfile.ts";
 import { deflate, inflate } from "./pack/zlib.ts";
 import { join } from "./path.ts";
 import { sha1 } from "./sha1.ts";
@@ -188,6 +190,15 @@ export class PackedObjectStore implements ObjectStore {
 			reader: new PackReader(packData, index),
 		});
 		return numObjects;
+	}
+
+	async ingestPackStream(entries: AsyncIterable<PackObject>): Promise<number> {
+		const objects: PackObject[] = [];
+		for await (const obj of entries) objects.push(obj);
+		if (objects.length === 0) return 0;
+
+		const packData = await writePack(objects);
+		return this.ingestPack(packData);
 	}
 
 	invalidatePacks(): void {

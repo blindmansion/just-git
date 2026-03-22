@@ -1,5 +1,6 @@
 import { ObjectCache } from "../lib/object-cache.ts";
 import { envelope } from "../lib/object-store.ts";
+import type { PackObject } from "../lib/pack/packfile.ts";
 import { readPack } from "../lib/pack/packfile.ts";
 import { sha1 } from "../lib/sha1.ts";
 import { normalizeRef } from "../lib/types.ts";
@@ -228,6 +229,19 @@ class PgObjectStore implements ObjectStore {
 		});
 
 		return entries.length;
+	}
+
+	async ingestPackStream(entries: AsyncIterable<PackObject>): Promise<number> {
+		const db = this.db;
+		const repoId = this.repoId;
+		let count = 0;
+		await db.transaction(async (tx) => {
+			for await (const entry of entries) {
+				await tx.query(SQL.objInsert, [repoId, entry.hash, entry.type, entry.content]);
+				count++;
+			}
+		});
+		return count;
 	}
 
 	async findByPrefix(prefix: string): Promise<ObjectId[]> {

@@ -32,7 +32,7 @@ const NUM_BY_TYPE: Record<ObjectType, number> = {
 // ── Types ────────────────────────────────────────────────────────────
 
 /** A fully resolved (non-delta) object from a packfile. */
-interface PackObject {
+export interface PackObject {
 	type: ObjectType;
 	content: Uint8Array;
 	hash: ObjectId;
@@ -319,6 +319,214 @@ async function findByHash(
 		}
 	}
 	return undefined;
+}
+
+// ── Streaming pack reader ────────────────────────────────────────────
+
+/**
+ * Buffered async byte reader for sequential consumption of an
+ * `AsyncIterable<Uint8Array>`. Tracks total bytes consumed and
+ * optionally maintains a running SHA-1 hash of all consumed bytes
+ * (for pack checksum verification).
+ */
+class AsyncByteReader {
+	private buf = new Uint8Array(0);
+	private iter: AsyncIterator<Uint8Array>;
+	private eof = false;
+	private _bytesRead = 0;
+	private hasher: ReturnType<typeof createHasher> | null;
+
+	constructor(source: AsyncIterable<Uint8Array>, hash = false) {
+		this.iter = source[Symbol.asyncIterator]();
+		this.hasher = hash ? createHasher() : null;
+	}
+
+	get bytesRead(): number {
+		return this._bytesRead;
+	}
+
+	private async pullMore(): Promise<boolean> {
+		if (this.eof) return false;
+		const { value, done } = await this.iter.next();
+		if (done || !value) {
+			this.eof = true;
+			return false;
+		}
+		if (this.buf.byteLength === 0) {
+			this.buf = new Uint8Array(value);
+		} else {
+			const merged = new Uint8Array(this.buf.byteLength + value.byteLength);
+			merged.set(this.buf);
+			merged.set(value, this.buf.byteLength);
+			this.buf = merged;
+		}
+		return true;
+	}
+
+	private async ensure(n: number): Promise<void> {
+		while (this.buf.byteLength < n) {
+			if (!(await this.pullMore())) {
+				throw new Error(
+					`Unexpected end of pack data: needed ${n} bytes, have ${this.buf.byteLength}`,
+				);
+			}
+		}
+	}
+
+	private consume(n: number): Uint8Array {
+		const result = new Uint8Array(this.buf.subarray(0, n));
+		this.hasher?.update(result);
+		this.buf = this.buf.subarray(n);
+		this._bytesRead += n;
+		return result;
+	}
+
+	async readByte(): Promise<number> {
+		await this.ensure(1);
+		return this.consume(1)[0]!;
+	}
+
+	async readExact(n: number): Promise<Uint8Array> {
+		await this.ensure(n);
+		return this.consume(n);
+	}
+
+	/** Read exactly `n` bytes without feeding them to the hasher. */
+	async readRaw(n: number): Promise<Uint8Array> {
+		await this.ensure(n);
+		const result = new Uint8Array(this.buf.subarray(0, n));
+		this.buf = this.buf.subarray(n);
+		this._bytesRead += n;
+		return result;
+	}
+
+	/**
+	 * Inflate a single zlib-compressed entry from the stream.
+	 * Buffers enough data for decompression, consumes only the
+	 * compressed bytes, and returns the inflated result.
+	 */
+	async inflateNext(expectedSize: number): Promise<Uint8Array> {
+		if (this.buf.byteLength === 0 && !this.eof) await this.pullMore();
+		while (true) {
+			try {
+				const { result, bytesConsumed } = await inflateObject(this.buf, expectedSize);
+				this.consume(bytesConsumed);
+				return result;
+			} catch {
+				if (!this.eof && (await this.pullMore())) continue;
+				throw new Error(
+					`Failed to inflate pack entry at byte ${this._bytesRead} (expected ${expectedSize} bytes)`,
+				);
+			}
+		}
+	}
+
+	async hashHex(): Promise<string> {
+		if (!this.hasher) throw new Error("Hashing not enabled");
+		return this.hasher.hex();
+	}
+}
+
+/**
+ * Streaming pack parser. Reads entries one at a time from an async
+ * byte source, resolves deltas on the fly, and yields fully resolved
+ * objects. Peak memory is `N * resolved_objects` — the raw compressed
+ * pack bytes are discarded as each entry is consumed.
+ *
+ * Verifies the pack checksum incrementally: all bytes before the
+ * trailing 20-byte SHA-1 are hashed as they flow through, and the
+ * trailer is checked at the end.
+ *
+ * Delta bases must precede their dependents in the pack (the standard
+ * ordering guarantee from `git pack-objects`).
+ */
+export async function* readPackStreaming(
+	source: AsyncIterable<Uint8Array>,
+	externalBase?: ExternalBaseResolver,
+): AsyncGenerator<PackObject> {
+	const reader = new AsyncByteReader(source, true);
+
+	const header = await reader.readExact(12);
+	const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+
+	const sig = view.getUint32(0);
+	if (sig !== PACK_SIGNATURE) {
+		throw new Error(
+			`Invalid pack signature: 0x${sig.toString(16)} (expected 0x${PACK_SIGNATURE.toString(16)})`,
+		);
+	}
+	const version = view.getUint32(4);
+	if (version !== PACK_VERSION) {
+		throw new Error(`Unsupported pack version: ${version}`);
+	}
+	const numObjects = view.getUint32(8);
+
+	const byOffset = new Map<number, PackObject>();
+	const byHash = new Map<string, PackObject>();
+
+	for (let i = 0; i < numObjects; i++) {
+		const headerOffset = reader.bytesRead;
+
+		let byte = await reader.readByte();
+		const typeNum = (byte >> 4) & 0x07;
+		let size = byte & 0x0f;
+		let shift = 4;
+		while (byte & 0x80) {
+			byte = await reader.readByte();
+			size |= (byte & 0x7f) << shift;
+			shift += 7;
+		}
+
+		let baseOffset: number | undefined;
+		let baseHash: string | undefined;
+
+		if (typeNum === OBJ_OFS_DELTA) {
+			let c = await reader.readByte();
+			baseOffset = c & 0x7f;
+			while (c & 0x80) {
+				baseOffset += 1;
+				c = await reader.readByte();
+				baseOffset = (baseOffset << 7) + (c & 0x7f);
+			}
+			baseOffset = headerOffset - baseOffset;
+		} else if (typeNum === OBJ_REF_DELTA) {
+			const hashBytes = await reader.readExact(20);
+			baseHash = hexAt(hashBytes, 0);
+		}
+
+		const inflated = await reader.inflateNext(size);
+
+		let obj: PackObject;
+
+		if (typeNum !== OBJ_OFS_DELTA && typeNum !== OBJ_REF_DELTA) {
+			const type = TYPE_BY_NUM[typeNum];
+			if (!type) throw new Error(`Unknown object type: ${typeNum}`);
+			obj = { type, content: inflated, hash: await hashGitObject(type, inflated) };
+		} else if (typeNum === OBJ_OFS_DELTA) {
+			const base = byOffset.get(baseOffset!);
+			if (!base) throw new Error(`OFS_DELTA base not found at offset ${baseOffset}`);
+			const content = applyDelta(base.content, inflated);
+			obj = { type: base.type, content, hash: await hashGitObject(base.type, content) };
+		} else {
+			let base: { type: ObjectType; content: Uint8Array } | undefined = byHash.get(baseHash!);
+			if (!base && externalBase) {
+				base = (await externalBase(baseHash!)) ?? undefined;
+			}
+			if (!base) throw new Error(`REF_DELTA base not found for hash ${baseHash}`);
+			const content = applyDelta(base.content, inflated);
+			obj = { type: base.type, content, hash: await hashGitObject(base.type, content) };
+		}
+
+		byOffset.set(headerOffset, obj);
+		byHash.set(obj.hash, obj);
+		yield obj;
+	}
+
+	const expectedHash = hexAt(await reader.readRaw(20), 0);
+	const computedHash = await reader.hashHex();
+	if (computedHash !== expectedHash) {
+		throw new Error(`pack checksum mismatch: expected ${expectedHash}, computed ${computedHash}`);
+	}
 }
 
 // ── Delta application ────────────────────────────────────────────────

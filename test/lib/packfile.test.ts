@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { applyDelta, type PackInput, readPack, writePack } from "../../src/lib/pack/packfile.ts";
+import {
+	applyDelta,
+	type PackInput,
+	type PackObject,
+	readPack,
+	readPackStreaming,
+	writePack,
+} from "../../src/lib/pack/packfile.ts";
 import { deflate, inflate } from "../../src/lib/pack/zlib.ts";
 
 // ── zlib ─────────────────────────────────────────────────────────────
@@ -162,6 +169,209 @@ describe("readPack", () => {
 			expect(new TextDecoder().decode(objects[i]!.content)).toBe(
 				`content-${i}-${"padding".repeat(i % 20)}`,
 			);
+		}
+	});
+});
+
+// ── Streaming pack reader ────────────────────────────────────────────
+
+async function collectStream(gen: AsyncGenerator<PackObject>): Promise<PackObject[]> {
+	const result: PackObject[] = [];
+	for await (const obj of gen) result.push(obj);
+	return result;
+}
+
+function chunkify(data: Uint8Array, chunkSize: number): AsyncIterable<Uint8Array> {
+	return {
+		async *[Symbol.asyncIterator]() {
+			for (let i = 0; i < data.byteLength; i += chunkSize) {
+				yield data.subarray(i, Math.min(i + chunkSize, data.byteLength));
+			}
+		},
+	};
+}
+
+function singleChunk(data: Uint8Array): AsyncIterable<Uint8Array> {
+	return {
+		async *[Symbol.asyncIterator]() {
+			yield data;
+		},
+	};
+}
+
+describe("readPackStreaming", () => {
+	test("round-trips a single blob", async () => {
+		const input = [blob("hello world")];
+		const pack = await writePack(input);
+		const objects = await collectStream(readPackStreaming(singleChunk(pack)));
+		expect(objects).toHaveLength(1);
+		expect(objects[0]!.type).toBe("blob");
+		expect(new TextDecoder().decode(objects[0]!.content)).toBe("hello world");
+	});
+
+	test("produces identical results to readPack", async () => {
+		const input: PackInput[] = [
+			blob("file content A"),
+			blob("file content B"),
+			commit(
+				"tree 0000000000000000000000000000000000000000\n" +
+					"author Test <test@test.com> 1000000000 +0000\n" +
+					"committer Test <test@test.com> 1000000000 +0000\n\nInitial\n",
+			),
+		];
+		const pack = await writePack(input);
+		const buffered = await readPack(pack);
+		const streamed = await collectStream(readPackStreaming(singleChunk(pack)));
+
+		expect(streamed).toHaveLength(buffered.length);
+		for (let i = 0; i < buffered.length; i++) {
+			expect(streamed[i]!.hash).toBe(buffered[i]!.hash);
+			expect(streamed[i]!.type).toBe(buffered[i]!.type);
+			expect(streamed[i]!.content).toEqual(buffered[i]!.content);
+		}
+	});
+
+	test("works with tiny chunks (1-byte)", async () => {
+		const input = [blob("hello"), blob("world")];
+		const pack = await writePack(input);
+		const objects = await collectStream(readPackStreaming(chunkify(pack, 1)));
+		expect(objects).toHaveLength(2);
+		expect(new TextDecoder().decode(objects[0]!.content)).toBe("hello");
+		expect(new TextDecoder().decode(objects[1]!.content)).toBe("world");
+	});
+
+	test("works with small chunks (7-byte)", async () => {
+		const input = [blob("alpha"), blob("beta"), blob("gamma")];
+		const pack = await writePack(input);
+		const objects = await collectStream(readPackStreaming(chunkify(pack, 7)));
+		expect(objects).toHaveLength(3);
+		expect(objects.map((o) => new TextDecoder().decode(o.content))).toEqual([
+			"alpha",
+			"beta",
+			"gamma",
+		]);
+	});
+
+	test("handles empty blob", async () => {
+		const input = [blob("")];
+		const pack = await writePack(input);
+		const objects = await collectStream(readPackStreaming(singleChunk(pack)));
+		expect(objects[0]!.hash).toBe("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391");
+		expect(objects[0]!.content.byteLength).toBe(0);
+	});
+
+	test("handles large blob", async () => {
+		const bigContent = "x".repeat(100_000);
+		const input = [blob(bigContent)];
+		const pack = await writePack(input);
+		const objects = await collectStream(readPackStreaming(chunkify(pack, 4096)));
+		expect(new TextDecoder().decode(objects[0]!.content)).toBe(bigContent);
+	});
+
+	test("handles many objects", async () => {
+		const input: PackInput[] = [];
+		for (let i = 0; i < 200; i++) {
+			input.push(blob(`content-${i}-${"padding".repeat(i % 20)}`));
+		}
+		const pack = await writePack(input);
+		const buffered = await readPack(pack);
+		const streamed = await collectStream(readPackStreaming(chunkify(pack, 512)));
+
+		expect(streamed).toHaveLength(200);
+		for (let i = 0; i < 200; i++) {
+			expect(streamed[i]!.hash).toBe(buffered[i]!.hash);
+		}
+	});
+
+	test("verifies pack checksum", async () => {
+		const pack = await writePack([blob("test")]);
+		// Corrupt the trailing SHA-1 checksum (last 20 bytes)
+		pack[pack.byteLength - 1] ^= 0xff;
+		const gen = readPackStreaming(singleChunk(pack));
+		await expect(collectStream(gen)).rejects.toThrow(/checksum mismatch/);
+	});
+
+	test("rejects invalid signature", async () => {
+		const pack = await writePack([blob("x")]);
+		pack[0] = 0;
+		const gen = readPackStreaming(singleChunk(pack));
+		await expect(collectStream(gen)).rejects.toThrow(/Invalid pack signature/);
+	});
+
+	test("reads delta-compressed packs from real git", async () => {
+		const { mkdtemp } = await import("node:fs/promises");
+		const { join } = await import("node:path");
+		const { tmpdir } = await import("node:os");
+		const fs = await import("node:fs");
+
+		const tmpDir = await mkdtemp(join(tmpdir(), "packtest-stream-delta-"));
+		try {
+			const run = async (cmd: string) => {
+				const proc = Bun.spawn(["sh", "-c", cmd], {
+					cwd: tmpDir,
+					stdout: "pipe",
+					stderr: "pipe",
+					env: {
+						...process.env,
+						GIT_AUTHOR_NAME: "Test",
+						GIT_AUTHOR_EMAIL: "test@test.com",
+						GIT_COMMITTER_NAME: "Test",
+						GIT_COMMITTER_EMAIL: "test@test.com",
+						GIT_CONFIG_NOSYSTEM: "1",
+						GIT_CONFIG_GLOBAL: "/dev/null",
+					},
+				});
+				await proc.exited;
+				return {
+					stdout: await new Response(proc.stdout).text(),
+					stderr: await new Response(proc.stderr).text(),
+				};
+			};
+
+			await run("git init -b main");
+
+			const baseContent = "line\n".repeat(200);
+			fs.writeFileSync(join(tmpDir, "big.txt"), baseContent);
+			await run("git add big.txt");
+			await run('git commit -m "v1"');
+
+			for (let i = 0; i < 5; i++) {
+				const modified = baseContent.slice(0, 100) + `modified-${i}\n` + baseContent.slice(100);
+				fs.writeFileSync(join(tmpDir, "big.txt"), modified);
+				await run("git add big.txt");
+				await run(`git commit -m "v${i + 2}"`);
+			}
+
+			const { stdout: objectList } = await run("git rev-list --objects --all");
+			const hashes = objectList
+				.trim()
+				.split("\n")
+				.map((line) => line.split(" ")[0]!);
+
+			const hashListPath = join(tmpDir, "hash-list.txt");
+			const packPath = join(tmpDir, "test.pack");
+			fs.writeFileSync(hashListPath, `${hashes.join("\n")}\n`);
+			await run(
+				`git pack-objects --stdout --delta-base-offset < ${hashListPath} > ${packPath}`,
+			);
+			const packData = new Uint8Array(fs.readFileSync(packPath));
+
+			const buffered = await readPack(packData);
+			const streamed = await collectStream(readPackStreaming(chunkify(packData, 256)));
+
+			expect(streamed.length).toBe(buffered.length);
+			const streamedHashes = new Set(streamed.map((o) => o.hash));
+			for (const obj of buffered) {
+				expect(streamedHashes.has(obj.hash)).toBe(true);
+			}
+
+			for (const obj of streamed) {
+				if (obj.type !== "blob") continue;
+				const { stdout } = await run(`git cat-file -p ${obj.hash}`);
+				expect(new TextDecoder().decode(obj.content)).toBe(stdout);
+			}
+		} finally {
+			fs.rmSync(tmpDir, { recursive: true, force: true });
 		}
 	});
 });

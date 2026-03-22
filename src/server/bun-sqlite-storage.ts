@@ -1,5 +1,6 @@
 import { ObjectCache } from "../lib/object-cache.ts";
 import { envelope } from "../lib/object-store.ts";
+import type { PackObject } from "../lib/pack/packfile.ts";
 import { readPack } from "../lib/pack/packfile.ts";
 import { sha1 } from "../lib/sha1.ts";
 import { normalizeRef } from "../lib/types.ts";
@@ -205,6 +206,21 @@ class BunSqliteObjectStore implements ObjectStore {
 		this.ingestTx(rows);
 
 		return entries.length;
+	}
+
+	async ingestPackStream(entries: AsyncIterable<PackObject>): Promise<number> {
+		const rows: Array<{ repoId: string; hash: string; type: string; content: Uint8Array }> = [];
+		for await (const entry of entries) {
+			rows.push({
+				repoId: this.repoId,
+				hash: entry.hash,
+				type: entry.type,
+				content: entry.content,
+			});
+		}
+		if (rows.length === 0) return 0;
+		this.ingestTx(rows);
+		return rows.length;
 	}
 
 	async findByPrefix(prefix: string): Promise<ObjectId[]> {

@@ -43,10 +43,10 @@ import {
 	buildRefListBytes,
 	collectRefs,
 	handleUploadPack,
-	ingestReceivePack,
+	ingestReceivePackFromStream,
 	applyReceivePack,
 } from "./operations.ts";
-import { buildReportStatus } from "./protocol.ts";
+import { buildReportStatus, type PushCommand } from "./protocol.ts";
 import type { RefAdvertisement, ServerHooks } from "./types.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -205,8 +205,13 @@ export function createGitSshServer(config: GitSshServerConfig): GitSshServer {
 						});
 						await writeResponse(writer, result);
 					} else {
-						const requestBody = await readReceivePackRequest(streamReader);
-						await serveReceivePack(writer, repo, repoPath, requestBody, hooks);
+						const { commands, capabilities } =
+							await readReceivePackCommands(streamReader);
+						const packStream = streamReader.streamRemaining();
+						await serveReceivePackStreaming(
+							writer, repo, repoPath,
+							commands, capabilities, packStream, hooks,
+						);
 					}
 				} finally {
 					streamReader.release();
@@ -230,14 +235,18 @@ export function createGitSshServer(config: GitSshServerConfig): GitSshServer {
 
 // ── Receive-pack ────────────────────────────────────────────────────
 
-async function serveReceivePack(
+async function serveReceivePackStreaming(
 	writer: WritableStreamDefaultWriter<Uint8Array>,
 	repo: GitRepo,
 	repoPath: string,
-	requestBody: Uint8Array,
+	commands: PushCommand[],
+	capabilities: string[],
+	packStream: AsyncIterable<Uint8Array>,
 	hooks?: ServerHooks,
 ): Promise<void> {
-	const ingestResult = await ingestReceivePack(repo, requestBody);
+	const ingestResult = await ingestReceivePackFromStream(
+		repo, commands, capabilities, packStream,
+	);
 	if (ingestResult.updates.length === 0) return;
 
 	const useSideband = ingestResult.capabilities.includes("side-band-64k");
@@ -376,6 +385,25 @@ class StreamPktLineReader {
 		return this.consume(this.buf.byteLength);
 	}
 
+	/**
+	 * Yield remaining bytes as an async iterable without buffering
+	 * everything into memory. Flushes the internal buffer first,
+	 * then forwards chunks from the underlying stream.
+	 */
+	async *streamRemaining(): AsyncGenerator<Uint8Array> {
+		if (this.buf.byteLength > 0) {
+			yield this.consume(this.buf.byteLength);
+		}
+		while (!this.eof) {
+			const result = await this.byteReader.read();
+			if (result.done || !result.value) {
+				this.eof = true;
+				break;
+			}
+			yield result.value;
+		}
+	}
+
 	release(): void {
 		this.byteReader.releaseLock();
 	}
@@ -400,20 +428,45 @@ async function readUploadPackRequest(reader: StreamPktLineReader): Promise<Uint8
 }
 
 /**
- * Read a receive-pack request: pkt-line commands until flush,
- * then raw pack data until the client sends EOF.
+ * Parse receive-pack pkt-line commands until flush.
+ * After this returns, the reader's buffer holds the raw pack data
+ * which can be streamed via `reader.streamRemaining()`.
  */
-async function readReceivePackRequest(reader: StreamPktLineReader): Promise<Uint8Array> {
-	const parts: Uint8Array[] = [];
+async function readReceivePackCommands(
+	reader: StreamPktLineReader,
+): Promise<{ commands: PushCommand[]; capabilities: string[] }> {
+	const commands: PushCommand[] = [];
+	let capabilities: string[] = [];
+	let first = true;
+
 	while (true) {
 		const line = await reader.readPktLine();
 		if (!line) break;
-		parts.push(line.raw);
 		if (line.type === "flush") break;
+
+		let text = line.text;
+		if (text.endsWith("\n")) text = text.slice(0, -1);
+
+		if (first) {
+			const nulIdx = text.indexOf("\0");
+			if (nulIdx !== -1) {
+				capabilities = text.slice(nulIdx + 1).split(" ").filter(Boolean);
+				text = text.slice(0, nulIdx);
+			}
+			first = false;
+		}
+
+		const parts = text.split(" ");
+		if (parts.length >= 3) {
+			commands.push({
+				oldHash: parts[0]!,
+				newHash: parts[1]!,
+				refName: parts.slice(2).join(" "),
+			});
+		}
 	}
-	const packData = await reader.readRemaining();
-	if (packData.byteLength > 0) parts.push(packData);
-	return concatBytes(parts);
+
+	return { commands, capabilities };
 }
 
 function concatBytes(arrays: Uint8Array[]): Uint8Array {

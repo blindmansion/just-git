@@ -7,6 +7,7 @@ import type {
 	IdentityOverride,
 	NetworkPolicy,
 } from "../hooks.ts";
+import type { PackObject } from "./pack/packfile.ts";
 
 // ── Object identifiers ──────────────────────────────────────────────
 
@@ -192,6 +193,12 @@ export interface ObjectStore {
 	write(type: ObjectType, content: Uint8Array): Promise<ObjectId>;
 	exists(hash: ObjectId): Promise<boolean>;
 	ingestPack(packData: Uint8Array): Promise<number>;
+	/**
+	 * Ingest pre-resolved objects from a streaming source.
+	 * Accepts the output of `readPackStreaming` — each yielded
+	 * `PackObject` has type, content, and hash already computed.
+	 */
+	ingestPackStream(entries: AsyncIterable<PackObject>): Promise<number>;
 	/** Return all object hashes matching a hex prefix (for short hash resolution). */
 	findByPrefix(prefix: string): Promise<ObjectId[]>;
 	/**

@@ -1,4 +1,5 @@
 import { envelope } from "../lib/object-store.ts";
+import type { PackObject } from "../lib/pack/packfile.ts";
 import { readPack } from "../lib/pack/packfile.ts";
 import { sha1 } from "../lib/sha1.ts";
 import { normalizeRef } from "../lib/types.ts";
@@ -108,6 +109,18 @@ class MemoryObjectStore implements ObjectStore {
 			}
 		}
 		return entries.length;
+	}
+
+	async ingestPackStream(entries: AsyncIterable<PackObject>): Promise<number> {
+		const store = this.store;
+		let count = 0;
+		for await (const entry of entries) {
+			if (!store.has(entry.hash)) {
+				store.set(entry.hash, { type: entry.type as ObjectType, content: entry.content });
+			}
+			count++;
+		}
+		return count;
 	}
 
 	async findByPrefix(prefix: string): Promise<ObjectId[]> {
