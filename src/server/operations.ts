@@ -551,30 +551,7 @@ export async function ingestReceivePack(
 		}
 	}
 
-	const updates: RefUpdate[] = [];
-	for (const cmd of commands) {
-		const isCreate = cmd.oldHash === ZERO_HASH;
-		const isDelete = cmd.newHash === ZERO_HASH;
-		let isFF = false;
-
-		if (!isCreate && !isDelete && unpackOk) {
-			try {
-				isFF = await isAncestor(repo, cmd.oldHash, cmd.newHash);
-			} catch {
-				// Ancestry check failed; leave isFF false
-			}
-		}
-
-		updates.push({
-			ref: cmd.refName,
-			oldHash: isCreate ? null : cmd.oldHash,
-			newHash: cmd.newHash,
-			isFF,
-			isCreate,
-			isDelete,
-		});
-	}
-
+	const updates = await buildRefUpdates(repo, commands, unpackOk);
 	return { updates, unpackOk, capabilities, sawFlush };
 }
 
@@ -610,6 +587,15 @@ export async function ingestReceivePackFromStream(
 		unpackOk = false;
 	}
 
+	const updates = await buildRefUpdates(repo, commands, unpackOk);
+	return { updates, unpackOk, capabilities, sawFlush };
+}
+
+async function buildRefUpdates(
+	repo: GitRepo,
+	commands: PushCommand[],
+	unpackOk: boolean,
+): Promise<RefUpdate[]> {
 	const updates: RefUpdate[] = [];
 	for (const cmd of commands) {
 		const isCreate = cmd.oldHash === ZERO_HASH;
@@ -633,8 +619,7 @@ export async function ingestReceivePackFromStream(
 			isDelete,
 		});
 	}
-
-	return { updates, unpackOk, capabilities, sawFlush };
+	return updates;
 }
 
 // ── Receive-pack lifecycle (transport-agnostic) ─────────────────────

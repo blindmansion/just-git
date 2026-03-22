@@ -205,12 +205,16 @@ export function createGitSshServer(config: GitSshServerConfig): GitSshServer {
 						});
 						await writeResponse(writer, result);
 					} else {
-						const { commands, capabilities } =
-							await readReceivePackCommands(streamReader);
+						const { commands, capabilities } = await readReceivePackCommands(streamReader);
 						const packStream = streamReader.streamRemaining();
 						await serveReceivePackStreaming(
-							writer, repo, repoPath,
-							commands, capabilities, packStream, hooks,
+							writer,
+							repo,
+							repoPath,
+							commands,
+							capabilities,
+							packStream,
+							hooks,
 						);
 					}
 				} finally {
@@ -244,9 +248,7 @@ async function serveReceivePackStreaming(
 	packStream: AsyncIterable<Uint8Array>,
 	hooks?: ServerHooks,
 ): Promise<void> {
-	const ingestResult = await ingestReceivePackFromStream(
-		repo, commands, capabilities, packStream,
-	);
+	const ingestResult = await ingestReceivePackFromStream(repo, commands, capabilities, packStream);
 	if (ingestResult.updates.length === 0) return;
 
 	const useSideband = ingestResult.capabilities.includes("side-band-64k");
@@ -368,23 +370,6 @@ class StreamPktLineReader {
 		return { type: "data", raw, text: decoder.decode(raw.subarray(4)) };
 	}
 
-	/** Read all remaining bytes until EOF. Used for pack data after flush. */
-	async readRemaining(): Promise<Uint8Array> {
-		while (!this.eof) {
-			const result = await this.byteReader.read();
-			if (result.done || !result.value) {
-				this.eof = true;
-				break;
-			}
-			const value = result.value;
-			const merged = new Uint8Array(this.buf.byteLength + value.byteLength);
-			merged.set(this.buf);
-			merged.set(value, this.buf.byteLength);
-			this.buf = merged;
-		}
-		return this.consume(this.buf.byteLength);
-	}
-
 	/**
 	 * Yield remaining bytes as an async iterable without buffering
 	 * everything into memory. Flushes the internal buffer first,
@@ -450,7 +435,10 @@ async function readReceivePackCommands(
 		if (first) {
 			const nulIdx = text.indexOf("\0");
 			if (nulIdx !== -1) {
-				capabilities = text.slice(nulIdx + 1).split(" ").filter(Boolean);
+				capabilities = text
+					.slice(nulIdx + 1)
+					.split(" ")
+					.filter(Boolean);
 				text = text.slice(0, nulIdx);
 			}
 			first = false;
@@ -461,7 +449,7 @@ async function readReceivePackCommands(
 			commands.push({
 				oldHash: parts[0]!,
 				newHash: parts[1]!,
-				refName: parts.slice(2).join(" "),
+				refName: parts[2]!,
 			});
 		}
 	}

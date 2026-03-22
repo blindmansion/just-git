@@ -351,9 +351,7 @@ describe("readPackStreaming", () => {
 			const hashListPath = join(tmpDir, "hash-list.txt");
 			const packPath = join(tmpDir, "test.pack");
 			fs.writeFileSync(hashListPath, `${hashes.join("\n")}\n`);
-			await run(
-				`git pack-objects --stdout --delta-base-offset < ${hashListPath} > ${packPath}`,
-			);
+			await run(`git pack-objects --stdout --delta-base-offset < ${hashListPath} > ${packPath}`);
 			const packData = new Uint8Array(fs.readFileSync(packPath));
 
 			const buffered = await readPack(packData);
