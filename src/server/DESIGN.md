@@ -316,11 +316,11 @@ Beyond read-only inspection via helpers, some hook use cases require a full work
 
 ### Three tiers of hook capability
 
-| Tier               | API                                  | VFS needed | Concurrent-safe | Use cases                                |
-| ------------------ | ------------------------------------ | ---------- | --------------- | ---------------------------------------- |
-| **Inspection**     | Standalone helpers                   | No         | Yes             | Read commits, diff trees, check ancestry |
-| **Read-only tree** | `checkoutTo()` or `createWorktree()` | Yes        | Yes             | Lint, test, inspect files at a commit    |
-| **Write-capable**  | `resolveRemote` + clone + push       | Yes        | Yes (CAS)       | Agent edits files, commits, pushes back  |
+| Tier               | API                                   | VFS needed | Concurrent-safe | Use cases                                |
+| ------------------ | ------------------------------------- | ---------- | --------------- | ---------------------------------------- |
+| **Inspection**     | Standalone helpers                    | No         | Yes             | Read commits, diff trees, check ancestry |
+| **Read-only tree** | `extractTree()` or `createWorktree()` | Yes        | Yes             | Lint, test, inspect files at a commit    |
+| **Write-capable**  | `resolveRemote` + clone + push        | Yes        | Yes (CAS)       | Agent edits files, commits, pushes back  |
 
 Most hooks only need the inspection tier. The read-only tree tier populates a VFS from a commit for file-level access. The write-capable tier gives an agent a full isolated git environment with CAS-protected pushes.
 
@@ -341,14 +341,14 @@ preReceive: async ({ repo, updates }) => {
 
 ### Read-only tree (lightweight VFS)
 
-`checkoutTo()` writes worktree files to a VFS without any `.git` structure — just the files. `createWorktree()` additionally builds a git index and `.git` scaffold, enabling git commands like `status`, `log`, `diff`, and `show`.
+`extractTree()` writes worktree files to a VFS without any `.git` structure — just the files. `createWorktree()` additionally builds a git index and `.git` scaffold, enabling git commands like `status`, `log`, `diff`, and `show`.
 
 Wrap the repo with `readonlyRepo()` to enforce read-only access — any write operation (`git add`, `git commit`, `git checkout -b`, etc.) will fail with a clear error instead of silently modifying the shared store.
 
 ```typescript
-// checkoutTo — just the files
+// extractTree — just the files
 const fs = new InMemoryFs();
-await checkoutTo(repo, "refs/heads/main", fs, "/workspace");
+await extractTree(repo, "refs/heads/main", fs, "/workspace");
 const pkg = await fs.readFile("/workspace/package.json");
 
 // createWorktree — files + index + .git scaffold, enforced read-only

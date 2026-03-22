@@ -15,7 +15,7 @@ import { Database } from "bun:sqlite";
 import { Bash } from "just-bash";
 import { createGit, type GitRepo } from "../src";
 import { createGitServer, BunSqliteStorage } from "../src/server";
-import { readFileAtCommit, createEphemeralWorktree } from "../src/repo";
+import { readFileAtCommit, createSandboxWorktree } from "../src/repo";
 
 const DB_PATH = process.env.DB_PATH ?? ":memory:";
 const PORT = Number(process.env.PORT ?? 4200);
@@ -42,7 +42,7 @@ async function runCIScript(
 	const script = await readFileAtCommit(repo, commitHash, CI_SCRIPT);
 	if (!script) return { passed: true, output: `No ${CI_SCRIPT} found — skipping` };
 
-	const { ctx } = await createEphemeralWorktree(repo, {
+	const { ctx } = await createSandboxWorktree(repo, {
 		ref: commitHash,
 		workTree: "/workspace",
 	});

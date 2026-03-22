@@ -5,7 +5,7 @@ import { createGit } from "../../src/index.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import type { GitRepo, Identity } from "../../src/lib/types.ts";
 import {
-	checkoutTo,
+	extractTree,
 	createCommit,
 	findMergeBases,
 	getNewCommits,
@@ -400,14 +400,14 @@ describe("mergeTrees + createCommit (PR merge flow)", () => {
 	});
 });
 
-// ── checkoutTo ──────────────────────────────────────────────────────
+// ── extractTree ──────────────────────────────────────────────────────
 
-describe("checkoutTo", () => {
+describe("extractTree", () => {
 	test("materializes a commit's worktree onto a filesystem", async () => {
 		const { repo, initialHash } = await setupWithCommits();
 
 		const targetFs = new InMemoryFs();
-		const result = await checkoutTo(repo, initialHash, targetFs);
+		const result = await extractTree(repo, initialHash, targetFs);
 
 		expect(result.commitHash).toBe(initialHash);
 		expect(result.filesWritten).toBe(1);
@@ -421,7 +421,7 @@ describe("checkoutTo", () => {
 		const { repo } = await setupWithCommits();
 
 		const targetFs = new InMemoryFs();
-		const result = await checkoutTo(repo, "HEAD", targetFs);
+		const result = await extractTree(repo, "HEAD", targetFs);
 
 		expect(result.filesWritten).toBe(1);
 		const content = await targetFs.readFile("/file.txt");
@@ -432,7 +432,7 @@ describe("checkoutTo", () => {
 		const { repo } = await setupWithCommits();
 
 		const targetFs = new InMemoryFs();
-		await checkoutTo(repo, "refs/heads/main", targetFs);
+		await extractTree(repo, "refs/heads/main", targetFs);
 
 		const content = await targetFs.readFile("/file.txt");
 		expect(content).toBe("initial content\n");
@@ -442,7 +442,7 @@ describe("checkoutTo", () => {
 		const { repo } = await setupWithCommits();
 
 		const targetFs = new InMemoryFs();
-		await checkoutTo(repo, "HEAD", targetFs, "/workspace/code");
+		await extractTree(repo, "HEAD", targetFs, "/workspace/code");
 
 		const content = await targetFs.readFile("/workspace/code/file.txt");
 		expect(content).toBe("initial content\n");
@@ -458,7 +458,7 @@ describe("checkoutTo", () => {
 		await bash.exec('git commit -m "add nested files"', { env: envAt(1000000100) });
 
 		const targetFs = new InMemoryFs();
-		const result = await checkoutTo(repo, "HEAD", targetFs);
+		const result = await extractTree(repo, "HEAD", targetFs);
 
 		expect(result.filesWritten).toBe(3);
 		expect(await targetFs.readFile("/file.txt")).toBe("initial content\n");
@@ -475,7 +475,7 @@ describe("checkoutTo", () => {
 		await bash.exec('git commit -m "update"', { env: envAt(1000000100) });
 
 		const targetFs = new InMemoryFs();
-		const result = await checkoutTo(repo, initialHash, targetFs);
+		const result = await extractTree(repo, initialHash, targetFs);
 
 		expect(result.filesWritten).toBe(1);
 		expect(await targetFs.readFile("/file.txt")).toBe("initial content\n");
@@ -485,14 +485,16 @@ describe("checkoutTo", () => {
 	test("throws for nonexistent ref", async () => {
 		const { repo } = await setupWithCommits();
 		const targetFs = new InMemoryFs();
-		await expect(checkoutTo(repo, "refs/heads/nonexistent", targetFs)).rejects.toThrow("not found");
+		await expect(extractTree(repo, "refs/heads/nonexistent", targetFs)).rejects.toThrow(
+			"not found",
+		);
 	});
 
 	test("throws for nonexistent hash", async () => {
 		const { repo } = await setupWithCommits();
 		const targetFs = new InMemoryFs();
 		await expect(
-			checkoutTo(repo, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", targetFs),
+			extractTree(repo, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", targetFs),
 		).rejects.toThrow("not found");
 	});
 
@@ -526,7 +528,7 @@ describe("checkoutTo", () => {
 		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commitHash });
 
 		const targetFs = new InMemoryFs();
-		const result = await checkoutTo(repo, "refs/heads/main", targetFs, "/build");
+		const result = await extractTree(repo, "refs/heads/main", targetFs, "/build");
 
 		expect(result.filesWritten).toBe(3);
 		expect(result.commitHash).toBe(commitHash);
@@ -549,7 +551,7 @@ describe("checkoutTo", () => {
 					if (!headSha) return;
 
 					const fs = new InMemoryFs();
-					await checkoutTo(event.repo, headSha, fs, "/review");
+					await extractTree(event.repo, headSha, fs, "/review");
 
 					const entries = await fs.readdir("/review");
 					inspectedFiles = entries.sort();
@@ -622,7 +624,7 @@ describe("checkoutTo", () => {
 					if (!headSha) return;
 
 					const fs = new InMemoryFs();
-					await checkoutTo(event.repo, headSha, fs, "/review");
+					await extractTree(event.repo, headSha, fs, "/review");
 
 					if (await fs.exists("/review/.env")) {
 						return { reject: true, message: ".env file not allowed" };
@@ -694,7 +696,7 @@ describe("checkoutTo", () => {
 			on: {
 				async onPush(event) {
 					const fs = new InMemoryFs();
-					await checkoutTo(event.repo, event.newHash, fs, "/snapshot");
+					await extractTree(event.repo, event.newHash, fs, "/snapshot");
 					const entries = await fs.readdir("/snapshot");
 					pushedFiles = entries.sort();
 				},

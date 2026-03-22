@@ -10,7 +10,7 @@ import { createGit } from "../src/git.ts";
 import { MemoryStorage } from "../src/server/memory-storage.ts";
 import { createGitServer } from "../src/server/handler.ts";
 import { readFileAtCommit, grep, resolveRef } from "../src/repo";
-import { createEphemeralWorktree } from "../src/repo/helpers.ts";
+import { createSandboxWorktree } from "../src/repo/helpers.ts";
 
 let passed = 0;
 let failed = 0;
@@ -63,7 +63,7 @@ const server = createGitServer({
 				}
 
 				// Check 3: full ephemeral worktree build check
-				const { ctx } = await createEphemeralWorktree(repo, {
+				const { ctx } = await createSandboxWorktree(repo, {
 					ref: update.newHash,
 					workTree: `/ci-${update.newHash.slice(0, 8)}`,
 				});

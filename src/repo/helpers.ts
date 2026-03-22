@@ -419,8 +419,8 @@ function indexFromEntries(entries: FlatTreeEntry[]) {
 
 // ── Checkout to filesystem ──────────────────────────────────────────
 
-/** Result of {@link checkoutTo}. */
-export interface CheckoutToResult {
+/** Result of {@link extractTree}. */
+export interface ExtractTreeResult {
 	commitHash: string;
 	treeHash: string;
 	filesWritten: number;
@@ -436,12 +436,12 @@ export interface CheckoutToResult {
  * Useful inside server hooks and platform callbacks to inspect, build,
  * or lint the code at a given commit without affecting the repo itself.
  */
-export async function checkoutTo(
+export async function extractTree(
 	repo: GitRepo,
 	refOrHash: string,
 	fs: FileSystem,
 	targetDir = "/",
-): Promise<CheckoutToResult> {
+): Promise<ExtractTreeResult> {
 	const commitHash = await resolveToCommitHash(repo, refOrHash);
 	const commit = await _readCommit(repo, commitHash);
 	const entries = await _flattenTree(repo, commit.tree);
@@ -974,7 +974,7 @@ export function overlayRepo(repo: GitRepo): GitRepo {
  * ```ts
  * hooks: {
  *   async preReceive({ repo, updates }) {
- *     const { ctx } = await createEphemeralWorktree(repo, {
+ *     const { ctx } = await createSandboxWorktree(repo, {
  *       ref: updates[0].newHash,
  *     });
  *     const git = createGit({
@@ -988,7 +988,7 @@ export function overlayRepo(repo: GitRepo): GitRepo {
  * }
  * ```
  */
-export async function createEphemeralWorktree(
+export async function createSandboxWorktree(
 	repo: GitRepo,
 	options?: { ref?: string; workTree?: string; gitDir?: string },
 ): Promise<WorktreeResult> {

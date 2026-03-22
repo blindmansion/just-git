@@ -160,16 +160,18 @@ Both return `{ treeHash, clean, conflicts, messages }`. Operates purely on the o
 
 ### Worktree
 
-| Function         | Signature                                              | Description                                                                                                                                                        |
-| ---------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `checkoutTo`     | `(repo, refOrHash, fs, targetDir?) → CheckoutToResult` | Materialize a commit's worktree onto a filesystem. No `.git` directory is created, just the working tree files                                                     |
-| `createWorktree` | `(repo, fs, options?) → WorktreeResult`                | Create a full `GitContext` backed by the repo's stores. Populates worktree, index, and `.git` on the VFS. See [GitRepo > Bridging the two](#how-you-get-a-gitrepo) |
+| Function                | Signature                                               | Description                                                                                                                                                        |
+| ----------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `extractTree`           | `(repo, refOrHash, fs, targetDir?) → ExtractTreeResult` | Extract a commit's tree onto a filesystem. No `.git` directory is created, just the working tree files                                                             |
+| `createWorktree`        | `(repo, fs, options?) → WorktreeResult`                 | Create a full `GitContext` backed by the repo's stores. Populates worktree, index, and `.git` on the VFS. See [GitRepo > Bridging the two](#how-you-get-a-gitrepo) |
+| `createSandboxWorktree` | `(repo, options?) → WorktreeResult`                     | Create an isolated worktree with copy-on-write overlay stores and lazy reads. Source repo is never mutated. Designed for server hooks                              |
 
 ### Safety
 
-| Function       | Signature          | Description                                                             |
-| -------------- | ------------------ | ----------------------------------------------------------------------- |
-| `readonlyRepo` | `(repo) → GitRepo` | Wrap a repo so all write operations throw. Read operations pass through |
+| Function       | Signature          | Description                                                                                                      |
+| -------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `readonlyRepo` | `(repo) → GitRepo` | Wrap a repo so all write operations throw. Read operations pass through                                          |
+| `overlayRepo`  | `(repo) → GitRepo` | Wrap a repo with copy-on-write overlay stores. Writes go to an in-memory layer; the underlying repo is untouched |
 
 ## Storage implementations
 
