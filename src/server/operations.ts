@@ -618,18 +618,21 @@ export async function ingestReceivePackFromStream(
 	sawFlush = true,
 ): Promise<ReceivePackResult> {
 	let unpackOk = true;
-	try {
-		const externalBase = async (hash: string) => {
-			try {
-				return await repo.objectStore.read(hash);
-			} catch {
-				return null;
-			}
-		};
-		const entries = readPackStreaming(packStream, externalBase);
-		await repo.objectStore.ingestPackStream(entries);
-	} catch {
-		unpackOk = false;
+	const needsPack = commands.some((c) => c.newHash !== ZERO_HASH);
+	if (needsPack) {
+		try {
+			const externalBase = async (hash: string) => {
+				try {
+					return await repo.objectStore.read(hash);
+				} catch {
+					return null;
+				}
+			};
+			const entries = readPackStreaming(packStream, externalBase);
+			await repo.objectStore.ingestPackStream(entries);
+		} catch {
+			unpackOk = false;
+		}
 	}
 
 	const updates = await buildRefUpdates(repo, commands, unpackOk);
