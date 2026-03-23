@@ -206,9 +206,10 @@ Key behaviors:
 - `resolve?: (path: string) => string | null` — maps request path to repo ID. Default: identity (URL path = repo ID).
 - `autoCreate?: boolean | { defaultBranch?: string }` — automatically create repos on first access.
 - `server.fetch(request)` — web-standard HTTP handler (Bun.serve, Hono, CF Workers, etc.).
-- `server.handleSession(command, channel, session?)` — SSH session handler. Accepts `SshChannel` (web-standard streams) and optional `SshSessionInfo` (username + optional `metadata`). Returns exit code.
+- `server.handleSession(command, channel, session?)` — SSH session handler. Accepts `SshChannel` (web-standard streams) and optional `SshSessionInfo` (username + optional `metadata`). Returns exit code. Only protocol v1 is supported over SSH; clients using `GIT_PROTOCOL_VERSION=2` receive a clear error message.
 - `server.createRepo(id, options?)` — create a new repo. Throws if it already exists.
 - `server.repo(id)` — get a repo by ID, or `null` if it doesn't exist.
+- `server.requireRepo(id)` — get a repo by ID, or throw if it doesn't exist.
 - `server.deleteRepo(id)` — delete a repo and all its data.
 - `server.asNetwork(baseUrl?)` — returns a `NetworkPolicy` that routes HTTP transport calls to the server in-process, bypassing the network stack. Pass the result as `network` to `createGit`. Default base URL is `"http://git"`. All server hooks, session building, and policy enforcement work identically to real HTTP.
 - `server.close(options?)` — graceful shutdown. New HTTP requests get 503, new SSH sessions get exit 128. Resolves when all in-flight operations complete and pack cache is released. Accepts `{ signal?: AbortSignal }` for timeout. Idempotent.
@@ -270,6 +271,7 @@ Standalone helpers for working with `GitRepo` directly — no filesystem, index,
 - `grep(repo, commitHash, patterns, opts?)` — search file contents at a commit.
 - `commit(repo, options)` — high-level: commit files to a branch in one call. Takes `files` (string/Uint8Array/null values keyed by path), `message`, `author` (`{ name, email, date? }`), optional `committer`, `branch`. Handles blob creation, tree construction (updates existing tree when branch exists, creates fresh tree otherwise), parent resolution, and ref advancement. The main entry point for programmatic writes.
 - `createCommit`, `writeBlob`, `writeTree` — low-level object creation. `createCommit` accepts `CommitIdentity` (either `{ name, email, date? }` or full `Identity`); `committer` defaults to `author` when omitted.
+- `createAnnotatedTag(repo, options)` — create an annotated tag object and ref. Takes `target` (hash), `name`, `tagger` (`CommitIdentity`), `message`, optional `targetType` (default `"commit"`). Returns tag object hash.
 - `updateTree(repo, treeHash, updates)` — apply path-based additions/deletions to a tree, handling nested subtree construction. Each `TreeUpdate` has `path` (full repo-relative), `hash` (blob hash, or `null` to delete), optional `mode`. Empty subtrees are pruned automatically.
 - `mergeTrees`, `mergeTreesFromTreeHashes` — tree-level three-way merge via merge-ort.
 - `extractTree`, `createWorktree`, `createSandboxWorktree` — materialize worktrees on a VFS.

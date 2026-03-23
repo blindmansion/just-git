@@ -330,6 +330,9 @@ export interface GitServer<S = Session> {
 	/** Get a repo by ID, or `null` if it doesn't exist. */
 	repo(id: string): Promise<GitRepo | null>;
 
+	/** Get a repo by ID, or throw if it doesn't exist. */
+	requireRepo(id: string): Promise<GitRepo>;
+
 	/** Delete a repo and all its data. */
 	deleteRepo(id: string): Promise<void>;
 

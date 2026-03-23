@@ -216,6 +216,8 @@ new Server({ hostKeys: [hostKey] }, (client) => {
 
 `handleSession` takes an optional `SshSessionInfo` with `username` and a `metadata` bag for passing along SSH-layer details (key fingerprint, client IP, etc.) — the session builder can extract and type these.
 
+> **Protocol version:** Only Git protocol v1 is supported over SSH. Clients that set `GIT_PROTOCOL_VERSION=2` will receive a clear error: `fatal: protocol version 2 is not supported over SSH; set GIT_PROTOCOL_VERSION=1`. Configure clients with `GIT_PROTOCOL_VERSION=1` in their environment.
+
 ## Policy
 
 Declarative push rules that run before hooks. These are git-level constraints that don't depend on the session — for auth logic, use [hooks](#hooks).
@@ -303,7 +305,7 @@ const server = createServer({
 
 ## Storage backends
 
-Pass a `Storage` to the server via `storage`. Multiple repos are partitioned by ID in a single store. Drivers also work with `resolveRemote` for in-process cross-VFS transport alongside HTTP access (use `server.repo(id)` to get the `GitRepo`).
+Pass a `Storage` to the server via `storage`. Multiple repos are partitioned by ID in a single store. Drivers also work with `resolveRemote` for in-process cross-VFS transport alongside HTTP access (use `server.repo(id)` or the throwing `server.requireRepo(id)` to get the `GitRepo`).
 
 ### `MemoryStorage`
 

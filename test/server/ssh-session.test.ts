@@ -360,7 +360,7 @@ describe("SSH session handler", () => {
 		const pushResult = await collectProc(push);
 		expect(pushResult.exitCode).toBe(0);
 
-		const repo = (await server.repo("test-repo"))!;
+		const repo = await server.requireRepo("test-repo");
 		const mainRef = await repo.refStore.readRef("refs/heads/main");
 		expect(mainRef).toBeTruthy();
 

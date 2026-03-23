@@ -107,7 +107,7 @@ describe("SQLite-backed server roundtrip", () => {
 			const cloneDir = join(sandbox, "local");
 			await realGit(home, sandbox, `clone http://localhost:${port}/my-repo ${cloneDir}`);
 
-			const repo = (await server.repo("my-repo"))!;
+			const repo = await server.requireRepo("my-repo");
 			const mainBefore = await repo.refStore.readRef("refs/heads/main");
 			const hashBefore = mainBefore?.type === "direct" ? mainBefore.hash : null;
 
@@ -118,7 +118,7 @@ describe("SQLite-backed server roundtrip", () => {
 			const pushResult = await realGit(home, cloneDir, "push origin main");
 			expect(pushResult.exitCode).toBe(0);
 
-			const repoAfter = (await server.repo("my-repo"))!;
+			const repoAfter = await server.requireRepo("my-repo");
 			const mainAfter = await repoAfter.refStore.readRef("refs/heads/main");
 			const hashAfter = mainAfter?.type === "direct" ? mainAfter.hash : null;
 			expect(hashAfter).not.toBe(hashBefore);
@@ -176,14 +176,14 @@ describe("SQLite-backed server roundtrip", () => {
 			const pushResult = await realGit(home, cloneDir, "push origin sqlite-feature");
 			expect(pushResult.exitCode).toBe(0);
 
-			const repo = (await server.repo("my-repo"))!;
+			const repo = await server.requireRepo("my-repo");
 			const branchRef = await repo.refStore.readRef("refs/heads/sqlite-feature");
 			expect(branchRef).not.toBeNull();
 
 			const deleteResult = await realGit(home, cloneDir, "push origin --delete sqlite-feature");
 			expect(deleteResult.exitCode).toBe(0);
 
-			const repoAfter = (await server.repo("my-repo"))!;
+			const repoAfter = await server.requireRepo("my-repo");
 			const afterDelete = await repoAfter.refStore.readRef("refs/heads/sqlite-feature");
 			expect(afterDelete).toBeNull();
 		} finally {

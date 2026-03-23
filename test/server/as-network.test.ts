@@ -51,7 +51,7 @@ describe("asNetwork", () => {
 		await seeder.exec('git commit -m "init"', { cwd: "/seed", env: envAt(1000000000) });
 		await seeder.exec("git push origin main", { cwd: "/seed" });
 
-		const repo = (await server.repo("repo"))!;
+		const repo = await server.requireRepo("repo");
 		const before = await repo.refStore.readRef("refs/heads/main");
 		const hashBefore = before!.type === "direct" ? before!.hash : null;
 

@@ -42,6 +42,9 @@ const server = createServer({
 });
 await server.createRepo("my-repo");
 const repo = await server.repo("my-repo"); // GitRepo | null
+
+// Or throw if the repo must exist:
+const repo2 = await server.requireRepo("my-repo"); // GitRepo (throws if missing)
 ```
 
 **Bridging the two**: `createWorktree` materializes a storage-backed repo onto a VFS, enabling full git command execution against a database backend:
@@ -51,7 +54,7 @@ import { createWorktree } from "just-git/repo";
 import { createGit } from "just-git";
 import { Bash, InMemoryFs } from "just-bash";
 
-const repo = (await server.repo("my-repo"))!;
+const repo = await server.requireRepo("my-repo");
 const fs = new InMemoryFs();
 await createWorktree(repo, fs, { workTree: "/repo" });
 
@@ -147,13 +150,14 @@ All functions accept `GitRepo` as the first argument.
 
 ### Writing
 
-| Function       | Signature                            | Description                                                                                                    |
-| -------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `commit`       | `(repo, options) → string`           | Commit files to a branch in one call. Handles blobs, tree construction, parent resolution, and ref advancement |
-| `writeBlob`    | `(repo, content) → string`           | Write a UTF-8 string as a blob, returns hash                                                                   |
-| `writeTree`    | `(repo, entries) → string`           | Build and write a tree from `TreeEntryInput[]` (single-level names)                                            |
-| `updateTree`   | `(repo, treeHash, updates) → string` | Apply path-based additions/deletions to a tree, handling nested subtrees. Prunes empty subtrees                |
-| `createCommit` | `(repo, options) → string`           | Create a commit object from a tree hash and explicit parents. Low-level primitive behind `commit`              |
+| Function             | Signature                            | Description                                                                                                    |
+| -------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `commit`             | `(repo, options) → string`           | Commit files to a branch in one call. Handles blobs, tree construction, parent resolution, and ref advancement |
+| `writeBlob`          | `(repo, content) → string`           | Write a UTF-8 string as a blob, returns hash                                                                   |
+| `writeTree`          | `(repo, entries) → string`           | Build and write a tree from `TreeEntryInput[]` (single-level names)                                            |
+| `updateTree`         | `(repo, treeHash, updates) → string` | Apply path-based additions/deletions to a tree, handling nested subtrees. Prunes empty subtrees                |
+| `createCommit`       | `(repo, options) → string`           | Create a commit object from a tree hash and explicit parents. Low-level primitive behind `commit`              |
+| `createAnnotatedTag` | `(repo, options) → string`           | Create an annotated tag object and ref. Takes `target`, `name`, `tagger`, `message`, optional `targetType`     |
 
 `commit` is the main entry point for programmatic writes — pass files and a branch, everything else is handled:
 

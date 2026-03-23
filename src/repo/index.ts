@@ -37,6 +37,7 @@ export {
 // Writing
 export {
 	commit,
+	createAnnotatedTag,
 	createCommit,
 	updateTree,
 	writeBlob,
@@ -44,6 +45,7 @@ export {
 	type CommitAuthor,
 	type CommitIdentity,
 	type CommitOptions,
+	type CreateAnnotatedTagOptions,
 	type CreateCommitOptions,
 	type TreeEntryInput,
 	type TreeUpdate,

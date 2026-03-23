@@ -27,19 +27,22 @@ type GitSshService = "git-upload-pack" | "git-receive-pack";
  * Parse a git SSH exec command into service and repo path.
  *
  * Handles `git-upload-pack '/path'`, `git upload-pack '/path'`,
- * and unquoted variants.
+ * and unquoted variants. Sets `protocolV2` when the client
+ * requests protocol version 2 via `--protocol=version=2`.
  */
 export function parseGitSshCommand(
 	command: string,
-): { service: GitSshService; repoPath: string } | null {
-	const match = command.match(/^git[\s-](upload-pack|receive-pack)\s+'?([^']+?)'?\s*$/);
+): { service: GitSshService; repoPath: string; protocolV2?: boolean } | null {
+	const protocolV2 = /--protocol=version=2/.test(command);
+	const cleaned = command.replace(/\s*--protocol=version=\d+/g, "");
+	const match = cleaned.match(/^git[\s-](upload-pack|receive-pack)\s+'?([^']+?)'?\s*$/);
 	if (!match) return null;
 
 	const service = `git-${match[1]}` as GitSshService;
 	let repoPath = match[2]!;
 	if (repoPath.startsWith("/")) repoPath = repoPath.slice(1);
 
-	return { service, repoPath };
+	return protocolV2 ? { service, repoPath, protocolV2 } : { service, repoPath };
 }
 
 // ── Session handler (used by createServer) ───────────────────────
@@ -72,6 +75,14 @@ export async function handleSshSession<S = Session>(
 		const parsed = parseGitSshCommand(command);
 		if (!parsed) {
 			sendStderr(channel, `fatal: unrecognized command '${command}'\n`);
+			return 128;
+		}
+
+		if (parsed.protocolV2) {
+			sendStderr(
+				channel,
+				"fatal: protocol version 2 is not supported over SSH; set GIT_PROTOCOL_VERSION=1\n",
+			);
 			return 128;
 		}
 

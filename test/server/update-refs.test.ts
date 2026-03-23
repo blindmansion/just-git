@@ -46,7 +46,7 @@ describe("server.updateRefs", () => {
 		expect(result.refResults[0]!.ok).toBe(true);
 		expect(result.applied).toHaveLength(1);
 
-		const repo = (await server.repo("test"))!;
+		const repo = await server.requireRepo("test");
 		const hash = await resolveRef(repo, "refs/heads/feature");
 		expect(hash).toBe(initialHash);
 	});

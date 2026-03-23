@@ -1,9 +1,10 @@
 import { readObject, writeObject } from "../lib/object-db.ts";
 import { readCommit as _readCommit } from "../lib/object-db.ts";
 import { serializeCommit } from "../lib/objects/commit.ts";
+import { serializeTag } from "../lib/objects/tag.ts";
 import { parseTree, serializeTree } from "../lib/objects/tree.ts";
 import { resolveRef as _resolveRef } from "../lib/refs.ts";
-import type { GitRepo, Identity, TreeEntry } from "../lib/types.ts";
+import type { GitRepo, Identity, ObjectType, TreeEntry } from "../lib/types.ts";
 
 // ── Identity helpers ────────────────────────────────────────────────
 
@@ -87,6 +88,52 @@ export async function createCommit(repo: GitRepo, options: CreateCommitOptions):
 		await advanceBranch(repo, options.branch, hash);
 	}
 
+	return hash;
+}
+
+// ── Annotated tag creation ───────────────────────────────────────────
+
+/** Options for {@link createAnnotatedTag}. */
+export interface CreateAnnotatedTagOptions {
+	/** Hash of the target object (usually a commit). */
+	target: string;
+	/** Tag name (written into the tag object and used for the ref). */
+	name: string;
+	/** Tagger identity. Accepts `{ name, email, date? }` or full `Identity`. */
+	tagger: CommitIdentity;
+	message: string;
+	/** Type of the target object. Defaults to `"commit"`. */
+	targetType?: ObjectType;
+}
+
+/**
+ * Create an annotated tag object and its ref.
+ * Returns the tag object's hash.
+ *
+ * ```ts
+ * await createAnnotatedTag(repo, {
+ *   target: commitHash,
+ *   name: "v1.0.0",
+ *   tagger: { name: "Alice", email: "alice@example.com" },
+ *   message: "Release 1.0.0",
+ * });
+ * ```
+ */
+export async function createAnnotatedTag(
+	repo: GitRepo,
+	options: CreateAnnotatedTagOptions,
+): Promise<string> {
+	const tagger = toIdentity(options.tagger);
+	const content = serializeTag({
+		type: "tag",
+		object: options.target,
+		objectType: options.targetType ?? "commit",
+		name: options.name,
+		tagger,
+		message: options.message,
+	});
+	const hash = await writeObject(repo, "tag", content);
+	await repo.refStore.writeRef(`refs/tags/${options.name}`, { type: "direct", hash });
 	return hash;
 }
 

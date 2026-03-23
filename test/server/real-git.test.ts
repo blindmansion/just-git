@@ -58,7 +58,7 @@ describe("server with real git client", () => {
 		await seedClient.exec("git tag v1.0", { cwd: "/local" });
 		await seedClient.exec("git push origin --tags", { cwd: "/local" });
 
-		const repo = (await server.repo("repo"))!;
+		const repo = await server.requireRepo("repo");
 		const mainRef = await repo.refStore.readRef("refs/heads/main");
 		const mainHash = mainRef!.type === "direct" ? mainRef!.hash : "";
 		await repo.refStore.writeRef("refs/heads/feature", mainHash);
@@ -103,7 +103,7 @@ describe("server with real git client", () => {
 			const cloneDir = join(sandbox, "local");
 			await realGit(home, sandbox, `clone http://localhost:${port}/repo ${cloneDir}`);
 
-			const repo = (await server.repo("repo"))!;
+			const repo = await server.requireRepo("repo");
 			const mainBefore = await repo.refStore.readRef("refs/heads/main");
 			const hashBefore = mainBefore?.type === "direct" ? mainBefore.hash : null;
 
@@ -171,7 +171,7 @@ describe("server with real git client", () => {
 			const pushResult = await realGit(home, cloneDir, "push origin real-git-branch");
 			expect(pushResult.exitCode).toBe(0);
 
-			const repo = (await server.repo("repo"))!;
+			const repo = await server.requireRepo("repo");
 			const newBranch = await repo.refStore.readRef("refs/heads/real-git-branch");
 			expect(newBranch).not.toBeNull();
 			expect(newBranch!.type).toBe("direct");
@@ -181,7 +181,7 @@ describe("server with real git client", () => {
 	});
 
 	test("delete remote branch via push", async () => {
-		const repo = (await server.repo("repo"))!;
+		const repo = await server.requireRepo("repo");
 		const before = await repo.refStore.readRef("refs/heads/feature");
 		expect(before).not.toBeNull();
 

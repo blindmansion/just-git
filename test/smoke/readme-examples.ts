@@ -465,7 +465,7 @@ import type { GitHooks } from "../../src";
 		storage: new BunSqliteStorage(new Database(":memory:")),
 	});
 	await server.createRepo("my-repo");
-	const repo = (await server.repo("my-repo"))!;
+	const repo = await server.requireRepo("my-repo");
 	console.assert(repo.objectStore !== undefined, "should have objectStore");
 	console.assert(repo.refStore !== undefined, "should have refStore");
 	console.log("REPO storage-backed: server.repo() OK");

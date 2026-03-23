@@ -28,7 +28,7 @@ describe("server hooks e2e", () => {
 
 		seedSrv.stop();
 
-		const repo = (await server.repo("repo"))!;
+		const repo = await server.requireRepo("repo");
 		const mainRef = await repo.refStore.readRef("refs/heads/main");
 		const mainHash = mainRef!.type === "direct" ? mainRef!.hash : "";
 		await repo.refStore.writeRef("refs/heads/feature", mainHash);
@@ -163,7 +163,7 @@ describe("server hooks e2e", () => {
 		});
 
 		test("filtered refs affect fetch", async () => {
-			const repo = (await server.repo("repo"))!;
+			const repo = await server.requireRepo("repo");
 			const mainRef = await repo.refStore.readRef("refs/heads/main");
 			await repo.refStore.writeRef("refs/heads/internal-new", mainRef!);
 

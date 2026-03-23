@@ -50,7 +50,7 @@ describe("server roundtrip", () => {
 		});
 		await seedClient.exec("git push origin --tags", { cwd: "/local" });
 
-		const repo = (await server.repo("repo"))!;
+		const repo = await server.requireRepo("repo");
 		const mainRef = await repo.refStore.readRef("refs/heads/main");
 		const mainHash = mainRef!.type === "direct" ? mainRef!.hash : "";
 		await repo.refStore.writeRef("refs/heads/feature", mainHash);
@@ -98,7 +98,7 @@ describe("server roundtrip", () => {
 			env: envAt(1000000300),
 		});
 
-		const repo = (await server.repo("repo"))!;
+		const repo = await server.requireRepo("repo");
 		const mainBefore = await repo.refStore.readRef("refs/heads/main");
 		expect(mainBefore).not.toBeNull();
 		const hashBefore = mainBefore!.type === "direct" ? mainBefore!.hash : null;
@@ -175,14 +175,14 @@ describe("server roundtrip", () => {
 		const pushResult = await client.exec("git push origin new-feature", { cwd: "/local" });
 		expect(pushResult.exitCode).toBe(0);
 
-		const repo = (await server.repo("repo"))!;
+		const repo = await server.requireRepo("repo");
 		const newBranch = await repo.refStore.readRef("refs/heads/new-feature");
 		expect(newBranch).not.toBeNull();
 		expect(newBranch!.type).toBe("direct");
 	});
 
 	test("delete remote branch via push", async () => {
-		const repo = (await server.repo("repo"))!;
+		const repo = await server.requireRepo("repo");
 		const before = await repo.refStore.readRef("refs/heads/feature");
 		expect(before).not.toBeNull();
 

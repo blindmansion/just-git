@@ -28,7 +28,7 @@ describe("server policy", () => {
 
 		seedSrv.stop();
 
-		const repo = (await server.repo("repo"))!;
+		const repo = await server.requireRepo("repo");
 		const mainRef = await repo.refStore.readRef("refs/heads/main");
 		const mainHash = mainRef!.type === "direct" ? mainRef!.hash : "";
 		await repo.refStore.writeRef("refs/heads/protected-branch", mainHash);
@@ -109,7 +109,7 @@ describe("server policy", () => {
 		});
 
 		test("allows deletion of non-protected branch", async () => {
-			const repo = (await server.repo("repo"))!;
+			const repo = await server.requireRepo("repo");
 			const mainRef = await repo.refStore.readRef("refs/heads/main");
 			await repo.refStore.writeRef("refs/heads/temp-delete", mainRef!);
 
@@ -160,7 +160,7 @@ describe("server policy", () => {
 
 	describe("denyNonFastForward", () => {
 		test("rejects non-fast-forward push to any branch", async () => {
-			const repo = (await server.repo("repo"))!;
+			const repo = await server.requireRepo("repo");
 			const mainRef = await repo.refStore.readRef("refs/heads/main");
 			await repo.refStore.writeRef("refs/heads/deny-ff-test", mainRef!);
 
@@ -221,7 +221,7 @@ describe("server policy", () => {
 
 	describe("denyDeletes", () => {
 		test("rejects ref deletion", async () => {
-			const repo = (await server.repo("repo"))!;
+			const repo = await server.requireRepo("repo");
 			const mainRef = await repo.refStore.readRef("refs/heads/main");
 			await repo.refStore.writeRef("refs/heads/deny-del-test", mainRef!);
 
@@ -443,7 +443,7 @@ describe("server policy", () => {
 
 	describe("immutableTags", () => {
 		test("blocks tag deletion", async () => {
-			const repo = (await server.repo("repo"))!;
+			const repo = await server.requireRepo("repo");
 			const mainRef = await repo.refStore.readRef("refs/heads/main");
 			const mainHash = mainRef!.type === "direct" ? mainRef!.hash : "";
 			const tagContent = `object ${mainHash}\ntype commit\ntag v1.0\ntagger Test <test@test.com> 1000002000 +0000\n\nrelease\n`;
@@ -518,7 +518,7 @@ describe("server policy", () => {
 				});
 				expect(push.exitCode).toBe(0);
 
-				const repo = (await server.repo("repo"))!;
+				const repo = await server.requireRepo("repo");
 				const tag = await repo.refStore.readRef("refs/tags/v2.0");
 				expect(tag).not.toBeNull();
 			} finally {
@@ -527,7 +527,7 @@ describe("server policy", () => {
 		});
 
 		test("allows branch operations when only tags are protected", async () => {
-			const repo = (await server.repo("repo"))!;
+			const repo = await server.requireRepo("repo");
 			const mainRef = await repo.refStore.readRef("refs/heads/main");
 			await repo.refStore.writeRef("refs/heads/deleteable-branch", mainRef!);
 

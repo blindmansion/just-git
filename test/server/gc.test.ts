@@ -89,7 +89,7 @@ describe("server.gc", () => {
 		expect(afterCount).toBe(beforeCount - result.deleted);
 
 		// The initial commit should still resolve
-		const freshRepo = (await server.repo("test"))!;
+		const freshRepo = await server.requireRepo("test");
 		const headHash = await resolveRef(freshRepo, "refs/heads/main");
 		expect(headHash).toBe(initialHash);
 	});

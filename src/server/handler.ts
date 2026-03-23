@@ -322,8 +322,7 @@ export function createServer<S = Session>(config: GitServerConfig<S>): GitServer
 		async updateRefs(repoId, refs, session?) {
 			if (!enter()) throw new Error("Server is shutting down");
 			try {
-				const repo = await storage.repo(repoId);
-				if (!repo) throw new Error(`Repository "${repoId}" not found`);
+				const repo = await server.requireRepo(repoId);
 
 				const updates = await resolveRefUpdates(repo, refs);
 				return applyReceivePack({
@@ -359,13 +358,17 @@ export function createServer<S = Session>(config: GitServerConfig<S>): GitServer
 
 		createRepo: (id, options) => storage.createRepo(id, options) as Promise<GitRepo>,
 		repo: (id) => storage.repo(id) as Promise<GitRepo | null>,
+		async requireRepo(id) {
+			const repo = await storage.repo(id);
+			if (!repo) throw new Error(`Repository "${id}" not found`);
+			return repo as GitRepo;
+		},
 		deleteRepo: (id) => storage.deleteRepo(id) as Promise<void>,
 
 		async gc(repoId, options?) {
 			if (!enter()) throw new Error("Server is shutting down");
 			try {
-				const repo = await storage.repo(repoId);
-				if (!repo) throw new Error(`Repository "${repoId}" not found`);
+				const repo = await server.requireRepo(repoId);
 				return gcRepo(repo, config.storage, repoId, options);
 			} finally {
 				leave();
