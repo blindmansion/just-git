@@ -16,7 +16,7 @@ import {
 import { createServer } from "../../src/server/handler.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import { createStorageAdapter } from "../../src/server/storage.ts";
-import { writeBlob, writeTree, createCommit } from "../../src/repo/helpers.ts";
+import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 
 // ── Protocol codec tests ────────────────────────────────────────────
 

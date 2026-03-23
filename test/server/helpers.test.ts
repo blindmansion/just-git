@@ -4,19 +4,11 @@ import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import type { GitRepo, Identity } from "../../src/lib/types.ts";
-import {
-	extractTree,
-	createCommit,
-	findMergeBases,
-	getNewCommits,
-	mergeTrees,
-	mergeTreesFromTreeHashes,
-	readCommit,
-	readFileAtCommit,
-	resolveRef,
-	writeBlob,
-	writeTree,
-} from "../../src/repo/helpers.ts";
+import { readCommit, readFileAtCommit, resolveRef } from "../../src/repo/reading.ts";
+import { findMergeBases, getNewCommits } from "../../src/repo/diffing.ts";
+import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
+import { mergeTrees, mergeTreesFromTreeHashes } from "../../src/repo/merging.ts";
+import { extractTree } from "../../src/repo/worktree.ts";
 import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
 import { createStorageAdapter } from "../../src/server/storage.ts";
 

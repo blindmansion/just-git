@@ -14,9 +14,9 @@
 import { MemoryFileSystem } from "../src/memory-fs";
 import { MemoryStorage } from "../src/server/memory-storage";
 import { createStorageAdapter } from "../src/server/storage";
-import { writeBlob, writeTree } from "../src/repo/helpers";
+import { writeBlob, writeTree } from "../src/repo/writing.ts";
 import { TreeBackedFs } from "../src/tree-backed-fs";
-import type { TreeEntryInput } from "../src/repo/helpers";
+import type { TreeEntryInput } from "../src/repo/writing.ts";
 import type { GitRepo } from "../src/lib/types";
 
 // ── Config ──────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { Server, type ServerChannel } from "ssh2";
-import { createCommit, writeBlob, writeTree } from "../../src/repo/helpers.ts";
+import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { createServer } from "../../src/server/handler.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import { parseGitSshCommand } from "../../src/server/ssh-session.ts";

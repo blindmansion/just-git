@@ -1,6 +1,6 @@
 import type { GitRepo } from "../lib/types.ts";
 import { composeHooks, createServer } from "../server/handler.ts";
-import { resolveRef } from "../repo/helpers.ts";
+import { resolveRef } from "../repo/reading.ts";
 import { BunSqliteStorage } from "../server/bun-sqlite-storage.ts";
 import type { BunSqliteDatabase } from "../server/bun-sqlite-storage.ts";
 import type { GitServer, ServerHooks } from "../server/types.ts";

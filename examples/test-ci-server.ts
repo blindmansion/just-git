@@ -10,7 +10,7 @@ import { createGit } from "../src/git.ts";
 import { MemoryStorage } from "../src/server/memory-storage.ts";
 import { createServer } from "../src/server/handler.ts";
 import { readFileAtCommit, grep, resolveRef } from "../src/repo";
-import { createSandboxWorktree } from "../src/repo/helpers.ts";
+import { createSandboxWorktree } from "../src/repo/worktree.ts";
 
 let passed = 0;
 let failed = 0;

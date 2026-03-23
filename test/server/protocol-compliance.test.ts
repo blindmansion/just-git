@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Identity } from "../../src/lib/types.ts";
 import { parsePktLineStream, pktLineText } from "../../src/lib/transport/pkt-line.ts";
-import { createCommit, writeBlob, writeTree } from "../../src/repo/helpers.ts";
+import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { collectRefs, PackCache } from "../../src/server/operations.ts";
 import { createServer } from "../../src/server/handler.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";

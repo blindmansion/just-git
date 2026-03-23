@@ -1,0 +1,95 @@
+import { writeObject } from "../lib/object-db.ts";
+import { serializeCommit } from "../lib/objects/commit.ts";
+import { serializeTree } from "../lib/objects/tree.ts";
+import type { GitRepo, Identity } from "../lib/types.ts";
+
+// ── Commit creation ─────────────────────────────────────────────────
+
+/** Options for {@link createCommit}. */
+export interface CreateCommitOptions {
+	/** Hash of the tree object for this commit. */
+	tree: string;
+	/** Parent commit hashes (empty for root commits). */
+	parents: string[];
+	author: Identity;
+	committer: Identity;
+	message: string;
+	/**
+	 * When set, advances `refs/heads/<branch>` to the new commit.
+	 * If HEAD does not exist yet, it is created as a symbolic ref
+	 * pointing to the branch — matching `git init` + `git commit`.
+	 */
+	branch?: string;
+}
+
+/**
+ * Create a commit object directly in the object store.
+ * Returns the new commit's hash.
+ *
+ * When `branch` is provided, also advances the branch ref and
+ * (if HEAD is absent) initializes HEAD as a symbolic ref to it.
+ * Without `branch`, no refs are updated.
+ */
+export async function createCommit(repo: GitRepo, options: CreateCommitOptions): Promise<string> {
+	const content = serializeCommit({
+		type: "commit",
+		tree: options.tree,
+		parents: options.parents,
+		author: options.author,
+		committer: options.committer,
+		message: options.message,
+	});
+	const hash = await writeObject(repo, "commit", content);
+
+	if (options.branch) {
+		const branchRef = `refs/heads/${options.branch}`;
+		await repo.refStore.writeRef(branchRef, { type: "direct", hash });
+		const head = await repo.refStore.readRef("HEAD");
+		if (!head) {
+			await repo.refStore.writeRef("HEAD", { type: "symbolic", target: branchRef });
+		}
+	}
+
+	return hash;
+}
+
+// ── Tree construction ───────────────────────────────────────────────
+
+/** An entry to include in a tree built by {@link writeTree}. */
+export interface TreeEntryInput {
+	/** Filename (not a path — nesting is achieved by including tree entries). */
+	name: string;
+	/** Hash of the blob or tree object. */
+	hash: string;
+	/** File mode (e.g. "100644"). Auto-detected from the object store when omitted. */
+	mode?: string;
+}
+
+/**
+ * Build a tree object from a flat list of entries and write it to the
+ * object store. When `mode` is omitted, the object store is consulted:
+ * tree objects get "040000", everything else gets "100644".
+ */
+export async function writeTree(repo: GitRepo, entries: TreeEntryInput[]): Promise<string> {
+	const sorted = [...entries].sort((a, b) => a.name.localeCompare(b.name));
+	const resolved = await Promise.all(
+		sorted.map(async (e) => {
+			let mode = e.mode;
+			if (!mode) {
+				const obj = await repo.objectStore.read(e.hash);
+				mode = obj.type === "tree" ? "040000" : "100644";
+			}
+			return { mode, name: e.name, hash: e.hash };
+		}),
+	);
+	const content = serializeTree({ type: "tree", entries: resolved });
+	return writeObject(repo, "tree", content);
+}
+
+/**
+ * Write a UTF-8 string as a blob to the object store.
+ * Returns the blob's hash.
+ */
+export async function writeBlob(repo: GitRepo, content: string): Promise<string> {
+	return writeObject(repo, "blob", new TextEncoder().encode(content));
+}

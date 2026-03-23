@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createCommit, writeBlob, writeTree } from "../../src/repo/helpers.ts";
+import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { createServer } from "../../src/server/handler.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import type { GitServerConfig } from "../../src/server/types.ts";

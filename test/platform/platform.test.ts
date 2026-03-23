@@ -11,14 +11,9 @@ import {
 	type PRMergedEvent,
 	type PRUpdatedEvent,
 } from "../../src/platform/index.ts";
-import {
-	createCommit,
-	flattenTree,
-	readCommit,
-	resolveRef,
-	writeBlob,
-	writeTree,
-} from "../../src/repo/helpers.ts";
+import { readCommit, resolveRef } from "../../src/repo/reading.ts";
+import { flattenTree } from "../../src/repo/diffing.ts";
+import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 
 const TEST_IDENTITY: Identity = {
 	name: "Test",

@@ -9,7 +9,8 @@ import { flattenTree } from "../../src/lib/tree-ops.ts";
 import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
 import { createStorageAdapter } from "../../src/server/storage.ts";
 import type { StorageAdapter } from "../../src/server/storage.ts";
-import { createWorktree, readonlyRepo } from "../../src/repo/helpers.ts";
+import { createWorktree } from "../../src/repo/worktree.ts";
+import { readonlyRepo } from "../../src/repo/safety.ts";
 
 const TEST_ENV = {
 	GIT_AUTHOR_NAME: "Test",
