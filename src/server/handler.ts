@@ -31,6 +31,7 @@ import {
 } from "./operations.ts";
 import { buildReportStatus } from "./protocol.ts";
 import { handleSshSession } from "./ssh-session.ts";
+import { gcRepo } from "./gc.ts";
 import { createStorageAdapter, type CreateRepoOptions } from "./storage.ts";
 import type {
 	GitServerConfig,
@@ -337,6 +338,17 @@ export function createServer<S = Session>(config: GitServerConfig<S>): GitServer
 		createRepo: (id, options) => storage.createRepo(id, options) as Promise<GitRepo>,
 		repo: (id) => storage.repo(id) as Promise<GitRepo | null>,
 		deleteRepo: (id) => storage.deleteRepo(id) as Promise<void>,
+
+		async gc(repoId, options?) {
+			if (!enter()) throw new Error("Server is shutting down");
+			try {
+				const repo = await storage.repo(repoId);
+				if (!repo) throw new Error(`Repository "${repoId}" not found`);
+				return gcRepo(repo, config.storage, repoId, options);
+			} finally {
+				leave();
+			}
+		},
 
 		get closed() {
 			return closed;

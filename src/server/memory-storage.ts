@@ -77,6 +77,19 @@ export class MemoryStorage implements Storage {
 		return matches;
 	}
 
+	listObjectHashes(repoId: string): string[] {
+		return Array.from(this.getObjMap(repoId).keys());
+	}
+
+	deleteObjects(repoId: string, hashes: ReadonlyArray<string>): number {
+		const map = this.getObjMap(repoId);
+		let deleted = 0;
+		for (const hash of hashes) {
+			if (map.delete(hash)) deleted++;
+		}
+		return deleted;
+	}
+
 	getRef(repoId: string, name: string): Ref | null {
 		return this.getRefMap(repoId).get(name) ?? null;
 	}

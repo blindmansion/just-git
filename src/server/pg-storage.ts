@@ -98,6 +98,7 @@ const SQL = {
 	objExists: "SELECT 1 FROM git_objects WHERE repo_id = $1 AND hash = $2 LIMIT 1",
 	objPrefix: "SELECT hash FROM git_objects WHERE repo_id = $1 AND hash LIKE $2",
 	objDeleteAll: "DELETE FROM git_objects WHERE repo_id = $1",
+	objListHashes: "SELECT hash FROM git_objects WHERE repo_id = $1",
 
 	refRead: "SELECT type, hash, target FROM git_refs WHERE repo_id = $1 AND name = $2",
 	refReadForUpdate:
@@ -183,6 +184,20 @@ export class PgStorage implements Storage {
 	async findObjectsByPrefix(repoId: string, prefix: string): Promise<string[]> {
 		const { rows } = await this.db.query<{ hash: string }>(SQL.objPrefix, [repoId, `${prefix}%`]);
 		return rows.map((r) => r.hash);
+	}
+
+	async listObjectHashes(repoId: string): Promise<string[]> {
+		const { rows } = await this.db.query<{ hash: string }>(SQL.objListHashes, [repoId]);
+		return rows.map((r) => r.hash);
+	}
+
+	async deleteObjects(repoId: string, hashes: ReadonlyArray<string>): Promise<number> {
+		if (hashes.length === 0) return 0;
+		const { rows } = await this.db.query<{ count: string }>(
+			"DELETE FROM git_objects WHERE repo_id = $1 AND hash = ANY($2::text[]) RETURNING hash",
+			[repoId, Array.from(hashes)],
+		);
+		return rows.length;
 	}
 
 	// ── Refs ────────────────────────────────────────────────────

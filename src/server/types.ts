@@ -1,6 +1,7 @@
 import type { GitRepo } from "../lib/types.ts";
 import type { NetworkPolicy, Rejection } from "../hooks.ts";
 import type { Storage, CreateRepoOptions } from "./storage.ts";
+import type { GcOptions, GcResult } from "./gc.ts";
 
 // ── Session ─────────────────────────────────────────────────────────
 
@@ -331,6 +332,20 @@ export interface GitServer<S = Session> {
 
 	/** Delete a repo and all its data. */
 	deleteRepo(id: string): Promise<void>;
+
+	/**
+	 * Remove unreachable objects from a repo's storage.
+	 *
+	 * Walks all objects reachable from the repo's refs, compares against
+	 * the full set of stored objects, and deletes the difference.
+	 *
+	 * If refs change during the walk (e.g. a concurrent push completes),
+	 * GC aborts and returns `{ aborted: true }` to prevent deleting
+	 * newly-reachable objects. Callers can retry.
+	 *
+	 * @throws If the repo does not exist or the server is shutting down.
+	 */
+	gc(repoId: string, options?: GcOptions): Promise<GcResult>;
 
 	/**
 	 * Graceful shutdown. After calling, new HTTP requests receive 503

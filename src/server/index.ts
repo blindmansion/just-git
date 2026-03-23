@@ -19,6 +19,9 @@ export type { AdvertiseResult, ApplyReceivePackOptions, ReceivePackResult } from
 export { buildRefListPktLines } from "./protocol.ts";
 export type { PushCommand } from "./protocol.ts";
 
+// GC
+export type { GcOptions, GcResult } from "./gc.ts";
+
 // Types
 export type {
 	AdvertiseRefsEvent,

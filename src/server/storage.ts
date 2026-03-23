@@ -149,6 +149,15 @@ export interface Storage {
 	 */
 	findObjectsByPrefix(repoId: string, prefix: string): MaybeAsync<string[]>;
 
+	/** Return all object hashes stored for a repo. */
+	listObjectHashes(repoId: string): MaybeAsync<string[]>;
+
+	/**
+	 * Delete specific objects by hash.
+	 * Returns the number of objects actually deleted.
+	 */
+	deleteObjects(repoId: string, hashes: ReadonlyArray<string>): MaybeAsync<number>;
+
 	// ── Refs ────────────────────────────────────────────────────────
 
 	/**

@@ -54,6 +54,8 @@ interface Statements {
 	objExists: BunSqliteStatement;
 	objPrefix: BunSqliteStatement;
 	objDeleteAll: BunSqliteStatement;
+	objListHashes: BunSqliteStatement;
+	objDelete: BunSqliteStatement;
 
 	refRead: BunSqliteStatement;
 	refWrite: BunSqliteStatement;
@@ -76,6 +78,8 @@ function prepareStatements(db: BunSqliteDatabase): Statements {
 		objExists: db.prepare("SELECT 1 FROM git_objects WHERE repo_id = ? AND hash = ? LIMIT 1"),
 		objPrefix: db.prepare("SELECT hash FROM git_objects WHERE repo_id = ? AND hash GLOB ?"),
 		objDeleteAll: db.prepare("DELETE FROM git_objects WHERE repo_id = ?"),
+		objListHashes: db.prepare("SELECT hash FROM git_objects WHERE repo_id = ?"),
+		objDelete: db.prepare("DELETE FROM git_objects WHERE repo_id = ? AND hash = ?"),
 
 		refRead: db.prepare("SELECT type, hash, target FROM git_refs WHERE repo_id = ? AND name = ?"),
 		refWrite: db.prepare(
@@ -105,6 +109,11 @@ export class BunSqliteStorage implements Storage {
 	private batchInsertTx: (
 		rows: ReadonlyArray<{ repoId: string; hash: string; type: string; content: Uint8Array }>,
 	) => void;
+	private batchDeleteTx: (
+		repoId: string,
+		hashes: ReadonlyArray<string>,
+		onCount: (n: number) => void,
+	) => void;
 
 	constructor(private db: BunSqliteDatabase) {
 		db.run(SCHEMA);
@@ -121,6 +130,16 @@ export class BunSqliteStorage implements Storage {
 				for (const row of rows) {
 					this.stmts.objInsert.run(row.repoId, row.hash, row.type, row.content);
 				}
+			},
+		);
+		this.batchDeleteTx = db.transaction(
+			(repoId: string, hashes: ReadonlyArray<string>, onCount: (n: number) => void) => {
+				let count = 0;
+				for (const hash of hashes) {
+					this.stmts.objDelete.run(repoId, hash);
+					count++;
+				}
+				onCount(count);
 			},
 		);
 	}
@@ -170,6 +189,20 @@ export class BunSqliteStorage implements Storage {
 	findObjectsByPrefix(repoId: string, prefix: string): string[] {
 		const rows = this.stmts.objPrefix.all(repoId, `${prefix}*`) as Array<{ hash: string }>;
 		return rows.map((r) => r.hash);
+	}
+
+	listObjectHashes(repoId: string): string[] {
+		const rows = this.stmts.objListHashes.all(repoId) as Array<{ hash: string }>;
+		return rows.map((r) => r.hash);
+	}
+
+	deleteObjects(repoId: string, hashes: ReadonlyArray<string>): number {
+		if (hashes.length === 0) return 0;
+		let deleted = 0;
+		this.batchDeleteTx(repoId, hashes, (count) => {
+			deleted += count;
+		});
+		return deleted;
 	}
 
 	// ── Refs ────────────────────────────────────────────────────
