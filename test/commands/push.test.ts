@@ -107,6 +107,94 @@ describe("git push", () => {
 		expect(await pathExists(bash.fs, "/remote/.git/refs/tags/v1.0")).toBe(true);
 	});
 
+	test("--tags with explicit refspec pushes both branch and tags", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /local && git tag v1.0");
+		await bash.exec("cd /local && echo v2 > README.md && git add . && git commit -m update");
+		await bash.exec("cd /local && git tag v2.0");
+
+		const localHead = await bash.exec("cd /local && git rev-parse HEAD");
+
+		const result = await bash.exec("git push origin main --tags", { cwd: "/local" });
+		expect(result.exitCode).toBe(0);
+
+		// Branch was pushed
+		const remoteMain = await readFile(bash.fs, "/remote/.git/refs/heads/main");
+		expect(remoteMain?.trim()).toBe(localHead.stdout.trim());
+
+		// Tags were pushed
+		expect(await pathExists(bash.fs, "/remote/.git/refs/tags/v1.0")).toBe(true);
+		expect(await pathExists(bash.fs, "/remote/.git/refs/tags/v2.0")).toBe(true);
+
+		// Output mentions both
+		expect(result.stderr).toContain("main -> main");
+		expect(result.stderr).toContain("[new tag]");
+	});
+
+	test("--tags alone does not push current branch via push.default", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /local && git tag v1.0");
+		await bash.exec("cd /local && echo v2 > README.md && git add . && git commit -m update");
+
+		const localHead = await bash.exec("cd /local && git rev-parse HEAD");
+		const remoteBefore = await readFile(bash.fs, "/remote/.git/refs/heads/main");
+
+		const result = await bash.exec("git push origin --tags", { cwd: "/local" });
+		expect(result.exitCode).toBe(0);
+
+		// Tag was pushed
+		expect(await pathExists(bash.fs, "/remote/.git/refs/tags/v1.0")).toBe(true);
+
+		// Branch was NOT pushed — remote main should still be at original commit
+		const remoteAfter = await readFile(bash.fs, "/remote/.git/refs/heads/main");
+		expect(remoteAfter?.trim()).toBe(remoteBefore?.trim());
+		expect(remoteAfter?.trim()).not.toBe(localHead.stdout.trim());
+	});
+
+	test("--tags with --all errors", async () => {
+		const bash = await setupClonePair();
+		const result = await bash.exec("git push --all --tags", { cwd: "/local" });
+		expect(result.exitCode).toBe(128);
+		expect(result.stderr).toContain("cannot be used together");
+	});
+
+	test("--tags with --delete errors", async () => {
+		const bash = await setupClonePair();
+		const result = await bash.exec("git push --delete --tags", { cwd: "/local" });
+		expect(result.exitCode).toBe(128);
+		expect(result.stderr).toContain("cannot be used together");
+	});
+
+	test("--tags skips tags already on remote", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /local && git tag v1.0");
+		await bash.exec("git push origin --tags", { cwd: "/local" });
+
+		// Create another tag
+		await bash.exec("cd /local && git tag v2.0");
+
+		const result = await bash.exec("git push origin --tags", { cwd: "/local" });
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain("[new tag]");
+		expect(result.stderr).toContain("v2.0");
+		// v1.0 should not appear in output since it's already up-to-date
+		expect(result.stderr).not.toContain("v1.0");
+	});
+
+	test("--tags output shows [new tag] not [new branch]", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /local && git tag v1.0");
+
+		const result = await bash.exec("git push origin --tags", { cwd: "/local" });
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain("[new tag]");
+		expect(result.stderr).not.toContain("[new branch]");
+	});
+
 	test("up-to-date push reports everything up-to-date", async () => {
 		const bash = await setupClonePair();
 

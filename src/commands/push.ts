@@ -58,12 +58,19 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				remoteRefMap.set(r.name, r.hash);
 			}
 
+			// Validate flag combinations
+			if (args.tags && args.all) {
+				return fatal("options '--tags' and '--all/--branches' cannot be used together");
+			}
+			if (args.tags && args.delete) {
+				return fatal("options '--delete' and '--tags' cannot be used together");
+			}
+
 			// Build push updates
 			const updates: PushRefUpdate[] = [];
 			const rawRefspecs = args.refspec;
 
 			if (args.delete) {
-				// --delete: treat refspecs as refs to delete on the remote
 				const refs = rawRefspecs && rawRefspecs.length > 0 ? rawRefspecs : [];
 				if (refs.length === 0) {
 					return fatal("--delete requires a ref argument");
@@ -82,7 +89,6 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 					});
 				}
 			} else if (args.all) {
-				// --all: push all local branches
 				const localRefs = await listRefs(gitCtx, "refs/heads");
 				for (const ref of localRefs) {
 					const remoteBranch = ref.name;
@@ -94,21 +100,7 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 						ok: force,
 					});
 				}
-			} else if (args.tags) {
-				// --tags: push all tags
-				const localRefs = await listRefs(gitCtx, "refs/tags");
-				for (const ref of localRefs) {
-					const oldHash = remoteRefMap.get(ref.name) ?? null;
-					if (oldHash === ref.hash) continue;
-					updates.push({
-						name: ref.name,
-						oldHash,
-						newHash: ref.hash,
-						ok: force,
-					});
-				}
 			} else if (rawRefspecs && rawRefspecs.length > 0) {
-				// Explicit refspecs
 				for (const raw of rawRefspecs) {
 					const spec = parseRefspec(raw);
 					const srcHash = await resolveRefForPush(gitCtx, spec.src);
@@ -124,8 +116,8 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 						ok: force || spec.force,
 					});
 				}
-			} else {
-				// No explicit refspec — use push.default to decide behavior
+			} else if (!args.tags) {
+				// No explicit refspec and no --tags — use push.default
 				const head = await readHead(gitCtx);
 				if (!head || head.type !== "symbolic") {
 					return fatal("You are not currently on a branch.");
@@ -154,6 +146,22 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				);
 				if ("exitCode" in pushUpdate) return pushUpdate;
 				updates.push(pushUpdate);
+			}
+
+			// --tags is additive: append all local tags that differ from remote
+			if (args.tags) {
+				const localTags = await listRefs(gitCtx, "refs/tags");
+				for (const ref of localTags) {
+					const oldHash = remoteRefMap.get(ref.name) ?? null;
+					if (oldHash === ref.hash) continue;
+					if (updates.some((u) => u.name === ref.name)) continue;
+					updates.push({
+						name: ref.name,
+						oldHash,
+						newHash: ref.hash,
+						ok: force,
+					});
+				}
 			}
 
 			if (updates.length === 0) {
@@ -189,9 +197,12 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 			let hasError = false;
 
 			for (const update of result.updates) {
+				const isTag = update.name.startsWith("refs/tags/");
 				const shortRef = update.name.startsWith("refs/heads/")
 					? update.name.slice("refs/heads/".length)
-					: update.name;
+					: update.name.startsWith("refs/tags/")
+						? update.name.slice("refs/tags/".length)
+						: update.name;
 
 				if (!update.ok) {
 					stderr.push(
@@ -199,7 +210,8 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 					);
 					hasError = true;
 				} else if (!update.oldHash) {
-					stderr.push(` * [new branch]      ${shortRef} -> ${shortRef}\n`);
+					const label = isTag ? "[new tag]" : "[new branch]";
+					stderr.push(` * ${label}      ${shortRef} -> ${shortRef}\n`);
 				} else if (update.newHash === ZERO_HASH) {
 					stderr.push(` - [deleted]         ${shortRef}\n`);
 				} else {
