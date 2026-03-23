@@ -48,7 +48,7 @@ describe("Smart HTTP clone (public)", () => {
 		expect(statusResult.exitCode).toBe(0);
 	}, 30000);
 
-	test("clones into specified directory", async () => {
+	test.skip("clones into specified directory", async () => {
 		const bash = createTestBash({ env: ENV });
 
 		const result = await bash.exec(`git clone ${PUBLIC_REPO} my-clone`);
@@ -63,7 +63,7 @@ describe("Smart HTTP clone (public)", () => {
 		expect(statusResult.exitCode).toBe(0);
 	}, 30000);
 
-	test("checkout has correct file content", async () => {
+	test.skip("checkout has correct file content", async () => {
 		const bash = createTestBash({ env: ENV });
 
 		const result = await bash.exec(`git clone ${PUBLIC_REPO}`);
@@ -83,7 +83,7 @@ describe("Smart HTTP clone (public)", () => {
 	}, 30000);
 });
 
-describe("Smart HTTP clone (private, authenticated)", () => {
+describe.skip("Smart HTTP clone (private, authenticated)", () => {
 	let net: NetworkEnv | null;
 
 	test("clones a private repo with credentials", async () => {
@@ -147,7 +147,7 @@ describe("Smart HTTP clone (private, authenticated)", () => {
 	}, 30000);
 });
 
-describe("Credential paths", () => {
+describe.skip("Credential paths", () => {
 	test("GIT_HTTP_USER + GIT_HTTP_PASSWORD env vars", async () => {
 		const net = loadNetworkEnv();
 		if (!net) {

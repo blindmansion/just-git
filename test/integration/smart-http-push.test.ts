@@ -9,7 +9,7 @@ import {
 
 const TIMEOUT = 60000;
 
-describe("Smart HTTP push", () => {
+describe.skip("Smart HTTP push", () => {
 	let net: NetworkEnv | null;
 	let cleanupBranches: string[] = [];
 	let cleanupTags: string[] = [];

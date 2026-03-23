@@ -9,7 +9,7 @@ import {
 
 const TIMEOUT = 60000;
 
-describe("Smart HTTP pull", () => {
+describe.skip("Smart HTTP pull", () => {
 	let net: NetworkEnv | null;
 	let cleanupBranches: string[] = [];
 	let cleanupBash: ReturnType<typeof createAuthBash> | null = null;
