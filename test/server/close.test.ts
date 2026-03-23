@@ -90,33 +90,42 @@ describe("GitServer.close", () => {
 	});
 
 	test("close() with signal timeout resolves when aborted", async () => {
-		const driver = new MemoryDriver();
+		let hookEntered: () => void;
+		const hookEnteredPromise = new Promise<void>((r) => {
+			hookEntered = r;
+		});
+		let releaseHook: () => void;
+		const hookGate = new Promise<void>((r) => {
+			releaseHook = r;
+		});
+
 		const server = createGitServer({
-			storage: driver,
+			storage: new MemoryDriver(),
 			hooks: {
 				advertiseRefs: async () => {
-					// Simulate a slow operation
-					await new Promise((r) => setTimeout(r, 5000));
+					hookEntered!();
+					await hookGate;
 				},
 			},
 		});
 		await server.createRepo("repo");
 
-		// Start a fetch that will hang in the advertiseRefs hook
 		const fetchPromise = server.fetch(
 			new Request("http://localhost/repo/info/refs?service=git-upload-pack"),
 		);
 
-		// Give the fetch a moment to enter the handler
-		await new Promise((r) => setTimeout(r, 50));
+		// Wait until the hook is actually running
+		await hookEnteredPromise;
 
-		// Close with a short timeout — should resolve without waiting for the fetch
+		const controller = new AbortController();
+		setTimeout(() => controller.abort(), 100);
 		const start = Date.now();
-		await server.close({ signal: AbortSignal.timeout(100) });
+		await server.close({ signal: controller.signal });
 		expect(Date.now() - start).toBeLessThan(2000);
 		expect(server.closed).toBe(true);
 
-		// Clean up: the fetch will eventually finish (or error) on its own
+		// Release the hook so the fetch can finish
+		releaseHook!();
 		await fetchPromise.catch(() => {});
 	});
 
