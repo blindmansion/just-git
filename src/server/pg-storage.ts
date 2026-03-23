@@ -1,63 +1,17 @@
 import type { RawObject, Ref } from "../lib/types.ts";
 import type { Storage, RawRefEntry, RefOps } from "./storage.ts";
 
-// ── Postgres interface ──────────────────────────────────────────────
-
-/** Minimal database interface for PostgreSQL. Use {@link wrapPgPool} to adapt a `pg` Pool. */
-export interface PgDatabase {
-	query<T = any>(text: string, values?: any[]): Promise<{ rows: T[] }>;
-	transaction<R>(fn: (tx: PgDatabase) => Promise<R>): Promise<R>;
-}
-
-// ── pg Pool adapter ─────────────────────────────────────────────────
+// ── Postgres pool interface ────────────────────────────────────────
 
 /** Minimal pool interface matching the `pg` package's `Pool` class. */
 export interface PgPool {
-	query(text: string, values?: any[]): Promise<{ rows: any[] }>;
+	query<T = any>(text: string, values?: any[]): Promise<{ rows: T[] }>;
 	connect(): Promise<PgPoolClient>;
 }
 
-/** Minimal pool client interface matching the `pg` package's `PoolClient`. */
-export interface PgPoolClient {
-	query(text: string, values?: any[]): Promise<{ rows: any[] }>;
+interface PgPoolClient {
+	query<T = any>(text: string, values?: any[]): Promise<{ rows: T[] }>;
 	release(): void;
-}
-
-/**
- * Wrap a `pg`-style pool into a `PgDatabase`.
- *
- * Handles `BEGIN`/`COMMIT`/`ROLLBACK` and client release automatically.
- *
- * ```ts
- * import { Pool } from "pg";
- * const pool = new Pool({ connectionString: "..." });
- * const db = wrapPgPool(pool);
- * ```
- */
-export function wrapPgPool(pool: PgPool): PgDatabase {
-	return {
-		query: (text, values) => pool.query(text, values),
-		async transaction<R>(fn: (tx: PgDatabase) => Promise<R>): Promise<R> {
-			const client = await pool.connect();
-			try {
-				await client.query("BEGIN");
-				const tx: PgDatabase = {
-					query: (text, values) => client.query(text, values),
-					transaction: () => {
-						throw new Error("nested transactions not supported");
-					},
-				};
-				const result = await fn(tx);
-				await client.query("COMMIT");
-				return result;
-			} catch (err) {
-				await client.query("ROLLBACK");
-				throw err;
-			} finally {
-				client.release();
-			}
-		},
-	};
 }
 
 // ── Schema ──────────────────────────────────────────────────────────
@@ -114,45 +68,60 @@ const SQL = {
 // ── PgStorage ────────────────────────────────────────────────────────
 
 /**
- * PostgreSQL-backed storage.
+ * PostgreSQL-backed storage. Accepts a `pg`-style pool directly.
  *
  * Use the static `create` factory (schema setup is async):
  *
  * ```ts
  * import { Pool } from "pg";
  * const pool = new Pool({ connectionString: "..." });
- * const storage = await PgStorage.create(wrapPgPool(pool));
+ * const storage = await PgStorage.create(pool);
  * ```
  */
 export class PgStorage implements Storage {
-	private constructor(private db: PgDatabase) {}
+	private constructor(private pool: PgPool) {}
 
-	static async create(db: PgDatabase): Promise<PgStorage> {
-		await db.query(SCHEMA);
-		return new PgStorage(db);
+	static async create(pool: PgPool): Promise<PgStorage> {
+		await pool.query(SCHEMA);
+		return new PgStorage(pool);
+	}
+
+	private async transaction<R>(fn: (query: QueryFn) => Promise<R>): Promise<R> {
+		const client = await this.pool.connect();
+		try {
+			await client.query("BEGIN");
+			const result = await fn((text, values) => client.query(text, values));
+			await client.query("COMMIT");
+			return result;
+		} catch (err) {
+			await client.query("ROLLBACK");
+			throw err;
+		} finally {
+			client.release();
+		}
 	}
 
 	// ── Repo ────────────────────────────────────────────────────
 
 	async hasRepo(repoId: string): Promise<boolean> {
-		const { rows } = await this.db.query(SQL.repoExists, [repoId]);
+		const { rows } = await this.pool.query(SQL.repoExists, [repoId]);
 		return rows.length > 0;
 	}
 
 	async insertRepo(repoId: string): Promise<void> {
-		await this.db.query(SQL.repoInsert, [repoId]);
+		await this.pool.query(SQL.repoInsert, [repoId]);
 	}
 
 	async deleteRepo(repoId: string): Promise<void> {
-		await this.db.query(SQL.repoDelete, [repoId]);
-		await this.db.query(SQL.objDeleteAll, [repoId]);
-		await this.db.query(SQL.refDeleteAll, [repoId]);
+		await this.pool.query(SQL.repoDelete, [repoId]);
+		await this.pool.query(SQL.objDeleteAll, [repoId]);
+		await this.pool.query(SQL.refDeleteAll, [repoId]);
 	}
 
 	// ── Objects ─────────────────────────────────────────────────
 
 	async getObject(repoId: string, hash: string): Promise<RawObject | null> {
-		const { rows } = await this.db.query<{ type: string; content: Uint8Array }>(SQL.objRead, [
+		const { rows } = await this.pool.query<{ type: string; content: Uint8Array }>(SQL.objRead, [
 			repoId,
 			hash,
 		]);
@@ -162,38 +131,38 @@ export class PgStorage implements Storage {
 	}
 
 	async putObject(repoId: string, hash: string, type: string, content: Uint8Array): Promise<void> {
-		await this.db.query(SQL.objInsert, [repoId, hash, type, content]);
+		await this.pool.query(SQL.objInsert, [repoId, hash, type, content]);
 	}
 
 	async putObjects(
 		repoId: string,
 		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
 	): Promise<void> {
-		await this.db.transaction(async (tx) => {
+		await this.transaction(async (query) => {
 			for (const obj of objects) {
-				await tx.query(SQL.objInsert, [repoId, obj.hash, obj.type, obj.content]);
+				await query(SQL.objInsert, [repoId, obj.hash, obj.type, obj.content]);
 			}
 		});
 	}
 
 	async hasObject(repoId: string, hash: string): Promise<boolean> {
-		const { rows } = await this.db.query(SQL.objExists, [repoId, hash]);
+		const { rows } = await this.pool.query(SQL.objExists, [repoId, hash]);
 		return rows.length > 0;
 	}
 
 	async findObjectsByPrefix(repoId: string, prefix: string): Promise<string[]> {
-		const { rows } = await this.db.query<{ hash: string }>(SQL.objPrefix, [repoId, `${prefix}%`]);
+		const { rows } = await this.pool.query<{ hash: string }>(SQL.objPrefix, [repoId, `${prefix}%`]);
 		return rows.map((r) => r.hash);
 	}
 
 	async listObjectHashes(repoId: string): Promise<string[]> {
-		const { rows } = await this.db.query<{ hash: string }>(SQL.objListHashes, [repoId]);
+		const { rows } = await this.pool.query<{ hash: string }>(SQL.objListHashes, [repoId]);
 		return rows.map((r) => r.hash);
 	}
 
 	async deleteObjects(repoId: string, hashes: ReadonlyArray<string>): Promise<number> {
 		if (hashes.length === 0) return 0;
-		const { rows } = await this.db.query<{ count: string }>(
+		const { rows } = await this.pool.query<{ count: string }>(
 			"DELETE FROM git_objects WHERE repo_id = $1 AND hash = ANY($2::text[]) RETURNING hash",
 			[repoId, Array.from(hashes)],
 		);
@@ -203,28 +172,28 @@ export class PgStorage implements Storage {
 	// ── Refs ────────────────────────────────────────────────────
 
 	async getRef(repoId: string, name: string): Promise<Ref | null> {
-		const { rows } = await this.db.query<RefRow>(SQL.refRead, [repoId, name]);
+		const { rows } = await this.pool.query<RefRow>(SQL.refRead, [repoId, name]);
 		return rowToRef(rows[0] ?? null);
 	}
 
 	async putRef(repoId: string, name: string, ref: Ref): Promise<void> {
 		if (ref.type === "symbolic") {
-			await this.db.query(SQL.refWrite, [repoId, name, "symbolic", null, ref.target]);
+			await this.pool.query(SQL.refWrite, [repoId, name, "symbolic", null, ref.target]);
 		} else {
-			await this.db.query(SQL.refWrite, [repoId, name, "direct", ref.hash, null]);
+			await this.pool.query(SQL.refWrite, [repoId, name, "direct", ref.hash, null]);
 		}
 	}
 
 	async removeRef(repoId: string, name: string): Promise<void> {
-		await this.db.query(SQL.refDelete, [repoId, name]);
+		await this.pool.query(SQL.refDelete, [repoId, name]);
 	}
 
 	async listRefs(repoId: string, prefix?: string): Promise<RawRefEntry[]> {
 		let rows: RefRow[];
 		if (prefix) {
-			({ rows } = await this.db.query<RefRow>(SQL.refList, [repoId, `${prefix}%`]));
+			({ rows } = await this.pool.query<RefRow>(SQL.refList, [repoId, `${prefix}%`]));
 		} else {
-			({ rows } = await this.db.query<RefRow>(SQL.refListAll, [repoId]));
+			({ rows } = await this.pool.query<RefRow>(SQL.refListAll, [repoId]));
 		}
 		return rows.flatMap((row) => {
 			const ref = rowToRef(row);
@@ -233,21 +202,21 @@ export class PgStorage implements Storage {
 	}
 
 	async atomicRefUpdate<T>(repoId: string, fn: (ops: RefOps) => Promise<T> | T): Promise<T> {
-		return this.db.transaction(async (tx) => {
+		return this.transaction(async (query) => {
 			return fn({
 				getRef: async (name) => {
-					const { rows } = await tx.query<RefRow>(SQL.refReadForUpdate, [repoId, name]);
+					const { rows } = await query<RefRow>(SQL.refReadForUpdate, [repoId, name]);
 					return rowToRef(rows[0] ?? null);
 				},
 				putRef: async (name, ref) => {
 					if (ref.type === "symbolic") {
-						await tx.query(SQL.refWrite, [repoId, name, "symbolic", null, ref.target]);
+						await query(SQL.refWrite, [repoId, name, "symbolic", null, ref.target]);
 					} else {
-						await tx.query(SQL.refWrite, [repoId, name, "direct", ref.hash, null]);
+						await query(SQL.refWrite, [repoId, name, "direct", ref.hash, null]);
 					}
 				},
 				removeRef: async (name) => {
-					await tx.query(SQL.refDelete, [repoId, name]);
+					await query(SQL.refDelete, [repoId, name]);
 				},
 			});
 		});
@@ -255,6 +224,8 @@ export class PgStorage implements Storage {
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────
+
+type QueryFn = <T = any>(text: string, values?: any[]) => Promise<{ rows: T[] }>;
 
 type RefRow = { name: string; type: string; hash: string | null; target: string | null };
 

@@ -344,39 +344,14 @@ await server.createRepo("my-repo");
 
 ### `PgStorage`
 
-Works with `pg` (node-postgres) or any driver matching the `PgDatabase` interface. Use `wrapPgPool` to adapt a `pg` Pool. `PgStorage.create()` is async (runs schema setup).
+Takes a `pg`-style pool directly. `PgStorage.create()` is async (runs schema setup). The `PgPool` interface is duck-typed — any object with `query()` and `connect()` methods works.
 
 ```ts
-import { createServer, PgStorage, wrapPgPool } from "just-git/server";
+import { createServer, PgStorage } from "just-git/server";
 import { Pool } from "pg";
 
 const server = createServer({
-  storage: await PgStorage.create(
-    wrapPgPool(new Pool({ connectionString: process.env.DATABASE_URL })),
-  ),
-});
-await server.createRepo("my-repo");
-```
-
-For other drivers, construct a `PgDatabase` directly:
-
-```ts
-const db: PgDatabase = {
-  query: (text, values) => myDriver.query(text, values),
-  transaction: async (fn) => {
-    await myDriver.query("BEGIN");
-    try {
-      const result = await fn(db);
-      await myDriver.query("COMMIT");
-      return result;
-    } catch (err) {
-      await myDriver.query("ROLLBACK");
-      throw err;
-    }
-  },
-};
-const server = createServer({
-  storage: await PgStorage.create(db),
+  storage: await PgStorage.create(new Pool({ connectionString: process.env.DATABASE_URL })),
 });
 await server.createRepo("my-repo");
 ```

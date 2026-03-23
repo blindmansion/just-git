@@ -54,10 +54,4 @@ export type { CreateRepoOptions, Storage, RefOps, RawRefEntry, MaybeAsync } from
 export { MemoryStorage } from "./memory-storage.ts";
 export { BunSqliteStorage, type BunSqliteDatabase } from "./bun-sqlite-storage.ts";
 export { BetterSqlite3Storage, type BetterSqlite3Database } from "./better-sqlite3-storage.ts";
-export {
-	PgStorage,
-	wrapPgPool,
-	type PgDatabase,
-	type PgPool,
-	type PgPoolClient,
-} from "./pg-storage.ts";
+export { PgStorage, type PgPool } from "./pg-storage.ts";

@@ -196,7 +196,7 @@ Key behaviors:
 | `MemoryStorage`        | `server/memory-storage.ts`         | `new MemoryStorage()`          | None                                              |
 | `BunSqliteStorage`     | `server/bun-sqlite-storage.ts`     | `new BunSqliteStorage(db)`     | `BunSqliteDatabase` (native `bun:sqlite`)         |
 | `BetterSqlite3Storage` | `server/better-sqlite3-storage.ts` | `new BetterSqlite3Storage(db)` | `BetterSqlite3Database` (native `better-sqlite3`) |
-| `PgStorage`            | `server/pg-storage.ts`             | `await PgStorage.create(db)`   | `PgDatabase` (use `wrapPgPool(pool)` for `pg`)    |
+| `PgStorage`            | `server/pg-storage.ts`             | `await PgStorage.create(pool)` | `PgPool` (duck-typed, matches `pg.Pool`)          |
 
 **Unified server (`createServer`):**
 
@@ -220,10 +220,6 @@ SSH library wiring lives in userland — the core package remains zero-dependenc
 **Session builder:** `createServer` accepts an optional `session` config with two builder functions — one for HTTP (`Request → S | Response`), one for SSH (`SshSessionInfo → S`). TypeScript infers `S` from the builder return types, and all hooks (`ServerHooks<S>`) receive the inferred type. When `session` is omitted, `S` defaults to the built-in `Session` type (which carries `transport`, optional `username`, optional `request`). The HTTP builder can return a `Response` to short-circuit the request (e.g. 401 with `WWW-Authenticate` header) — this is the primary mechanism for HTTP auth. SSH auth is handled at the transport layer (e.g. ssh2's `authentication` event) before the session builder runs, so the SSH builder only enriches the session. `SshSessionInfo` has an optional `metadata?: Record<string, unknown>` bag for threading SSH-layer details (key fingerprint, client IP, roles, etc.) into the session builder.
 
 **Auth:** HTTP auth is handled by the session builder returning a `Response` on failure. Per-repo read auth uses `advertiseRefs` hook which can return a `Rejection` to deny access entirely (HTTP returns 403, SSH returns exit 128 with stderr message). Per-repo push auth uses `preReceive` hook.
-
-**Driver adapters:**
-
-- `wrapPgPool(pool)` — wraps a `pg` `Pool` into `PgDatabase`. Handles `BEGIN`/`COMMIT`/`ROLLBACK` and client release.
 
 **Node.js HTTP adapter:**
 
