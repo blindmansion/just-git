@@ -129,6 +129,9 @@ export function createServer<S = Session>(config: GitServerConfig<S>): GitServer
 			if (!enter()) return new Response("Service Unavailable", { status: 503 });
 			let session: S | undefined;
 			try {
+				if (!buildSession.http) {
+					return new Response("HTTP session builder not configured", { status: 501 });
+				}
 				const sessionOrResponse = await buildSession.http(req);
 				if (sessionOrResponse instanceof Response) return sessionOrResponse;
 				session = sessionOrResponse;
@@ -272,6 +275,12 @@ export function createServer<S = Session>(config: GitServerConfig<S>): GitServer
 				return 128;
 			}
 			try {
+				if (!buildSession.ssh) {
+					channel.writeStderr?.(
+						new TextEncoder().encode("fatal: SSH session builder not configured\n"),
+					);
+					return 128;
+				}
 				const session = await buildSession.ssh(sshSession ?? {});
 				return await handleSshSession(command, channel, {
 					resolveRepo,

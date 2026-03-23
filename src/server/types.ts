@@ -23,20 +23,20 @@ export interface Session {
  * User-provided session builder that transforms raw transport input
  * into a typed session object threaded through all hooks.
  *
- * TypeScript infers `S` from the return types of the builder functions,
- * so hooks receive the custom type without explicit generic annotations.
+ * Both properties are optional — provide only the transports you use.
+ * TypeScript infers `S` from whichever builders are present.
+ *
+ * If a transport is used at runtime but its builder is missing, the
+ * server returns an error (HTTP 501 / SSH exit 128).
  *
  * ```ts
+ * // HTTP-only — no need to provide ssh
  * const server = createServer({
  *   storage: new BunSqliteStorage(db),
  *   session: {
  *     http: (req) => ({
  *       userId: parseJwt(req).sub,
  *       roles: parseJwt(req).roles,
- *     }),
- *     ssh: (info) => ({
- *       userId: info.username ?? "anonymous",
- *       roles: (info.metadata?.roles as string[]) ?? [],
  *     }),
  *   },
  *   hooks: {
@@ -56,10 +56,17 @@ export interface SessionBuilder<S> {
 	 * Return `S` to proceed, or return a `Response` to short-circuit
 	 * the request (e.g. 401 with `WWW-Authenticate` header). This is
 	 * the primary mechanism for HTTP auth — no separate middleware needed.
+	 *
+	 * When omitted, HTTP requests receive a 501 response.
 	 */
-	http: (request: Request) => S | Response | Promise<S | Response>;
-	/** Build a session from SSH session info. */
-	ssh: (info: SshSessionInfo) => S | Promise<S>;
+	http?: (request: Request) => S | Response | Promise<S | Response>;
+	/**
+	 * Build a session from SSH session info.
+	 *
+	 * When omitted, SSH sessions receive exit code 128 with a
+	 * diagnostic message.
+	 */
+	ssh?: (info: SshSessionInfo) => S | Promise<S>;
 }
 
 // ── SSH types ───────────────────────────────────────────────────────
@@ -174,11 +181,12 @@ export interface GitServerConfig<S = Session> {
 	policy?: ServerPolicy;
 
 	/**
-	 * Custom session builder. When provided, the server calls
-	 * `session.http(request)` for HTTP and `session.ssh(info)` for SSH
-	 * to produce the session object threaded through all hooks.
+	 * Custom session builder. Provide `http`, `ssh`, or both —
+	 * the server calls whichever is present for that transport.
+	 * If a transport is used but its builder is missing, the server
+	 * returns an error (HTTP 501 / SSH exit 128).
 	 *
-	 * When omitted, the built-in `Session` type is used.
+	 * When omitted entirely, the built-in `Session` type is used.
 	 */
 	session?: SessionBuilder<S>;
 
