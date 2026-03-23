@@ -27,6 +27,7 @@ import {
 	buildRefAdvertisementBytes,
 	handleUploadPack,
 	ingestReceivePack,
+	resolveRefUpdates,
 } from "./operations.ts";
 import { buildReportStatus } from "./protocol.ts";
 import { handleSshSession } from "./ssh-session.ts";
@@ -69,7 +70,7 @@ const defaultSessionBuilder: SessionBuilder<Session> = {
  * server.handleSession(command, channel, { username });
  * ```
  */
-export function createServer<S = Session>(config: GitServerConfig<S>): GitServer {
+export function createServer<S = Session>(config: GitServerConfig<S>): GitServer<S> {
 	if (!config || !config.storage) {
 		throw new TypeError(
 			"createServer: config.storage is required. " +
@@ -124,7 +125,7 @@ export function createServer<S = Session>(config: GitServerConfig<S>): GitServer
 		if (closed && inflight === 0) drainResolve?.();
 	}
 
-	const server: GitServer = {
+	const server: GitServer<S> = {
 		async fetch(req: Request): Promise<Response> {
 			if (!enter()) return new Response("Service Unavailable", { status: 503 });
 			let session: S | undefined;
@@ -295,6 +296,25 @@ export function createServer<S = Session>(config: GitServerConfig<S>): GitServer
 			}
 		},
 
+		async updateRefs(repoId, refs, session?) {
+			if (!enter()) throw new Error("Server is shutting down");
+			try {
+				const repo = await storage.repo(repoId);
+				if (!repo) throw new Error(`Repository "${repoId}" not found`);
+
+				const updates = await resolveRefUpdates(repo, refs);
+				return applyReceivePack({
+					repo,
+					repoId,
+					ingestResult: { updates, unpackOk: true, capabilities: [], sawFlush: true },
+					hooks,
+					session,
+				});
+			} finally {
+				leave();
+			}
+		},
+
 		nodeHandler(req: NodeHttpRequest, res: NodeHttpResponse): void {
 			const chunks: Uint8Array[] = [];
 			req.on("data", (chunk: Uint8Array) => chunks.push(new Uint8Array(chunk)));
@@ -380,7 +400,7 @@ async function readRequestBody(req: Request): Promise<Uint8Array> {
 // ── Node.js adapter internals ───────────────────────────────────────
 
 async function nodeRequestToFetch(
-	server: GitServer,
+	server: Pick<GitServer, "fetch">,
 	req: NodeHttpRequest,
 	chunks: Uint8Array[],
 	res: NodeHttpResponse,

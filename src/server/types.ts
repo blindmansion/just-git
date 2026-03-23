@@ -225,7 +225,30 @@ export interface GitServerConfig<S = Session> {
 	onError?: false | ((err: unknown, session?: S) => void);
 }
 
-export interface GitServer {
+/**
+ * A ref update request for {@link GitServer.updateRefs}.
+ *
+ * In-process equivalent of a push command — updates a ref with CAS
+ * protection and hook enforcement, without transport overhead.
+ */
+export interface RefUpdateRequest {
+	/** Full ref name (e.g. `"refs/heads/main"`, `"refs/tags/v1.0"`). */
+	ref: string;
+	/** New commit hash, or `null` to delete the ref. */
+	newHash: string | null;
+	/**
+	 * Expected current hash for compare-and-swap.
+	 *
+	 * - `undefined` (default) — the server reads the current ref state
+	 *   automatically. Still CAS-protected against concurrent updates.
+	 * - `null` — assert the ref does not exist (create-only).
+	 * - `string` — explicit CAS: the update fails if the ref's current
+	 *   hash doesn't match.
+	 */
+	oldHash?: string | null;
+}
+
+export interface GitServer<S = Session> {
 	/** Standard fetch-API handler for HTTP: (Request) => Response */
 	fetch(request: Request): Promise<Response>;
 
@@ -262,6 +285,33 @@ export interface GitServer {
 	 * ```
 	 */
 	handleSession(command: string, channel: SshChannel, session?: SshSessionInfo): Promise<number>;
+
+	/**
+	 * Update refs in-process with hook enforcement and CAS protection.
+	 *
+	 * Equivalent to a push, but without transport overhead — no pack
+	 * negotiation, no object transfer. Objects must already exist in
+	 * the repo's object store (e.g. via `createCommit` from `just-git/repo`).
+	 *
+	 * Runs the full hook lifecycle: `preReceive` → per-ref `update` →
+	 * CAS application → `postReceive`. Returns per-ref results.
+	 *
+	 * ```ts
+	 * import { createCommit, writeBlob, writeTree } from "just-git/repo";
+	 *
+	 * const repo = await server.repo("my-repo");
+	 * const blob = await writeBlob(repo, "content");
+	 * const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);
+	 * const commit = await createCommit(repo, { tree, parents: [head], ... });
+	 *
+	 * await server.updateRefs("my-repo", [
+	 *   { ref: "refs/heads/auto-fix", newHash: commit },
+	 * ]);
+	 * ```
+	 *
+	 * @throws If the repo does not exist or the server is shutting down.
+	 */
+	updateRefs(repoId: string, refs: RefUpdateRequest[], session?: S): Promise<RefUpdateResult>;
 
 	/**
 	 * Node.js `http.createServer` compatible handler.
@@ -412,6 +462,21 @@ export interface AdvertiseRefsEvent<S = Session> {
 export interface RefAdvertisement {
 	name: string;
 	hash: string;
+}
+
+// ── Ref update results ──────────────────────────────────────────────
+
+/** Per-ref result from a push or {@link GitServer.updateRefs} call. */
+export interface RefResult {
+	ref: string;
+	ok: boolean;
+	error?: string;
+}
+
+/** Result of a push or {@link GitServer.updateRefs} call. */
+export interface RefUpdateResult {
+	refResults: RefResult[];
+	applied: RefUpdate[];
 }
 
 export type { Rejection };

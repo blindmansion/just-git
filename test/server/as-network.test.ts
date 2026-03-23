@@ -211,7 +211,6 @@ describe("asNetwork", () => {
 					seenUrls.push(new URL(req.url).pathname);
 					return { transport: "http" as const, request: req };
 				},
-				ssh: (info) => ({ transport: "ssh" as const, username: info.username }),
 			},
 		});
 

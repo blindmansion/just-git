@@ -3,7 +3,7 @@ import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { createServer } from "../../src/server/handler.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import type { GitServerConfig } from "../../src/server/types.ts";
-import { defaultHttpSession, defaultSshSession } from "./util.ts";
+import { defaultHttpSession } from "./util.ts";
 
 const TEST_IDENTITY = {
 	name: "Test",
@@ -56,7 +56,6 @@ describe("resolveRepo and session auth", () => {
 					}
 					return defaultHttpSession(req);
 				},
-				ssh: defaultSshSession,
 			},
 		});
 
@@ -74,7 +73,6 @@ describe("resolveRepo and session auth", () => {
 			resolve: () => null,
 			session: {
 				http: () => new Response("Forbidden", { status: 403 }),
-				ssh: defaultSshSession,
 			},
 		});
 
@@ -93,7 +91,6 @@ describe("resolveRepo and session auth", () => {
 			resolve: () => null,
 			session: {
 				http: () => new Response("Forbidden", { status: 403 }),
-				ssh: defaultSshSession,
 			},
 		});
 
@@ -126,7 +123,6 @@ describe("resolveRepo and session auth", () => {
 						}
 						return defaultHttpSession(req);
 					},
-					ssh: defaultSshSession,
 				},
 			})
 		).server;

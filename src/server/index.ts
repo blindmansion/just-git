@@ -11,14 +11,9 @@ export {
 	handleUploadPack,
 	ingestReceivePack,
 	ingestReceivePackFromStream,
+	resolveRefUpdates,
 } from "./operations.ts";
-export type {
-	AdvertiseResult,
-	ApplyReceivePackOptions,
-	ApplyReceivePackResult,
-	RefResult,
-	ReceivePackResult,
-} from "./operations.ts";
+export type { AdvertiseResult, ApplyReceivePackOptions, ReceivePackResult } from "./operations.ts";
 
 // Transport-agnostic protocol primitives (advanced)
 export { buildRefListPktLines } from "./protocol.ts";
@@ -34,7 +29,10 @@ export type {
 	PostReceiveEvent,
 	PreReceiveEvent,
 	RefAdvertisement,
+	RefResult,
 	RefUpdate,
+	RefUpdateRequest,
+	RefUpdateResult,
 	Rejection,
 	ServerHooks,
 	ServerPolicy,

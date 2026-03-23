@@ -8,13 +8,7 @@ import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import { createStorageAdapter } from "../../src/server/storage.ts";
 import type { NodeHttpRequest, NodeHttpResponse } from "../../src/server/types.ts";
 import { pathExists, readFile } from "../util.ts";
-import {
-	envAt,
-	createServerClient,
-	startServer,
-	defaultHttpSession,
-	defaultSshSession,
-} from "./util.ts";
+import { envAt, createServerClient, startServer, defaultHttpSession } from "./util.ts";
 
 const TEST_IDENTITY: Identity = {
 	name: "Test",
@@ -588,7 +582,6 @@ describe("nodeHandler", () => {
 					capturedHeaders = req.headers;
 					return defaultHttpSession(req);
 				},
-				ssh: defaultSshSession,
 			},
 		});
 
@@ -617,7 +610,6 @@ describe("nodeHandler", () => {
 					capturedBody = new Uint8Array(await req.clone().arrayBuffer());
 					return defaultHttpSession(req);
 				},
-				ssh: defaultSshSession,
 			},
 		});
 
@@ -671,7 +663,6 @@ describe("nodeHandler", () => {
 					capturedUrl = new URL(req.url).pathname;
 					return defaultHttpSession(req);
 				},
-				ssh: defaultSshSession,
 			},
 		});
 

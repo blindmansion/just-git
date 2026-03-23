@@ -76,11 +76,6 @@ export function startServer(config: GitServerConfig) {
 	return { server, srv, port: srv.port!, stop: () => srv.stop() };
 }
 
-export const defaultSshSession = (info: { username?: string }): Session => ({
-	transport: "ssh",
-	username: info.username,
-});
-
 export const defaultHttpSession = (req: Request): Session => ({
 	transport: "http",
 	request: req,
@@ -104,7 +99,6 @@ export function startServerWithSessionAuth(
 				if (!result) return new Response("Forbidden", { status: 403 });
 				return defaultHttpSession(req);
 			},
-			ssh: defaultSshSession,
 		},
 	});
 	const srv = Bun.serve({ fetch: server.fetch, port: 0 });

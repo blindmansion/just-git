@@ -9,6 +9,7 @@
 import { isRejection } from "../hooks.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 import { isAncestor } from "../lib/merge.ts";
+import { resolveRef } from "../lib/refs.ts";
 import { parseTag } from "../lib/objects/tag.ts";
 import { findBestDeltas } from "../lib/pack/delta.ts";
 import type { DeltaPackInput, PackInput } from "../lib/pack/packfile.ts";
@@ -34,7 +35,15 @@ import {
 	parseReceivePackRequest,
 	parseUploadPackRequest,
 } from "./protocol.ts";
-import type { RefAdvertisement, RefUpdate, Rejection, ServerHooks } from "./types.ts";
+import type {
+	RefUpdateResult,
+	RefAdvertisement,
+	RefResult,
+	RefUpdate,
+	RefUpdateRequest,
+	Rejection,
+	ServerHooks,
+} from "./types.ts";
 
 // ── Pack cache ──────────────────────────────────────────────────────
 
@@ -669,17 +678,6 @@ export interface ApplyReceivePackOptions<S = unknown> {
 	session?: S;
 }
 
-export interface RefResult {
-	ref: string;
-	ok: boolean;
-	error?: string;
-}
-
-export interface ApplyReceivePackResult {
-	refResults: RefResult[];
-	applied: RefUpdate[];
-}
-
 /**
  * Run the full receive-pack lifecycle: preReceive hook, per-ref update
  * hook with ref format validation, CAS ref application, and postReceive
@@ -691,7 +689,7 @@ export interface ApplyReceivePackResult {
  */
 export async function applyReceivePack<S = unknown>(
 	options: ApplyReceivePackOptions<S>,
-): Promise<ApplyReceivePackResult> {
+): Promise<RefUpdateResult> {
 	const { repo, repoId, ingestResult, hooks, session } = options;
 	const { updates } = ingestResult;
 
@@ -758,4 +756,53 @@ export async function applyReceivePack<S = unknown>(
 	}
 
 	return { refResults, applied };
+}
+
+// ── In-process ref updates ──────────────────────────────────────────
+
+/**
+ * Resolve `RefUpdateRequest[]` into fully computed `RefUpdate[]`.
+ *
+ * Reads current ref state when `oldHash` is not provided, and computes
+ * `isFF`/`isCreate`/`isDelete` for each entry.
+ */
+export async function resolveRefUpdates(
+	repo: GitRepo,
+	requests: RefUpdateRequest[],
+): Promise<RefUpdate[]> {
+	const updates: RefUpdate[] = [];
+
+	for (const req of requests) {
+		let oldHash: string | null;
+
+		if (req.oldHash !== undefined) {
+			oldHash = req.oldHash;
+		} else {
+			oldHash = await resolveRef(repo, req.ref);
+		}
+
+		const isCreate = oldHash === null;
+		const isDelete = req.newHash === null;
+		const newHash = req.newHash ?? ZERO_HASH;
+
+		let isFF = false;
+		if (!isCreate && !isDelete) {
+			try {
+				isFF = await isAncestor(repo, oldHash!, newHash);
+			} catch {
+				// Ancestry check failed; leave isFF false
+			}
+		}
+
+		updates.push({
+			ref: req.ref,
+			oldHash,
+			newHash,
+			isFF,
+			isCreate,
+			isDelete,
+		});
+	}
+
+	return updates;
 }
