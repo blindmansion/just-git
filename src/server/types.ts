@@ -273,6 +273,20 @@ export interface GitServer {
 
 	/** Delete a repo and all its data. */
 	deleteRepo(id: string): Promise<void>;
+
+	/**
+	 * Graceful shutdown. After calling, new HTTP requests receive 503
+	 * and new SSH sessions get exit 128. Resolves when all in-flight
+	 * operations complete and the pack cache is released.
+	 *
+	 * Pass an `AbortSignal` to set a timeout — when aborted, the
+	 * promise resolves immediately even if operations are still running.
+	 * Idempotent: subsequent calls return the same drain promise.
+	 */
+	close(options?: { signal?: AbortSignal }): Promise<void>;
+
+	/** Whether `close()` has been called. */
+	readonly closed: boolean;
 }
 
 // ── Hooks ───────────────────────────────────────────────────────────

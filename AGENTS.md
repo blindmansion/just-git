@@ -210,6 +210,8 @@ Key behaviors:
 - `server.createRepo(id, options?)` — create a new repo. Throws if it already exists.
 - `server.repo(id)` — get a repo by ID, or `null` if it doesn't exist.
 - `server.deleteRepo(id)` — delete a repo and all its data.
+- `server.close(options?)` — graceful shutdown. New HTTP requests get 503, new SSH sessions get exit 128. Resolves when all in-flight operations complete and pack cache is released. Accepts `{ signal?: AbortSignal }` for timeout. Idempotent.
+- `server.closed` — `true` after `close()` is called.
 - `session?: SessionBuilder<S>` — custom session builder. Provides `http: (request) => S` and `ssh: (info) => S` functions that transform raw transport input into a typed session object threaded through all hooks. When omitted, the built-in `Session` type is used as default.
 
 SSH library wiring lives in userland — the core package remains zero-dependency. The `SshChannel` interface wraps any SSH library's streams into web-standard `ReadableStream`/`WritableStream`.

@@ -108,8 +108,25 @@ export function createGitServer<S = Session>(config: GitServerConfig<S>): GitSer
 					console.error(`[server] Internal error: ${msg}`);
 				}));
 
+	let closed = false;
+	let inflight = 0;
+	let drainResolve: (() => void) | null = null;
+	let drainPromise: Promise<void> | null = null;
+
+	function enter(): boolean {
+		if (closed) return false;
+		inflight++;
+		return true;
+	}
+
+	function leave(): void {
+		inflight--;
+		if (closed && inflight === 0) drainResolve?.();
+	}
+
 	const server: GitServer = {
 		async fetch(req: Request): Promise<Response> {
+			if (!enter()) return new Response("Service Unavailable", { status: 503 });
 			let session: S | undefined;
 			try {
 				const sessionOrResponse = await buildSession.http(req);
@@ -240,6 +257,8 @@ export function createGitServer<S = Session>(config: GitServerConfig<S>): GitSer
 			} catch (err) {
 				onError?.(err, session);
 				return new Response("Internal Server Error", { status: 500 });
+			} finally {
+				leave();
 			}
 		},
 
@@ -248,15 +267,23 @@ export function createGitServer<S = Session>(config: GitServerConfig<S>): GitSer
 			channel: SshChannel,
 			sshSession?: SshSessionInfo,
 		): Promise<number> {
-			const session = await buildSession.ssh(sshSession ?? {});
-			return handleSshSession(command, channel, {
-				resolveRepo,
-				hooks,
-				packCache,
-				packOptions: config.packOptions,
-				session,
-				onError: onError ? (err) => onError(err, session) : undefined,
-			});
+			if (!enter()) {
+				channel.writeStderr?.(new TextEncoder().encode("fatal: server shutting down\n"));
+				return 128;
+			}
+			try {
+				const session = await buildSession.ssh(sshSession ?? {});
+				return await handleSshSession(command, channel, {
+					resolveRepo,
+					hooks,
+					packCache,
+					packOptions: config.packOptions,
+					session,
+					onError: onError ? (err) => onError(err, session) : undefined,
+				});
+			} finally {
+				leave();
+			}
 		},
 
 		nodeHandler(req: NodeHttpRequest, res: NodeHttpResponse): void {
@@ -281,6 +308,30 @@ export function createGitServer<S = Session>(config: GitServerConfig<S>): GitSer
 		createRepo: (id, options) => storage.createRepo(id, options) as Promise<GitRepo>,
 		repo: (id) => storage.repo(id) as Promise<GitRepo | null>,
 		deleteRepo: (id) => storage.deleteRepo(id) as Promise<void>,
+
+		get closed() {
+			return closed;
+		},
+
+		async close(options?): Promise<void> {
+			if (closed) return drainPromise ?? Promise.resolve();
+			closed = true;
+			packCache?.clear();
+			if (inflight === 0) return;
+			drainPromise = new Promise<void>((resolve) => {
+				drainResolve = resolve;
+			});
+			if (options?.signal) {
+				if (options.signal.aborted) {
+					drainResolve!();
+					return;
+				}
+				const onAbort = () => drainResolve?.();
+				options.signal.addEventListener("abort", onAbort, { once: true });
+				drainPromise.then(() => options.signal!.removeEventListener("abort", onAbort));
+			}
+			return drainPromise;
+		},
 	};
 	return server;
 }

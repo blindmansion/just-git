@@ -265,6 +265,8 @@ All hook payloads include `repo: GitRepo`, `repoId` (the resolved repo ID), and 
 
 Combine multiple hook sets with `composeHooks()`. Pre-hooks chain in order and short-circuit on the first rejection. Post-hooks all run regardless.
 
+All composed hook sets must share the same session type `S`. For reusable hooks that don't inspect the session, use `ServerHooks<unknown>` — it composes with any concrete session type thanks to contravariance.
+
 ```ts
 import { createGitServer, composeHooks } from "just-git/server";
 
@@ -405,6 +407,29 @@ const server = createGitServer({
   },
 });
 ```
+
+## Graceful shutdown
+
+`close()` stops accepting new requests and waits for in-flight operations to finish. After calling, HTTP requests receive 503 and SSH sessions get exit 128.
+
+```ts
+// Stop the transport first (no new connections)
+srv.stop();
+
+// Then drain in-flight git operations
+await server.close();
+
+// Now safe to close the database
+db.close();
+```
+
+Pass an `AbortSignal` for a timeout:
+
+```ts
+await server.close({ signal: AbortSignal.timeout(5000) });
+```
+
+`server.closed` is `true` after `close()` is called. Repo management methods (`createRepo`, `repo`, `deleteRepo`) remain available after close.
 
 ## Platform reference
 

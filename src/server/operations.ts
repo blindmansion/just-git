@@ -99,6 +99,11 @@ export class PackCache {
 		this.currentBytes += size;
 	}
 
+	clear(): void {
+		this.entries.clear();
+		this.currentBytes = 0;
+	}
+
 	get stats() {
 		return {
 			entries: this.entries.size,
