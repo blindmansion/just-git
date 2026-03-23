@@ -427,7 +427,7 @@ function buildPolicyHooks(policy: ServerPolicy): ServerHooks<any> {
 		protectedBranches = [],
 		denyNonFastForward = false,
 		denyDeletes = false,
-		denyDeleteTags = false,
+		immutableTags = false,
 	} = policy;
 
 	const protectedSet = new Set(
@@ -453,12 +453,12 @@ function buildPolicyHooks(policy: ServerPolicy): ServerHooks<any> {
 		};
 	}
 
-	if (denyNonFastForward || denyDeletes || denyDeleteTags) {
+	if (denyNonFastForward || denyDeletes || immutableTags) {
 		hooks.update = async (event: UpdateEvent): Promise<void | Rejection> => {
 			if (denyDeletes && event.update.isDelete) {
 				return { reject: true, message: "ref deletion denied" };
 			}
-			if (denyDeleteTags && event.update.ref.startsWith("refs/tags/")) {
+			if (immutableTags && event.update.ref.startsWith("refs/tags/")) {
 				if (event.update.isDelete) {
 					return { reject: true, message: "tag deletion denied" };
 				}

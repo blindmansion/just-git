@@ -38,7 +38,7 @@ const server = createServer({
 
 	policy: {
 		protectedBranches: ["main", "master"],
-		denyDeleteTags: true,
+		immutableTags: true,
 	},
 
 	hooks: {

@@ -202,7 +202,7 @@ const server = createServer({
     protectedBranches: ["main", "production"],
     denyNonFastForward: true,
     denyDeletes: true,
-    denyDeleteTags: true,
+    immutableTags: true,
   },
 });
 ```
@@ -212,7 +212,7 @@ const server = createServer({
 | `protectedBranches`  | Listed branches cannot be force-pushed to or deleted |
 | `denyNonFastForward` | Reject all non-fast-forward pushes globally          |
 | `denyDeletes`        | Reject all ref deletions globally                    |
-| `denyDeleteTags`     | Tags are immutable — no deletion, no overwrite       |
+| `immutableTags`      | Tags are immutable — no deletion, no overwrite       |
 
 Policy rules are checked first. If a policy check rejects, user hooks don't run.
 

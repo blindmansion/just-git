@@ -43,7 +43,7 @@ const server = createServer({
 	policy: {
 		protectedBranches: ["main", "master"],
 		denyNonFastForward: true,
-		denyDeleteTags: true,
+		immutableTags: true,
 	},
 	hooks: {
 		preReceive: async ({ updates }) => {

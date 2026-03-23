@@ -128,8 +128,8 @@ export interface ServerPolicy {
 	denyNonFastForward?: boolean;
 	/** Reject all ref deletions globally. */
 	denyDeletes?: boolean;
-	/** Reject deletion and overwrite of tags. Tags are treated as immutable. */
-	denyDeleteTags?: boolean;
+	/** Tags are immutable — no deletion, no overwrite once created. */
+	immutableTags?: boolean;
 }
 
 // ── Server config ───────────────────────────────────────────────────

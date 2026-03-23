@@ -441,7 +441,7 @@ describe("server policy", () => {
 		});
 	});
 
-	describe("denyDeleteTags", () => {
+	describe("immutableTags", () => {
 		test("blocks tag deletion", async () => {
 			const repo = (await server.repo("repo"))!;
 			const mainRef = await repo.refStore.readRef("refs/heads/main");
@@ -452,7 +452,7 @@ describe("server policy", () => {
 
 			const { srv, port } = startServer({
 				storage: driver,
-				policy: { denyDeleteTags: true },
+				policy: { immutableTags: true },
 			});
 
 			try {
@@ -474,7 +474,7 @@ describe("server policy", () => {
 		test("blocks tag overwrite via force-push", async () => {
 			const { srv, port } = startServer({
 				storage: driver,
-				policy: { denyDeleteTags: true },
+				policy: { immutableTags: true },
 			});
 
 			try {
@@ -503,7 +503,7 @@ describe("server policy", () => {
 		test("allows creating new tags", async () => {
 			const { srv, port } = startServer({
 				storage: driver,
-				policy: { denyDeleteTags: true },
+				policy: { immutableTags: true },
 			});
 
 			try {
@@ -533,7 +533,7 @@ describe("server policy", () => {
 
 			const { srv, port } = startServer({
 				storage: driver,
-				policy: { denyDeleteTags: true },
+				policy: { immutableTags: true },
 			});
 
 			try {
