@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
-import { createServer } from "../../src/server/handler.ts";
+import { createServer, isValidRepoId } from "../../src/server/handler.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import { createStorageAdapter } from "../../src/server/storage.ts";
 import {
@@ -701,5 +701,209 @@ describe("CAS race on ref update", () => {
 			}
 		}
 		expect(foundNg).toBe(true);
+	});
+});
+
+// ── BUG-002: Repo ID sanitization / path traversal ─────────────────
+
+describe("isValidRepoId", () => {
+	test("accepts simple names", () => {
+		expect(isValidRepoId("repo")).toBe(true);
+		expect(isValidRepoId("my-repo")).toBe(true);
+		expect(isValidRepoId("org/repo")).toBe(true);
+		expect(isValidRepoId("a/b/c")).toBe(true);
+		expect(isValidRepoId("user/repo.git")).toBe(true);
+	});
+
+	test("rejects empty string", () => {
+		expect(isValidRepoId("")).toBe(false);
+	});
+
+	test("rejects path traversal", () => {
+		expect(isValidRepoId("../../../etc/passwd")).toBe(false);
+		expect(isValidRepoId("repo/../../other")).toBe(false);
+		expect(isValidRepoId("..")).toBe(false);
+		expect(isValidRepoId("repo/..")).toBe(false);
+	});
+
+	test("rejects dot-prefixed components", () => {
+		expect(isValidRepoId(".git")).toBe(false);
+		expect(isValidRepoId(".git/config")).toBe(false);
+		expect(isValidRepoId("repo/.hidden")).toBe(false);
+		expect(isValidRepoId(".gitmodules")).toBe(false);
+	});
+
+	test("rejects null bytes", () => {
+		expect(isValidRepoId("repo\0evil")).toBe(false);
+	});
+
+	test("rejects control characters", () => {
+		expect(isValidRepoId("repo\r\nevil")).toBe(false);
+		expect(isValidRepoId("repo\nevil")).toBe(false);
+		expect(isValidRepoId("repo\x01evil")).toBe(false);
+		expect(isValidRepoId("repo\x7fevil")).toBe(false);
+	});
+
+	test("rejects backslashes", () => {
+		expect(isValidRepoId("repo\\evil")).toBe(false);
+		expect(isValidRepoId("..\\..\\etc\\passwd")).toBe(false);
+	});
+
+	test("rejects empty path components (double slashes)", () => {
+		expect(isValidRepoId("repo//evil")).toBe(false);
+		expect(isValidRepoId("/repo")).toBe(false);
+		expect(isValidRepoId("repo/")).toBe(false);
+	});
+});
+
+describe("path traversal via HTTP", () => {
+	test("dot-prefixed repo IDs return 404 with autoCreate", async () => {
+		const driver = new MemoryStorage();
+		const server = createServer({ storage: driver, autoCreate: true });
+
+		const paths = ["/.git/config", "/.hidden-repo", "/.gitmodules"];
+
+		for (const path of paths) {
+			const res = await server.fetch(
+				new Request(`http://localhost${path}/info/refs?service=git-upload-pack`),
+			);
+			expect(res.status).toBe(404);
+		}
+	});
+
+	test("null byte in repo ID returns 404", async () => {
+		const driver = new MemoryStorage();
+		const server = createServer({ storage: driver, autoCreate: true });
+
+		const res = await server.fetch(
+			new Request("http://localhost/repo%00evil/info/refs?service=git-upload-pack"),
+		);
+		expect(res.status).toBe(404);
+	});
+
+	test("CRLF in repo ID returns 404", async () => {
+		const driver = new MemoryStorage();
+		const server = createServer({ storage: driver, autoCreate: true });
+
+		const res = await server.fetch(
+			new Request("http://localhost/repo%0d%0aevil/info/refs?service=git-upload-pack"),
+		);
+		expect(res.status).toBe(404);
+	});
+
+	test("double-slash in repo ID returns 404", async () => {
+		const driver = new MemoryStorage();
+		const server = createServer({ storage: driver, autoCreate: true });
+
+		const res = await server.fetch(
+			new Request("http://localhost/repo//evil/info/refs?service=git-upload-pack"),
+		);
+		expect(res.status).toBe(404);
+	});
+
+	test("autoCreate does not create repos for invalid IDs", async () => {
+		const driver = new MemoryStorage();
+		const server = createServer({ storage: driver, autoCreate: true });
+
+		await server.fetch(
+			new Request("http://localhost/.git/config/info/refs?service=git-upload-pack"),
+		);
+		await server.fetch(
+			new Request("http://localhost/repo%00evil/info/refs?service=git-upload-pack"),
+		);
+
+		const hasGit = await driver.hasRepo(".git/config");
+		const hasNull = await driver.hasRepo("repo\0evil");
+		expect(hasGit).toBe(false);
+		expect(hasNull).toBe(false);
+	});
+
+	test("valid repo paths still work with autoCreate", async () => {
+		const driver = new MemoryStorage();
+		const server = createServer({ storage: driver, autoCreate: true });
+
+		const res = await server.fetch(
+			new Request("http://localhost/my-org/my-repo/info/refs?service=git-upload-pack"),
+		);
+		expect(res.status).toBe(200);
+	});
+
+	test("dot-prefixed repo rejected for receive-pack", async () => {
+		const driver = new MemoryStorage();
+		const server = createServer({ storage: driver, autoCreate: true });
+
+		const res = await server.fetch(
+			new Request("http://localhost/.git/config/git-receive-pack", {
+				method: "POST",
+				body: new Uint8Array(0),
+			}),
+		);
+		expect(res.status).toBe(404);
+	});
+
+	test("dot-prefixed repo rejected for upload-pack", async () => {
+		const driver = new MemoryStorage();
+		const server = createServer({ storage: driver, autoCreate: true });
+
+		const res = await server.fetch(
+			new Request("http://localhost/.git/config/git-upload-pack", {
+				method: "POST",
+				body: new Uint8Array(0),
+			}),
+		);
+		expect(res.status).toBe(404);
+	});
+
+	test("custom resolve returning traversal ID is rejected", async () => {
+		const driver = new MemoryStorage();
+		const server = createServer({
+			storage: driver,
+			autoCreate: true,
+			resolve: () => "../../../etc/passwd",
+		});
+
+		const res = await server.fetch(
+			new Request("http://localhost/safe-name/info/refs?service=git-upload-pack"),
+		);
+		expect(res.status).toBe(404);
+	});
+});
+
+describe("path traversal via SSH", () => {
+	function makeSshChannel(): {
+		channel: import("../../src/server/types.ts").SshChannel;
+		stderrChunks: Uint8Array[];
+	} {
+		const stderrChunks: Uint8Array[] = [];
+		const channel: import("../../src/server/types.ts").SshChannel = {
+			readable: new ReadableStream({
+				start(controller) {
+					controller.close();
+				},
+			}),
+			writable: new WritableStream(),
+			writeStderr(data: Uint8Array) {
+				stderrChunks.push(data);
+			},
+		};
+		return { channel, stderrChunks };
+	}
+
+	test("traversal path returns exit 128", async () => {
+		const driver = new MemoryStorage();
+		const server = createServer({ storage: driver, autoCreate: true });
+
+		const { channel } = makeSshChannel();
+		const exitCode = await server.handleSession("git-upload-pack '/../../../etc/passwd'", channel);
+		expect(exitCode).toBe(128);
+	});
+
+	test("dot-prefixed path returns exit 128", async () => {
+		const driver = new MemoryStorage();
+		const server = createServer({ storage: driver, autoCreate: true });
+
+		const { channel } = makeSshChannel();
+		const exitCode = await server.handleSession("git-upload-pack '/.git/config'", channel);
+		expect(exitCode).toBe(128);
 	});
 });
