@@ -7,7 +7,7 @@
 
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../src"; // "just-git"
-import { createServer, MemoryDriver } from "../src/server"; // "just-git/server"
+import { createServer, MemoryStorage } from "../src/server"; // "just-git/server"
 import { writeBlob, writeTree, createCommit } from "../src/repo"; // "just-git/repo"
 
 const ENV = {
@@ -31,7 +31,7 @@ console.log("═══ 1. Setting up server-side repo ═══\n");
 const pushLog: string[] = [];
 
 const server = createServer({
-	storage: new MemoryDriver(),
+	storage: new MemoryStorage(),
 
 	hooks: {
 		preReceive: async (event) => {

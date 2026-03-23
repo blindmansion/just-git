@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Identity, GitRepo } from "../../src/lib/types.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
+import { createStorageAdapter } from "../../src/server/storage.ts";
 import { createCommit, diffCommits, writeBlob, writeTree } from "../../src/repo/helpers.ts";
 
 const ID: Identity = {
@@ -15,8 +16,7 @@ function idAt(ts: number): Identity {
 }
 
 async function freshRepo(): Promise<GitRepo> {
-	const s = new MemoryStorage();
-	return s.createRepo("test");
+	return createStorageAdapter(new MemoryStorage()).createRepo("test");
 }
 
 async function makeTree(repo: GitRepo, files: Record<string, string>): Promise<string> {

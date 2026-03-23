@@ -187,22 +187,22 @@ Key behaviors:
 
 ### Storage backends (`server/`)
 
-`createServer` accepts a `storage: StorageDriver` config property and builds the git-aware `Storage` adapter internally. Users only interact with `StorageDriver` implementations — the `Storage` interface is an internal detail. `createRepo`, `repo`, and `deleteRepo` are exposed on the returned `GitServer` object. All backends partition multiple repos by ID in a single store.
+`createServer` accepts a `storage: Storage` config property and builds the git-aware `Storage` adapter internally. Users only interact with `Storage` implementations — the `Storage` interface is an internal detail. `createRepo`, `repo`, and `deleteRepo` are exposed on the returned `GitServer` object. All backends partition multiple repos by ID in a single store.
 
-`StorageDriver` (thin raw key-value CRUD) is the user-facing abstraction. Drivers implement raw object/ref I/O and an `atomicRefUpdate` primitive; the internal adapter handles object hashing, pack ingestion, symref resolution, and CAS semantics. All `StorageDriver` methods use `MaybeAsync<T>` (`T | Promise<T>`) return types so sync (SQLite) and async (Pg) drivers both work.
+`Storage` (thin raw key-value CRUD) is the user-facing abstraction. Drivers implement raw object/ref I/O and an `atomicRefUpdate` primitive; the internal adapter handles object hashing, pack ingestion, symref resolution, and CAS semantics. All `Storage` methods use `MaybeAsync<T>` (`T | Promise<T>`) return types so sync (SQLite) and async (Pg) drivers both work.
 
-| Backend               | File                               | Construction                  | Database interface                                |
-| --------------------- | ---------------------------------- | ----------------------------- | ------------------------------------------------- |
-| `MemoryDriver`        | `server/memory-storage.ts`         | `new MemoryDriver()`          | None                                              |
-| `BunSqliteDriver`     | `server/bun-sqlite-storage.ts`     | `new BunSqliteDriver(db)`     | `BunSqliteDatabase` (native `bun:sqlite`)         |
-| `BetterSqlite3Driver` | `server/better-sqlite3-storage.ts` | `new BetterSqlite3Driver(db)` | `BetterSqlite3Database` (native `better-sqlite3`) |
-| `PgDriver`            | `server/pg-storage.ts`             | `await PgDriver.create(db)`   | `PgDatabase` (use `wrapPgPool(pool)` for `pg`)    |
+| Backend                | File                               | Construction                   | Database interface                                |
+| ---------------------- | ---------------------------------- | ------------------------------ | ------------------------------------------------- |
+| `MemoryStorage`        | `server/memory-storage.ts`         | `new MemoryStorage()`          | None                                              |
+| `BunSqliteStorage`     | `server/bun-sqlite-storage.ts`     | `new BunSqliteStorage(db)`     | `BunSqliteDatabase` (native `bun:sqlite`)         |
+| `BetterSqlite3Storage` | `server/better-sqlite3-storage.ts` | `new BetterSqlite3Storage(db)` | `BetterSqlite3Database` (native `better-sqlite3`) |
+| `PgStorage`            | `server/pg-storage.ts`             | `await PgStorage.create(db)`   | `PgDatabase` (use `wrapPgPool(pool)` for `pg`)    |
 
 **Unified server (`createServer`):**
 
 `createServer<S = Session>(config)` returns a `GitServer` with both `fetch` (HTTP) and `handleSession` (SSH) methods, plus repo management (`createRepo`, `repo`, `deleteRepo`). One server object handles both protocols with shared config:
 
-- `storage: StorageDriver` — the storage driver for git object and ref persistence. `createStorage()` is called internally.
+- `storage: Storage` — the storage driver for git object and ref persistence. `createStorageAdapter()` is called internally.
 - `resolve?: (path: string) => string | null` — maps request path to repo ID. Default: identity (URL path = repo ID).
 - `autoCreate?: boolean | { defaultBranch?: string }` — automatically create repos on first access.
 - `server.fetch(request)` — web-standard HTTP handler (Bun.serve, Hono, CF Workers, etc.).

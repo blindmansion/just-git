@@ -185,10 +185,10 @@ Connect a git client directly to a [`GitServer`](SERVER.md) without starting an 
 
 ```ts
 import { createGit } from "just-git";
-import { createServer, MemoryDriver } from "just-git/server";
+import { createServer, MemoryStorage } from "just-git/server";
 
 const server = createServer({
-  storage: new MemoryDriver(),
+  storage: new MemoryStorage(),
   autoCreate: true,
 });
 

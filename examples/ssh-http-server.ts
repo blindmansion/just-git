@@ -20,7 +20,7 @@ import { Server } from "ssh2";
 import { Database } from "bun:sqlite";
 import {
 	createServer,
-	BunSqliteDriver,
+	BunSqliteStorage,
 	type SshChannel,
 	type PostReceiveEvent,
 } from "../src/server"; // "just-git/server"
@@ -38,7 +38,7 @@ const db = new Database(DB_PATH);
 db.run("PRAGMA journal_mode = WAL");
 
 const server = createServer({
-	storage: new BunSqliteDriver(db),
+	storage: new BunSqliteStorage(db),
 	autoCreate: true,
 	policy: {
 		protectedBranches: ["main", "master"],

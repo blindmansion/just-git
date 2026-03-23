@@ -1,12 +1,12 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test, beforeEach } from "bun:test";
-import { BunSqliteDriver } from "../../src/server/bun-sqlite-storage.ts";
-import { createStorage } from "../../src/server/storage.ts";
+import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
+import { createStorageAdapter } from "../../src/server/storage.ts";
 import { envelope } from "../../src/lib/object-store.ts";
 import { sha1 } from "../../src/lib/sha1.ts";
 import { writePack } from "../../src/lib/pack/packfile.ts";
 import type { ObjectType } from "../../src/lib/types.ts";
-import type { Storage } from "../../src/server/storage.ts";
+import type { StorageAdapter } from "../../src/server/storage.ts";
 
 const encoder = new TextEncoder();
 
@@ -14,13 +14,13 @@ async function makeHash(type: ObjectType, content: Uint8Array): Promise<string> 
 	return sha1(envelope(type, content));
 }
 
-describe("BunSqliteDriver", () => {
+describe("BunSqliteStorage", () => {
 	let db: Database;
-	let storage: Storage;
+	let storage: StorageAdapter;
 
 	beforeEach(() => {
 		db = new Database(":memory:");
-		storage = createStorage(new BunSqliteDriver(db));
+		storage = createStorageAdapter(new BunSqliteStorage(db));
 	});
 
 	// ── ObjectStore ──────────────────────────────────────────────

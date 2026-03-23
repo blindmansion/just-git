@@ -7,7 +7,7 @@
  */
 
 import { createGit } from "../../dist/index.js";
-import { createServer, MemoryDriver } from "../../dist/server/index.js";
+import { createServer, MemoryStorage } from "../../dist/server/index.js";
 import { writeBlob, writeTree, createCommit } from "../../dist/repo/index.js";
 import { Bash, InMemoryFs } from "just-bash";
 import http from "node:http";
@@ -23,7 +23,7 @@ const ID = { name: "Test", email: "test@test.com", timestamp: 1000000000, timezo
 
 // ── Set up server ───────────────────────────────────────────────────
 
-const gitServer = createServer({ storage: new MemoryDriver() });
+const gitServer = createServer({ storage: new MemoryStorage() });
 const repo = await gitServer.createRepo("repo");
 
 const readmeBlob = await writeBlob(repo, "# Hello from Node " + process.version);

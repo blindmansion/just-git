@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/helpers.ts";
 import { createServer } from "../../src/server/handler.ts";
-import { MemoryDriver } from "../../src/server/memory-storage.ts";
-import { createStorage } from "../../src/server/storage.ts";
+import { MemoryStorage } from "../../src/server/memory-storage.ts";
+import { createStorageAdapter } from "../../src/server/storage.ts";
 import {
 	encodePktLine,
 	flushPkt,
@@ -19,8 +19,8 @@ const TEST_IDENTITY = {
 };
 
 async function setupRepo() {
-	const driver = new MemoryDriver();
-	const storage = createStorage(driver);
+	const driver = new MemoryStorage();
+	const storage = createStorageAdapter(driver);
 	const repo = await storage.createRepo("repo");
 	const blob = await writeBlob(repo, "# test");
 	const tree = await writeTree(repo, [{ name: "README.md", hash: blob }]);
@@ -52,7 +52,7 @@ describe("createServer config validation", () => {
 });
 
 describe("resolve returns null", () => {
-	const server = createServer({ storage: new MemoryDriver(), resolve: () => null });
+	const server = createServer({ storage: new MemoryStorage(), resolve: () => null });
 
 	test("info/refs returns 404", async () => {
 		const res = await server.fetch(
@@ -84,7 +84,7 @@ describe("resolve returns null", () => {
 
 describe("resolve throws", () => {
 	const server = createServer({
-		storage: new MemoryDriver(),
+		storage: new MemoryStorage(),
 		resolve: async () => {
 			throw new Error("database connection lost");
 		},
@@ -377,7 +377,7 @@ describe("onError callback", () => {
 
 		try {
 			const server = createServer({
-				storage: new MemoryDriver(),
+				storage: new MemoryStorage(),
 				resolve: async () => {
 					throw new Error("db connection lost");
 				},
@@ -399,7 +399,7 @@ describe("onError callback", () => {
 	test("custom onError receives error and session", async () => {
 		let captured: { err: unknown; session: unknown } | null = null;
 		const server = createServer({
-			storage: new MemoryDriver(),
+			storage: new MemoryStorage(),
 			resolve: async () => {
 				throw new Error("custom error");
 			},
@@ -426,7 +426,7 @@ describe("onError callback", () => {
 
 		try {
 			const server = createServer({
-				storage: new MemoryDriver(),
+				storage: new MemoryStorage(),
 				resolve: async () => {
 					throw new Error("should not appear");
 				},

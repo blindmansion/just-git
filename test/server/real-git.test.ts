@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { InMemoryFs } from "just-bash";
-import { MemoryDriver } from "../../src/server/memory-storage.ts";
+import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import type { GitServer } from "../../src/server/types.ts";
 import {
 	envAt,
@@ -17,14 +17,14 @@ import {
 describe("server with real git client", () => {
 	let srv: ReturnType<typeof Bun.serve>;
 	let server: GitServer;
-	let driver: MemoryDriver;
+	let driver: MemoryStorage;
 	let port: number;
 	let home: string;
 
 	beforeAll(async () => {
 		home = await createRealGitHome();
 
-		driver = new MemoryDriver();
+		driver = new MemoryStorage();
 		const s = startServer({ storage: driver });
 		server = s.server;
 		srv = s.srv;

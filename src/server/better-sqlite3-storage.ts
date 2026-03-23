@@ -1,7 +1,7 @@
 import type { RawObject, Ref } from "../lib/types.ts";
-import type { StorageDriver, RawRefEntry, RefOps } from "./storage.ts";
+import type { Storage, RawRefEntry, RefOps } from "./storage.ts";
 
-// ── better-sqlite3 driver types ─────────────────────────────────────
+// ── better-sqlite3 types ────────────────────────────────────────────
 
 /** Minimal prepared statement interface matching `better-sqlite3`. */
 export interface BetterSqlite3Statement {
@@ -124,17 +124,17 @@ function prepareStatements(db: BetterSqlite3Database): Statements {
 	};
 }
 
-// ── BetterSqlite3Driver ─────────────────────────────────────────────
+// ── BetterSqlite3Storage ─────────────────────────────────────────────
 
 /**
- * SQLite-backed storage driver using `better-sqlite3`.
+ * SQLite-backed storage using `better-sqlite3`.
  *
  * ```ts
  * import Database from "better-sqlite3";
- * const storage = createStorage(new BetterSqlite3Driver(new Database("repos.db")));
+ * const storage = createStorageAdapter(new BetterSqlite3Storage(new Database("repos.db")));
  * ```
  */
-export class BetterSqlite3Driver implements StorageDriver {
+export class BetterSqlite3Storage implements Storage {
 	private stmts: Statements;
 	private batchInsertTx: (
 		rows: ReadonlyArray<{ repoId: string; hash: string; type: string; content: Uint8Array }>,

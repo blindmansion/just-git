@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { Server, type ServerChannel } from "ssh2";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/helpers.ts";
 import { createServer } from "../../src/server/handler.ts";
-import { MemoryDriver } from "../../src/server/memory-storage.ts";
+import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import { parseGitSshCommand } from "../../src/server/ssh-session.ts";
 import type { GitServer, SshChannel } from "../../src/server/types.ts";
 
@@ -76,11 +76,11 @@ describe("parseGitSshCommand", () => {
 describe("SSH session handler", () => {
 	let sshServer: Server;
 	let sshPort: number;
-	let driver: MemoryDriver;
+	let driver: MemoryStorage;
 	let server: GitServer;
 
 	beforeAll(async () => {
-		driver = new MemoryDriver();
+		driver = new MemoryStorage();
 		server = createServer({ storage: driver });
 		const repo = await server.createRepo("test-repo");
 
@@ -182,7 +182,7 @@ describe("SSH session handler", () => {
 
 	test("handleSession rejects unknown repo", async () => {
 		const testServer = createServer({
-			storage: new MemoryDriver(),
+			storage: new MemoryStorage(),
 			resolve: () => null,
 			onError: false,
 		});

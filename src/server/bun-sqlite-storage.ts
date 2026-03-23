@@ -1,7 +1,7 @@
 import type { RawObject, Ref } from "../lib/types.ts";
-import type { StorageDriver, RawRefEntry, RefOps } from "./storage.ts";
+import type { Storage, RawRefEntry, RefOps } from "./storage.ts";
 
-// ── bun:sqlite driver types ─────────────────────────────────────────
+// ── bun:sqlite types ────────────────────────────────────────────────
 
 /** Minimal prepared statement interface matching `bun:sqlite`. */
 export interface BunSqliteStatement {
@@ -90,17 +90,17 @@ function prepareStatements(db: BunSqliteDatabase): Statements {
 	};
 }
 
-// ── BunSqliteDriver ─────────────────────────────────────────────────
+// ── BunSqliteStorage ─────────────────────────────────────────────────
 
 /**
- * SQLite-backed storage driver using `bun:sqlite`.
+ * SQLite-backed storage using `bun:sqlite`.
  *
  * ```ts
  * import { Database } from "bun:sqlite";
- * const storage = createStorage(new BunSqliteDriver(new Database("repos.db")));
+ * const storage = createStorageAdapter(new BunSqliteStorage(new Database("repos.db")));
  * ```
  */
-export class BunSqliteDriver implements StorageDriver {
+export class BunSqliteStorage implements Storage {
 	private stmts: Statements;
 	private batchInsertTx: (
 		rows: ReadonlyArray<{ repoId: string; hash: string; type: string; content: Uint8Array }>,

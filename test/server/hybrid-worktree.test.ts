@@ -6,9 +6,9 @@ import { findRepo } from "../../src/lib/repo.ts";
 import { resolveRef } from "../../src/lib/refs.ts";
 import { readCommit } from "../../src/lib/object-db.ts";
 import { flattenTree } from "../../src/lib/tree-ops.ts";
-import { BunSqliteDriver } from "../../src/server/bun-sqlite-storage.ts";
-import { createStorage } from "../../src/server/storage.ts";
-import type { Storage } from "../../src/server/storage.ts";
+import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
+import { createStorageAdapter } from "../../src/server/storage.ts";
+import type { StorageAdapter } from "../../src/server/storage.ts";
 import { createWorktree, readonlyRepo } from "../../src/repo/helpers.ts";
 
 const TEST_ENV = {
@@ -26,11 +26,11 @@ function envAt(ts: number) {
 
 describe("hybrid worktree (VFS + SQLite stores)", () => {
 	let db: Database;
-	let storage: Storage;
+	let storage: StorageAdapter;
 
 	beforeAll(async () => {
 		db = new Database(":memory:");
-		storage = createStorage(new BunSqliteDriver(db));
+		storage = createStorageAdapter(new BunSqliteStorage(db));
 
 		const repo = await storage.createRepo("test-repo");
 
@@ -272,11 +272,11 @@ describe("hybrid worktree (VFS + SQLite stores)", () => {
 
 describe("readonlyRepo", () => {
 	let db: Database;
-	let storage: Storage;
+	let storage: StorageAdapter;
 
 	beforeAll(async () => {
 		db = new Database(":memory:");
-		storage = createStorage(new BunSqliteDriver(db));
+		storage = createStorageAdapter(new BunSqliteStorage(db));
 
 		const repo = await storage.createRepo("ro-test");
 

@@ -1,7 +1,7 @@
 import type { RawObject, Ref } from "../lib/types.ts";
-import type { StorageDriver, RawRefEntry, RefOps } from "./storage.ts";
+import type { Storage, RawRefEntry, RefOps } from "./storage.ts";
 
-// ── Postgres driver interface ───────────────────────────────────────
+// ── Postgres interface ──────────────────────────────────────────────
 
 /** Minimal database interface for PostgreSQL. Use {@link wrapPgPool} to adapt a `pg` Pool. */
 export interface PgDatabase {
@@ -110,26 +110,25 @@ const SQL = {
 	refDeleteAll: "DELETE FROM git_refs WHERE repo_id = $1",
 } as const;
 
-// ── PgDriver ────────────────────────────────────────────────────────
+// ── PgStorage ────────────────────────────────────────────────────────
 
 /**
- * PostgreSQL-backed storage driver.
+ * PostgreSQL-backed storage.
  *
  * Use the static `create` factory (schema setup is async):
  *
  * ```ts
  * import { Pool } from "pg";
  * const pool = new Pool({ connectionString: "..." });
- * const driver = await PgDriver.create(wrapPgPool(pool));
- * const storage = createStorage(driver);
+ * const storage = await PgStorage.create(wrapPgPool(pool));
  * ```
  */
-export class PgDriver implements StorageDriver {
+export class PgStorage implements Storage {
 	private constructor(private db: PgDatabase) {}
 
-	static async create(db: PgDatabase): Promise<PgDriver> {
+	static async create(db: PgDatabase): Promise<PgStorage> {
 		await db.query(SCHEMA);
-		return new PgDriver(db);
+		return new PgStorage(db);
 	}
 
 	// ── Repo ────────────────────────────────────────────────────

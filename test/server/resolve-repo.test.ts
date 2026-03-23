@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/helpers.ts";
 import { createServer } from "../../src/server/handler.ts";
-import { MemoryDriver } from "../../src/server/memory-storage.ts";
+import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import type { GitServerConfig } from "../../src/server/types.ts";
 import { defaultHttpSession, defaultSshSession } from "./util.ts";
 
@@ -13,7 +13,7 @@ const TEST_IDENTITY = {
 };
 
 async function setupServerRepo(options?: Pick<GitServerConfig, "session">) {
-	const driver = new MemoryDriver();
+	const driver = new MemoryStorage();
 	const server = createServer({ storage: driver, ...options });
 	const repo = await server.createRepo("test");
 	const blobHash = await writeBlob(repo, "hello");
@@ -32,7 +32,7 @@ async function setupServerRepo(options?: Pick<GitServerConfig, "session">) {
 describe("resolveRepo and session auth", () => {
 	test("returns 404 when resolveRepo returns null", async () => {
 		const server = createServer({
-			storage: new MemoryDriver(),
+			storage: new MemoryStorage(),
 			resolve: () => null,
 		});
 
@@ -44,7 +44,7 @@ describe("resolveRepo and session auth", () => {
 
 	test("session builder returns custom Response for auth failure", async () => {
 		const server = createServer({
-			storage: new MemoryDriver(),
+			storage: new MemoryStorage(),
 			resolve: () => null,
 			session: {
 				http: (req) => {
@@ -70,7 +70,7 @@ describe("resolveRepo and session auth", () => {
 
 	test("session builder rejects → 403 for upload-pack", async () => {
 		const server = createServer({
-			storage: new MemoryDriver(),
+			storage: new MemoryStorage(),
 			resolve: () => null,
 			session: {
 				http: () => new Response("Forbidden", { status: 403 }),
@@ -89,7 +89,7 @@ describe("resolveRepo and session auth", () => {
 
 	test("session builder rejects → 403 for receive-pack", async () => {
 		const server = createServer({
-			storage: new MemoryDriver(),
+			storage: new MemoryStorage(),
 			resolve: () => null,
 			session: {
 				http: () => new Response("Forbidden", { status: 403 }),

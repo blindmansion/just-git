@@ -1,6 +1,6 @@
 import type { GitRepo } from "../lib/types.ts";
 import type { NetworkPolicy, Rejection } from "../hooks.ts";
-import type { StorageDriver, CreateRepoOptions } from "./storage.ts";
+import type { Storage, CreateRepoOptions } from "./storage.ts";
 
 // ── Session ─────────────────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ export interface Session {
  *
  * ```ts
  * const server = createServer({
- *   storage: new BunSqliteDriver(db),
+ *   storage: new BunSqliteStorage(db),
  *   session: {
  *     http: (req) => ({
  *       userId: parseJwt(req).sub,
@@ -136,13 +136,13 @@ export interface ServerPolicy {
 
 export interface GitServerConfig<S = Session> {
 	/**
-	 * Storage driver for git object and ref persistence.
+	 * Storage backend for git object and ref persistence.
 	 *
-	 * The server calls `createStorage(storage)` internally to build the
-	 * git-aware adapter. Users provide the raw driver; they never see
-	 * the `Storage` interface.
+	 * The server calls `createStorageAdapter(storage)` internally to build the
+	 * git-aware adapter. Users provide the storage backend; they never see
+	 * the `StorageAdapter` interface.
 	 */
-	storage: StorageDriver;
+	storage: Storage;
 
 	/**
 	 * Map a request path to a repo ID.

@@ -64,12 +64,12 @@ Both `fs` and `cwd` can be set once in `createGit` and overridden per-call. `cwd
 Stand up a git server with built-in storage (SQLite or PostgreSQL), branch protection, auth, and push hooks:
 
 ```ts
-import { createServer, BunSqliteDriver } from "just-git/server";
+import { createServer, BunSqliteStorage } from "just-git/server";
 import { getChangedFiles } from "just-git/repo";
 import { Database } from "bun:sqlite";
 
 const server = createServer({
-  storage: new BunSqliteDriver(new Database("repos.sqlite")),
+  storage: new BunSqliteStorage(new Database("repos.sqlite")),
   autoCreate: true,
   policy: { protectedBranches: ["main"] },
   hooks: {
@@ -90,7 +90,7 @@ Bun.serve({ fetch: server.fetch });
 // git clone http://localhost:3000/my-repo ← works with real git
 ```
 
-Uses web-standard `Request`/`Response`. Works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. For Node.js, use `server.nodeHandler` with `http.createServer` and `BetterSqlite3Driver` for `better-sqlite3`. SSH is supported via `server.handleSession`. See [SERVER.md](docs/SERVER.md) for the full API.
+Uses web-standard `Request`/`Response`. Works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. For Node.js, use `server.nodeHandler` with `http.createServer` and `BetterSqlite3Storage` for `better-sqlite3`. SSH is supported via `server.handleSession`. See [SERVER.md](docs/SERVER.md) for the full API.
 
 ## Repo module
 

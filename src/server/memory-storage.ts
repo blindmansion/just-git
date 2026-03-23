@@ -1,10 +1,22 @@
-import type { Ref, RawObject, GitRepo } from "../lib/types.ts";
-import type { Storage, CreateRepoOptions, StorageDriver, RawRefEntry, RefOps } from "./storage.ts";
-import { createStorage } from "./storage.ts";
+import type { Ref, RawObject } from "../lib/types.ts";
+import type { Storage, RawRefEntry, RefOps } from "./storage.ts";
 
-// ── MemoryDriver ────────────────────────────────────────────────────
+// ── MemoryStorage ───────────────────────────────────────────────────
 
-export class MemoryDriver implements StorageDriver {
+/**
+ * In-memory storage backend with multi-repo support.
+ *
+ * Useful for tests, ephemeral servers, and benchmarking.
+ * Data is lost when the process exits.
+ *
+ * ```ts
+ * const server = createServer({
+ *   storage: new MemoryStorage(),
+ * });
+ * await server.createRepo("my-repo");
+ * ```
+ */
+export class MemoryStorage implements Storage {
 	private repos = new Set<string>();
 	private objects = new Map<string, Map<string, RawObject>>();
 	private refs = new Map<string, Map<string, Ref>>();
@@ -119,41 +131,5 @@ export class MemoryDriver implements StorageDriver {
 			this.refs.set(repoId, map);
 		}
 		return map;
-	}
-}
-
-// ── MemoryStorage ───────────────────────────────────────────────────
-
-/**
- * In-memory git storage with multi-repo support.
- *
- * Useful for tests, ephemeral servers, and benchmarking.
- * Data is lost when the process exits.
- *
- * ```ts
- * const server = createServer({
- *   storage: new MemoryDriver(),
- * });
- * await server.createRepo("my-repo");
- * ```
- */
-export class MemoryStorage implements Storage {
-	private driver = new MemoryDriver();
-	private storage = createStorage(this.driver);
-
-	createRepo(repoId: string, options?: CreateRepoOptions): Promise<GitRepo> {
-		return this.storage.createRepo(repoId, options) as Promise<GitRepo>;
-	}
-
-	repo(repoId: string): Promise<GitRepo | null> {
-		return this.storage.repo(repoId) as Promise<GitRepo | null>;
-	}
-
-	deleteRepo(repoId: string): Promise<void> {
-		return this.storage.deleteRepo(repoId) as Promise<void>;
-	}
-
-	listRepos(): string[] {
-		return this.driver.repoIds();
 	}
 }

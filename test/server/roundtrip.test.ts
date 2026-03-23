@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { InMemoryFs } from "just-bash";
-import { MemoryDriver } from "../../src/server/memory-storage.ts";
+import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import { createServer } from "../../src/server/handler.ts";
 import type { GitServer } from "../../src/server/types.ts";
 import { envAt, createServerClient, startServer } from "./util.ts";
@@ -8,11 +8,11 @@ import { envAt, createServerClient, startServer } from "./util.ts";
 describe("server roundtrip", () => {
 	let srv: ReturnType<typeof Bun.serve>;
 	let server: GitServer;
-	let driver: MemoryDriver;
+	let driver: MemoryStorage;
 	let port: number;
 
 	beforeAll(async () => {
-		driver = new MemoryDriver();
+		driver = new MemoryStorage();
 		const s = startServer({ storage: driver });
 		server = s.server;
 		srv = s.srv;

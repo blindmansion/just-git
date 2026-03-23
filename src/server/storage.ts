@@ -19,7 +19,7 @@ import type {
 
 export type MaybeAsync<T> = T | Promise<T>;
 
-/** Options for {@link Storage.createRepo}. */
+/** Options for {@link StorageAdapter.createRepo}. */
 export interface CreateRepoOptions {
 	/** Name of the default branch (default: `"main"`). Used for HEAD initialization. */
 	defaultBranch?: string;
@@ -32,9 +32,9 @@ export interface CreateRepoOptions {
  * accessed with `repo`. This prevents accidental repo creation when
  * `storage.repo(path)` is passed directly as a server's `resolveRepo`.
  *
- * Use `createStorage(driver)` to build a `Storage` from a {@link StorageDriver}.
+ * Use `createStorageAdapter(driver)` to build a `StorageAdapter` from a {@link Storage}.
  */
-export interface Storage {
+export interface StorageAdapter {
 	/**
 	 * Create a new repo and initialize HEAD.
 	 *
@@ -53,17 +53,17 @@ export interface Storage {
 	deleteRepo(repoId: string): void | Promise<void>;
 }
 
-// ── StorageDriver interface ─────────────────────────────────────────
+// ── Storage interface ─────────────────────────────────────────
 
-/** Unresolved ref entry as stored by the driver. */
+/** Unresolved ref entry as stored by the storage backend. */
 export interface RawRefEntry {
 	name: string;
 	ref: Ref;
 }
 
 /**
- * Ref operations available inside an {@link StorageDriver.atomicRefUpdate} callback.
- * The driver provides isolation; the shared adapter runs git-aware CAS logic inside.
+ * Ref operations available inside an {@link Storage.atomicRefUpdate} callback.
+ * The storage backend provides isolation; the shared adapter runs git-aware CAS logic inside.
  */
 export interface RefOps {
 	getRef(name: string): MaybeAsync<Ref | null>;
@@ -72,15 +72,15 @@ export interface RefOps {
 }
 
 /**
- * Thin storage driver interface. Implementations provide raw key-value
+ * Storage backend interface. Implementations provide raw key-value
  * CRUD for objects and refs, plus an atomic ref operation primitive.
  *
  * All git-aware logic (object hashing, pack ingestion, symref resolution,
- * CAS semantics) lives in the shared adapter built by {@link createStorage}.
+ * CAS semantics) lives in the shared adapter built by {@link createStorageAdapter}.
  *
  * All methods may return synchronously or asynchronously.
  */
-export interface StorageDriver {
+export interface Storage {
 	// ── Repo lifecycle ──────────────────────────────────────────────
 
 	hasRepo(repoId: string): MaybeAsync<boolean>;
@@ -92,7 +92,7 @@ export interface StorageDriver {
 
 	getObject(repoId: string, hash: string): MaybeAsync<RawObject | null>;
 	putObject(repoId: string, hash: string, type: string, content: Uint8Array): MaybeAsync<void>;
-	/** Bulk insert. Drivers should use their optimal batch strategy. */
+	/** Bulk insert. Implementations should use their optimal batch strategy. */
 	putObjects(
 		repoId: string,
 		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
@@ -109,22 +109,22 @@ export interface StorageDriver {
 	listRefs(repoId: string, prefix?: string): MaybeAsync<RawRefEntry[]>;
 
 	/**
-	 * Run ref operations atomically. The driver wraps the callback in
+	 * Run ref operations atomically. The storage backend wraps the callback in
 	 * whatever isolation mechanism it supports (transaction, lock, etc.).
 	 * The shared adapter uses this for compare-and-swap with symref resolution.
 	 */
 	atomicRefUpdate<T>(repoId: string, fn: (ops: RefOps) => MaybeAsync<T>): MaybeAsync<T>;
 }
 
-// ── createStorage ───────────────────────────────────────────────────
+// ── createStorageAdapter ───────────────────────────────────────────────────
 
 /**
- * Build a {@link Storage} from a {@link StorageDriver}.
+ * Build a {@link StorageAdapter} from a {@link Storage} backend.
  *
- * The returned `Storage` handles all git-aware logic (object hashing,
- * pack ingestion, symref resolution, CAS) on top of the driver's raw I/O.
+ * The returned adapter handles all git-aware logic (object hashing,
+ * pack ingestion, symref resolution, CAS) on top of the backend's raw I/O.
  */
-export function createStorage(driver: StorageDriver): Storage {
+export function createStorageAdapter(driver: Storage): StorageAdapter {
 	function buildRepo(repoId: string): GitRepo {
 		return {
 			objectStore: new AdaptedObjectStore(driver, repoId),
@@ -163,7 +163,7 @@ class AdaptedObjectStore implements ObjectStore {
 	private cache = new ObjectCache();
 
 	constructor(
-		private driver: StorageDriver,
+		private driver: Storage,
 		private repoId: string,
 	) {}
 
@@ -230,7 +230,7 @@ class AdaptedObjectStore implements ObjectStore {
 
 class AdaptedRefStore implements RefStore {
 	constructor(
-		private driver: StorageDriver,
+		private driver: Storage,
 		private repoId: string,
 	) {}
 

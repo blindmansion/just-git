@@ -1,7 +1,7 @@
 import type { GitRepo } from "../lib/types.ts";
 import { composeHooks, createServer } from "../server/handler.ts";
 import { resolveRef } from "../repo/helpers.ts";
-import { BunSqliteDriver } from "../server/bun-sqlite-storage.ts";
+import { BunSqliteStorage } from "../server/bun-sqlite-storage.ts";
 import type { BunSqliteDatabase } from "../server/bun-sqlite-storage.ts";
 import type { GitServer, ServerHooks } from "../server/types.ts";
 import { executeMerge, MergeError } from "./pull-requests.ts";
@@ -31,7 +31,7 @@ export class Platform {
 	constructor(config: PlatformConfig) {
 		this.db = config.database;
 		this.internalServer = createServer({
-			storage: new BunSqliteDriver(config.database),
+			storage: new BunSqliteStorage(config.database),
 		});
 		this.platformDb = new PlatformDb(config.database);
 		this.callbacks = config.on ?? {};
@@ -201,7 +201,7 @@ export class Platform {
 		const platform = this;
 
 		const server = createServer({
-			storage: new BunSqliteDriver(this.db),
+			storage: new BunSqliteStorage(this.db),
 
 			resolve: (repoPath: string) => {
 				const repoRecord = platform.platformDb.getRepo(repoPath);

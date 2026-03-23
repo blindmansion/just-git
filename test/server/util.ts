@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createGit } from "../../src/index.ts";
 import { createServer } from "../../src/server/handler.ts";
-import { MemoryDriver } from "../../src/server/memory-storage.ts";
+import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import type { GitServerConfig, Session } from "../../src/server/types.ts";
 
 // ── Test env ────────────────────────────────────────────────────────
@@ -112,14 +112,14 @@ export function startServerWithSessionAuth(
 }
 
 /**
- * Create a MemoryDriver-backed server with a pre-created (empty) repo.
+ * Create a MemoryStorage-backed server with a pre-created (empty) repo.
  * Returns the server, HTTP port, and stop function.
  */
 export async function startMemoryServer(
 	repoId = "test-repo",
 	configOverrides?: Partial<GitServerConfig>,
 ) {
-	const driver = new MemoryDriver();
+	const driver = new MemoryStorage();
 	const config: GitServerConfig = {
 		storage: driver,
 		...configOverrides,
@@ -131,7 +131,7 @@ export async function startMemoryServer(
 }
 
 /**
- * Create a MemoryDriver-backed server, create a repo, and seed it
+ * Create a MemoryStorage-backed server, create a repo, and seed it
  * with initial content by pushing from a virtual client.
  */
 export async function createSeededServer(

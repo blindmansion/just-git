@@ -8,7 +8,7 @@
  *
  * ```ts
  * const server = createServer({
- *   storage: new MemoryDriver(),
+ *   storage: new MemoryStorage(),
  *   autoCreate: true,
  * });
  * await server.createRepo("my-repo");
@@ -30,7 +30,7 @@ import {
 } from "./operations.ts";
 import { buildReportStatus } from "./protocol.ts";
 import { handleSshSession } from "./ssh-session.ts";
-import { createStorage, type CreateRepoOptions } from "./storage.ts";
+import { createStorageAdapter, type CreateRepoOptions } from "./storage.ts";
 import type {
 	GitServerConfig,
 	GitServer,
@@ -57,7 +57,7 @@ const defaultSessionBuilder: SessionBuilder<Session> = {
  *
  * ```ts
  * const server = createServer({
- *   storage: new MemoryDriver(),
+ *   storage: new MemoryStorage(),
  *   autoCreate: true,
  * });
  * await server.createRepo("my-repo");
@@ -73,11 +73,11 @@ export function createServer<S = Session>(config: GitServerConfig<S>): GitServer
 	if (!config || !config.storage) {
 		throw new TypeError(
 			"createServer: config.storage is required. " +
-				"Example: createServer({ storage: new MemoryDriver() })",
+				"Example: createServer({ storage: new MemoryStorage() })",
 		);
 	}
 
-	const storage = createStorage(config.storage);
+	const storage = createStorageAdapter(config.storage);
 	const resolve = config.resolve ?? ((path: string) => path);
 	const autoCreate = config.autoCreate;
 	const { basePath } = config;

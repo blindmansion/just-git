@@ -8,7 +8,7 @@
 import { Bash, InMemoryFs } from "just-bash";
 import { Database } from "bun:sqlite";
 import { createGit, MemoryFileSystem, composeGitHooks, findRepo } from "../../src";
-import { createServer, BunSqliteDriver } from "../../src/server";
+import { createServer, BunSqliteStorage } from "../../src/server";
 import {
 	readFileAtCommit,
 	getChangedFiles,
@@ -84,7 +84,7 @@ import type { GitHooks } from "../../src";
 	const changedFileCounts: number[] = [];
 
 	const server = createServer({
-		storage: new BunSqliteDriver(new Database(":memory:")),
+		storage: new BunSqliteStorage(new Database(":memory:")),
 		policy: { protectedBranches: ["main"] },
 		hooks: {
 			preReceive: ({ session }) => {
@@ -457,7 +457,7 @@ import type { GitHooks } from "../../src";
 
 {
 	const server = createServer({
-		storage: new BunSqliteDriver(new Database(":memory:")),
+		storage: new BunSqliteStorage(new Database(":memory:")),
 	});
 	await server.createRepo("my-repo");
 	const repo = (await server.repo("my-repo"))!;
@@ -470,7 +470,7 @@ import type { GitHooks } from "../../src";
 
 {
 	const server = createServer({
-		storage: new BunSqliteDriver(new Database(":memory:")),
+		storage: new BunSqliteStorage(new Database(":memory:")),
 	});
 
 	const repo = await server.createRepo("my-repo");
@@ -517,7 +517,7 @@ import type { GitHooks } from "../../src";
 
 {
 	const server = createServer({
-		storage: new BunSqliteDriver(new Database(":memory:")),
+		storage: new BunSqliteStorage(new Database(":memory:")),
 	});
 	const repo = await server.createRepo("my-repo");
 	const ro = readonlyRepo(repo);
@@ -572,7 +572,7 @@ import type { GitHooks } from "../../src";
 	const commitMessages: string[] = [];
 
 	const server = createServer({
-		storage: new BunSqliteDriver(new Database(":memory:")),
+		storage: new BunSqliteStorage(new Database(":memory:")),
 		hooks: {
 			postReceive: async ({ repo, updates }) => {
 				for (const u of updates) {
@@ -626,7 +626,7 @@ import type { GitHooks } from "../../src";
 
 {
 	const server = createServer({
-		storage: new BunSqliteDriver(new Database(":memory:")),
+		storage: new BunSqliteStorage(new Database(":memory:")),
 		session: {
 			http: (request) => {
 				const header = request.headers.get("Authorization");
@@ -678,7 +678,7 @@ import type { GitHooks } from "../../src";
 
 {
 	const server = createServer({
-		storage: new BunSqliteDriver(new Database(":memory:")),
+		storage: new BunSqliteStorage(new Database(":memory:")),
 		session: {
 			http: (req) => ({ authorized: req.headers.has("Authorization") }),
 			ssh: (info) => ({ authorized: info.username != null }),
@@ -726,7 +726,7 @@ import type { GitHooks } from "../../src";
 
 {
 	const server = createServer({
-		storage: new BunSqliteDriver(new Database(":memory:")),
+		storage: new BunSqliteStorage(new Database(":memory:")),
 		hooks: {
 			advertiseRefs: ({ repoId }) => {
 				if (repoId.startsWith("private/")) {
@@ -764,7 +764,7 @@ import type { GitHooks } from "../../src";
 	const pushLog: string[] = [];
 
 	const server = createServer({
-		storage: new BunSqliteDriver(new Database(":memory:")),
+		storage: new BunSqliteStorage(new Database(":memory:")),
 		policy: { protectedBranches: ["main"] },
 		hooks: {
 			postReceive: async ({ repoId, updates }) => {
@@ -796,7 +796,7 @@ import type { GitHooks } from "../../src";
 
 {
 	const server = createServer({
-		storage: new BunSqliteDriver(new Database(":memory:")),
+		storage: new BunSqliteStorage(new Database(":memory:")),
 		autoCreate: true,
 	});
 
@@ -843,7 +843,7 @@ import type { GitHooks } from "../../src";
 
 {
 	const server = createServer({
-		storage: new BunSqliteDriver(new Database(":memory:")),
+		storage: new BunSqliteStorage(new Database(":memory:")),
 		autoCreate: true,
 	});
 
@@ -879,7 +879,7 @@ import type { GitHooks } from "../../src";
 	let hookFired = false;
 
 	const server = createServer({
-		storage: new BunSqliteDriver(new Database(":memory:")),
+		storage: new BunSqliteStorage(new Database(":memory:")),
 		autoCreate: true,
 		hooks: {
 			preReceive: ({ session: _session }) => {

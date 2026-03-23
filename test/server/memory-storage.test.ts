@@ -1,5 +1,7 @@
 import { describe, expect, test, beforeEach } from "bun:test";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
+import { createStorageAdapter } from "../../src/server/storage.ts";
+import type { StorageAdapter } from "../../src/server/storage.ts";
 import { envelope } from "../../src/lib/object-store.ts";
 import { sha1 } from "../../src/lib/sha1.ts";
 import { writePack } from "../../src/lib/pack/packfile.ts";
@@ -12,10 +14,12 @@ async function makeHash(type: ObjectType, content: Uint8Array): Promise<string> 
 }
 
 describe("MemoryStorage", () => {
-	let storage: MemoryStorage;
+	let driver: MemoryStorage;
+	let storage: StorageAdapter;
 
 	beforeEach(() => {
-		storage = new MemoryStorage();
+		driver = new MemoryStorage();
+		storage = createStorageAdapter(driver);
 	});
 
 	// ── ObjectStore ──────────────────────────────────────────────
@@ -397,10 +401,10 @@ describe("MemoryStorage", () => {
 		});
 
 		test("listRepos returns created repo IDs", async () => {
-			expect(storage.listRepos()).toEqual([]);
+			expect(driver.repoIds()).toEqual([]);
 			await storage.createRepo("alpha");
 			await storage.createRepo("beta");
-			expect(storage.listRepos().sort()).toEqual(["alpha", "beta"]);
+			expect(driver.repoIds().sort()).toEqual(["alpha", "beta"]);
 		});
 
 		test("createRepo initializes HEAD", async () => {

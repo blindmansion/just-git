@@ -34,11 +34,11 @@ const ctx = await findRepo(fs, "/repo"); // GitContext | null
 **From a server**: `createServer` returns a server with `repo(id)` to get a `GitRepo` backed by the storage driver:
 
 ```ts
-import { createServer, BunSqliteDriver } from "just-git/server";
+import { createServer, BunSqliteStorage } from "just-git/server";
 import { Database } from "bun:sqlite";
 
 const server = createServer({
-  storage: new BunSqliteDriver(new Database("repos.sqlite")),
+  storage: new BunSqliteStorage(new Database("repos.sqlite")),
 });
 await server.createRepo("my-repo");
 const repo = await server.repo("my-repo"); // GitRepo | null
@@ -101,7 +101,7 @@ const git = createGit({
 
 // Server-side hook
 const server = createServer({
-  storage: new BunSqliteDriver(db),
+  storage: new BunSqliteStorage(db),
   hooks: {
     postReceive: async ({ repo, updates }) => {
       for (const u of updates) {
@@ -180,4 +180,4 @@ Both return `{ treeHash, clean, conflicts, messages }`. Operates purely on the o
 
 The repo module also re-exports `PackedObjectStore` and `FileSystemRefStore`, the `ObjectStore` and `RefStore` implementations used by VFS-backed repositories. These are what `findRepo` uses internally, and can be used directly for custom storage setups.
 
-Server storage drivers (`BunSqliteDriver`, `BetterSqlite3Driver`, `PgDriver`, `MemoryDriver`) provide their own implementations. See [SERVER.md](SERVER.md#storage-drivers) for details.
+Server storage drivers (`BunSqliteStorage`, `BetterSqlite3Storage`, `PgStorage`, `MemoryStorage`) provide their own implementations. See [SERVER.md](SERVER.md#storage-drivers) for details.

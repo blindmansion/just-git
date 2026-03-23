@@ -14,8 +14,8 @@ import {
 	pktLineText,
 } from "../../src/lib/transport/pkt-line.ts";
 import { createServer } from "../../src/server/handler.ts";
-import { MemoryDriver } from "../../src/server/memory-storage.ts";
-import { createStorage } from "../../src/server/storage.ts";
+import { MemoryStorage } from "../../src/server/memory-storage.ts";
+import { createStorageAdapter } from "../../src/server/storage.ts";
 import { writeBlob, writeTree, createCommit } from "../../src/repo/helpers.ts";
 
 // ── Protocol codec tests ────────────────────────────────────────────
@@ -288,8 +288,8 @@ describe("handler HTTP conformance", () => {
 	let serverFetch: (req: Request) => Promise<Response>;
 
 	const setup = async () => {
-		const driver = new MemoryDriver();
-		const storage = createStorage(driver);
+		const driver = new MemoryStorage();
+		const storage = createStorageAdapter(driver);
 		const repo = await storage.createRepo("repo");
 		const blob = await writeBlob(repo, "# test");
 		const tree = await writeTree(repo, [{ name: "README.md", hash: blob }]);
@@ -414,8 +414,8 @@ describe("handler HTTP conformance", () => {
 	});
 
 	test("basePath stripping works correctly", async () => {
-		const driver = new MemoryDriver();
-		const storage = createStorage(driver);
+		const driver = new MemoryStorage();
+		const storage = createStorageAdapter(driver);
 		const repo = await storage.createRepo("repo");
 		const blob = await writeBlob(repo, "# test");
 		const tree = await writeTree(repo, [{ name: "README.md", hash: blob }]);

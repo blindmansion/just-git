@@ -1,14 +1,14 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { MemoryDriver } from "../../src/server/memory-storage.ts";
+import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import type { GitServer } from "../../src/server/types.ts";
 import { envAt, createServerClient, startServer, startServerWithSessionAuth } from "./util.ts";
 
 describe("server policy", () => {
-	let driver: MemoryDriver;
+	let driver: MemoryStorage;
 	let server: GitServer;
 
 	beforeAll(async () => {
-		driver = new MemoryDriver();
+		driver = new MemoryStorage();
 		const { server: s, srv: seedSrv, port: seedPort } = startServer({ storage: driver });
 		server = s;
 

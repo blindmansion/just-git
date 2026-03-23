@@ -13,7 +13,7 @@
 
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit, type GitRepo } from "../src";
-import { createServer, MemoryDriver } from "../src/server";
+import { createServer, MemoryStorage } from "../src/server";
 import { readFileAtCommit, writeBlob, writeTree, createCommit } from "../src/repo";
 
 const ENV = {
@@ -45,7 +45,7 @@ async function cloneIntoSandbox(repo: GitRepo) {
 console.log("═══ 1. Setting up server repo ═══\n");
 
 const ciResults: { ref: string; passed: boolean; output: string }[] = [];
-const driver = new MemoryDriver();
+const driver = new MemoryStorage();
 
 const server = createServer({
 	storage: driver,

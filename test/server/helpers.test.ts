@@ -17,8 +17,8 @@ import {
 	writeBlob,
 	writeTree,
 } from "../../src/repo/helpers.ts";
-import { BunSqliteDriver } from "../../src/server/bun-sqlite-storage.ts";
-import { createStorage } from "../../src/server/storage.ts";
+import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
+import { createStorageAdapter } from "../../src/server/storage.ts";
 
 const TEST_ENV = {
 	GIT_AUTHOR_NAME: "Test",
@@ -499,9 +499,9 @@ describe("extractTree", () => {
 		).rejects.toThrow("not found");
 	});
 
-	test("works with BunSqliteDriver-backed repos", async () => {
+	test("works with BunSqliteStorage-backed repos", async () => {
 		const db = new Database(":memory:");
-		const storage = createStorage(new BunSqliteDriver(db));
+		const storage = createStorageAdapter(new BunSqliteStorage(db));
 		const repo = await storage.createRepo("test-repo");
 
 		const readmeBlob = await writeBlob(repo, "# My Project\n");

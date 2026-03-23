@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { BunSqliteDriver } from "../../src/server/bun-sqlite-storage.ts";
-import { MemoryDriver } from "../../src/server/memory-storage.ts";
+import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
+import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import type { GitServer } from "../../src/server/types.ts";
 import { envAt, createServerClient, startServer } from "./util.ts";
 
@@ -15,7 +15,7 @@ describe("concurrent push safety (VFS-backed server)", () => {
 	let server: GitServer;
 
 	beforeAll(async () => {
-		const driver = new MemoryDriver();
+		const driver = new MemoryStorage();
 		const s = startServer({ storage: driver });
 		srv = s.srv;
 		port = s.port;
@@ -106,7 +106,7 @@ describe("concurrent push safety (SQLite-backed server)", () => {
 
 	beforeAll(async () => {
 		db = new Database(":memory:");
-		const s = startServer({ storage: new BunSqliteDriver(db) });
+		const s = startServer({ storage: new BunSqliteStorage(db) });
 		srv = s.srv;
 		port = s.port;
 		server = s.server;
@@ -169,7 +169,7 @@ describe("cross-path push safety (resolveRemote + HTTP)", () => {
 
 	beforeAll(async () => {
 		db = new Database(":memory:");
-		const s = startServer({ storage: new BunSqliteDriver(db) });
+		const s = startServer({ storage: new BunSqliteStorage(db) });
 		srv = s.srv;
 		port = s.port;
 		server = s.server;

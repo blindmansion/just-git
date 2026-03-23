@@ -4,7 +4,7 @@ import { rm } from "node:fs/promises";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { InMemoryFs } from "just-bash";
-import { BunSqliteDriver } from "../../src/server/bun-sqlite-storage.ts";
+import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
 import type { GitServer } from "../../src/server/types.ts";
 import {
 	envAt,
@@ -26,7 +26,7 @@ describe("SQLite-backed server roundtrip", () => {
 		home = await createRealGitHome();
 		db = new Database(":memory:");
 
-		const s = startServer({ storage: new BunSqliteDriver(db) });
+		const s = startServer({ storage: new BunSqliteStorage(db) });
 		server = s.server;
 		srv = s.srv;
 		port = s.port;
