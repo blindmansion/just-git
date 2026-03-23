@@ -12,7 +12,7 @@ import {
 } from "./hooks.ts";
 import type { ObjectStore, RefStore, RemoteResolver } from "./lib/types.ts";
 
-export const VERSION = "1.3.3";
+export const VERSION = "1.3.4";
 
 /** Options for subcommand execution (mirrors just-bash's CommandExecOptions). */
 export interface CommandExecOptions {
