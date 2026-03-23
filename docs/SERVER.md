@@ -53,6 +53,31 @@ The server manages repos through three methods:
 | `repo(id)`                 | `GitRepo \| null` | Get a repo, or `null` if it hasn't been created.     |
 | `deleteRepo(id)`           | `void`            | Delete all data and the repo record.                 |
 
+### Garbage collection
+
+`server.gc(repoId)` removes unreachable objects from storage — objects not reachable from any ref. Typical sources of unreachable objects are force-pushed-away commits, deleted branches, and objects ingested from rejected pushes.
+
+```ts
+const result = await server.gc("my-repo");
+// result: { deleted: 12, retained: 847 }
+```
+
+Use `dryRun` to preview what would be deleted without actually deleting:
+
+```ts
+const result = await server.gc("my-repo", { dryRun: true });
+console.log(`Would delete ${result.deleted} objects`);
+```
+
+If refs change during the walk (e.g. a concurrent push completes), GC aborts and returns `{ aborted: true }` instead of risking deletion of newly-reachable objects. Callers can retry.
+
+```ts
+const result = await server.gc("my-repo");
+if (result.aborted) {
+  // refs changed during GC — retry later
+}
+```
+
 By default, requests to unknown repos return 404 (HTTP) or exit 128 (SSH). Set `autoCreate` to create repos on first access (e.g. for a push-to-create workflow):
 
 ```ts

@@ -313,7 +313,7 @@ The push handling flow with hooks:
 7. Build report-status response
 ```
 
-Objects are ingested before hooks fire (step 2) so hooks can inspect pushed content. If `preReceive` rejects, those objects become orphaned — same behavior as real git. A future `gc()` on the storage backend can clean them up.
+Objects are ingested before hooks fire (step 2) so hooks can inspect pushed content. If `preReceive` rejects, those objects become orphaned — same behavior as real git. `server.gc(repoId)` cleans them up.
 
 ## Working copies in hooks
 
@@ -436,11 +436,45 @@ All three paths can target the same backing store (e.g. the same SQLite database
 - **LocalTransport**: reports `failed to lock ref '<ref>'`. The push command surfaces this as a rejected update.
 - **Platform merge**: throws `MergeError` with message "base branch was updated concurrently". The caller can retry the merge.
 
+## Garbage collection
+
+`server.gc(repoId, options?)` removes unreachable objects from a repo's storage. Unlike the VFS-based `gc`/`repack` commands (which deal with loose objects, pack files, and filesystem layout), server-side GC operates on database rows: walk refs → enumerate reachable hashes → delete the rest.
+
+### Implementation
+
+The core logic lives in `gc.ts`. The flow:
+
+1. **Snapshot refs** — `refStore.listRefs()` captures the current ref state.
+2. **Walk reachability** — `enumerateObjects(repo, tips, [])` from `object-walk.ts` collects all hashes reachable from ref tips. This uses `GitRepo` (objectStore + refStore) and requires no filesystem access.
+3. **List stored hashes** — `driver.listObjectHashes(repoId)` returns all object hashes in the repo's partition.
+4. **Compute unreachable** — set difference: stored − reachable.
+5. **Safety check** — re-read refs; if any changed since step 1, abort with `{ aborted: true }`.
+6. **Delete** — `driver.deleteObjects(repoId, unreachableHashes)`.
+
+### Concurrency safety
+
+The ref-change check (step 5) prevents the most common race: a push completing during the GC walk. If refs changed, the reachable set may be stale, so GC aborts rather than risk deleting newly-reachable objects. The caller can retry.
+
+Objects added by an in-flight push that hasn't committed its refs yet are safe — they weren't in the step-3 hash listing (which happened before the push's object ingestion), so they're not in the deletion set.
+
+GC should not run concurrently with pushes to the same repo. The abort-on-change check catches completed pushes, but objects mid-ingestion (before ref update) create a window where the invariant is harder to enforce without locking. For production use, pause pushes to the repo before running GC, or schedule GC during low-activity windows.
+
+### Storage interface
+
+Two methods on `Storage` support GC:
+
+- `listObjectHashes(repoId)` — returns all stored hashes for a repo.
+- `deleteObjects(repoId, hashes)` — deletes specific objects by hash, returns count deleted.
+
+These are raw primitives on the driver interface. The GC logic (reachability walk, set diff, safety check) stays in the adapter/server layer where git-awareness lives — drivers remain git-unaware.
+
+### Relationship to VFS GC
+
+The VFS-based `gc` command handles a fundamentally different storage model: loose objects under `.git/objects/`, pack files, `.idx` files, reflog expiry, and pack consolidation. The only shared code is `object-walk.ts` for the reachability walk — everything else is different. Server GC doesn't reuse `repackFromTips`, `collectAllRoots`, `pruneAllLoose`, or any of the filesystem-oriented GC machinery.
+
 ## Future work
 
 - **`atomic` push capability** — the Git Smart HTTP protocol defines `atomic` as a server-advertised capability. When a client sends `--atomic`, the server guarantees all-or-nothing ref updates: if any ref CAS fails or a hook rejects one ref, all are rolled back. Currently the server applies refs individually in a loop — each ref gets its own CAS, so a multi-ref push can partially succeed. The client-side transports (`LocalTransport`, `SmartHttpTransport`) already enforce atomic semantics before sending, so this only matters for external git clients pushing multiple refs with `--atomic`. Implementation: add `"atomic"` to `RECEIVE_PACK_CAPS`, detect the capability in the client's request, and batch all `compareAndSwapRef` calls into a single `db.transaction()`. Low priority — agent repos almost always push a single ref at a time.
-
-- **Server-side GC** — clean up orphaned objects from rejected pushes and deleted branches. The existing VFS-based `gc`/`repack` commands require `GitContext` (filesystem, `.git` directory, loose objects, pack files), but SQLite-storage-backed repos have none of that — objects are rows in a table. Server-side GC is a simpler problem: walk all refs to get root hashes, enumerate reachable objects via `enumerateObjectsWithContent` (already works on `GitRepo`), then `DELETE` unreachable rows. The natural home is a `gc(repoId)` method on the storage class that runs the walk and issues the SQL directly, avoiding any changes to the `ObjectStore` interface. The reachability walk currently returns full object content; a hashes-only enumeration mode would be a worthwhile optimization for GC. Triggering would follow the pattern real git platforms use: fire-and-forget from `postReceive`, on a schedule, or on-demand — never blocking a push. Low urgency since SQLite rows from rejected pushes don't cause the filesystem-level overhead (inode proliferation, slow readdir) that motivates GC in traditional git servers.
 
 - **Sideband progress messages** — the server can write to sideband-64k band-2 (stderr) during `receive-pack` to send progress messages or warnings back to the pushing client. This would let long-running hooks give feedback (e.g. "running tests...", "checking policy...") instead of the client seeing silence until the push completes.
 
