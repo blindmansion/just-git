@@ -3,8 +3,9 @@ import type { GitRepo } from "../../src/lib/types.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import { createStorageAdapter } from "../../src/server/storage.ts";
 import { readTree } from "../../src/repo/reading.ts";
+import { readCommit, resolveRef } from "../../src/repo/reading.ts";
 import { flattenTree } from "../../src/repo/diffing.ts";
-import { updateTree, writeBlob, writeTree } from "../../src/repo/writing.ts";
+import { commit, updateTree, writeBlob, writeTree } from "../../src/repo/writing.ts";
 
 async function freshRepo(): Promise<GitRepo> {
 	return createStorageAdapter(new MemoryStorage()).createRepo("test");
@@ -168,5 +169,149 @@ describe("updateTree", () => {
 
 		const aEntry = flat.find((e) => e.path === "src/a.ts")!;
 		expect(aEntry.hash).toBe(blob1);
+	});
+});
+
+// ── commit ──────────────────────────────────────────────────────────
+
+describe("commit", () => {
+	test("creates a root commit on a new branch", async () => {
+		const repo = await freshRepo();
+
+		const hash = await commit(repo, {
+			files: { "README.md": "# Hello\n", "src/index.ts": "export {};\n" },
+			message: "initial\n",
+			author: { name: "Alice", email: "alice@example.com" },
+			branch: "main",
+		});
+
+		const ref = await resolveRef(repo, "refs/heads/main");
+		expect(ref).toBe(hash);
+
+		const c = await readCommit(repo, hash);
+		expect(c.parents).toEqual([]);
+		expect(c.message).toBe("initial\n");
+		expect(c.author.name).toBe("Alice");
+		expect(c.committer.name).toBe("Alice");
+
+		const flat = await flattenTree(repo, c.tree);
+		const paths = flat.map((e) => e.path).sort();
+		expect(paths).toEqual(["README.md", "src/index.ts"]);
+	});
+
+	test("chains commits with automatic parent resolution", async () => {
+		const repo = await freshRepo();
+
+		const first = await commit(repo, {
+			files: { "a.txt": "one\n" },
+			message: "first\n",
+			author: { name: "Alice", email: "alice@example.com" },
+			branch: "main",
+		});
+
+		const second = await commit(repo, {
+			files: { "b.txt": "two\n" },
+			message: "second\n",
+			author: { name: "Alice", email: "alice@example.com" },
+			branch: "main",
+		});
+
+		const c = await readCommit(repo, second);
+		expect(c.parents).toEqual([first]);
+
+		const flat = await flattenTree(repo, c.tree);
+		const paths = flat.map((e) => e.path).sort();
+		expect(paths).toEqual(["a.txt", "b.txt"]);
+	});
+
+	test("deletes files with null", async () => {
+		const repo = await freshRepo();
+
+		await commit(repo, {
+			files: { "a.txt": "keep\n", "b.txt": "remove\n" },
+			message: "initial\n",
+			author: { name: "Alice", email: "alice@example.com" },
+			branch: "main",
+		});
+
+		const hash = await commit(repo, {
+			files: { "b.txt": null },
+			message: "delete b\n",
+			author: { name: "Alice", email: "alice@example.com" },
+			branch: "main",
+		});
+
+		const c = await readCommit(repo, hash);
+		const flat = await flattenTree(repo, c.tree);
+		expect(flat.map((e) => e.path)).toEqual(["a.txt"]);
+	});
+
+	test("accepts Uint8Array for binary content", async () => {
+		const repo = await freshRepo();
+
+		const binary = new Uint8Array([0x00, 0xff, 0x42]);
+		const hash = await commit(repo, {
+			files: { "data.bin": binary },
+			message: "binary\n",
+			author: { name: "Alice", email: "alice@example.com" },
+			branch: "main",
+		});
+
+		const c = await readCommit(repo, hash);
+		const flat = await flattenTree(repo, c.tree);
+		expect(flat).toHaveLength(1);
+		expect(flat[0]!.path).toBe("data.bin");
+	});
+
+	test("committer defaults to author", async () => {
+		const repo = await freshRepo();
+
+		const hash = await commit(repo, {
+			files: { "f.txt": "x\n" },
+			message: "test\n",
+			author: { name: "Author", email: "author@example.com" },
+			branch: "main",
+		});
+
+		const c = await readCommit(repo, hash);
+		expect(c.author.name).toBe("Author");
+		expect(c.committer.name).toBe("Author");
+		expect(c.committer.email).toBe("author@example.com");
+	});
+
+	test("accepts separate committer", async () => {
+		const repo = await freshRepo();
+
+		const hash = await commit(repo, {
+			files: { "f.txt": "x\n" },
+			message: "test\n",
+			author: { name: "Author", email: "author@example.com" },
+			committer: { name: "Bot", email: "bot@ci.com" },
+			branch: "main",
+		});
+
+		const c = await readCommit(repo, hash);
+		expect(c.author.name).toBe("Author");
+		expect(c.committer.name).toBe("Bot");
+	});
+
+	test("handles nested paths in files", async () => {
+		const repo = await freshRepo();
+
+		const hash = await commit(repo, {
+			files: {
+				"src/lib/utils.ts": "export const x = 1;\n",
+				"src/index.ts": "import './lib/utils';\n",
+				"README.md": "# Readme\n",
+			},
+			message: "nested\n",
+			author: { name: "Alice", email: "alice@example.com" },
+			branch: "main",
+		});
+
+		const c = await readCommit(repo, hash);
+		const flat = await flattenTree(repo, c.tree);
+		const paths = flat.map((e) => e.path).sort();
+		expect(paths).toEqual(["README.md", "src/index.ts", "src/lib/utils.ts"]);
 	});
 });

@@ -36,10 +36,14 @@ export {
 
 // Writing
 export {
+	commit,
 	createCommit,
 	updateTree,
 	writeBlob,
 	writeTree,
+	type CommitAuthor,
+	type CommitIdentity,
+	type CommitOptions,
 	type CreateCommitOptions,
 	type TreeEntryInput,
 	type TreeUpdate,

@@ -147,36 +147,51 @@ All functions accept `GitRepo` as the first argument.
 
 ### Writing
 
-| Function       | Signature                            | Description                                                                                     |
-| -------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------- |
-| `writeBlob`    | `(repo, content) → string`           | Write a UTF-8 string as a blob, returns hash                                                    |
-| `writeTree`    | `(repo, entries) → string`           | Build and write a tree from `TreeEntryInput[]` (single-level names)                             |
-| `updateTree`   | `(repo, treeHash, updates) → string` | Apply path-based additions/deletions to a tree, handling nested subtrees. Prunes empty subtrees |
-| `createCommit` | `(repo, options) → string`           | Create a commit object. Optionally advances a branch ref via `options.branch`                   |
+| Function       | Signature                            | Description                                                                                                    |
+| -------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `commit`       | `(repo, options) → string`           | Commit files to a branch in one call. Handles blobs, tree construction, parent resolution, and ref advancement |
+| `writeBlob`    | `(repo, content) → string`           | Write a UTF-8 string as a blob, returns hash                                                                   |
+| `writeTree`    | `(repo, entries) → string`           | Build and write a tree from `TreeEntryInput[]` (single-level names)                                            |
+| `updateTree`   | `(repo, treeHash, updates) → string` | Apply path-based additions/deletions to a tree, handling nested subtrees. Prunes empty subtrees                |
+| `createCommit` | `(repo, options) → string`           | Create a commit object from a tree hash and explicit parents. Low-level primitive behind `commit`              |
 
-`readTree` and `writeTree` operate at the single-level tree node level (matching git's internal model), while `updateTree` handles full paths and nested subtree construction:
+`commit` is the main entry point for programmatic writes — pass files and a branch, everything else is handled:
 
 ```ts
-import {
-  readCommit,
-  readTree,
-  writeBlob,
-  writeTree,
-  updateTree,
-  createCommit,
-} from "just-git/repo";
+import { commit } from "just-git/repo";
 
-// Low-level: read root entries, modify, write back
-const commit = await readCommit(repo, headHash);
-const entries = await readTree(repo, commit.tree);
+await commit(repo, {
+  files: { "README.md": "# Hello\n", "src/index.ts": "export {};\n" },
+  message: "initial commit\n",
+  author: { name: "Alice", email: "alice@example.com" },
+  branch: "main",
+});
+
+// Subsequent commits auto-resolve the parent and preserve existing files
+await commit(repo, {
+  files: { "docs/guide.md": "# Guide\n", "src/old.ts": null }, // null deletes
+  message: "add docs, remove old file\n",
+  author: { name: "Alice", email: "alice@example.com" },
+  branch: "main",
+});
+```
+
+For lower-level control, `readTree`/`writeTree` operate at the single-level tree node level, `updateTree` handles full paths, and `createCommit` takes explicit tree hashes and parents:
+
+```ts
+import { readCommit, readTree, writeBlob, writeTree, updateTree } from "just-git/repo";
+
+// Read root entries, modify, write back
+const c = await readCommit(repo, headHash);
+const entries = await readTree(repo, c.tree);
 const blob = await writeBlob(repo, "new content\n");
 entries.push({ name: "file.txt", hash: blob, mode: "100644" });
 const newTree = await writeTree(repo, entries);
 
-// High-level: add/remove files by path (handles nested trees)
-const updated = await updateTree(repo, commit.tree, [
+// Or: add/remove files by path (handles nested trees)
+const updated = await updateTree(repo, c.tree, [
   { path: "src/lib/new.ts", hash: blob },
-  { path: "old-file.txt", hash: null }, // delete
+  { path: "old-file.txt", hash: null },
 ]);
 ```
 

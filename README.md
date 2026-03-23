@@ -99,7 +99,15 @@ Uses web-standard `Request`/`Response`. Works with Bun, Hono, Cloudflare Workers
 Everything operates on `GitRepo`, a minimal `{ objectStore, refStore }` interface shared by the client and server. A `GitRepo` can be backed by a virtual filesystem, SQLite, Postgres, or any custom storage. The same helpers work inside both client-side hooks and server-side hooks, and `createWorktree` lets you spin up a full git client against a database-backed repo.
 
 ```ts
-import { readFileAtCommit, getChangedFiles, mergeTrees } from "just-git/repo";
+import { commit, readFileAtCommit, getChangedFiles, mergeTrees } from "just-git/repo";
+
+// Commit files to a branch — handles blobs, trees, parents, and refs
+await commit(repo, {
+  files: { "README.md": "# Hello\n", "src/index.ts": "export {};\n" },
+  message: "initial commit\n",
+  author: { name: "Alice", email: "alice@example.com" },
+  branch: "main",
+});
 
 const content = await readFileAtCommit(repo, commitHash, "src/index.ts");
 const changes = await getChangedFiles(repo, parentHash, commitHash);

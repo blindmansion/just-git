@@ -10,6 +10,7 @@ import { Database } from "bun:sqlite";
 import { createGit, MemoryFileSystem, composeGitHooks, findRepo } from "../../src";
 import { createServer, BunSqliteStorage } from "../../src/server";
 import {
+	commit,
 	readFileAtCommit,
 	getChangedFiles,
 	getNewCommits,
@@ -705,6 +706,61 @@ import type { GitHooks } from "../../src";
 	console.log(
 		"REPO readTree + updateTree: round-trip, nested ops, pruning, full commit workflow OK",
 	);
+}
+
+// ── REPO: commit (high-level) ───────────────────────────────────────
+
+{
+	const server = createServer({
+		storage: new BunSqliteStorage(new Database(":memory:")),
+	});
+	const repo = await server.createRepo("commit-test");
+
+	// Root commit — branch doesn't exist yet
+	const first = await commit(repo, {
+		files: { "README.md": "# Hello\n", "src/index.ts": "export {};\n" },
+		message: "initial commit\n",
+		author: { name: "Alice", email: "alice@example.com" },
+		branch: "main",
+	});
+
+	const firstCommit = await readCommit(repo, first);
+	console.assert(firstCommit.parents.length === 0, "root commit should have no parents");
+	console.assert(firstCommit.author.name === "Alice", "author should be Alice");
+	console.assert(firstCommit.committer.name === "Alice", "committer should default to author");
+	const firstFlat = await flattenTree(repo, firstCommit.tree);
+	console.assert(firstFlat.length === 2, "should have 2 files");
+
+	// Second commit — auto-resolves parent, preserves existing files
+	const second = await commit(repo, {
+		files: { "docs/guide.md": "# Guide\n" },
+		message: "add docs\n",
+		author: { name: "Alice", email: "alice@example.com" },
+		branch: "main",
+	});
+
+	const secondCommit = await readCommit(repo, second);
+	console.assert(secondCommit.parents[0] === first, "parent should be first commit");
+	const secondFlat = await flattenTree(repo, secondCommit.tree);
+	const paths = secondFlat.map((e) => e.path).sort();
+	console.assert(paths.length === 3, "should have 3 files (2 original + 1 new)");
+	console.assert(paths.includes("README.md"), "should preserve README.md");
+	console.assert(paths.includes("docs/guide.md"), "should include new file");
+
+	// Delete a file
+	const third = await commit(repo, {
+		files: { "src/index.ts": null },
+		message: "remove index\n",
+		author: { name: "Alice", email: "alice@example.com" },
+		branch: "main",
+	});
+
+	const thirdCommit = await readCommit(repo, third);
+	const thirdFlat = await flattenTree(repo, thirdCommit.tree);
+	console.assert(thirdFlat.length === 2, "should have 2 files after deletion");
+	console.assert(!thirdFlat.some((e) => e.path === "src/index.ts"), "deleted file should be gone");
+
+	console.log("REPO commit: root, chain, delete, auto-parent, default committer OK");
 }
 
 // ═══════════════════════════════════════════════════════════════════

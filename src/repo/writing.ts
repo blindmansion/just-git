@@ -1,7 +1,45 @@
 import { readObject, writeObject } from "../lib/object-db.ts";
+import { readCommit as _readCommit } from "../lib/object-db.ts";
 import { serializeCommit } from "../lib/objects/commit.ts";
 import { parseTree, serializeTree } from "../lib/objects/tree.ts";
+import { resolveRef as _resolveRef } from "../lib/refs.ts";
 import type { GitRepo, Identity, TreeEntry } from "../lib/types.ts";
+
+// ── Identity helpers ────────────────────────────────────────────────
+
+/**
+ * Simplified identity for the public API. When `date` is omitted,
+ * defaults to the current time. Accepts either this form or the
+ * internal `Identity` (with `timestamp`/`timezone`) for full control.
+ */
+export interface CommitAuthor {
+	name: string;
+	email: string;
+	/** Defaults to `new Date()` (current time). */
+	date?: Date;
+}
+
+/** Accepts either the simplified {@link CommitAuthor} or the internal `Identity` with raw timestamp/timezone. */
+export type CommitIdentity = CommitAuthor | Identity;
+
+function formatTimezone(offsetMinutes: number): string {
+	const abs = Math.abs(offsetMinutes);
+	const sign = offsetMinutes <= 0 ? "+" : "-";
+	const hours = String(Math.floor(abs / 60)).padStart(2, "0");
+	const mins = String(abs % 60).padStart(2, "0");
+	return `${sign}${hours}${mins}`;
+}
+
+function toIdentity(input: CommitIdentity): Identity {
+	if ("timestamp" in input) return input as Identity;
+	const date = input.date ?? new Date();
+	return {
+		name: input.name,
+		email: input.email,
+		timestamp: Math.floor(date.getTime() / 1000),
+		timezone: formatTimezone(date.getTimezoneOffset()),
+	};
+}
 
 // ── Commit creation ─────────────────────────────────────────────────
 
@@ -11,8 +49,10 @@ export interface CreateCommitOptions {
 	tree: string;
 	/** Parent commit hashes (empty for root commits). */
 	parents: string[];
-	author: Identity;
-	committer: Identity;
+	/** Author identity. Accepts `{ name, email, date? }` or full `Identity`. */
+	author: CommitIdentity;
+	/** Committer identity. Defaults to `author` when omitted. */
+	committer?: CommitIdentity;
 	message: string;
 	/**
 	 * When set, advances `refs/heads/<branch>` to the new commit.
@@ -31,26 +71,117 @@ export interface CreateCommitOptions {
  * Without `branch`, no refs are updated.
  */
 export async function createCommit(repo: GitRepo, options: CreateCommitOptions): Promise<string> {
+	const author = toIdentity(options.author);
+	const committer = options.committer ? toIdentity(options.committer) : author;
 	const content = serializeCommit({
 		type: "commit",
 		tree: options.tree,
 		parents: options.parents,
-		author: options.author,
-		committer: options.committer,
+		author,
+		committer,
 		message: options.message,
 	});
 	const hash = await writeObject(repo, "commit", content);
 
 	if (options.branch) {
-		const branchRef = `refs/heads/${options.branch}`;
-		await repo.refStore.writeRef(branchRef, { type: "direct", hash });
-		const head = await repo.refStore.readRef("HEAD");
-		if (!head) {
-			await repo.refStore.writeRef("HEAD", { type: "symbolic", target: branchRef });
-		}
+		await advanceBranch(repo, options.branch, hash);
 	}
 
 	return hash;
+}
+
+// ── High-level commit ───────────────────────────────────────────────
+
+/** Options for {@link commit}. */
+export interface CommitOptions {
+	/**
+	 * Files to add, update, or delete.
+	 * - `string` values are written as UTF-8 blobs.
+	 * - `Uint8Array` values are written as raw blobs.
+	 * - `null` deletes the file from the tree.
+	 */
+	files: Record<string, string | Uint8Array | null>;
+	message: string;
+	/** Author identity. Accepts `{ name, email, date? }` or full `Identity`. Timestamp defaults to now. */
+	author: CommitIdentity;
+	/** Committer identity. Defaults to `author` when omitted. */
+	committer?: CommitIdentity;
+	/** Branch to commit to. Parent is auto-resolved from the current branch tip. */
+	branch: string;
+}
+
+/**
+ * Commit files to a branch in one call.
+ *
+ * Handles blob creation, tree construction, parent resolution, and
+ * ref advancement. When the branch already exists, the specified
+ * files are applied on top of the existing tree (unmentioned files
+ * are preserved). When the branch doesn't exist, a root commit is
+ * created with only the specified files.
+ *
+ * ```ts
+ * await commit(repo, {
+ *   files: { "README.md": "# Hello\n", "src/index.ts": "export {};\n" },
+ *   message: "initial commit",
+ *   author: { name: "Alice", email: "alice@example.com" },
+ *   branch: "main",
+ * });
+ * ```
+ */
+export async function commit(repo: GitRepo, options: CommitOptions): Promise<string> {
+	const branchRef = `refs/heads/${options.branch}`;
+	const parentHash = await _resolveRef(repo, branchRef);
+
+	let existingTreeHash: string | null = null;
+	if (parentHash) {
+		const parentCommit = await _readCommit(repo, parentHash);
+		existingTreeHash = parentCommit.tree;
+	}
+
+	const updates: TreeUpdate[] = [];
+	for (const [path, content] of Object.entries(options.files)) {
+		if (content === null) {
+			updates.push({ path, hash: null });
+		} else {
+			const blobData = typeof content === "string" ? new TextEncoder().encode(content) : content;
+			const blobHash = await writeObject(repo, "blob", blobData);
+			updates.push({ path, hash: blobHash });
+		}
+	}
+
+	let treeHash: string;
+	if (existingTreeHash) {
+		treeHash = await updateTree(repo, existingTreeHash, updates);
+	} else {
+		treeHash = await applyUpdates(repo, null, groupBySegment(updates));
+	}
+
+	const author = toIdentity(options.author);
+	const committer = options.committer ? toIdentity(options.committer) : author;
+	const parents = parentHash ? [parentHash] : [];
+
+	const content = serializeCommit({
+		type: "commit",
+		tree: treeHash,
+		parents,
+		author,
+		committer,
+		message: options.message,
+	});
+	const hash = await writeObject(repo, "commit", content);
+
+	await advanceBranch(repo, options.branch, hash);
+
+	return hash;
+}
+
+async function advanceBranch(repo: GitRepo, branch: string, hash: string): Promise<void> {
+	const branchRef = `refs/heads/${branch}`;
+	await repo.refStore.writeRef(branchRef, { type: "direct", hash });
+	const head = await repo.refStore.readRef("HEAD");
+	if (!head) {
+		await repo.refStore.writeRef("HEAD", { type: "symbolic", target: branchRef });
+	}
 }
 
 // ── Tree construction ───────────────────────────────────────────────
