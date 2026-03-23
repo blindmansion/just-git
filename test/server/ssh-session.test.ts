@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { Server, type ServerChannel } from "ssh2";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/helpers.ts";
 import { createServer } from "../../src/server/handler.ts";
@@ -73,6 +73,9 @@ describe("parseGitSshCommand", () => {
 
 // ── SSH server integration tests ────────────────────────────────────
 
+const HOST_KEY_PATH = "/tmp/just-git-test-host-key";
+const hasHostKey = existsSync(HOST_KEY_PATH);
+
 describe("SSH session handler", () => {
 	let sshServer: Server;
 	let sshPort: number;
@@ -101,7 +104,9 @@ describe("SSH session handler", () => {
 		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commitHash });
 		await repo.refStore.writeRef("refs/tags/v1.0", { type: "direct", hash: commitHash });
 
-		const hostKey = readFileSync("/tmp/just-git-test-host-key");
+		if (!hasHostKey) return;
+
+		const hostKey = readFileSync(HOST_KEY_PATH);
 
 		sshPort = await new Promise<number>((resolve, reject) => {
 			sshServer = new Server({ hostKeys: [hostKey] }, (client) => {
@@ -285,7 +290,7 @@ describe("SSH session handler", () => {
 		expect(text).toContain("HEAD");
 	});
 
-	test("real git clone over SSH", async () => {
+	test.skipIf(!hasHostKey)("real git clone over SSH", async () => {
 		const workDir = await createSshTestDir();
 		const env = sshTestEnv(sshPort, workDir);
 
@@ -306,7 +311,7 @@ describe("SSH session handler", () => {
 		await cleanupDir(workDir);
 	});
 
-	test("real git clone + push over SSH", async () => {
+	test.skipIf(!hasHostKey)("real git clone + push over SSH", async () => {
 		const workDir = await createSshTestDir();
 		const env = sshTestEnv(sshPort, workDir);
 		const { join } = await import("node:path");
