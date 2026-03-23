@@ -263,16 +263,18 @@ Standalone helpers for working with `GitRepo` directly — no filesystem, index,
 - `diffCommits(repo, base, head, options?)` — structured line-level diffs between two commits. Returns `FileDiff[]` with hunks. Accepts commit hashes or rev-parse expressions (`main~1`, `HEAD^2`, tag names, short hashes). Options: `paths` (prefix filter), `contextLines` (default 3), `renames` (default true).
 - `walkCommitHistory(repo, startHash, opts?)` — walk commit graph yielding `CommitInfo`. Options: `exclude`, `firstParent`, `paths` (only commits touching these paths, with TREESAME simplification at merge points).
 - `diffTrees`, `flattenTree`, `getChangedFiles`, `getNewCommits` — tree-level operations.
+- `readTree(repo, treeHash)` — returns root-level tree entries (name/hash/mode, not recursive). Round-trips with `writeTree`.
 - `readCommit`, `readBlob`, `readBlobText`, `readFileAtCommit` — object reading.
 - `resolveRef`, `listBranches`, `listTags`, `isAncestor`, `findMergeBases`, `countAheadBehind` — ref operations.
 - `blame(repo, commitHash, path, opts?)` — line-by-line blame.
 - `grep(repo, commitHash, patterns, opts?)` — search file contents at a commit.
 - `createCommit`, `writeBlob`, `writeTree` — object creation.
+- `updateTree(repo, treeHash, updates)` — apply path-based additions/deletions to a tree, handling nested subtree construction. Each `TreeUpdate` has `path` (full repo-relative), `hash` (blob hash, or `null` to delete), optional `mode`. Empty subtrees are pruned automatically.
 - `mergeTrees`, `mergeTreesFromTreeHashes` — tree-level three-way merge via merge-ort.
 - `extractTree`, `createWorktree`, `createSandboxWorktree` — materialize worktrees on a VFS.
 - `readonlyRepo`, `overlayRepo` — repo wrappers (read-only enforcement, copy-on-write).
 
-**Types:** `FileDiff`, `DiffHunk`, `CommitInfo`, `BlameEntry`, `GrepFileMatch`, `GrepMatch`, `GrepOptions`, `MergeConflict`, `MergeTreesResult`, `TreeEntryInput`, `CreateCommitOptions`, `CreateWorktreeOptions`, `ExtractTreeResult`, `WorktreeResult`.
+**Types:** `FileDiff`, `DiffHunk`, `CommitInfo`, `BlameEntry`, `GrepFileMatch`, `GrepMatch`, `GrepOptions`, `MergeConflict`, `MergeTreesResult`, `TreeEntryInput`, `TreeUpdate`, `CreateCommitOptions`, `CreateWorktreeOptions`, `ExtractTreeResult`, `WorktreeResult`.
 
 All helpers accept revision strings via `resolveRevisionRepo` (from `lib/rev-parse.ts`), which supports branch names, tag names, `HEAD`, short hashes, `~N`/`^N` suffixes, and chained expressions — everything except reflog syntax (`@{N}`).
 

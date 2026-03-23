@@ -9,6 +9,7 @@ export {
 	readBlobText,
 	readCommit,
 	readFileAtCommit,
+	readTree,
 	resolveRef,
 	type GrepFileMatch,
 	type GrepMatch,
@@ -36,10 +37,12 @@ export {
 // Writing
 export {
 	createCommit,
+	updateTree,
 	writeBlob,
 	writeTree,
 	type CreateCommitOptions,
 	type TreeEntryInput,
+	type TreeUpdate,
 } from "./writing.ts";
 
 // Merging
@@ -64,5 +67,12 @@ export {
 export { overlayRepo, readonlyRepo } from "./safety.ts";
 
 // Re-exported lib types used in helper signatures
-export type { Commit, GitRepo, Identity, RefEntry, TreeDiffEntry } from "../lib/types.ts";
+export type {
+	Commit,
+	GitRepo,
+	Identity,
+	RefEntry,
+	TreeDiffEntry,
+	TreeEntry,
+} from "../lib/types.ts";
 export type { FlatTreeEntry } from "../lib/tree-ops.ts";

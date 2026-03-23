@@ -15,10 +15,14 @@ import {
 	getNewCommits,
 	mergeTrees,
 	readCommit,
+	readTree,
 	resolveRef,
 	createWorktree,
 	readonlyRepo,
+	flattenTree,
 	writeBlob,
+	writeTree,
+	updateTree,
 	createCommit,
 } from "../../src/repo";
 import type { GitHooks } from "../../src";
@@ -616,6 +620,91 @@ import type { GitHooks } from "../../src";
 	console.assert(commitMessages.includes("add readme"), "should include 'add readme' commit");
 	console.log("REPO hooks (server): getChangedFiles + readFileAtCommit + getNewCommits OK");
 	srv.stop();
+}
+
+// ── REPO: readTree + writeTree round-trip, and updateTree ───────────
+
+{
+	const server = createServer({
+		storage: new BunSqliteStorage(new Database(":memory:")),
+	});
+	const repo = await server.createRepo("tree-test");
+
+	const blob1 = await writeBlob(repo, "hello\n");
+	const subtree = await writeTree(repo, [{ name: "index.ts", hash: blob1 }]);
+	const root = await writeTree(repo, [
+		{ name: "README.md", hash: blob1 },
+		{ name: "src", hash: subtree },
+	]);
+
+	// readTree returns root-level entries (not recursive)
+	const entries = await readTree(repo, root);
+	console.assert(entries.length === 2, "readTree should return 2 root entries");
+	const names = entries.map((e) => e.name).sort();
+	console.assert(names[0] === "README.md" && names[1] === "src", "should have README.md and src");
+
+	// Round-trip: readTree → writeTree produces same hash
+	const rebuilt = await writeTree(repo, entries);
+	console.assert(rebuilt === root, "readTree → writeTree should round-trip");
+
+	// updateTree: add a nested file and remove a root file
+	const newBlob = await writeBlob(repo, "new content\n");
+	const updated = await updateTree(repo, root, [
+		{ path: "src/lib/new.ts", hash: newBlob },
+		{ path: "docs/guide.md", hash: newBlob },
+		{ path: "README.md", hash: null },
+	]);
+
+	const flat = await flattenTree(repo, updated);
+	const paths = flat.map((e) => e.path).sort();
+	console.assert(!paths.includes("README.md"), "README.md should be removed");
+	console.assert(paths.includes("src/index.ts"), "existing src/index.ts should be preserved");
+	console.assert(paths.includes("src/lib/new.ts"), "nested file should be added");
+	console.assert(paths.includes("docs/guide.md"), "new top-level dir should be created");
+
+	// updateTree: delete the only file in a subtree prunes the subtree
+	const pruned = await updateTree(repo, root, [{ path: "src/index.ts", hash: null }]);
+	const prunedEntries = await readTree(repo, pruned);
+	const prunedNames = prunedEntries.map((e) => e.name);
+	console.assert(!prunedNames.includes("src"), "empty subtree should be pruned");
+	console.assert(prunedNames.includes("README.md"), "untouched entries should remain");
+
+	// Full server-side commit workflow using updateTree
+	const initialCommit = await createCommit(repo, {
+		tree: root,
+		parents: [],
+		author: { name: "Test", email: "test@test.com", timestamp: 1000000000, timezone: "+0000" },
+		committer: { name: "Test", email: "test@test.com", timestamp: 1000000000, timezone: "+0000" },
+		message: "initial\n",
+		branch: "main",
+	});
+
+	const commit = await readCommit(repo, initialCommit);
+	const fileBlob = await writeBlob(repo, "added via updateTree\n");
+	const newTree = await updateTree(repo, commit.tree, [{ path: "src/added.ts", hash: fileBlob }]);
+	const newCommit = await createCommit(repo, {
+		tree: newTree,
+		parents: [initialCommit],
+		author: { name: "Test", email: "test@test.com", timestamp: 1000000001, timezone: "+0000" },
+		committer: { name: "Test", email: "test@test.com", timestamp: 1000000001, timezone: "+0000" },
+		message: "add file\n",
+		branch: "main",
+	});
+
+	const headHash = await resolveRef(repo, "refs/heads/main");
+	console.assert(headHash === newCommit, "branch should point to new commit");
+	const newCommitObj = await readCommit(repo, newCommit);
+	console.assert(newCommitObj.parents[0] === initialCommit, "parent should be initial commit");
+	const finalFlat = await flattenTree(repo, newCommitObj.tree);
+	const finalPaths = finalFlat.map((e) => e.path).sort();
+	console.assert(
+		finalPaths.includes("src/added.ts") && finalPaths.includes("src/index.ts"),
+		"new tree should contain both old and new files",
+	);
+
+	console.log(
+		"REPO readTree + updateTree: round-trip, nested ops, pruning, full commit workflow OK",
+	);
 }
 
 // ═══════════════════════════════════════════════════════════════════

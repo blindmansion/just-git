@@ -1,8 +1,14 @@
-import { readBlobBytes, readBlobContent, readCommit as _readCommit } from "../lib/object-db.ts";
+import {
+	readBlobBytes,
+	readBlobContent,
+	readCommit as _readCommit,
+	readObject,
+} from "../lib/object-db.ts";
+import { parseTree } from "../lib/objects/tree.ts";
 import { resolveRef as _resolveRef, listRefs } from "../lib/refs.ts";
 import { flattenTree as _flattenTree } from "../lib/tree-ops.ts";
 import { compilePattern, grepContent, type GrepMatch } from "../lib/grep.ts";
-import type { Commit, GitRepo, RefEntry } from "../lib/types.ts";
+import type { Commit, GitRepo, RefEntry, TreeEntry } from "../lib/types.ts";
 
 // ── Ref resolution ──────────────────────────────────────────────────
 
@@ -36,6 +42,28 @@ export async function readBlob(repo: GitRepo, hash: string): Promise<Uint8Array>
 /** Read a blob as a UTF-8 string by its hash. */
 export async function readBlobText(repo: GitRepo, hash: string): Promise<string> {
 	return readBlobContent(repo, hash);
+}
+
+/**
+ * Read the direct children of a tree object.
+ *
+ * Unlike {@link flattenTree} (which recursively walks and returns full
+ * paths), this returns single-level entries — the same shape that
+ * {@link writeTree} accepts, making read-modify-write round-trips
+ * straightforward.
+ *
+ * ```ts
+ * const entries = await readTree(repo, commit.tree);
+ * entries.push({ name: "new-file.txt", hash: blobHash, mode: "100644" });
+ * const newTreeHash = await writeTree(repo, entries);
+ * ```
+ */
+export async function readTree(repo: GitRepo, treeHash: string): Promise<TreeEntry[]> {
+	const raw = await readObject(repo, treeHash);
+	if (raw.type !== "tree") {
+		throw new Error(`Expected tree object, got ${raw.type}`);
+	}
+	return parseTree(raw.content).entries;
 }
 
 /**

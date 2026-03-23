@@ -1,7 +1,7 @@
-import { writeObject } from "../lib/object-db.ts";
+import { readObject, writeObject } from "../lib/object-db.ts";
 import { serializeCommit } from "../lib/objects/commit.ts";
-import { serializeTree } from "../lib/objects/tree.ts";
-import type { GitRepo, Identity } from "../lib/types.ts";
+import { parseTree, serializeTree } from "../lib/objects/tree.ts";
+import type { GitRepo, Identity, TreeEntry } from "../lib/types.ts";
 
 // ── Commit creation ─────────────────────────────────────────────────
 
@@ -92,4 +92,116 @@ export async function writeTree(repo: GitRepo, entries: TreeEntryInput[]): Promi
  */
 export async function writeBlob(repo: GitRepo, content: string): Promise<string> {
 	return writeObject(repo, "blob", new TextEncoder().encode(content));
+}
+
+// ── Tree modification ───────────────────────────────────────────────
+
+/** A file to add or update in a tree via {@link updateTree}. */
+export interface TreeUpdate {
+	/** Full repo-relative path (e.g. `"src/lib/foo.ts"`). */
+	path: string;
+	/** Blob hash. When `null`, the file is removed. */
+	hash: string | null;
+	/** File mode (default `"100644"`). Ignored when `hash` is `null`. */
+	mode?: string;
+}
+
+/**
+ * Apply path-based additions, updates, and deletions to an existing
+ * tree, handling nested subtree construction automatically.
+ * Returns the new root tree hash.
+ *
+ * ```ts
+ * const blob = await writeBlob(repo, "hello world\n");
+ * const newTree = await updateTree(repo, commit.tree, [
+ *   { path: "src/new-file.ts", hash: blob },
+ *   { path: "old-file.txt", hash: null },
+ * ]);
+ * ```
+ */
+export async function updateTree(
+	repo: GitRepo,
+	treeHash: string,
+	updates: TreeUpdate[],
+): Promise<string> {
+	return applyUpdates(repo, treeHash, groupBySegment(updates));
+}
+
+interface SegmentGroup {
+	files: Map<string, { hash: string | null; mode: string }>;
+	dirs: Map<string, TreeUpdate[]>;
+}
+
+function groupBySegment(updates: TreeUpdate[]): SegmentGroup {
+	const files = new Map<string, { hash: string | null; mode: string }>();
+	const dirs = new Map<string, TreeUpdate[]>();
+
+	for (const u of updates) {
+		const slashIdx = u.path.indexOf("/");
+		if (slashIdx === -1) {
+			files.set(u.path, { hash: u.hash, mode: u.mode ?? "100644" });
+		} else {
+			const dir = u.path.slice(0, slashIdx);
+			const rest = u.path.slice(slashIdx + 1);
+			let group = dirs.get(dir);
+			if (!group) {
+				group = [];
+				dirs.set(dir, group);
+			}
+			group.push({ ...u, path: rest });
+		}
+	}
+
+	return { files, dirs };
+}
+
+async function readTreeEntries(repo: GitRepo, hash: string): Promise<TreeEntry[]> {
+	const raw = await readObject(repo, hash);
+	if (raw.type !== "tree") throw new Error(`Expected tree object, got ${raw.type}`);
+	return parseTree(raw.content).entries;
+}
+
+async function applyUpdates(
+	repo: GitRepo,
+	treeHash: string | null,
+	group: SegmentGroup,
+): Promise<string> {
+	const entries = new Map<string, TreeEntry>();
+
+	if (treeHash) {
+		for (const e of await readTreeEntries(repo, treeHash)) {
+			entries.set(e.name, e);
+		}
+	}
+
+	for (const [name, { hash, mode }] of group.files) {
+		if (hash === null) {
+			entries.delete(name);
+		} else {
+			entries.set(name, { name, hash, mode });
+		}
+	}
+
+	for (const [dir, subUpdates] of group.dirs) {
+		const existing = entries.get(dir);
+		const existingHash = existing?.mode === "040000" ? existing.hash : null;
+		const subGroup = groupBySegment(subUpdates);
+		const newSubHash = await applyUpdates(repo, existingHash, subGroup);
+
+		const subEntries = await readTreeEntries(repo, newSubHash);
+		if (subEntries.length === 0) {
+			entries.delete(dir);
+		} else {
+			entries.set(dir, { name: dir, hash: newSubHash, mode: "040000" });
+		}
+	}
+
+	const sorted = [...entries.values()].sort((a, b) => {
+		const aKey = a.mode === "040000" ? `${a.name}/` : a.name;
+		const bKey = b.mode === "040000" ? `${b.name}/` : b.name;
+		return aKey < bKey ? -1 : aKey > bKey ? 1 : 0;
+	});
+
+	const content = serializeTree({ type: "tree", entries: sorted });
+	return writeObject(repo, "tree", content);
 }

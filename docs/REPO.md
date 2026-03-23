@@ -124,6 +124,7 @@ All functions accept `GitRepo` as the first argument.
 | `readCommit`       | `(repo, hash) → Commit`                                 | Parse and return a commit object                                                                                                |
 | `readBlob`         | `(repo, hash) → Uint8Array`                             | Read a blob as raw bytes                                                                                                        |
 | `readBlobText`     | `(repo, hash) → string`                                 | Read a blob as a UTF-8 string                                                                                                   |
+| `readTree`         | `(repo, treeHash) → TreeEntry[]`                        | Read a tree's direct children (name, hash, mode). Round-trips with `writeTree`                                                  |
 | `readFileAtCommit` | `(repo, commitHash, filePath) → string \| null`         | Read a file's content at a specific commit                                                                                      |
 | `grep`             | `(repo, commitHash, patterns, opts?) → GrepFileMatch[]` | Search files at a commit for matching lines. Supports regex, fixed strings, globs, `allMatch`, `invert`, `maxCount`, `maxDepth` |
 | `resolveRef`       | `(repo, name) → string \| null`                         | Resolve a ref name to a commit hash                                                                                             |
@@ -146,11 +147,38 @@ All functions accept `GitRepo` as the first argument.
 
 ### Writing
 
-| Function       | Signature                  | Description                                                                   |
-| -------------- | -------------------------- | ----------------------------------------------------------------------------- |
-| `writeBlob`    | `(repo, content) → string` | Write a UTF-8 string as a blob, returns hash                                  |
-| `writeTree`    | `(repo, entries) → string` | Build and write a tree from `TreeEntryInput[]`                                |
-| `createCommit` | `(repo, options) → string` | Create a commit object. Optionally advances a branch ref via `options.branch` |
+| Function       | Signature                            | Description                                                                                     |
+| -------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `writeBlob`    | `(repo, content) → string`           | Write a UTF-8 string as a blob, returns hash                                                    |
+| `writeTree`    | `(repo, entries) → string`           | Build and write a tree from `TreeEntryInput[]` (single-level names)                             |
+| `updateTree`   | `(repo, treeHash, updates) → string` | Apply path-based additions/deletions to a tree, handling nested subtrees. Prunes empty subtrees |
+| `createCommit` | `(repo, options) → string`           | Create a commit object. Optionally advances a branch ref via `options.branch`                   |
+
+`readTree` and `writeTree` operate at the single-level tree node level (matching git's internal model), while `updateTree` handles full paths and nested subtree construction:
+
+```ts
+import {
+  readCommit,
+  readTree,
+  writeBlob,
+  writeTree,
+  updateTree,
+  createCommit,
+} from "just-git/repo";
+
+// Low-level: read root entries, modify, write back
+const commit = await readCommit(repo, headHash);
+const entries = await readTree(repo, commit.tree);
+const blob = await writeBlob(repo, "new content\n");
+entries.push({ name: "file.txt", hash: blob, mode: "100644" });
+const newTree = await writeTree(repo, entries);
+
+// High-level: add/remove files by path (handles nested trees)
+const updated = await updateTree(repo, commit.tree, [
+  { path: "src/lib/new.ts", hash: blob },
+  { path: "old-file.txt", hash: null }, // delete
+]);
+```
 
 ### Merging
 
