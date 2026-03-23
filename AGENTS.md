@@ -210,6 +210,7 @@ Key behaviors:
 - `server.createRepo(id, options?)` — create a new repo. Throws if it already exists.
 - `server.repo(id)` — get a repo by ID, or `null` if it doesn't exist.
 - `server.deleteRepo(id)` — delete a repo and all its data.
+- `server.asNetwork(baseUrl?)` — returns a `NetworkPolicy` that routes HTTP transport calls to the server in-process, bypassing the network stack. Pass the result as `network` to `createGit`. Default base URL is `"http://git"`. All server hooks, session building, and policy enforcement work identically to real HTTP.
 - `server.close(options?)` — graceful shutdown. New HTTP requests get 503, new SSH sessions get exit 128. Resolves when all in-flight operations complete and pack cache is released. Accepts `{ signal?: AbortSignal }` for timeout. Idempotent.
 - `server.closed` — `true` after `close()` is called.
 - `session?: SessionBuilder<S>` — custom session builder. Provides `http: (request) => S` and `ssh: (info) => S` functions that transform raw transport input into a typed session object threaded through all hooks. When omitted, the built-in `Session` type is used as default.

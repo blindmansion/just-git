@@ -792,4 +792,131 @@ import type { GitHooks } from "../../src";
 	srv.stop();
 }
 
+// ── CLIENT: In-process server (default base URL) ────────────────────
+
+{
+	const server = createServer({
+		storage: new BunSqliteDriver(new Database(":memory:")),
+		autoCreate: true,
+	});
+
+	const git = createGit({
+		network: server.asNetwork(),
+	});
+
+	const bash = new Bash({
+		fs: new InMemoryFs(),
+		cwd: "/",
+		customCommands: [git],
+	});
+	const clone = await bash.exec("git clone http://git/my-repo /work", {
+		env: {
+			GIT_AUTHOR_NAME: "Alice",
+			GIT_AUTHOR_EMAIL: "alice@example.com",
+			GIT_COMMITTER_NAME: "Alice",
+			GIT_COMMITTER_EMAIL: "alice@example.com",
+		},
+	});
+	console.assert(clone.exitCode === 0, "in-process clone should succeed");
+
+	await bash.exec("echo 'hello' > /work/README.md");
+	await bash.exec("git add .", { cwd: "/work" });
+	await bash.exec('git commit -m "init"', {
+		cwd: "/work",
+		env: {
+			GIT_AUTHOR_NAME: "Alice",
+			GIT_AUTHOR_EMAIL: "alice@example.com",
+			GIT_COMMITTER_NAME: "Alice",
+			GIT_COMMITTER_EMAIL: "alice@example.com",
+		},
+	});
+	const push = await bash.exec("git push origin main", { cwd: "/work" });
+	console.assert(push.exitCode === 0, "in-process push should succeed");
+
+	const pull = await bash.exec("git pull origin main", { cwd: "/work" });
+	console.assert(pull.exitCode === 0, "in-process pull should succeed");
+
+	console.log("CLIENT in-process server: clone + push + pull OK (default URL)");
+}
+
+// ── CLIENT: In-process server (custom base URL) ─────────────────────
+
+{
+	const server = createServer({
+		storage: new BunSqliteDriver(new Database(":memory:")),
+		autoCreate: true,
+	});
+
+	const git = createGit({
+		network: server.asNetwork("http://my-server:8080"),
+	});
+
+	const bash = new Bash({
+		fs: new InMemoryFs(),
+		cwd: "/",
+		customCommands: [git],
+	});
+	const clone = await bash.exec("git clone http://my-server:8080/my-repo /work", {
+		env: {
+			GIT_AUTHOR_NAME: "Alice",
+			GIT_AUTHOR_EMAIL: "alice@example.com",
+			GIT_COMMITTER_NAME: "Alice",
+			GIT_COMMITTER_EMAIL: "alice@example.com",
+		},
+	});
+	console.assert(clone.exitCode === 0, "in-process clone with custom URL should succeed");
+
+	const fs = bash.fs as InMemoryFs;
+	const config = await fs.readFile("/work/.git/config");
+	console.assert(config.includes("my-server:8080"), "remote URL should use custom base");
+
+	console.log("CLIENT in-process server: custom base URL OK");
+}
+
+// ── SERVER: In-process client (with hooks) ──────────────────────────
+
+{
+	let hookFired = false;
+
+	const server = createServer({
+		storage: new BunSqliteDriver(new Database(":memory:")),
+		autoCreate: true,
+		hooks: {
+			preReceive: ({ session: _session }) => {
+				hookFired = true;
+			},
+		},
+	});
+
+	const git = createGit({
+		network: server.asNetwork(),
+	});
+
+	const bash = new Bash({ fs: new InMemoryFs(), cwd: "/", customCommands: [git] });
+	await bash.exec("git clone http://git/my-repo /work", {
+		env: {
+			GIT_AUTHOR_NAME: "Alice",
+			GIT_AUTHOR_EMAIL: "alice@example.com",
+			GIT_COMMITTER_NAME: "Alice",
+			GIT_COMMITTER_EMAIL: "alice@example.com",
+		},
+	});
+	await bash.exec("echo 'hello' > /work/file.txt");
+	await bash.exec("git add .", { cwd: "/work" });
+	await bash.exec('git commit -m "init"', {
+		cwd: "/work",
+		env: {
+			GIT_AUTHOR_NAME: "Alice",
+			GIT_AUTHOR_EMAIL: "alice@example.com",
+			GIT_COMMITTER_NAME: "Alice",
+			GIT_COMMITTER_EMAIL: "alice@example.com",
+		},
+	});
+	const push = await bash.exec("git push origin main", { cwd: "/work" });
+	console.assert(push.exitCode === 0, "in-process push with hooks should succeed");
+	console.assert(hookFired, "preReceive hook should fire through asNetwork");
+
+	console.log("SERVER in-process client: hooks fire through asNetwork OK");
+}
+
 console.log("\nAll doc examples verified.");

@@ -313,6 +313,15 @@ export function createServer<S = Session>(config: GitServerConfig<S>): GitServer
 			return closed;
 		},
 
+		asNetwork(baseUrl = "http://git") {
+			const normalized = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+			return {
+				allowed: [normalized],
+				fetch: (input: string | URL | Request, init?: RequestInit) =>
+					server.fetch(new Request(input as string, init)),
+			};
+		},
+
 		async close(options?): Promise<void> {
 			if (closed) return drainPromise ?? Promise.resolve();
 			closed = true;

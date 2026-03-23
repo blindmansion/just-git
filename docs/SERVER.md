@@ -408,6 +408,42 @@ const server = createServer({
 });
 ```
 
+## In-process client
+
+Connect a [`createGit`](CLIENT.md) client directly to the server without starting an HTTP listener. The server's `asNetwork()` method returns a `NetworkPolicy` that routes all transport calls through the server's request handler in-process — no TCP, no serialization overhead, full hook/session/policy support.
+
+```ts
+import { Bash, InMemoryFs } from "just-bash";
+import { createGit } from "just-git";
+import { createServer, MemoryDriver } from "just-git/server";
+
+const server = createServer({
+  storage: new MemoryDriver(),
+  autoCreate: true,
+  hooks: {
+    preReceive: ({ session }) => {
+      // hooks fire normally — session comes from the session builder
+    },
+  },
+});
+
+const git = createGit({
+  network: server.asNetwork(), // default base URL: http://git
+});
+
+const bash = new Bash({ fs: new InMemoryFs(), cwd: "/", customCommands: [git] });
+await bash.exec("git clone http://git/my-repo /work");
+await bash.exec("git push origin main", { cwd: "/work" });
+```
+
+Pass a custom base URL when you need a specific hostname (e.g. to match a `resolve` callback or for config readability):
+
+```ts
+const git = createGit({
+  network: server.asNetwork("http://my-server:8080"),
+});
+```
+
 ## Graceful shutdown
 
 `close()` stops accepting new requests and waits for in-flight operations to finish. After calling, HTTP requests receive 503 and SSH sessions get exit 128.

@@ -1,5 +1,5 @@
 import type { GitRepo } from "../lib/types.ts";
-import type { Rejection } from "../hooks.ts";
+import type { NetworkPolicy, Rejection } from "../hooks.ts";
 import type { StorageDriver, CreateRepoOptions } from "./storage.ts";
 
 // ── Session ─────────────────────────────────────────────────────────
@@ -287,6 +287,24 @@ export interface GitServer {
 
 	/** Whether `close()` has been called. */
 	readonly closed: boolean;
+
+	/**
+	 * Build a {@link NetworkPolicy} that routes HTTP requests to this
+	 * server in-process, bypassing the network stack entirely.
+	 *
+	 * Pass the returned policy as `network` to {@link createGit}:
+	 *
+	 * ```ts
+	 * const git = createGit({ network: server.asNetwork() });
+	 * await git.exec("clone http://git/my-repo /work");
+	 * ```
+	 *
+	 * @param baseUrl - Base URL used in clone/push/fetch commands.
+	 *   Only the hostname matters (for the `allowed` list). The URL
+	 *   never hits the network — it's resolved by the server's
+	 *   `resolve` function. Defaults to `"http://git"`.
+	 */
+	asNetwork(baseUrl?: string): NetworkPolicy;
 }
 
 // ── Hooks ───────────────────────────────────────────────────────────
