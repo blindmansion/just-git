@@ -869,6 +869,115 @@ describe("path traversal via HTTP", () => {
 	});
 });
 
+describe("HEAD ref deletion via push", () => {
+	test("deleting HEAD is rejected", async () => {
+		const { repo, driver } = await setupRepo();
+		const server = createServer({ storage: driver });
+		const mainRef = await repo.refStore.readRef("refs/heads/main");
+		const mainHash = mainRef?.type === "direct" ? mainRef.hash : "0".repeat(40);
+		const zeroHash = "0".repeat(40);
+
+		await repo.refStore.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
+
+		const headRef = await repo.refStore.readRef("HEAD");
+		const headHash =
+			headRef?.type === "symbolic"
+				? (await repo.refStore.readRef(headRef.target))?.type === "direct"
+					? ((await repo.refStore.readRef(headRef.target)) as any).hash
+					: mainHash
+				: headRef?.type === "direct"
+					? headRef.hash
+					: mainHash;
+
+		const body = buildPushBody(
+			[{ oldHash: headHash, newHash: zeroHash, refName: "HEAD" }],
+			await buildEmptyPack(),
+		);
+
+		const res = await server.fetch(
+			new Request("http://localhost/repo/git-receive-pack", { method: "POST", body }),
+		);
+		expect(res.status).toBe(200);
+		const resBody = new Uint8Array(await res.arrayBuffer());
+		const lines = parsePktLineStream(resBody);
+
+		let foundNg = false;
+		for (const line of lines) {
+			const text = pktLineText(line);
+			if (text.startsWith("ng HEAD")) foundNg = true;
+		}
+		expect(foundNg).toBe(true);
+
+		const postHead = await repo.refStore.readRef("HEAD");
+		expect(postHead).not.toBeNull();
+	});
+
+	test("updating HEAD is also rejected", async () => {
+		const { repo, driver } = await setupRepo();
+		const server = createServer({ storage: driver });
+		const mainRef = await repo.refStore.readRef("refs/heads/main");
+		const mainHash = mainRef?.type === "direct" ? mainRef.hash : "0".repeat(40);
+		const zeroHash = "0".repeat(40);
+
+		const body = buildPushBody(
+			[{ oldHash: zeroHash, newHash: mainHash, refName: "HEAD" }],
+			await buildEmptyPack(),
+		);
+
+		const res = await server.fetch(
+			new Request("http://localhost/repo/git-receive-pack", { method: "POST", body }),
+		);
+		expect(res.status).toBe(200);
+		const resBody = new Uint8Array(await res.arrayBuffer());
+		const lines = parsePktLineStream(resBody);
+
+		let foundNg = false;
+		for (const line of lines) {
+			const text = pktLineText(line);
+			if (text.startsWith("ng HEAD")) foundNg = true;
+		}
+		expect(foundNg).toBe(true);
+	});
+
+	test("HEAD + branch delete: HEAD rejected, branch delete succeeds", async () => {
+		const { repo, driver } = await setupRepo();
+		const server = createServer({ storage: driver });
+		const mainRef = await repo.refStore.readRef("refs/heads/main");
+		const mainHash = mainRef?.type === "direct" ? mainRef.hash : "0".repeat(40);
+		const zeroHash = "0".repeat(40);
+
+		await repo.refStore.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
+
+		const body = buildPushBody(
+			[
+				{ oldHash: mainHash, newHash: zeroHash, refName: "HEAD" },
+				{ oldHash: mainHash, newHash: zeroHash, refName: "refs/heads/main" },
+			],
+			await buildEmptyPack(),
+		);
+
+		const res = await server.fetch(
+			new Request("http://localhost/repo/git-receive-pack", { method: "POST", body }),
+		);
+		expect(res.status).toBe(200);
+		const resBody = new Uint8Array(await res.arrayBuffer());
+		const lines = parsePktLineStream(resBody);
+
+		let headNg = false;
+		let mainOk = false;
+		for (const line of lines) {
+			const text = pktLineText(line);
+			if (text.startsWith("ng HEAD")) headNg = true;
+			if (text.startsWith("ok refs/heads/main")) mainOk = true;
+		}
+		expect(headNg).toBe(true);
+		expect(mainOk).toBe(true);
+
+		const postHead = await repo.refStore.readRef("HEAD");
+		expect(postHead).not.toBeNull();
+	});
+});
+
 describe("path traversal via SSH", () => {
 	function makeSshChannel(): {
 		channel: import("../../src/server/types.ts").SshChannel;

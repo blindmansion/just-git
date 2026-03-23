@@ -710,6 +710,11 @@ export async function applyReceivePack<S = unknown>(
 	const applied: RefUpdate[] = [];
 
 	for (const update of updates) {
+		if (update.ref === "HEAD") {
+			refResults.push({ ref: update.ref, ok: false, error: "HEAD cannot be updated via push" });
+			continue;
+		}
+
 		if (!update.isDelete && !checkRefFormat(update.ref)) {
 			refResults.push({ ref: update.ref, ok: false, error: "invalid refname" });
 			continue;
