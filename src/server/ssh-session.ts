@@ -1,10 +1,9 @@
 /**
- * SSH protocol helpers for the unified Git server.
+ * SSH protocol helpers for `createServer`'s `handleSession` method.
  *
  * Provides the pkt-line stream reader, command parser, and
- * receive-pack streaming logic used by `createServer`'s
- * `handleSession` method. Not a public entry point — see
- * `createServer` for usage.
+ * receive-pack streaming logic. Internal to the server module —
+ * users interact via `GitServer.handleSession`.
  */
 
 import { isRejection } from "../hooks.ts";
@@ -47,7 +46,7 @@ export function parseGitSshCommand(
 
 const encoder = new TextEncoder();
 
-export interface HandleSessionOptions<S = Session> {
+interface HandleSessionOptions<S = Session> {
 	resolveRepo: (
 		path: string,
 	) => { repo: GitRepo; repoId: string } | null | Promise<{ repo: GitRepo; repoId: string } | null>;

@@ -44,9 +44,6 @@ export {
 	type WorktreeResult,
 } from "./helpers.ts";
 
-// Storage implementations
-export { PackedObjectStore } from "../lib/object-store.ts";
-export { FileSystemRefStore } from "../lib/refs.ts";
-
-// Re-exported lib types needed by helpers
-export type { Identity, GitRepo } from "../lib/types.ts";
+// Re-exported lib types used in helper signatures
+export type { Commit, GitRepo, Identity, RefEntry, TreeDiffEntry } from "../lib/types.ts";
+export type { FlatTreeEntry } from "../lib/tree-ops.ts";

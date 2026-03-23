@@ -4,7 +4,7 @@ import type { Storage, RawRefEntry, RefOps } from "./storage.ts";
 // ── bun:sqlite types ────────────────────────────────────────────────
 
 /** Minimal prepared statement interface matching `bun:sqlite`. */
-export interface BunSqliteStatement {
+interface BunSqliteStatement {
 	run(...params: any[]): void;
 	get(...params: any[]): any;
 	all(...params: any[]): any[];

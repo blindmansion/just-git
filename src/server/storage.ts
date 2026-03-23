@@ -17,9 +17,16 @@ import type {
 
 // ── Public types ────────────────────────────────────────────────────
 
+/**
+ * A value that may be synchronous or asynchronous.
+ *
+ * Storage methods use this return type so that sync backends (e.g. SQLite)
+ * can avoid unnecessary `async`/`await` overhead while async backends
+ * (e.g. PostgreSQL) return promises naturally.
+ */
 export type MaybeAsync<T> = T | Promise<T>;
 
-/** Options for {@link StorageAdapter.createRepo}. */
+/** Options for creating a new repo via `GitServer.createRepo`. */
 export interface CreateRepoOptions {
 	/** Name of the default branch (default: `"main"`). Used for HEAD initialization. */
 	defaultBranch?: string;
@@ -55,63 +62,120 @@ export interface StorageAdapter {
 
 // ── Storage interface ─────────────────────────────────────────
 
-/** Unresolved ref entry as stored by the storage backend. */
+/**
+ * A ref entry as stored by the storage backend, without symref resolution.
+ *
+ * Symbolic refs (like HEAD → refs/heads/main) are returned as-is — the
+ * adapter layer handles resolution. Storage backends should store and
+ * return the exact {@link Ref} value that was written via `putRef`.
+ */
 export interface RawRefEntry {
+	/** Full ref name, e.g. `"HEAD"` or `"refs/heads/main"`. */
 	name: string;
+	/** The ref value — either a direct hash or a symbolic pointer. */
 	ref: Ref;
 }
 
 /**
- * Ref operations available inside an {@link Storage.atomicRefUpdate} callback.
- * The storage backend provides isolation; the shared adapter runs git-aware CAS logic inside.
+ * Ref operations available inside a {@link Storage.atomicRefUpdate} callback.
+ *
+ * The storage backend wraps the callback in a transaction (or lock), and the
+ * adapter layer uses these operations to implement compare-and-swap with
+ * symref resolution. Implementations should route these to the same
+ * underlying store as the top-level ref methods, but within the
+ * transaction/lock scope.
  */
 export interface RefOps {
+	/** Read a single ref within the transaction. */
 	getRef(name: string): MaybeAsync<Ref | null>;
+	/** Write a ref within the transaction. */
 	putRef(name: string, ref: Ref): MaybeAsync<void>;
+	/** Delete a ref within the transaction. */
 	removeRef(name: string): MaybeAsync<void>;
 }
 
 /**
- * Storage backend interface. Implementations provide raw key-value
- * CRUD for objects and refs, plus an atomic ref operation primitive.
+ * Storage backend interface for multi-repo git object and ref persistence.
  *
- * All git-aware logic (object hashing, pack ingestion, symref resolution,
- * CAS semantics) lives in the shared adapter built by {@link createStorageAdapter}.
+ * Implementations provide raw key-value CRUD for objects and refs, plus an
+ * atomic ref operation primitive. All git-aware logic — object hashing,
+ * pack ingestion, symref resolution, compare-and-swap semantics — lives
+ * in the internal adapter and does not need to be implemented by backends.
  *
- * All methods may return synchronously or asynchronously.
+ * All methods use {@link MaybeAsync} return types: sync backends (SQLite)
+ * can return values directly, async backends (PostgreSQL) return promises.
+ *
+ * See `MemoryStorage` for a minimal reference implementation.
  */
 export interface Storage {
 	// ── Repo lifecycle ──────────────────────────────────────────────
 
+	/** Check whether a repo with this ID has been created. */
 	hasRepo(repoId: string): MaybeAsync<boolean>;
+
+	/** Register a new repo ID. Does not need to create any initial data. */
 	insertRepo(repoId: string): MaybeAsync<void>;
+
 	/** Delete the repo record and all associated objects and refs. */
 	deleteRepo(repoId: string): MaybeAsync<void>;
 
 	// ── Objects ─────────────────────────────────────────────────────
 
+	/**
+	 * Read a raw git object by hash.
+	 * Returns `null` when the object does not exist.
+	 */
 	getObject(repoId: string, hash: string): MaybeAsync<RawObject | null>;
+
+	/** Store a single git object. `content` is the uncompressed object body (no git header). */
 	putObject(repoId: string, hash: string, type: string, content: Uint8Array): MaybeAsync<void>;
-	/** Bulk insert. Implementations should use their optimal batch strategy. */
+
+	/**
+	 * Bulk-insert objects. Called during pack ingestion (push, fetch).
+	 * Implementations should use their optimal batch strategy (e.g. a
+	 * single transaction for SQL backends).
+	 */
 	putObjects(
 		repoId: string,
 		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
 	): MaybeAsync<void>;
+
+	/** Check whether an object exists without reading its content. */
 	hasObject(repoId: string, hash: string): MaybeAsync<boolean>;
+
+	/**
+	 * Find all object hashes starting with `prefix` (for short-hash resolution).
+	 * `prefix` is at least 4 hex characters.
+	 */
 	findObjectsByPrefix(repoId: string, prefix: string): MaybeAsync<string[]>;
 
 	// ── Refs ────────────────────────────────────────────────────────
 
+	/**
+	 * Read a single ref. Returns the stored {@link Ref} value (direct hash
+	 * or symbolic pointer) without following symrefs — the adapter handles
+	 * resolution.
+	 */
 	getRef(repoId: string, name: string): MaybeAsync<Ref | null>;
+
+	/** Write a ref (direct or symbolic). */
 	putRef(repoId: string, name: string, ref: Ref): MaybeAsync<void>;
+
+	/** Delete a ref. */
 	removeRef(repoId: string, name: string): MaybeAsync<void>;
-	/** Return all refs under a prefix, unresolved (symrefs not followed). */
+
+	/**
+	 * List all refs, optionally filtered by a prefix (e.g. `"refs/heads/"`).
+	 * Returns unresolved entries — symrefs are not followed.
+	 */
 	listRefs(repoId: string, prefix?: string): MaybeAsync<RawRefEntry[]>;
 
 	/**
-	 * Run ref operations atomically. The storage backend wraps the callback in
-	 * whatever isolation mechanism it supports (transaction, lock, etc.).
-	 * The shared adapter uses this for compare-and-swap with symref resolution.
+	 * Run ref operations atomically.
+	 *
+	 * The storage backend wraps the callback in whatever isolation
+	 * mechanism it supports (SQL transaction, in-memory lock, etc.).
+	 * The adapter uses this for compare-and-swap with symref resolution.
 	 */
 	atomicRefUpdate<T>(repoId: string, fn: (ops: RefOps) => MaybeAsync<T>): MaybeAsync<T>;
 }

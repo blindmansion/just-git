@@ -47,12 +47,21 @@ export type {
 export { composeGitHooks, isRejection } from "./hooks";
 export { MemoryFileSystem } from "./memory-fs";
 export type {
+	Commit,
+	DirectRef,
 	GitContext,
 	GitRepo,
+	Identity,
+	ObjectId,
 	ObjectStore,
+	ObjectType,
+	RawObject,
+	Ref,
 	RefEntry,
 	RefStore,
 	RemoteResolver,
+	SymbolicRef,
 } from "./lib/types";
+export type { PackObject } from "./lib/pack/packfile";
 export type { HttpAuth } from "./lib/transport/transport";
 export { findRepo } from "./lib/repo";

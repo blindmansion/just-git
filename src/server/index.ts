@@ -1,10 +1,7 @@
 // HTTP + SSH handler
 export { createServer, composeHooks } from "./handler.ts";
 
-// SSH helpers
-export { parseGitSshCommand } from "./ssh-session.ts";
-
-// Transport-agnostic operations
+// Transport-agnostic operations (advanced — for building custom transports)
 export {
 	advertiseRefsWithHooks,
 	applyReceivePack,
@@ -23,8 +20,9 @@ export type {
 	ReceivePackResult,
 } from "./operations.ts";
 
-// Transport-agnostic protocol primitives
+// Transport-agnostic protocol primitives (advanced)
 export { buildRefListPktLines } from "./protocol.ts";
+export type { PushCommand } from "./protocol.ts";
 
 // Types
 export type {
@@ -39,6 +37,7 @@ export type {
 	RefUpdate,
 	Rejection,
 	ServerHooks,
+	ServerPolicy,
 	Session,
 	SessionBuilder,
 	SshChannel,
@@ -46,22 +45,14 @@ export type {
 	UpdateEvent,
 } from "./types.ts";
 
-// Policy
-export type { ServerPolicy } from "./types.ts";
+// Re-exported lib types used in Storage and hook signatures
+export type { GitRepo, RawObject, Ref } from "../lib/types.ts";
 
 // Storage
 export type { CreateRepoOptions, Storage, RefOps, RawRefEntry, MaybeAsync } from "./storage.ts";
 export { MemoryStorage } from "./memory-storage.ts";
-export {
-	BunSqliteStorage,
-	type BunSqliteDatabase,
-	type BunSqliteStatement,
-} from "./bun-sqlite-storage.ts";
-export {
-	BetterSqlite3Storage,
-	type BetterSqlite3Database,
-	type BetterSqlite3Statement,
-} from "./better-sqlite3-storage.ts";
+export { BunSqliteStorage, type BunSqliteDatabase } from "./bun-sqlite-storage.ts";
+export { BetterSqlite3Storage, type BetterSqlite3Database } from "./better-sqlite3-storage.ts";
 export {
 	PgStorage,
 	wrapPgPool,

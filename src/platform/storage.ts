@@ -1,4 +1,4 @@
-import type { BunSqliteDatabase, BunSqliteStatement } from "../server/bun-sqlite-storage.ts";
+import type { BunSqliteDatabase } from "../server/bun-sqlite-storage.ts";
 import type {
 	CreatePullRequestOptions,
 	ListPullRequestsFilter,
@@ -41,23 +41,25 @@ CREATE TABLE IF NOT EXISTS platform_pull_requests (
 
 // ── Prepared statements ─────────────────────────────────────────────
 
-interface Statements {
-	repoInsert: BunSqliteStatement;
-	repoGet: BunSqliteStatement;
-	repoList: BunSqliteStatement;
-	repoDelete: BunSqliteStatement;
+type Stmt = ReturnType<BunSqliteDatabase["prepare"]>;
 
-	prInsert: BunSqliteStatement;
-	prGet: BunSqliteStatement;
-	prListAll: BunSqliteStatement;
-	prListByState: BunSqliteStatement;
-	prNextNumber: BunSqliteStatement;
-	prUpdate: BunSqliteStatement;
-	prSetState: BunSqliteStatement;
-	prSetMerged: BunSqliteStatement;
-	prUpdateHead: BunSqliteStatement;
-	prOpenByHeadRef: BunSqliteStatement;
-	prDeleteByRepo: BunSqliteStatement;
+interface Statements {
+	repoInsert: Stmt;
+	repoGet: Stmt;
+	repoList: Stmt;
+	repoDelete: Stmt;
+
+	prInsert: Stmt;
+	prGet: Stmt;
+	prListAll: Stmt;
+	prListByState: Stmt;
+	prNextNumber: Stmt;
+	prUpdate: Stmt;
+	prSetState: Stmt;
+	prSetMerged: Stmt;
+	prUpdateHead: Stmt;
+	prOpenByHeadRef: Stmt;
+	prDeleteByRepo: Stmt;
 }
 
 function prepareStatements(db: BunSqliteDatabase): Statements {

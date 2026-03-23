@@ -4,7 +4,7 @@ import type { Storage, RawRefEntry, RefOps } from "./storage.ts";
 // ── better-sqlite3 types ────────────────────────────────────────────
 
 /** Minimal prepared statement interface matching `better-sqlite3`. */
-export interface BetterSqlite3Statement {
+interface BetterSqlite3Statement {
 	run(...params: any[]): any;
 	get(...params: any[]): any;
 	all(...params: any[]): any[];
