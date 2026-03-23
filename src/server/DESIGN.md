@@ -53,13 +53,13 @@ The Smart HTTP protocol surface is small and well-specified. The three endpoints
 
 Features not implemented that generally don't matter for the target use case:
 
-| Feature                     | Matters for agents?                                   |
-| --------------------------- | ----------------------------------------------------- |
-| Protocol v2                 | No — v1 works, clients fall back                      |
-| Shallow clones (`--depth`)  | Rarely — agent repos are small                        |
-| Partial clones (`--filter`) | No                                                    |
-| SSH transport               | No — bearer token auth over HTTP is better for agents |
-| LFS                         | Unlikely for now                                      |
+| Feature                     | Matters for agents?              |
+| --------------------------- | -------------------------------- |
+| Protocol v2                 | No — v1 works, clients fall back |
+| Partial clones (`--filter`) | No                               |
+| LFS                         | Unlikely for now                 |
+
+Shallow clones (`--depth`) and SSH transport are both implemented. Shallow clone support includes `computeShallowBoundary`, depth/shallow/unshallow negotiation, and the `shallow` capability in upload-pack. SSH transport is handled via `server.handleSession`.
 
 ## Architecture
 

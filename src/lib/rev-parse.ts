@@ -238,6 +238,43 @@ async function peelToType(ctx: GitRepo, hash: ObjectId, target: string): Promise
 	return hash;
 }
 
+async function applySuffixes(
+	ctx: GitRepo,
+	startHash: ObjectId,
+	suffixes: RevSuffix[],
+): Promise<ObjectId | null> {
+	let hash: ObjectId | null = startHash;
+
+	const hasTildeOrCaret = suffixes.some((s) => s.type === "tilde" || s.type === "caret");
+	if (hasTildeOrCaret) {
+		hash = await peelToCommit(ctx, hash);
+	}
+
+	for (const suffix of suffixes) {
+		if (suffix.type === "peel") {
+			if (!hash) return null;
+			hash = await peelToType(ctx, hash, suffix.target);
+		} else if (suffix.type === "tilde") {
+			for (let i = 0; i < suffix.n; i++) {
+				if (!hash) return null;
+				const commit = await readCommit(ctx, hash);
+				if (commit.parents.length === 0) return null;
+				hash = commit.parents[0] ?? null;
+				if (!hash) return null;
+			}
+		} else {
+			if (suffix.n === 0) continue;
+			if (!hash) return null;
+			const commit = await readCommit(ctx, hash);
+			if (suffix.n > commit.parents.length) return null;
+			hash = commit.parents[suffix.n - 1] ?? null;
+			if (!hash) return null;
+		}
+	}
+
+	return hash;
+}
+
 /**
  * Resolve a revision string to an ObjectId.
  *
@@ -264,36 +301,25 @@ export async function resolveRevision(ctx: GitContext, rev: string): Promise<Obj
 	}
 	if (!hash) return null;
 
-	// Peel through tag objects to reach a commit before applying parent/ancestor suffixes
-	const hasTildeOrCaret = suffixes.some((s) => s.type === "tilde" || s.type === "caret");
-	if (hasTildeOrCaret) {
-		hash = await peelToCommit(ctx, hash);
-	}
+	return applySuffixes(ctx, hash, suffixes);
+}
 
-	for (const suffix of suffixes) {
-		if (suffix.type === "peel") {
-			if (!hash) return null;
-			hash = await peelToType(ctx, hash, suffix.target);
-		} else if (suffix.type === "tilde") {
-			for (let i = 0; i < suffix.n; i++) {
-				if (!hash) return null;
-				const commit = await readCommit(ctx, hash);
-				if (commit.parents.length === 0) return null;
-				hash = commit.parents[0] ?? null;
-				if (!hash) return null;
-			}
-		} else {
-			// caret: ^0 means the commit itself, ^N means Nth parent (1-indexed)
-			if (suffix.n === 0) continue;
-			if (!hash) return null;
-			const commit = await readCommit(ctx, hash);
-			if (suffix.n > commit.parents.length) return null;
-			hash = commit.parents[suffix.n - 1] ?? null;
-			if (!hash) return null;
-		}
-	}
+/**
+ * Resolve a revision string against a `GitRepo` (no filesystem needed).
+ *
+ * Same capabilities as {@link resolveRevision} except reflog syntax
+ * (`@{N}`) is not supported — reflog entries live on-disk and require
+ * a full `GitContext`.
+ */
+export async function resolveRevisionRepo(ctx: GitRepo, rev: string): Promise<ObjectId | null> {
+	const { base, reflogIndex, suffixes } = parseRevSuffixes(rev);
 
-	return hash;
+	if (reflogIndex !== undefined) return null;
+
+	const hash = await resolveBaseRef(ctx, base);
+	if (!hash) return null;
+
+	return applySuffixes(ctx, hash, suffixes);
 }
 
 /**

@@ -259,59 +259,79 @@ Re-exports `createGit`, `Git`, `GitOptions`, `GitCommandName`, `GitExtensions`, 
 
 **Event types:** `PreCommitEvent`, `CommitMsgEvent`, `MergeMsgEvent`, `PostCommitEvent`, `PreMergeCommitEvent`, `PostMergeEvent`, `PreCheckoutEvent`, `PostCheckoutEvent`, `PrePushEvent`, `PostPushEvent`, `PreFetchEvent`, `PostFetchEvent`, `PreCloneEvent`, `PostCloneEvent`, `PrePullEvent`, `PostPullEvent`, `PreRebaseEvent`, `PreResetEvent`, `PostResetEvent`, `PreCleanEvent`, `PostCleanEvent`, `PreRmEvent`, `PostRmEvent`, `PreCherryPickEvent`, `PostCherryPickEvent`, `PreRevertEvent`, `PostRevertEvent`, `PreStashEvent`, `PostStashEvent`, `RefUpdateEvent`, `RefDeleteEvent`, `ObjectWriteEvent`. All event payloads include `repo: GitRepo`.
 
+### `src/repo/` — Repo operations SDK (`just-git/repo`)
+
+Standalone helpers for working with `GitRepo` directly — no filesystem, index, or worktree needed. Useful inside server hooks and equally useful outside the server for direct repo inspection.
+
+- `diffCommits(repo, base, head, options?)` — structured line-level diffs between two commits. Returns `FileDiff[]` with hunks. Accepts commit hashes or rev-parse expressions (`main~1`, `HEAD^2`, tag names, short hashes). Options: `paths` (prefix filter), `contextLines` (default 3), `renames` (default true).
+- `walkCommitHistory(repo, startHash, opts?)` — walk commit graph yielding `CommitInfo`. Options: `exclude`, `firstParent`, `paths` (only commits touching these paths, with TREESAME simplification at merge points).
+- `diffTrees`, `flattenTree`, `getChangedFiles`, `getNewCommits` — tree-level operations.
+- `readCommit`, `readBlob`, `readBlobText`, `readFileAtCommit` — object reading.
+- `resolveRef`, `listBranches`, `listTags`, `isAncestor`, `findMergeBases`, `countAheadBehind` — ref operations.
+- `blame(repo, commitHash, path, opts?)` — line-by-line blame.
+- `grep(repo, commitHash, patterns, opts?)` — search file contents at a commit.
+- `createCommit`, `writeBlob`, `writeTree` — object creation.
+- `mergeTrees`, `mergeTreesFromTreeHashes` — tree-level three-way merge via merge-ort.
+- `extractTree`, `createWorktree`, `createSandboxWorktree` — materialize worktrees on a VFS.
+- `readonlyRepo`, `overlayRepo` — repo wrappers (read-only enforcement, copy-on-write).
+
+**Types:** `FileDiff`, `DiffHunk`, `CommitInfo`, `BlameEntry`, `GrepFileMatch`, `GrepMatch`, `GrepOptions`, `MergeConflict`, `MergeTreesResult`, `TreeEntryInput`, `CreateCommitOptions`, `CreateWorktreeOptions`, `ExtractTreeResult`, `WorktreeResult`.
+
+All helpers accept revision strings via `resolveRevisionRepo` (from `lib/rev-parse.ts`), which supports branch names, tag names, `HEAD`, short hashes, `~N`/`^N` suffixes, and chained expressions — everything except reflog syntax (`@{N}`).
+
 ### Lib modules
 
-| File                           | Purpose                                                                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `lib/bisect.ts`                | Bisect state management (`isBisectInProgress`, `readBisectState`, `cleanBisectState`) and binary search (`findBisectionCommit`) |
-| `lib/types.ts`                 | Core types: `ObjectId`, `Commit`, `Tree`, `Index`, `GitContext`, etc.                                                           |
-| `lib/sha1.ts`                  | SHA-1 hashing (platform-adaptive)                                                                                               |
-| `lib/object-db.ts`             | Object store: read/write/hash git objects                                                                                       |
-| `lib/objects/`                 | Parse/serialize by type (tree, commit, tag)                                                                                     |
-| `lib/refs.ts`                  | Reference management: read, resolve, update, delete, list                                                                       |
-| `lib/index.ts`                 | Staging area (index): read/write, add/remove entries                                                                            |
-| `lib/repo.ts`                  | Repository discovery (`findRepo`) and `initRepository`                                                                          |
-| `lib/config.ts`                | Git config (INI format): get/set/unset values                                                                                   |
-| `lib/identity.ts`              | Author/committer resolution from env vars and config                                                                            |
-| `lib/tree-ops.ts`              | `buildTreeFromIndex`, `flattenTree`, `diffTrees`                                                                                |
-| `lib/worktree.ts`              | Working tree: diff, checkout, stage, walk (with .gitignore and symlink support)                                                 |
-| `lib/symlink.ts`               | Symlink helpers: `lstatSafe`, `isSymlinkMode`, `readWorktreeContent`, `hashWorktreeEntry`                                       |
-| `lib/ignore.ts`                | Full .gitignore implementation: parse, match, hierarchical stacking                                                             |
-| `lib/wildmatch.ts`             | Port of git's `wildmatch.c` — glob pattern matching                                                                             |
-| `lib/pathspec.ts`              | Pathspec parsing/matching with magic prefixes                                                                                   |
-| `lib/diff-algorithm.ts`        | Myers diff + unified diff format                                                                                                |
-| `lib/diff3.ts`                 | Three-way content merge (Hunt-McIlroy LCS)                                                                                      |
-| `lib/combined-diff.ts`         | Combined diff formatting for merge commits                                                                                      |
-| `lib/merge.ts`                 | Merge base finding (`findAllMergeBases`) + fast-forward handling                                                                |
-| `lib/merge-ort.ts`             | Merge-ort strategy: tree-level three-way merge with rename detection                                                            |
-| `lib/unpack-trees.ts`          | Tree unpacking engine (checkout/merge/reset core), modeled after git's `unpack-trees.c`                                         |
-| `lib/commit-walk.ts`           | Commit graph traversal, ahead/behind counts, orphan detection                                                                   |
-| `lib/rev-parse.ts`             | Revision string resolution (`HEAD~2`, `main^{commit}`, short hashes)                                                            |
-| `lib/reflog.ts`                | Reflog read/write/append in standard git format                                                                                 |
-| `lib/stash.ts`                 | Stash operations: save, apply, drop, list, clear                                                                                |
-| `lib/rebase.ts`                | Rebase state persistence and todo list management                                                                               |
-| `lib/operation-state.ts`       | State files: `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `ORIG_HEAD`, `MERGE_MSG`                                                         |
-| `lib/checkout-utils.ts`        | Shared helpers for checkout/switch/restore commands                                                                             |
-| `lib/command-utils.ts`         | Shared command helpers: context requirements, formatting                                                                        |
-| `lib/commit-summary.ts`        | Diffstat and commit summary formatting                                                                                          |
-| `lib/status-format.ts`         | Long-form status output with staged/unmerged/untracked sections                                                                 |
-| `lib/log-format.ts`            | Log format string expansion (`--format`/`--pretty`)                                                                             |
-| `lib/rename-detection.ts`      | Content-similarity rename detection for tree diffs                                                                              |
-| `lib/patch-id.ts`              | Patch ID computation for rebase deduplication                                                                                   |
-| `lib/range-syntax.ts`          | `A..B` and `A...B` range syntax parsing                                                                                         |
-| `lib/date.ts`                  | Date parsing/formatting for `--since`/`--until` and log output                                                                  |
-| `lib/path.ts`                  | Pure path utilities (join, resolve, dirname, basename, relative)                                                                |
-| `lib/pack/packfile.ts`         | Git v2 packfile read/write with zlib compression                                                                                |
-| `lib/pack/pack-index.ts`       | Pack index v2 reader (`PackIndex`), writer (`writePackIndex`), builder (`buildPackIndex`)                                       |
-| `lib/pack/pack-reader.ts`      | Random-access pack reader (`PackReader`): reads objects from `.pack` + `.idx` pairs, resolves deltas                            |
-| `lib/pack/crc32.ts`            | CRC32 (ISO 3309) for pack index construction                                                                                    |
-| `lib/pack/zlib.ts`             | Zlib deflate/inflate abstraction                                                                                                |
-| `lib/transport/transport.ts`   | Transport layer: `LocalTransport` and `SmartHttpTransport`                                                                      |
-| `lib/transport/smart-http.ts`  | Git Smart HTTP Protocol v1 client                                                                                               |
-| `lib/transport/pkt-line.ts`    | pkt-line wire framing and side-band-64k demuxing                                                                                |
-| `lib/transport/object-walk.ts` | Object reachability enumeration for pack negotiation                                                                            |
-| `lib/transport/refspec.ts`     | Refspec parsing and ref mapping                                                                                                 |
-| `lib/transport/remote.ts`      | Remote name → transport resolution via git config                                                                               |
+| File                           | Purpose                                                                                                                                                               |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/bisect.ts`                | Bisect state management (`isBisectInProgress`, `readBisectState`, `cleanBisectState`) and binary search (`findBisectionCommit`)                                       |
+| `lib/types.ts`                 | Core types: `ObjectId`, `Commit`, `Tree`, `Index`, `GitContext`, etc.                                                                                                 |
+| `lib/sha1.ts`                  | SHA-1 hashing (platform-adaptive)                                                                                                                                     |
+| `lib/object-db.ts`             | Object store: read/write/hash git objects                                                                                                                             |
+| `lib/objects/`                 | Parse/serialize by type (tree, commit, tag)                                                                                                                           |
+| `lib/refs.ts`                  | Reference management: read, resolve, update, delete, list                                                                                                             |
+| `lib/index.ts`                 | Staging area (index): read/write, add/remove entries                                                                                                                  |
+| `lib/repo.ts`                  | Repository discovery (`findRepo`) and `initRepository`                                                                                                                |
+| `lib/config.ts`                | Git config (INI format): get/set/unset values                                                                                                                         |
+| `lib/identity.ts`              | Author/committer resolution from env vars and config                                                                                                                  |
+| `lib/tree-ops.ts`              | `buildTreeFromIndex`, `flattenTree`, `diffTrees`                                                                                                                      |
+| `lib/worktree.ts`              | Working tree: diff, checkout, stage, walk (with .gitignore and symlink support)                                                                                       |
+| `lib/symlink.ts`               | Symlink helpers: `lstatSafe`, `isSymlinkMode`, `readWorktreeContent`, `hashWorktreeEntry`                                                                             |
+| `lib/ignore.ts`                | Full .gitignore implementation: parse, match, hierarchical stacking                                                                                                   |
+| `lib/wildmatch.ts`             | Port of git's `wildmatch.c` — glob pattern matching                                                                                                                   |
+| `lib/pathspec.ts`              | Pathspec parsing/matching with magic prefixes                                                                                                                         |
+| `lib/diff-algorithm.ts`        | Myers diff + unified diff format                                                                                                                                      |
+| `lib/diff3.ts`                 | Three-way content merge (Hunt-McIlroy LCS)                                                                                                                            |
+| `lib/combined-diff.ts`         | Combined diff formatting for merge commits                                                                                                                            |
+| `lib/merge.ts`                 | Merge base finding (`findAllMergeBases`) + fast-forward handling                                                                                                      |
+| `lib/merge-ort.ts`             | Merge-ort strategy: tree-level three-way merge with rename detection                                                                                                  |
+| `lib/unpack-trees.ts`          | Tree unpacking engine (checkout/merge/reset core), modeled after git's `unpack-trees.c`                                                                               |
+| `lib/commit-walk.ts`           | Commit graph traversal, ahead/behind counts, orphan detection                                                                                                         |
+| `lib/rev-parse.ts`             | Revision string resolution (`HEAD~2`, `main^{commit}`, short hashes). `resolveRevision` (needs `GitContext`), `resolveRevisionRepo` (works with `GitRepo`, no reflog) |
+| `lib/reflog.ts`                | Reflog read/write/append in standard git format                                                                                                                       |
+| `lib/stash.ts`                 | Stash operations: save, apply, drop, list, clear                                                                                                                      |
+| `lib/rebase.ts`                | Rebase state persistence and todo list management                                                                                                                     |
+| `lib/operation-state.ts`       | State files: `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `ORIG_HEAD`, `MERGE_MSG`                                                                                               |
+| `lib/checkout-utils.ts`        | Shared helpers for checkout/switch/restore commands                                                                                                                   |
+| `lib/command-utils.ts`         | Shared command helpers: context requirements, formatting                                                                                                              |
+| `lib/commit-summary.ts`        | Diffstat and commit summary formatting                                                                                                                                |
+| `lib/status-format.ts`         | Long-form status output with staged/unmerged/untracked sections                                                                                                       |
+| `lib/log-format.ts`            | Log format string expansion (`--format`/`--pretty`)                                                                                                                   |
+| `lib/rename-detection.ts`      | Content-similarity rename detection for tree diffs                                                                                                                    |
+| `lib/patch-id.ts`              | Patch ID computation for rebase deduplication                                                                                                                         |
+| `lib/range-syntax.ts`          | `A..B` and `A...B` range syntax parsing                                                                                                                               |
+| `lib/date.ts`                  | Date parsing/formatting for `--since`/`--until` and log output                                                                                                        |
+| `lib/path.ts`                  | Pure path utilities (join, resolve, dirname, basename, relative)                                                                                                      |
+| `lib/pack/packfile.ts`         | Git v2 packfile read/write with zlib compression                                                                                                                      |
+| `lib/pack/pack-index.ts`       | Pack index v2 reader (`PackIndex`), writer (`writePackIndex`), builder (`buildPackIndex`)                                                                             |
+| `lib/pack/pack-reader.ts`      | Random-access pack reader (`PackReader`): reads objects from `.pack` + `.idx` pairs, resolves deltas                                                                  |
+| `lib/pack/crc32.ts`            | CRC32 (ISO 3309) for pack index construction                                                                                                                          |
+| `lib/pack/zlib.ts`             | Zlib deflate/inflate abstraction                                                                                                                                      |
+| `lib/transport/transport.ts`   | Transport layer: `LocalTransport` and `SmartHttpTransport`                                                                                                            |
+| `lib/transport/smart-http.ts`  | Git Smart HTTP Protocol v1 client                                                                                                                                     |
+| `lib/transport/pkt-line.ts`    | pkt-line wire framing and side-band-64k demuxing                                                                                                                      |
+| `lib/transport/object-walk.ts` | Object reachability enumeration for pack negotiation                                                                                                                  |
+| `lib/transport/refspec.ts`     | Refspec parsing and ref mapping                                                                                                                                       |
+| `lib/transport/remote.ts`      | Remote name → transport resolution via git config                                                                                                                     |
 
 ## Commands
 

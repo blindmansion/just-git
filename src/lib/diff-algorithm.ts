@@ -30,7 +30,7 @@ export interface Edit {
 	newLineNo: number;
 }
 
-interface Hunk {
+export interface Hunk {
 	oldStart: number; // 1-based
 	oldCount: number;
 	newStart: number; // 1-based
@@ -38,7 +38,7 @@ interface Hunk {
 	lines: HunkLine[];
 }
 
-interface HunkLine {
+export interface HunkLine {
 	type: "context" | "insert" | "delete";
 	content: string;
 }
@@ -1014,7 +1014,7 @@ const CONTEXT_LINES = 3;
 /**
  * Group an edit script into hunks with surrounding context lines.
  */
-function buildHunks(edits: Edit[], contextLines = CONTEXT_LINES): Hunk[] {
+export function buildHunks(edits: Edit[], contextLines = CONTEXT_LINES): Hunk[] {
 	contextLines = Math.max(0, contextLines);
 	if (edits.length === 0) return [];
 
