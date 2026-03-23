@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/helpers.ts";
-import { createGitServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/handler.ts";
 import { MemoryDriver } from "../../src/server/memory-storage.ts";
 import type { GitServerConfig } from "../../src/server/types.ts";
 import { defaultHttpSession, defaultSshSession } from "./util.ts";
@@ -14,7 +14,7 @@ const TEST_IDENTITY = {
 
 async function setupServerRepo(options?: Pick<GitServerConfig, "session">) {
 	const driver = new MemoryDriver();
-	const server = createGitServer({ storage: driver, ...options });
+	const server = createServer({ storage: driver, ...options });
 	const repo = await server.createRepo("test");
 	const blobHash = await writeBlob(repo, "hello");
 	const treeHash = await writeTree(repo, [{ name: "README.md", hash: blobHash }]);
@@ -31,7 +31,7 @@ async function setupServerRepo(options?: Pick<GitServerConfig, "session">) {
 
 describe("resolveRepo and session auth", () => {
 	test("returns 404 when resolveRepo returns null", async () => {
-		const server = createGitServer({
+		const server = createServer({
 			storage: new MemoryDriver(),
 			resolve: () => null,
 		});
@@ -43,7 +43,7 @@ describe("resolveRepo and session auth", () => {
 	});
 
 	test("session builder returns custom Response for auth failure", async () => {
-		const server = createGitServer({
+		const server = createServer({
 			storage: new MemoryDriver(),
 			resolve: () => null,
 			session: {
@@ -69,7 +69,7 @@ describe("resolveRepo and session auth", () => {
 	});
 
 	test("session builder rejects → 403 for upload-pack", async () => {
-		const server = createGitServer({
+		const server = createServer({
 			storage: new MemoryDriver(),
 			resolve: () => null,
 			session: {
@@ -88,7 +88,7 @@ describe("resolveRepo and session auth", () => {
 	});
 
 	test("session builder rejects → 403 for receive-pack", async () => {
-		const server = createGitServer({
+		const server = createServer({
 			storage: new MemoryDriver(),
 			resolve: () => null,
 			session: {

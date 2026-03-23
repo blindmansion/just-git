@@ -6,7 +6,7 @@ import type { StorageDriver, CreateRepoOptions } from "./storage.ts";
 
 /**
  * Default session type, produced by the built-in session builder when
- * no custom `session` config is provided to `createGitServer`.
+ * no custom `session` config is provided to `createServer`.
  *
  * HTTP requests produce `{ transport: "http", request }`.
  * SSH sessions produce `{ transport: "ssh", username }`.
@@ -27,7 +27,7 @@ export interface Session {
  * so hooks receive the custom type without explicit generic annotations.
  *
  * ```ts
- * const server = createGitServer({
+ * const server = createServer({
  *   storage: new BunSqliteDriver(db),
  *   session: {
  *     http: (req) => ({

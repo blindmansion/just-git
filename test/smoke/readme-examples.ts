@@ -8,7 +8,7 @@
 import { Bash, InMemoryFs } from "just-bash";
 import { Database } from "bun:sqlite";
 import { createGit, MemoryFileSystem, composeGitHooks, findRepo } from "../../src";
-import { createGitServer, BunSqliteDriver } from "../../src/server";
+import { createServer, BunSqliteDriver } from "../../src/server";
 import {
 	readFileAtCommit,
 	getChangedFiles,
@@ -83,7 +83,7 @@ import type { GitHooks } from "../../src";
 {
 	const changedFileCounts: number[] = [];
 
-	const server = createGitServer({
+	const server = createServer({
 		storage: new BunSqliteDriver(new Database(":memory:")),
 		policy: { protectedBranches: ["main"] },
 		hooks: {
@@ -456,7 +456,7 @@ import type { GitHooks } from "../../src";
 // ── REPO: Storage-backed GitRepo ────────────────────────────────────
 
 {
-	const server = createGitServer({
+	const server = createServer({
 		storage: new BunSqliteDriver(new Database(":memory:")),
 	});
 	await server.createRepo("my-repo");
@@ -469,7 +469,7 @@ import type { GitHooks } from "../../src";
 // ── REPO: createWorktree (hybrid pattern) ───────────────────────────
 
 {
-	const server = createGitServer({
+	const server = createServer({
 		storage: new BunSqliteDriver(new Database(":memory:")),
 	});
 
@@ -516,7 +516,7 @@ import type { GitHooks } from "../../src";
 // ── REPO: readonlyRepo ──────────────────────────────────────────────
 
 {
-	const server = createGitServer({
+	const server = createServer({
 		storage: new BunSqliteDriver(new Database(":memory:")),
 	});
 	const repo = await server.createRepo("my-repo");
@@ -571,7 +571,7 @@ import type { GitHooks } from "../../src";
 	const changedFilePaths: string[] = [];
 	const commitMessages: string[] = [];
 
-	const server = createGitServer({
+	const server = createServer({
 		storage: new BunSqliteDriver(new Database(":memory:")),
 		hooks: {
 			postReceive: async ({ repo, updates }) => {
@@ -625,7 +625,7 @@ import type { GitHooks } from "../../src";
 // ── SERVER: Session builder (HTTP auth gate) ────────────────────────
 
 {
-	const server = createGitServer({
+	const server = createServer({
 		storage: new BunSqliteDriver(new Database(":memory:")),
 		session: {
 			http: (request) => {
@@ -677,7 +677,7 @@ import type { GitHooks } from "../../src";
 // ── SERVER: Custom session type (uniform auth across HTTP + SSH) ─────
 
 {
-	const server = createGitServer({
+	const server = createServer({
 		storage: new BunSqliteDriver(new Database(":memory:")),
 		session: {
 			http: (req) => ({ authorized: req.headers.has("Authorization") }),
@@ -725,7 +725,7 @@ import type { GitHooks } from "../../src";
 // ── SERVER: advertiseRefs rejection (per-repo read gate) ────────────
 
 {
-	const server = createGitServer({
+	const server = createServer({
 		storage: new BunSqliteDriver(new Database(":memory:")),
 		hooks: {
 			advertiseRefs: ({ repoId }) => {
@@ -763,7 +763,7 @@ import type { GitHooks } from "../../src";
 {
 	const pushLog: string[] = [];
 
-	const server = createGitServer({
+	const server = createServer({
 		storage: new BunSqliteDriver(new Database(":memory:")),
 		policy: { protectedBranches: ["main"] },
 		hooks: {

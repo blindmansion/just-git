@@ -13,7 +13,7 @@ import {
 	parsePktLineStream,
 	pktLineText,
 } from "../../src/lib/transport/pkt-line.ts";
-import { createGitServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/handler.ts";
 import { MemoryDriver } from "../../src/server/memory-storage.ts";
 import { createStorage } from "../../src/server/storage.ts";
 import { writeBlob, writeTree, createCommit } from "../../src/repo/helpers.ts";
@@ -301,7 +301,7 @@ describe("handler HTTP conformance", () => {
 			message: "init\n",
 		});
 		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commit });
-		const server = createGitServer({ storage: driver });
+		const server = createServer({ storage: driver });
 		serverFetch = server.fetch;
 	};
 
@@ -427,7 +427,7 @@ describe("handler HTTP conformance", () => {
 			message: "init\n",
 		});
 		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commit });
-		const server = createGitServer({ storage: driver, basePath: "/git" });
+		const server = createServer({ storage: driver, basePath: "/git" });
 
 		// Without basePath prefix → 404
 		const res404 = await server.fetch(

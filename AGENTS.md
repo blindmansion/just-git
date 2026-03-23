@@ -187,7 +187,7 @@ Key behaviors:
 
 ### Storage backends (`server/`)
 
-`createGitServer` accepts a `storage: StorageDriver` config property and builds the git-aware `Storage` adapter internally. Users only interact with `StorageDriver` implementations — the `Storage` interface is an internal detail. `createRepo`, `repo`, and `deleteRepo` are exposed on the returned `GitServer` object. All backends partition multiple repos by ID in a single store.
+`createServer` accepts a `storage: StorageDriver` config property and builds the git-aware `Storage` adapter internally. Users only interact with `StorageDriver` implementations — the `Storage` interface is an internal detail. `createRepo`, `repo`, and `deleteRepo` are exposed on the returned `GitServer` object. All backends partition multiple repos by ID in a single store.
 
 `StorageDriver` (thin raw key-value CRUD) is the user-facing abstraction. Drivers implement raw object/ref I/O and an `atomicRefUpdate` primitive; the internal adapter handles object hashing, pack ingestion, symref resolution, and CAS semantics. All `StorageDriver` methods use `MaybeAsync<T>` (`T | Promise<T>`) return types so sync (SQLite) and async (Pg) drivers both work.
 
@@ -198,9 +198,9 @@ Key behaviors:
 | `BetterSqlite3Driver` | `server/better-sqlite3-storage.ts` | `new BetterSqlite3Driver(db)` | `BetterSqlite3Database` (native `better-sqlite3`) |
 | `PgDriver`            | `server/pg-storage.ts`             | `await PgDriver.create(db)`   | `PgDatabase` (use `wrapPgPool(pool)` for `pg`)    |
 
-**Unified server (`createGitServer`):**
+**Unified server (`createServer`):**
 
-`createGitServer<S = Session>(config)` returns a `GitServer` with both `fetch` (HTTP) and `handleSession` (SSH) methods, plus repo management (`createRepo`, `repo`, `deleteRepo`). One server object handles both protocols with shared config:
+`createServer<S = Session>(config)` returns a `GitServer` with both `fetch` (HTTP) and `handleSession` (SSH) methods, plus repo management (`createRepo`, `repo`, `deleteRepo`). One server object handles both protocols with shared config:
 
 - `storage: StorageDriver` — the storage driver for git object and ref persistence. `createStorage()` is called internally.
 - `resolve?: (path: string) => string | null` — maps request path to repo ID. Default: identity (URL path = repo ID).
@@ -216,7 +216,7 @@ Key behaviors:
 
 SSH library wiring lives in userland — the core package remains zero-dependency. The `SshChannel` interface wraps any SSH library's streams into web-standard `ReadableStream`/`WritableStream`.
 
-**Session builder:** `createGitServer` accepts an optional `session` config with two builder functions — one for HTTP (`Request → S | Response`), one for SSH (`SshSessionInfo → S`). TypeScript infers `S` from the builder return types, and all hooks (`ServerHooks<S>`) receive the inferred type. When `session` is omitted, `S` defaults to the built-in `Session` type (which carries `transport`, optional `username`, optional `request`). The HTTP builder can return a `Response` to short-circuit the request (e.g. 401 with `WWW-Authenticate` header) — this is the primary mechanism for HTTP auth. SSH auth is handled at the transport layer (e.g. ssh2's `authentication` event) before the session builder runs, so the SSH builder only enriches the session. `SshSessionInfo` has an optional `metadata?: Record<string, unknown>` bag for threading SSH-layer details (key fingerprint, client IP, roles, etc.) into the session builder.
+**Session builder:** `createServer` accepts an optional `session` config with two builder functions — one for HTTP (`Request → S | Response`), one for SSH (`SshSessionInfo → S`). TypeScript infers `S` from the builder return types, and all hooks (`ServerHooks<S>`) receive the inferred type. When `session` is omitted, `S` defaults to the built-in `Session` type (which carries `transport`, optional `username`, optional `request`). The HTTP builder can return a `Response` to short-circuit the request (e.g. 401 with `WWW-Authenticate` header) — this is the primary mechanism for HTTP auth. SSH auth is handled at the transport layer (e.g. ssh2's `authentication` event) before the session builder runs, so the SSH builder only enriches the session. `SshSessionInfo` has an optional `metadata?: Record<string, unknown>` bag for threading SSH-layer details (key fingerprint, client IP, roles, etc.) into the session builder.
 
 **Auth:** HTTP auth is handled by the session builder returning a `Response` on failure. Per-repo read auth uses `advertiseRefs` hook which can return a `Rejection` to deny access entirely (HTTP returns 403, SSH returns exit 128 with stderr message). Per-repo push auth uses `preReceive` hook.
 

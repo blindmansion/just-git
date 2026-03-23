@@ -8,7 +8,7 @@
 import { MemoryFileSystem } from "../src/memory-fs.ts";
 import { createGit } from "../src/git.ts";
 import { MemoryDriver } from "../src/server/memory-storage.ts";
-import { createGitServer } from "../src/server/handler.ts";
+import { createServer } from "../src/server/handler.ts";
 import { readFileAtCommit, grep, resolveRef } from "../src/repo";
 import { createSandboxWorktree } from "../src/repo/helpers.ts";
 
@@ -29,7 +29,7 @@ function assert(condition: boolean, msg: string) {
 
 const ciLog: string[] = [];
 
-const server = createGitServer({
+const server = createServer({
 	storage: new MemoryDriver(),
 	autoCreate: true,
 	hooks: {

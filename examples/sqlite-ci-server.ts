@@ -14,7 +14,7 @@
 import { Database } from "bun:sqlite";
 import { Bash } from "just-bash";
 import { createGit, type GitRepo } from "../src";
-import { createGitServer, BunSqliteDriver } from "../src/server";
+import { createServer, BunSqliteDriver } from "../src/server";
 import { readFileAtCommit, createSandboxWorktree } from "../src/repo";
 
 const DB_PATH = process.env.DB_PATH ?? ":memory:";
@@ -72,7 +72,7 @@ async function runCIScript(
 	};
 }
 
-const server = createGitServer({
+const server = createServer({
 	storage: new BunSqliteDriver(db),
 	autoCreate: true,
 

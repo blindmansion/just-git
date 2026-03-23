@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/helpers.ts";
-import { createGitServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/handler.ts";
 import { MemoryDriver } from "../../src/server/memory-storage.ts";
 import { createStorage } from "../../src/server/storage.ts";
 import {
@@ -35,24 +35,24 @@ async function setupRepo() {
 	return { repo, driver };
 }
 
-describe("createGitServer config validation", () => {
+describe("createServer config validation", () => {
 	test("missing storage throws descriptive error", () => {
-		expect(() => createGitServer({ resolve: async () => "repo" } as any)).toThrow(
+		expect(() => createServer({ resolve: async () => "repo" } as any)).toThrow(
 			"config.storage is required",
 		);
 	});
 
 	test("passing empty config throws descriptive error", () => {
-		expect(() => createGitServer({} as any)).toThrow("config.storage is required");
+		expect(() => createServer({} as any)).toThrow("config.storage is required");
 	});
 
 	test("passing null config throws descriptive error", () => {
-		expect(() => createGitServer(null as any)).toThrow("config.storage is required");
+		expect(() => createServer(null as any)).toThrow("config.storage is required");
 	});
 });
 
 describe("resolve returns null", () => {
-	const server = createGitServer({ storage: new MemoryDriver(), resolve: () => null });
+	const server = createServer({ storage: new MemoryDriver(), resolve: () => null });
 
 	test("info/refs returns 404", async () => {
 		const res = await server.fetch(
@@ -83,7 +83,7 @@ describe("resolve returns null", () => {
 });
 
 describe("resolve throws", () => {
-	const server = createGitServer({
+	const server = createServer({
 		storage: new MemoryDriver(),
 		resolve: async () => {
 			throw new Error("database connection lost");
@@ -122,7 +122,7 @@ describe("resolve throws", () => {
 describe("malformed upload-pack body", () => {
 	test("garbage bytes return 500", async () => {
 		const { driver } = await setupRepo();
-		const server = createGitServer({
+		const server = createServer({
 			storage: driver,
 			onError: false,
 		});
@@ -139,7 +139,7 @@ describe("malformed upload-pack body", () => {
 
 	test("empty body (no wants) returns 200 with valid response", async () => {
 		const { driver } = await setupRepo();
-		const server = createGitServer({ storage: driver });
+		const server = createServer({ storage: driver });
 
 		const emptyBody = concatPktLines(flushPkt(), encodePktLine("done\n"));
 		const res = await server.fetch(
@@ -156,7 +156,7 @@ describe("malformed upload-pack body", () => {
 describe("malformed receive-pack body", () => {
 	test("garbage bytes return 400", async () => {
 		const { driver } = await setupRepo();
-		const server = createGitServer({ storage: driver });
+		const server = createServer({ storage: driver });
 
 		const garbage = new Uint8Array([0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04]);
 		const res = await server.fetch(
@@ -170,7 +170,7 @@ describe("malformed receive-pack body", () => {
 
 	test("empty body returns 400", async () => {
 		const { driver } = await setupRepo();
-		const server = createGitServer({ storage: driver });
+		const server = createServer({ storage: driver });
 
 		const res = await server.fetch(
 			new Request("http://localhost/repo/git-receive-pack", {
@@ -183,7 +183,7 @@ describe("malformed receive-pack body", () => {
 
 	test("truncated pkt-line returns 400", async () => {
 		const { driver } = await setupRepo();
-		const server = createGitServer({ storage: driver });
+		const server = createServer({ storage: driver });
 
 		const truncated = new TextEncoder().encode("0032");
 		const res = await server.fetch(
@@ -197,7 +197,7 @@ describe("malformed receive-pack body", () => {
 
 	test("flush-only body (no commands) returns 200", async () => {
 		const { driver } = await setupRepo();
-		const server = createGitServer({ storage: driver });
+		const server = createServer({ storage: driver });
 
 		const res = await server.fetch(
 			new Request("http://localhost/repo/git-receive-pack", {
@@ -227,7 +227,7 @@ describe("push with bad pack data", () => {
 		const badPack = new Uint8Array([0xba, 0xad, 0xf0, 0x0d]);
 		const body = concatPktLines(firstLine, flushPkt(), badPack);
 
-		const server = createGitServer({ storage: driver });
+		const server = createServer({ storage: driver });
 		const res = await server.fetch(
 			new Request("http://localhost/repo/git-receive-pack", {
 				method: "POST",
@@ -257,7 +257,7 @@ describe("delete non-existent ref", () => {
 
 		const body = concatPktLines(firstLine, flushPkt());
 
-		const server = createGitServer({ storage: driver });
+		const server = createServer({ storage: driver });
 		const res = await server.fetch(
 			new Request("http://localhost/repo/git-receive-pack", {
 				method: "POST",
@@ -308,7 +308,7 @@ describe("push with invalid ref names", () => {
 
 			const body = concatPktLines(firstLine, flushPkt());
 
-			const server = createGitServer({ storage: driver });
+			const server = createServer({ storage: driver });
 			const res = await server.fetch(
 				new Request("http://localhost/repo/git-receive-pack", {
 					method: "POST",
@@ -346,7 +346,7 @@ describe("push with invalid ref names", () => {
 		const firstLine = encodePktLine(payload);
 		const body = concatPktLines(firstLine, flushPkt());
 
-		const server = createGitServer({ storage: driver });
+		const server = createServer({ storage: driver });
 		const res = await server.fetch(
 			new Request("http://localhost/repo/git-receive-pack", {
 				method: "POST",
@@ -376,7 +376,7 @@ describe("onError callback", () => {
 		console.error = (...args: unknown[]) => calls.push(args);
 
 		try {
-			const server = createGitServer({
+			const server = createServer({
 				storage: new MemoryDriver(),
 				resolve: async () => {
 					throw new Error("db connection lost");
@@ -398,7 +398,7 @@ describe("onError callback", () => {
 
 	test("custom onError receives error and session", async () => {
 		let captured: { err: unknown; session: unknown } | null = null;
-		const server = createGitServer({
+		const server = createServer({
 			storage: new MemoryDriver(),
 			resolve: async () => {
 				throw new Error("custom error");
@@ -425,7 +425,7 @@ describe("onError callback", () => {
 		console.error = (...args: unknown[]) => calls.push(args);
 
 		try {
-			const server = createGitServer({
+			const server = createServer({
 				storage: new MemoryDriver(),
 				resolve: async () => {
 					throw new Error("should not appear");
@@ -451,7 +451,7 @@ describe("CAS race on ref update", () => {
 		const mainHash = mainRef?.type === "direct" ? mainRef.hash : "0".repeat(40);
 		const newHash = "b".repeat(40);
 
-		const server = createGitServer({
+		const server = createServer({
 			storage: driver,
 			hooks: {
 				preReceive: async () => {

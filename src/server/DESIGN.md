@@ -126,7 +126,7 @@ Declarative push rules on `GitServerConfig.policy`: branch protection, force-pus
 
 **Storage** (`storage.ts`, `bun-sqlite-storage.ts`, `better-sqlite3-storage.ts`, `memory-storage.ts`, `pg-storage.ts`)
 
-Two-layer architecture: `StorageDriver` implementations (`BunSqliteDriver`, `BetterSqlite3Driver`, `PgDriver`, `MemoryDriver`) provide raw key-value CRUD. `createStorage(driver)` is called internally by `createGitServer` to wrap any driver with shared git-aware logic (object hashing, pack ingestion, symref resolution, CAS). Multiple repos partitioned by ID in a single store.
+Two-layer architecture: `StorageDriver` implementations (`BunSqliteDriver`, `BetterSqlite3Driver`, `PgDriver`, `MemoryDriver`) provide raw key-value CRUD. `createStorage(driver)` is called internally by `createServer` to wrap any driver with shared git-aware logic (object hashing, pack ingestion, symref resolution, CAS). Multiple repos partitioned by ID in a single store.
 
 Repos require explicit creation via `server.createRepo(id)`, or set `autoCreate: true` in the server config for automatic creation on first access. `server.repo(id)` returns `null` for unregistered repos — unknown paths get 404 responses.
 
@@ -147,13 +147,13 @@ This split is enforced at the type level — lib functions that don't need files
 
 ## API
 
-### `createGitServer`
+### `createServer`
 
 ```typescript
-import { createGitServer, BunSqliteDriver } from "just-git/server";
+import { createServer, BunSqliteDriver } from "just-git/server";
 import { Database } from "bun:sqlite";
 
-const server = createGitServer({
+const server = createServer({
   storage: new BunSqliteDriver(new Database("repos.sqlite")),
   autoCreate: true,
   hooks: {
@@ -273,10 +273,10 @@ const branches = await listBranches(repo);
 ### Policy + hooks
 
 ```typescript
-import { createGitServer, BunSqliteDriver } from "just-git/server";
+import { createServer, BunSqliteDriver } from "just-git/server";
 import { Database } from "bun:sqlite";
 
-const server = createGitServer({
+const server = createServer({
   storage: new BunSqliteDriver(new Database("repos.sqlite")),
   autoCreate: true,
   policy: {

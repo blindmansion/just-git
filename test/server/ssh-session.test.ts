@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { Server, type ServerChannel } from "ssh2";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/helpers.ts";
-import { createGitServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/handler.ts";
 import { MemoryDriver } from "../../src/server/memory-storage.ts";
 import { parseGitSshCommand } from "../../src/server/ssh-session.ts";
 import type { GitServer, SshChannel } from "../../src/server/types.ts";
@@ -81,7 +81,7 @@ describe("SSH session handler", () => {
 
 	beforeAll(async () => {
 		driver = new MemoryDriver();
-		server = createGitServer({ storage: driver });
+		server = createServer({ storage: driver });
 		const repo = await server.createRepo("test-repo");
 
 		const readmeBlob = await writeBlob(repo, "# SSH Test");
@@ -139,7 +139,7 @@ describe("SSH session handler", () => {
 	});
 
 	test("handleSession processes upload-pack", async () => {
-		const testServer = createGitServer({ storage: driver });
+		const testServer = createServer({ storage: driver });
 
 		const repo = (await testServer.repo("test-repo"))!;
 		const { refs: allRefs } = await import("../../src/server/operations.ts").then((m) =>
@@ -181,7 +181,7 @@ describe("SSH session handler", () => {
 	});
 
 	test("handleSession rejects unknown repo", async () => {
-		const testServer = createGitServer({
+		const testServer = createServer({
 			storage: new MemoryDriver(),
 			resolve: () => null,
 			onError: false,
@@ -207,7 +207,7 @@ describe("SSH session handler", () => {
 	});
 
 	test("handleSession rejects unknown command", async () => {
-		const testServer = createGitServer({
+		const testServer = createServer({
 			storage: driver,
 			onError: false,
 		});
@@ -232,7 +232,7 @@ describe("SSH session handler", () => {
 	});
 
 	test("handleSession rejects when advertiseRefs returns rejection", async () => {
-		const testServer = createGitServer({
+		const testServer = createServer({
 			storage: driver,
 			hooks: {
 				advertiseRefs: async () => {
@@ -262,7 +262,7 @@ describe("SSH session handler", () => {
 	});
 
 	test("handleSession handles empty upload-pack (ls-remote)", async () => {
-		const testServer = createGitServer({ storage: driver });
+		const testServer = createServer({ storage: driver });
 
 		const responseChunks: Uint8Array[] = [];
 		const channel: SshChannel = {

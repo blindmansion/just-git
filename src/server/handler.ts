@@ -7,7 +7,7 @@
  * works with any SSH library (ssh2, etc.) through a thin adapter.
  *
  * ```ts
- * const server = createGitServer({
+ * const server = createServer({
  *   storage: new MemoryDriver(),
  *   autoCreate: true,
  * });
@@ -56,7 +56,7 @@ const defaultSessionBuilder: SessionBuilder<Session> = {
  * Create a unified Git server that handles both HTTP and SSH.
  *
  * ```ts
- * const server = createGitServer({
+ * const server = createServer({
  *   storage: new MemoryDriver(),
  *   autoCreate: true,
  * });
@@ -69,11 +69,11 @@ const defaultSessionBuilder: SessionBuilder<Session> = {
  * server.handleSession(command, channel, { username });
  * ```
  */
-export function createGitServer<S = Session>(config: GitServerConfig<S>): GitServer {
+export function createServer<S = Session>(config: GitServerConfig<S>): GitServer {
 	if (!config || !config.storage) {
 		throw new TypeError(
-			"createGitServer: config.storage is required. " +
-				"Example: createGitServer({ storage: new MemoryDriver() })",
+			"createServer: config.storage is required. " +
+				"Example: createServer({ storage: new MemoryDriver() })",
 		);
 	}
 

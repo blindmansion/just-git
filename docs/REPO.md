@@ -31,13 +31,13 @@ import { findRepo } from "just-git";
 const ctx = await findRepo(fs, "/repo"); // GitContext | null
 ```
 
-**From a server**: `createGitServer` returns a server with `repo(id)` to get a `GitRepo` backed by the storage driver:
+**From a server**: `createServer` returns a server with `repo(id)` to get a `GitRepo` backed by the storage driver:
 
 ```ts
-import { createGitServer, BunSqliteDriver } from "just-git/server";
+import { createServer, BunSqliteDriver } from "just-git/server";
 import { Database } from "bun:sqlite";
 
-const server = createGitServer({
+const server = createServer({
   storage: new BunSqliteDriver(new Database("repos.sqlite")),
 });
 await server.createRepo("my-repo");
@@ -100,7 +100,7 @@ const git = createGit({
 });
 
 // Server-side hook
-const server = createGitServer({
+const server = createServer({
   storage: new BunSqliteDriver(db),
   hooks: {
     postReceive: async ({ repo, updates }) => {

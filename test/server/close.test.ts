@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { createGitServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/handler.ts";
 import { MemoryDriver } from "../../src/server/memory-storage.ts";
 import type { SshChannel } from "../../src/server/types.ts";
 
 function makeServer() {
-	const server = createGitServer({ storage: new MemoryDriver() });
+	const server = createServer({ storage: new MemoryDriver() });
 	return server;
 }
 
@@ -99,7 +99,7 @@ describe("GitServer.close", () => {
 			releaseHook = r;
 		});
 
-		const server = createGitServer({
+		const server = createServer({
 			storage: new MemoryDriver(),
 			hooks: {
 				advertiseRefs: async () => {

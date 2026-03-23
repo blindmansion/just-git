@@ -5,16 +5,16 @@ Embeddable Git server with Smart HTTP and SSH support. Any standard git client (
 HTTP uses web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare Workers, Deno, or any fetch-compatible runtime. SSH uses web-standard `ReadableStream`/`WritableStream` — works with any SSH library through a thin adapter. For Node.js's `http.createServer`, use `server.nodeHandler`.
 
 ```ts
-import { createGitServer } from "just-git/server";
+import { createServer } from "just-git/server";
 ```
 
 ## Quick start
 
 ```ts
-import { createGitServer, BunSqliteDriver } from "just-git/server";
+import { createServer, BunSqliteDriver } from "just-git/server";
 import { Database } from "bun:sqlite";
 
-const server = createGitServer({
+const server = createServer({
   storage: new BunSqliteDriver(new Database("repos.sqlite")),
 });
 
@@ -26,10 +26,10 @@ For Node.js, use `server.nodeHandler`:
 
 ```ts
 import http from "node:http";
-import { createGitServer, BetterSqlite3Driver } from "just-git/server";
+import { createServer, BetterSqlite3Driver } from "just-git/server";
 import Database from "better-sqlite3";
 
-const server = createGitServer({
+const server = createServer({
   storage: new BetterSqlite3Driver(new Database("repos.sqlite")),
 });
 
@@ -56,7 +56,7 @@ The server manages repos through three methods:
 By default, requests to unknown repos return 404 (HTTP) or exit 128 (SSH). Set `autoCreate` to create repos on first access (e.g. for a push-to-create workflow):
 
 ```ts
-const server = createGitServer({
+const server = createServer({
   storage: new BunSqliteDriver(new Database("repos.sqlite")),
   autoCreate: true, // or { defaultBranch: "main" }
 });
@@ -67,7 +67,7 @@ The optional `resolve` callback maps a request path to a repo ID. The default is
 A request 404s if `resolve` returns `null` (bad path) or if the resolved ID doesn't match an existing repo (and `autoCreate` is off). Both cases produce the same response.
 
 ```ts
-const server = createGitServer({
+const server = createServer({
   storage: new BunSqliteDriver(db),
   resolve: (path) => {
     if (!path.startsWith("repos/")) return null; // 404
@@ -83,7 +83,7 @@ const server = createGitServer({
 The optional `session` config builds a typed session object from each request. The session is available in all hooks. For HTTP, returning a `Response` rejects the request (e.g. 401). For SSH, auth is handled at the transport layer before the session builder runs.
 
 ```ts
-const server = createGitServer({
+const server = createServer({
   storage: new BunSqliteDriver(db),
   session: {
     http: (request) => {
@@ -113,7 +113,7 @@ When `session` is omitted, the server uses a default `Session` type with `transp
 Anyone can clone, only authorized users can push:
 
 ```ts
-const server = createGitServer({
+const server = createServer({
   storage: new BunSqliteDriver(db),
   hooks: {
     preReceive: ({ session }) => {
@@ -127,7 +127,7 @@ const server = createGitServer({
 With a custom session type, auth works uniformly across HTTP and SSH:
 
 ```ts
-const server = createGitServer({
+const server = createServer({
   storage: new BunSqliteDriver(db),
   session: {
     http: (req) => ({ authorized: req.headers.has("Authorization") }),
@@ -147,10 +147,10 @@ const server = createGitServer({
 
 ```ts
 import { Server } from "ssh2";
-import { createGitServer, BunSqliteDriver, type SshChannel } from "just-git/server";
+import { createServer, BunSqliteDriver, type SshChannel } from "just-git/server";
 import { Database } from "bun:sqlite";
 
-const server = createGitServer({
+const server = createServer({
   storage: new BunSqliteDriver(new Database("repos.sqlite")),
 });
 await server.createRepo("my-repo");
@@ -196,7 +196,7 @@ new Server({ hostKeys: [hostKey] }, (client) => {
 Declarative push rules that run before hooks. These are git-level constraints that don't depend on the session — for auth logic, use [hooks](#hooks).
 
 ```ts
-const server = createGitServer({
+const server = createServer({
   storage: new BunSqliteDriver(db),
   policy: {
     protectedBranches: ["main", "production"],
@@ -221,7 +221,7 @@ Policy rules are checked first. If a policy check rejects, user hooks don't run.
 Server hooks fire during push and ref advertisement. All are optional.
 
 ```ts
-const server = createGitServer({
+const server = createServer({
   storage: new BunSqliteDriver(db),
   hooks: {
     preReceive: async ({ repo, updates, session }) => {
@@ -268,9 +268,9 @@ Combine multiple hook sets with `composeHooks()`. Pre-hooks chain in order and s
 All composed hook sets must share the same session type `S`. For reusable hooks that don't inspect the session, use `ServerHooks<unknown>` — it composes with any concrete session type thanks to contravariance.
 
 ```ts
-import { createGitServer, composeHooks } from "just-git/server";
+import { createServer, composeHooks } from "just-git/server";
 
-const server = createGitServer({
+const server = createServer({
   storage: new BunSqliteDriver(db),
   hooks: composeHooks(auditHooks, ciTriggerHooks),
 });
@@ -283,9 +283,9 @@ Pass a `StorageDriver` to the server via `storage`. Multiple repos are partition
 ### `MemoryDriver`
 
 ```ts
-import { createGitServer, MemoryDriver } from "just-git/server";
+import { createServer, MemoryDriver } from "just-git/server";
 
-const server = createGitServer({ storage: new MemoryDriver() });
+const server = createServer({ storage: new MemoryDriver() });
 await server.createRepo("my-repo");
 ```
 
@@ -294,10 +294,10 @@ await server.createRepo("my-repo");
 For Bun. Takes a `bun:sqlite` `Database` directly.
 
 ```ts
-import { createGitServer, BunSqliteDriver } from "just-git/server";
+import { createServer, BunSqliteDriver } from "just-git/server";
 import { Database } from "bun:sqlite";
 
-const server = createGitServer({
+const server = createServer({
   storage: new BunSqliteDriver(new Database("repos.sqlite")),
 });
 await server.createRepo("my-repo");
@@ -308,10 +308,10 @@ await server.createRepo("my-repo");
 For Node.js. Takes a `better-sqlite3` `Database` directly.
 
 ```ts
-import { createGitServer, BetterSqlite3Driver } from "just-git/server";
+import { createServer, BetterSqlite3Driver } from "just-git/server";
 import Database from "better-sqlite3";
 
-const server = createGitServer({
+const server = createServer({
   storage: new BetterSqlite3Driver(new Database("repos.sqlite")),
 });
 await server.createRepo("my-repo");
@@ -322,10 +322,10 @@ await server.createRepo("my-repo");
 Works with `pg` (node-postgres) or any driver matching the `PgDatabase` interface. Use `wrapPgPool` to adapt a `pg` Pool. `PgDriver.create()` is async (runs schema setup).
 
 ```ts
-import { createGitServer, PgDriver, wrapPgPool } from "just-git/server";
+import { createServer, PgDriver, wrapPgPool } from "just-git/server";
 import { Pool } from "pg";
 
-const server = createGitServer({
+const server = createServer({
   storage: await PgDriver.create(
     wrapPgPool(new Pool({ connectionString: process.env.DATABASE_URL })),
   ),
@@ -350,7 +350,7 @@ const db: PgDatabase = {
     }
   },
 };
-const server = createGitServer({
+const server = createServer({
   storage: await PgDriver.create(db),
 });
 await server.createRepo("my-repo");
@@ -363,7 +363,7 @@ Use the [repo module](REPO.md) (`just-git/repo`) inside hooks to inspect pushed 
 ```ts
 import { getChangedFiles, readFileAtCommit, getNewCommits } from "just-git/repo";
 
-const server = createGitServer({
+const server = createServer({
   storage: new BunSqliteDriver(db),
   hooks: {
     postReceive: async ({ repo, updates }) => {
@@ -383,7 +383,7 @@ const server = createGitServer({
 ## Configuration
 
 ```ts
-const server = createGitServer({
+const server = createServer({
   storage,
   policy,
   hooks,

@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createGit } from "../../src/index.ts";
-import { createGitServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/handler.ts";
 import { MemoryDriver } from "../../src/server/memory-storage.ts";
 import type { GitServerConfig, Session } from "../../src/server/types.ts";
 
@@ -71,7 +71,7 @@ export async function realGit(
 // ── HTTP server wrapper ─────────────────────────────────────────────
 
 export function startServer(config: GitServerConfig) {
-	const server = createGitServer(config);
+	const server = createServer(config);
 	const srv = Bun.serve({ fetch: server.fetch, port: 0 });
 	return { server, srv, port: srv.port!, stop: () => srv.stop() };
 }
@@ -95,7 +95,7 @@ export function startServerWithSessionAuth(
 	authorize: (request: Request) => boolean | Response | Promise<boolean | Response>,
 	config: GitServerConfig,
 ) {
-	const server = createGitServer({
+	const server = createServer({
 		...config,
 		session: {
 			http: async (req) => {
@@ -124,7 +124,7 @@ export async function startMemoryServer(
 		storage: driver,
 		...configOverrides,
 	};
-	const server = createGitServer(config);
+	const server = createServer(config);
 	await server.createRepo(repoId);
 	const srv = Bun.serve({ fetch: server.fetch, port: 0 });
 	return { server, srv, port: srv.port!, stop: () => srv.stop() };

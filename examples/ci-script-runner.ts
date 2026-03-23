@@ -13,7 +13,7 @@
 
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit, type GitRepo } from "../src";
-import { createGitServer, MemoryDriver } from "../src/server";
+import { createServer, MemoryDriver } from "../src/server";
 import { readFileAtCommit, writeBlob, writeTree, createCommit } from "../src/repo";
 
 const ENV = {
@@ -47,7 +47,7 @@ console.log("═══ 1. Setting up server repo ═══\n");
 const ciResults: { ref: string; passed: boolean; output: string }[] = [];
 const driver = new MemoryDriver();
 
-const server = createGitServer({
+const server = createServer({
 	storage: driver,
 
 	hooks: {
@@ -179,7 +179,7 @@ console.log("═══ 5. PreReceive rejection variant ═══\n");
 
 const rejectResults: string[] = [];
 
-const strictServer = createGitServer({
+const strictServer = createServer({
 	storage: driver,
 
 	hooks: {

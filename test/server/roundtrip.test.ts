@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { InMemoryFs } from "just-bash";
 import { MemoryDriver } from "../../src/server/memory-storage.ts";
-import { createGitServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/handler.ts";
 import type { GitServer } from "../../src/server/types.ts";
 import { envAt, createServerClient, startServer } from "./util.ts";
 
@@ -204,7 +204,7 @@ describe("server roundtrip", () => {
 	test("postReceive hook is called with repoId", async () => {
 		const pushEvents: Array<{ refCount: number; repoId: string }> = [];
 
-		const hookedServer = createGitServer({
+		const hookedServer = createServer({
 			storage: driver,
 			hooks: {
 				postReceive: async (event) => {
@@ -245,7 +245,7 @@ describe("server roundtrip", () => {
 	test("preReceive hook receives repoId", async () => {
 		let capturedRepoId: string | undefined;
 
-		const hookedServer = createGitServer({
+		const hookedServer = createServer({
 			storage: driver,
 			hooks: {
 				preReceive: async (event) => {
@@ -282,7 +282,7 @@ describe("server roundtrip", () => {
 	});
 
 	test("preReceive hook can reject a push", async () => {
-		const authServer = createGitServer({
+		const authServer = createServer({
 			storage: driver,
 			hooks: {
 				preReceive: async () => {

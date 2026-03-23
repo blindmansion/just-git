@@ -36,7 +36,7 @@ import {
 import { tmpdir } from "os";
 import { join } from "path";
 import { BunSqliteDriver } from "../../src/server/bun-sqlite-storage.ts";
-import { createGitServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/handler.ts";
 
 const SOURCE_REPO = process.argv[2] || "https://github.com/DeabLabs/cannoli.git";
 const DB_PATH = process.env.DB_PATH ?? ":memory:";
@@ -124,7 +124,7 @@ let pushCount = 0;
 const NO_DELTA = process.env.NO_DELTA === "1";
 if (NO_DELTA) console.log("  mode:       no-delta (streaming)\n");
 
-const server = createGitServer({
+const server = createServer({
 	storage: new BunSqliteDriver(db),
 	autoCreate: true,
 	packOptions: NO_DELTA ? { noDelta: true } : undefined,

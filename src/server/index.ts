@@ -1,5 +1,5 @@
 // HTTP + SSH handler
-export { createGitServer, composeHooks } from "./handler.ts";
+export { createServer, composeHooks } from "./handler.ts";
 
 // SSH helpers
 export { parseGitSshCommand } from "./ssh-session.ts";

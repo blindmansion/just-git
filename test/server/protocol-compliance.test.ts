@@ -3,7 +3,7 @@ import type { Identity } from "../../src/lib/types.ts";
 import { parsePktLineStream, pktLineText } from "../../src/lib/transport/pkt-line.ts";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/helpers.ts";
 import { collectRefs, PackCache } from "../../src/server/operations.ts";
-import { createGitServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/handler.ts";
 import { MemoryDriver } from "../../src/server/memory-storage.ts";
 import { createStorage } from "../../src/server/storage.ts";
 import type { NodeHttpRequest, NodeHttpResponse } from "../../src/server/types.ts";
@@ -73,7 +73,7 @@ describe("ref advertisement sorting", () => {
 		await repo.refStore.writeRef("refs/heads/alpha", { type: "direct", hash: commitHash });
 		await repo.refStore.writeRef("refs/heads/middle", { type: "direct", hash: commitHash });
 
-		const server = createGitServer({ storage: driver });
+		const server = createServer({ storage: driver });
 		const res = await server.fetch(
 			new Request("http://localhost/repo/info/refs?service=git-upload-pack"),
 		);
@@ -228,7 +228,7 @@ describe("allow-reachable-sha1-in-want", () => {
 		});
 		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commitHash });
 
-		const server = createGitServer({ storage: driver });
+		const server = createServer({ storage: driver });
 		const res = await server.fetch(
 			new Request("http://localhost/repo/info/refs?service=git-upload-pack"),
 		);
@@ -528,7 +528,7 @@ describe("nodeHandler", () => {
 		});
 		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: commitHash });
 
-		const server = createGitServer({ storage: driver });
+		const server = createServer({ storage: driver });
 
 		const req = createMockNodeReq("GET", "/repo/info/refs?service=git-upload-pack");
 		const res = createMockNodeRes();
@@ -544,7 +544,7 @@ describe("nodeHandler", () => {
 	});
 
 	test("returns 404 for unknown path", async () => {
-		const server = createGitServer({ storage: new MemoryDriver(), resolve: () => null });
+		const server = createServer({ storage: new MemoryDriver(), resolve: () => null });
 
 		const req = createMockNodeReq("GET", "/repo/info/refs?service=git-upload-pack");
 		const res = createMockNodeRes();
@@ -558,7 +558,7 @@ describe("nodeHandler", () => {
 	});
 
 	test("returns 500 when server handler throws", async () => {
-		const server = createGitServer({
+		const server = createServer({
 			storage: new MemoryDriver(),
 			resolve: async () => {
 				throw new Error("test explosion");
@@ -580,7 +580,7 @@ describe("nodeHandler", () => {
 	test("passes array headers through correctly", async () => {
 		let capturedHeaders: Headers | undefined;
 
-		const server = createGitServer({
+		const server = createServer({
 			storage: new MemoryDriver(),
 			resolve: () => null,
 			session: {
@@ -609,7 +609,7 @@ describe("nodeHandler", () => {
 	test("collects POST body chunks and passes to server", async () => {
 		let capturedBody: Uint8Array | undefined;
 
-		const server = createGitServer({
+		const server = createServer({
 			storage: new MemoryDriver(),
 			resolve: () => null,
 			session: {
@@ -634,7 +634,7 @@ describe("nodeHandler", () => {
 	});
 
 	test("handles request error event", async () => {
-		const server = createGitServer({
+		const server = createServer({
 			storage: new MemoryDriver(),
 			resolve: () => null,
 			onError: false,
@@ -662,7 +662,7 @@ describe("nodeHandler", () => {
 		let capturedMethod: string | undefined;
 		let capturedUrl: string | undefined;
 
-		const server = createGitServer({
+		const server = createServer({
 			storage: new MemoryDriver(),
 			resolve: () => null,
 			session: {

@@ -1,5 +1,5 @@
 import type { GitRepo } from "../lib/types.ts";
-import { composeHooks, createGitServer } from "../server/handler.ts";
+import { composeHooks, createServer } from "../server/handler.ts";
 import { resolveRef } from "../repo/helpers.ts";
 import { BunSqliteDriver } from "../server/bun-sqlite-storage.ts";
 import type { BunSqliteDatabase } from "../server/bun-sqlite-storage.ts";
@@ -30,7 +30,7 @@ export class Platform {
 
 	constructor(config: PlatformConfig) {
 		this.db = config.database;
-		this.internalServer = createGitServer({
+		this.internalServer = createServer({
 			storage: new BunSqliteDriver(config.database),
 		});
 		this.platformDb = new PlatformDb(config.database);
@@ -200,7 +200,7 @@ export class Platform {
 	gitServer(options?: { hooks?: ServerHooks; basePath?: string }): GitServer {
 		const platform = this;
 
-		const server = createGitServer({
+		const server = createServer({
 			storage: new BunSqliteDriver(this.db),
 
 			resolve: (repoPath: string) => {

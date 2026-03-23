@@ -1,7 +1,7 @@
 /**
  * Dual-protocol Git server: serves repos over both HTTP and SSH.
  *
- * One `createGitServer` call creates a unified handler with both
+ * One `createServer` call creates a unified handler with both
  * `fetch` (for HTTP) and `handleSession` (for SSH). The ssh2
  * dependency stays in userland — just-git remains zero-dependency.
  *
@@ -19,7 +19,7 @@ import { readFileSync } from "node:fs";
 import { Server } from "ssh2";
 import { Database } from "bun:sqlite";
 import {
-	createGitServer,
+	createServer,
 	BunSqliteDriver,
 	type SshChannel,
 	type PostReceiveEvent,
@@ -37,7 +37,7 @@ const HOST_KEY_PATH = process.env.HOST_KEY ?? "host_key";
 const db = new Database(DB_PATH);
 db.run("PRAGMA journal_mode = WAL");
 
-const server = createGitServer({
+const server = createServer({
 	storage: new BunSqliteDriver(db),
 	autoCreate: true,
 	policy: {

@@ -131,7 +131,7 @@ export class MemoryDriver implements StorageDriver {
  * Data is lost when the process exits.
  *
  * ```ts
- * const server = createGitServer({
+ * const server = createServer({
  *   storage: new MemoryDriver(),
  * });
  * await server.createRepo("my-repo");

@@ -10,7 +10,7 @@
  */
 
 import { createGit } from "../../src/index.ts";
-import { createGitServer, MemoryDriver } from "../../src/server/index.ts";
+import { createServer, MemoryDriver } from "../../src/server/index.ts";
 import {
 	writeBlob,
 	writeTree,
@@ -37,7 +37,7 @@ const ENV = {
 // ── Seed a repo with the repo helpers ───────────────────────────────
 
 const driver = new MemoryDriver();
-const gitServer = createGitServer({ storage: driver });
+const gitServer = createServer({ storage: driver });
 const repo = await gitServer.createRepo("demo");
 
 const readmeBlob = await writeBlob(repo, "# Seeded Repo\n\nCreated with repo helpers.\n");
