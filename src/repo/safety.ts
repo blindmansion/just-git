@@ -120,6 +120,16 @@ class OverlayObjectStore implements ObjectStore {
 	async ingestPack(packData: Uint8Array): Promise<number> {
 		if (packData.byteLength < 32) return 0;
 		const view = new DataView(packData.buffer, packData.byteOffset, packData.byteLength);
+
+		const sig = view.getUint32(0);
+		if (sig !== 0x5041434b) {
+			throw new Error(`invalid pack signature: 0x${sig.toString(16)} (expected 0x5041434b)`);
+		}
+		const version = view.getUint32(4);
+		if (version !== 2) {
+			throw new Error(`unsupported pack version: ${version}`);
+		}
+
 		const numObjects = view.getUint32(8);
 		if (numObjects === 0) return 0;
 

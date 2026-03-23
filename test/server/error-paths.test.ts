@@ -10,6 +10,7 @@ import {
 	parsePktLineStream,
 	pktLineText,
 } from "../../src/lib/transport/pkt-line.ts";
+import { sha1 } from "../../src/lib/sha1.ts";
 
 const TEST_IDENTITY = {
 	name: "Test",
@@ -210,6 +211,52 @@ describe("malformed receive-pack body", () => {
 	});
 });
 
+function buildPushBody(
+	commands: Array<{ oldHash: string; newHash: string; refName: string }>,
+	packData: Uint8Array = new Uint8Array(0),
+) {
+	const enc = new TextEncoder();
+	const nul = new Uint8Array([0]);
+	const lines: Uint8Array[] = [];
+	for (let i = 0; i < commands.length; i++) {
+		const cmd = commands[i]!;
+		const commandLine = `${cmd.oldHash} ${cmd.newHash} ${cmd.refName}`;
+		if (i === 0) {
+			const payload = concatPktLines(enc.encode(commandLine), nul, enc.encode(" report-status\n"));
+			lines.push(encodePktLine(payload));
+		} else {
+			lines.push(encodePktLine(enc.encode(commandLine + "\n")));
+		}
+	}
+	return concatPktLines(...lines, flushPkt(), packData);
+}
+
+async function buildEmptyPack(): Promise<Uint8Array> {
+	const header = new Uint8Array(12);
+	const view = new DataView(header.buffer);
+	view.setUint32(0, 0x5041434b); // "PACK"
+	view.setUint32(4, 2); // version 2
+	view.setUint32(8, 0); // 0 objects
+	const checksum = await sha1(header);
+	const checksumBytes = new Uint8Array(20);
+	for (let i = 0; i < 20; i++) {
+		checksumBytes[i] = parseInt(checksum.slice(i * 2, i * 2 + 2), 16);
+	}
+	const result = new Uint8Array(32);
+	result.set(header, 0);
+	result.set(checksumBytes, 12);
+	return result;
+}
+
+function buildCorruptPack(): Uint8Array {
+	const pack = new Uint8Array(32);
+	const view = new DataView(pack.buffer);
+	view.setUint32(0, 0x42414421); // "BAD!"
+	view.setUint32(4, 2);
+	view.setUint32(8, 0); // 0 objects — triggers the early-return bug
+	return pack;
+}
+
 describe("push with bad pack data", () => {
 	test("invalid pack data sets unpackOk to false", async () => {
 		const { repo, driver } = await setupRepo();
@@ -239,6 +286,171 @@ describe("push with bad pack data", () => {
 		const resBody = new Uint8Array(await res.arrayBuffer());
 		const text = new TextDecoder().decode(resBody);
 		expect(text).toContain("unpack");
+	});
+
+	test("corrupt pack with bad signature and zero objects reports unpack error", async () => {
+		const { driver } = await setupRepo();
+		const server = createServer({ storage: driver });
+		const zeroHash = "0".repeat(40);
+		const fakeHash = "a".repeat(40);
+
+		const body = buildPushBody(
+			[{ oldHash: zeroHash, newHash: fakeHash, refName: "refs/heads/hack" }],
+			buildCorruptPack(),
+		);
+
+		const res = await server.fetch(
+			new Request("http://localhost/repo/git-receive-pack", { method: "POST", body }),
+		);
+		expect(res.status).toBe(200);
+		const resBody = new Uint8Array(await res.arrayBuffer());
+		const lines = parsePktLineStream(resBody);
+		expect(pktLineText(lines[0]!)).toBe("unpack error");
+	});
+
+	test("corrupt pack does not create dangling ref", async () => {
+		const { repo, driver } = await setupRepo();
+		const server = createServer({ storage: driver });
+		const zeroHash = "0".repeat(40);
+		const fakeHash = "a".repeat(40);
+
+		const body = buildPushBody(
+			[{ oldHash: zeroHash, newHash: fakeHash, refName: "refs/heads/hack" }],
+			buildCorruptPack(),
+		);
+
+		await server.fetch(
+			new Request("http://localhost/repo/git-receive-pack", { method: "POST", body }),
+		);
+
+		const ref = await repo.refStore.readRef("refs/heads/hack");
+		expect(ref).toBeNull();
+	});
+
+	test("valid empty pack with zero objects does not fail", async () => {
+		const { repo, driver } = await setupRepo();
+		const server = createServer({ storage: driver });
+		const mainRef = await repo.refStore.readRef("refs/heads/main");
+		const mainHash = mainRef?.type === "direct" ? mainRef.hash : "0".repeat(40);
+		const zeroHash = "0".repeat(40);
+
+		const body = buildPushBody(
+			[{ oldHash: zeroHash, newHash: mainHash, refName: "refs/heads/new-branch" }],
+			await buildEmptyPack(),
+		);
+
+		const res = await server.fetch(
+			new Request("http://localhost/repo/git-receive-pack", { method: "POST", body }),
+		);
+		expect(res.status).toBe(200);
+		const resBody = new Uint8Array(await res.arrayBuffer());
+		const lines = parsePktLineStream(resBody);
+		expect(pktLineText(lines[0]!)).toBe("unpack ok");
+
+		let foundOk = false;
+		for (const line of lines) {
+			if (pktLineText(line).startsWith("ok refs/heads/new-branch")) foundOk = true;
+		}
+		expect(foundOk).toBe(true);
+	});
+});
+
+describe("push with non-existent object hash", () => {
+	test("ref create with missing newHash is rejected", async () => {
+		const { repo, driver } = await setupRepo();
+		const server = createServer({ storage: driver });
+		const zeroHash = "0".repeat(40);
+		const fakeHash = "a".repeat(40);
+
+		const body = buildPushBody(
+			[{ oldHash: zeroHash, newHash: fakeHash, refName: "refs/heads/phantom" }],
+			await buildEmptyPack(),
+		);
+
+		const res = await server.fetch(
+			new Request("http://localhost/repo/git-receive-pack", { method: "POST", body }),
+		);
+		expect(res.status).toBe(200);
+		const resBody = new Uint8Array(await res.arrayBuffer());
+		const lines = parsePktLineStream(resBody);
+
+		expect(pktLineText(lines[0]!)).toBe("unpack ok");
+
+		let foundNg = false;
+		for (const line of lines) {
+			const text = pktLineText(line);
+			if (text.startsWith("ng refs/heads/phantom")) {
+				foundNg = true;
+				expect(text).toContain("missing objects");
+			}
+		}
+		expect(foundNg).toBe(true);
+
+		const ref = await repo.refStore.readRef("refs/heads/phantom");
+		expect(ref).toBeNull();
+	});
+
+	test("ref update with missing newHash is rejected", async () => {
+		const { repo, driver } = await setupRepo();
+		const server = createServer({ storage: driver });
+		const mainRef = await repo.refStore.readRef("refs/heads/main");
+		const mainHash = mainRef?.type === "direct" ? mainRef.hash : "0".repeat(40);
+		const fakeHash = "b".repeat(40);
+
+		const body = buildPushBody(
+			[{ oldHash: mainHash, newHash: fakeHash, refName: "refs/heads/main" }],
+			await buildEmptyPack(),
+		);
+
+		const res = await server.fetch(
+			new Request("http://localhost/repo/git-receive-pack", { method: "POST", body }),
+		);
+		expect(res.status).toBe(200);
+		const resBody = new Uint8Array(await res.arrayBuffer());
+		const lines = parsePktLineStream(resBody);
+
+		expect(pktLineText(lines[0]!)).toBe("unpack ok");
+
+		let foundNg = false;
+		for (const line of lines) {
+			const text = pktLineText(line);
+			if (text.startsWith("ng refs/heads/main")) {
+				foundNg = true;
+				expect(text).toContain("missing objects");
+			}
+		}
+		expect(foundNg).toBe(true);
+
+		const ref = await repo.refStore.readRef("refs/heads/main");
+		expect(ref?.type === "direct" ? ref.hash : null).toBe(mainHash);
+	});
+
+	test("ref delete with zero newHash is not blocked by existence check", async () => {
+		const { repo, driver } = await setupRepo();
+		const server = createServer({ storage: driver });
+		const mainRef = await repo.refStore.readRef("refs/heads/main");
+		const mainHash = mainRef?.type === "direct" ? mainRef.hash : "0".repeat(40);
+		const zeroHash = "0".repeat(40);
+
+		const body = buildPushBody(
+			[{ oldHash: mainHash, newHash: zeroHash, refName: "refs/heads/main" }],
+			await buildEmptyPack(),
+		);
+
+		const res = await server.fetch(
+			new Request("http://localhost/repo/git-receive-pack", { method: "POST", body }),
+		);
+		expect(res.status).toBe(200);
+		const resBody = new Uint8Array(await res.arrayBuffer());
+		const lines = parsePktLineStream(resBody);
+
+		expect(pktLineText(lines[0]!)).toBe("unpack ok");
+
+		let foundOk = false;
+		for (const line of lines) {
+			if (pktLineText(line).startsWith("ok refs/heads/main")) foundOk = true;
+		}
+		expect(foundOk).toBe(true);
 	});
 });
 

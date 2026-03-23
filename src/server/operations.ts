@@ -727,6 +727,14 @@ export async function applyReceivePack<S = unknown>(
 			}
 		}
 
+		if (!update.isDelete) {
+			const exists = await repo.objectStore.exists(update.newHash);
+			if (!exists) {
+				refResults.push({ ref: update.ref, ok: false, error: "missing objects" });
+				continue;
+			}
+		}
+
 		try {
 			const expectedOld = update.isCreate ? null : update.oldHash;
 			const newRef = update.isDelete ? null : { type: "direct" as const, hash: update.newHash };
