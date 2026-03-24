@@ -140,7 +140,30 @@ import type { GitHooks } from "../../src";
 
 	console.assert(changedFileCounts.length === 1, "postReceive should have fired once");
 	console.assert(changedFileCounts[0] === 1, "should see 1 changed file (README.md)");
-	console.log("README server: policy + auth + postReceive OK");
+
+	// Programmatic commit (CAS-protected)
+	const { hash } = await server.commit("test-repo", {
+		files: { "README.md": "# Hello\n" },
+		message: "bot commit",
+		author: { name: "Bot", email: "bot@example.com" },
+		branch: "main",
+	});
+	console.assert(
+		typeof hash === "string" && hash.length === 40,
+		"server.commit should return a hash",
+	);
+
+	// Fork
+	const fork = await server.forkRepo("test-repo", "user/fork");
+	console.assert(fork.objectStore !== undefined, "fork should have objectStore");
+	console.assert(fork.refStore !== undefined, "fork should have refStore");
+
+	// GC
+	const gcResult = await server.gc("test-repo");
+	console.assert(!gcResult.aborted, "GC should not abort");
+	console.assert(typeof gcResult.retained === "number", "GC should report retained count");
+
+	console.log("README server: policy + auth + postReceive + commit + fork + gc OK");
 	srv.stop();
 }
 
@@ -767,7 +790,7 @@ import type { GitHooks } from "../../src";
 // SERVER.md examples
 // ═══════════════════════════════════════════════════════════════════
 
-// ── SERVER: Auth provider (HTTP auth gate) ────────────────────────
+// ── SERVER: Fully private repos (auth + preReceive) ─────────────────
 
 {
 	const server = createServer({
@@ -781,15 +804,13 @@ import type { GitHooks } from "../../src";
 						headers: { "WWW-Authenticate": 'Bearer realm="git"' },
 					});
 				}
-				return { userId: header.replace("Bearer ", "") };
+				return { userId: header.replace("Bearer ", ""), canWrite: header.includes("writer") };
 			},
-			ssh: (info) => ({
-				userId: info.username ?? "anonymous",
-			}),
+			ssh: (info) => ({ userId: info.username!, canWrite: true }),
 		},
 		hooks: {
 			preReceive: ({ auth }) => {
-				if (!auth.userId) return { reject: true, message: "unauthorized" };
+				if (!auth.canWrite) return { reject: true, message: "read-only access" };
 			},
 		},
 	});
@@ -815,23 +836,24 @@ import type { GitHooks } from "../../src";
 	);
 	console.assert(withAuth.status === 200, "auth provider should allow with token");
 
-	console.log("SERVER auth provider: HTTP auth gate OK");
+	console.log("SERVER fully private: auth + preReceive OK");
 	srv.stop();
 }
 
-// ── SERVER: Custom auth type (uniform auth across HTTP + SSH) ─────
+// ── SERVER: Public read, private write (http-only auth) ─────────────
 
 {
 	const server = createServer({
 		storage: new BunSqliteStorage(new Database(":memory:")),
 		auth: {
-			http: (req) => ({ authorized: req.headers.has("Authorization") }),
-			ssh: (info) => ({ authorized: info.username != null }),
+			http: (req) => {
+				const token = req.headers.get("Authorization");
+				return { authorized: token != null };
+			},
 		},
-		policy: { protectedBranches: ["main"] },
 		hooks: {
 			preReceive: ({ auth }) => {
-				if (!auth.authorized) return { reject: true, message: "unauthorized" };
+				if (!auth.authorized) return { reject: true, message: "push requires authentication" };
 			},
 		},
 	});
@@ -847,7 +869,11 @@ import type { GitHooks } from "../../src";
 		await bash.exec("echo 'hi' > file.txt && git add . && git commit -m 'init'");
 		await bash.exec(`git remote add origin ${srv.url}test-repo`);
 
-		// Push without auth should fail (auth.authorized is false)
+		// Clone without auth should succeed (public read)
+		const clone = await bash.exec(`git clone ${srv.url}test-repo /clone`);
+		console.assert(clone.exitCode === 0, "clone without auth should succeed");
+
+		// Push without auth should fail
 		const noAuth = await bash.exec("git push -u origin main");
 		console.assert(noAuth.exitCode !== 0, "push without auth should fail");
 	}
@@ -858,12 +884,12 @@ import type { GitHooks } from "../../src";
 		});
 		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
 
-		// Push with auth should succeed (auth.authorized is true)
+		// Push with auth should succeed
 		const withAuth = await bash.exec("git push -u origin main");
 		console.assert(withAuth.exitCode === 0, "push with auth should succeed");
 	}
 
-	console.log("SERVER custom auth: uniform auth OK");
+	console.log("SERVER public read, private write: http-only auth OK");
 	srv.stop();
 }
 

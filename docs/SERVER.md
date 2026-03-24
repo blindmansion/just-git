@@ -8,16 +8,30 @@ HTTP uses web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare
 import { createServer } from "just-git/server";
 ```
 
+- [Quick start](#quick-start)
+- [Repo management](#repo-management)
+- [Authentication and authorization](#authentication-and-authorization)
+- [SSH](#ssh)
+- [Policy](#policy)
+- [Hooks](#hooks)
+- [Storage backends](#storage-backends)
+- [Programmatic commits](#programmatic-commits)
+- [Working with pushed code](#working-with-pushed-code)
+- [Configuration](#configuration)
+- [In-process access](#in-process-access)
+- [Forks](#forks)
+- [Graceful shutdown](#graceful-shutdown)
+
 ## Quick start
 
-Storage defaults to in-memory — no setup required:
+Storage defaults to in-memory. Set `autoCreate` to true for push-to-create:
 
 ```ts
 import { createServer } from "just-git/server";
 
 const server = createServer({ autoCreate: true });
 Bun.serve({ fetch: server.fetch });
-// git clone http://localhost:3000/my-repo ← works immediately
+// git push http://localhost:3000/my-repo main ← repo created on first push
 ```
 
 For persistent storage, pass a SQLite or Postgres backend:
@@ -118,41 +132,24 @@ const server = createServer({
 
 Authentication (verifying identity) and authorization (checking permissions) live at different layers:
 
-| Layer                | Concern                                                          | Mechanism                                              |
-| -------------------- | ---------------------------------------------------------------- | ------------------------------------------------------ |
-| Auth provider        | **Authentication** — parse credentials, verify identity          | Return `Response` to reject, or return a typed context |
-| `advertiseRefs` hook | **Read authorization** — control who can clone/fetch             | Return `Rejection` to deny repo access                 |
-| `preReceive` hook    | **Write authorization** (batch) — control who can push           | Return `Rejection` to deny the entire push             |
-| `update` hook        | **Write authorization** (per-ref) — control specific ref updates | Return `Rejection` to deny one ref                     |
+| Layer                | Concern                                                          | Mechanism                                                                |
+| -------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Auth provider        | **Authentication** — parse credentials, verify identity          | HTTP: return `Response` to reject, or a typed context. SSH: enrich only. |
+| `advertiseRefs` hook | **Read authorization** — control who can clone/fetch             | Return `Rejection` to deny repo access                                   |
+| `preReceive` hook    | **Write authorization** (batch) — control who can push           | Return `Rejection` to deny the entire push                               |
+| `update` hook        | **Write authorization** (per-ref) — control specific ref updates | Return `Rejection` to deny one ref                                       |
 
 ### Auth provider
 
-The auth provider runs first, before any git protocol handling. It parses credentials and produces a typed auth context that hooks can inspect. For HTTP, returning a `Response` short-circuits the request (e.g. 401). For SSH, authentication happens at the transport layer (e.g. ssh2's `authentication` event) before the auth provider runs — the SSH callback is for enrichment, not authentication.
+The `auth` option has two callbacks, `http` and `ssh`, both optional. Provide whichever transports you use. Each receives the raw request or session info and returns a typed auth context that all hooks can inspect.
 
-```ts
-const server = createServer({
-  storage: new BunSqliteStorage(db),
-  auth: {
-    http: (request) => {
-      const header = request.headers.get("Authorization");
-      if (!header) {
-        return new Response("Unauthorized", {
-          status: 401,
-          headers: { "WWW-Authenticate": 'Bearer realm="git"' },
-        });
-      }
-      return { userId: parseToken(header) };
-    },
-    ssh: (info) => ({ userId: info.username ?? "anonymous" }),
-  },
-});
-```
+For HTTP, the callback can return a `Response` to short-circuit the request (e.g. 401), or return your auth context to continue. For SSH, authentication happens at the transport layer (e.g. ssh2's `authentication` event) before the auth provider runs — the SSH callback only enriches the context. If a transport is used but its callback is missing, the server returns an error (HTTP 501 / SSH exit 128).
 
-When `auth` is omitted, the server uses a default `Auth` type with `transport`, optional `username`, and optional `request`.
+When `auth` is omitted entirely, the server uses a default `Auth` type with `transport`, optional `username`, and optional `request`.
 
 ### Fully private repos
 
-When all access requires authentication, reject in the auth provider and use hooks for authorization decisions:
+The auth provider rejects unauthenticated HTTP requests. The `preReceive` hook handles authorization, blocking pushes from read-only users:
 
 ```ts
 const server = createServer({
@@ -180,14 +177,16 @@ const server = createServer({
 
 ### Public read, private write
 
-Anyone can clone, only authorized users can push. The auth provider extracts auth when present but doesn't reject anonymous requests — the `preReceive` hook enforces write authorization:
+Anyone can clone. The auth provider never rejects — it just records whether credentials were present. The `preReceive` hook checks that flag and blocks unauthenticated pushes. Only `http` is provided here; `ssh` is optional:
 
 ```ts
 const server = createServer({
   storage: new BunSqliteStorage(db),
   auth: {
-    http: (req) => ({ authorized: req.headers.has("Authorization") }),
-    ssh: (info) => ({ authorized: info.username != null }),
+    http: (req) => {
+      const token = req.headers.get("Authorization");
+      return { authorized: token != null };
+    },
   },
   hooks: {
     preReceive: ({ auth }) => {
@@ -476,6 +475,8 @@ Key things to know:
 
 - **All methods use `MaybeAsync<T>`.** Return `T` directly for sync backends (SQLite), or `Promise<T>` for async ones (Postgres, HTTP). The adapter handles both transparently.
 
+- **Fork support is optional.** Implement `forkRepo`, `getForkParent`, and `listForks` to enable `server.forkRepo()`. Without them, everything else works normally. See [Forks](#forks) for details.
+
 - **`MemoryStorage` is the reference implementation** — it's under 150 lines and covers every method. Start there when building a new backend.
 
 ## Programmatic commits
@@ -622,7 +623,7 @@ When `auth` is omitted, `auth.http` runs on every request as before.
 
 ## Forks
 
-`server.forkRepo()` creates a fork of an existing repo. The fork gets its own ref namespace but reads from the parent's object pool — no objects are copied. This makes fork creation instant regardless of repo size.
+`server.forkRepo()` creates a fork of an existing repo. The fork gets its own ref namespace but reads from the parent's object pool (no objects are copied). This makes fork creation instant regardless of repo size.
 
 ```ts
 const upstream = await server.createRepo("upstream");
@@ -636,7 +637,7 @@ const fork = await server.forkRepo("upstream", "user/fork");
 
 **Flat fork network:** Forking a fork resolves to the root. `forkRepo("fork-of-A", "B")` records B as a fork of A's root, not of the intermediate fork. Object reads always check exactly two partitions (self, then root).
 
-**Deletion:** Deleting a fork is clean — its objects and refs are removed, the parent is unaffected. Deleting a root repo that has active forks throws. Delete all forks first.
+**Deletion:** Deleting a fork is clean. Its objects and refs are removed, the parent is unaffected. Deleting a root repo that has active forks throws. Delete all forks first.
 
 **GC:** When GC'ing a root repo, the server includes all fork ref tips in the reachability walk, so objects referenced only by forks are not collected. When GC'ing a fork, only the fork's own partition is examined.
 
@@ -665,10 +666,6 @@ await server.close({ signal: AbortSignal.timeout(5000) });
 
 `server.closed` is `true` after `close()` is called. Repo management methods (`createRepo`, `repo`, `deleteRepo`) remain available after close.
 
-## Platform reference
-
-[`src/platform/`](src/platform/) is a reference implementation that builds GitHub-like functionality on top of the server and repo modules: repository CRUD, pull requests, merge strategies (merge commit, squash, fast-forward), and push callbacks. It demonstrates what a full platform layer looks like using these primitives.
-
-## Architecture
+---
 
 For protocol details, CAS semantics, interoperability notes, and design rationale, see [`src/server/DESIGN.md`](src/server/DESIGN.md).
