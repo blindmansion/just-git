@@ -10,7 +10,7 @@ import { appendReflog, ZERO_HASH } from "../lib/reflog.ts";
 import { createSymbolicRef, updateRef } from "../lib/refs.ts";
 import { findRepo, initRepository } from "../lib/repo.ts";
 import { applyShallowUpdates } from "../lib/shallow.ts";
-import { createTransportForUrl } from "../lib/transport/remote.ts";
+import { createTransportForUrl, stripAndCacheCredentials } from "../lib/transport/remote.ts";
 import type { ShallowFetchOptions, Transport } from "../lib/transport/transport.ts";
 import { flattenTree } from "../lib/tree-ops.ts";
 import type { GitContext, GitRepo, ObjectId } from "../lib/types.ts";
@@ -55,7 +55,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 					return fatal(`repository '${repository}' does not exist`);
 				}
 			} else {
-				sourcePath = repository;
+				sourcePath = stripAndCacheCredentials(repository, ext?.credentialCache).url;
 			}
 
 			// Determine target directory name
@@ -63,7 +63,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			if (!targetName) {
 				let base: string;
 				if (isHttp || repository.includes("://")) {
-					base = repository.split("/").pop() ?? repository;
+					base = sourcePath.split("/").pop() ?? sourcePath;
 				} else {
 					base = basename(sourcePath);
 				}
@@ -74,7 +74,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			}
 			const targetPath = resolve(ctx.cwd, targetName);
 			const rej = await ext?.hooks?.preClone?.({
-				repository,
+				repository: sourcePath,
 				targetPath,
 				bare: args.bare,
 				branch: branchOpt ?? null,
@@ -113,6 +113,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 						fetchFn: ext.fetchFn,
 						networkPolicy: ext.networkPolicy,
 						resolveRemote: ext.resolveRemote,
+						credentialCache: ext.credentialCache,
 					}
 				: baseCtx;
 
@@ -143,7 +144,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			if (remoteRefs.length === 0) {
 				await ext?.hooks?.postClone?.({
 					repo: newCtx,
-					repository,
+					repository: sourcePath,
 					targetPath,
 					bare: args.bare,
 					branch: branchOpt ?? null,
@@ -247,7 +248,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 				}
 				await ext?.hooks?.postClone?.({
 					repo: newCtx,
-					repository,
+					repository: sourcePath,
 					targetPath,
 					bare: args.bare,
 					branch: defaultBranch,
@@ -318,7 +319,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			};
 			await ext?.hooks?.postClone?.({
 				repo: newCtx,
-				repository,
+				repository: sourcePath,
 				targetPath,
 				bare: args.bare,
 				branch: defaultBranch,

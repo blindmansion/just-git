@@ -9,6 +9,7 @@ import {
 import { type GitConfig, readConfig, writeConfig } from "../lib/config.ts";
 import { readReflog, writeReflog } from "../lib/reflog.ts";
 import { checkRefFormat, deleteRef, listRefs, RefFormatFlag, updateRef } from "../lib/refs.ts";
+import { stripAndCacheCredentials } from "../lib/transport/remote.ts";
 import type { GitContext } from "../lib/types.ts";
 import { a, type Command, f } from "../parse/index.ts";
 
@@ -86,8 +87,10 @@ export function registerRemoteCommand(parent: Command, ext?: GitExtensions) {
 				return err(`error: remote ${args.name} already exists.\n`, 3);
 			}
 
+			const cleanUrl = stripAndCacheCredentials(args.url, ext?.credentialCache).url;
+
 			config[sectionKey] = {
-				url: args.url,
+				url: cleanUrl,
 				fetch: `+refs/heads/*:refs/remotes/${args.name}/*`,
 			};
 			await writeConfig(gitCtxOrError, config);
@@ -166,8 +169,10 @@ export function registerRemoteCommand(parent: Command, ext?: GitExtensions) {
 				return err(`error: No such remote '${args.name}'\n`, 2);
 			}
 
+			const cleanUrl = stripAndCacheCredentials(args.url, ext?.credentialCache).url;
+
 			const section = config[sectionKey];
-			if (section) section.url = args.url;
+			if (section) section.url = cleanUrl;
 			await writeConfig(gitCtxOrError, config);
 			return { stdout: "", stderr: "", exitCode: 0 };
 		},

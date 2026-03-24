@@ -4,6 +4,50 @@ import type { GitContext, GitRepo } from "../types.ts";
 import type { NetworkPolicy } from "../../hooks.ts";
 import { type HttpAuth, LocalTransport, SmartHttpTransport, type Transport } from "./transport.ts";
 
+export type CredentialCache = Map<string, HttpAuth>;
+
+interface ParsedRemoteUrl {
+	url: string;
+	embeddedAuth?: HttpAuth;
+}
+
+export function parseRemoteUrl(raw: string): ParsedRemoteUrl {
+	if (!isHttpUrl(raw)) return { url: raw };
+	try {
+		const parsed = new URL(raw);
+		if (!parsed.username && !parsed.password) return { url: raw };
+		const auth: HttpAuth = {
+			type: "basic",
+			username: decodeURIComponent(parsed.username),
+			password: decodeURIComponent(parsed.password),
+		};
+		parsed.username = "";
+		parsed.password = "";
+		return { url: parsed.href, embeddedAuth: auth };
+	} catch {
+		return { url: raw };
+	}
+}
+
+/**
+ * Strip embedded credentials from a URL and cache them by origin.
+ * Returns the sanitized URL.
+ */
+export function stripAndCacheCredentials(
+	raw: string,
+	cache: CredentialCache | undefined,
+): ParsedRemoteUrl {
+	const parsed = parseRemoteUrl(raw);
+	if (parsed.embeddedAuth && cache) {
+		try {
+			cache.set(new URL(parsed.url).origin, parsed.embeddedAuth);
+		} catch {
+			// malformed URL — skip caching
+		}
+	}
+	return parsed;
+}
+
 interface RemoteConfig {
 	name: string;
 	url: string;
@@ -74,8 +118,7 @@ function resolveAuth(env: Map<string, string>): HttpAuth | undefined {
 }
 
 /**
- * Resolve auth for a URL. Checks the operator-provided credential provider
- * on GitContext first, then falls back to env vars.
+ * Resolve auth for a URL. Priority: credential provider > env vars > credential cache.
  */
 async function resolveAuthForUrl(
 	ctx: GitContext,
@@ -86,11 +129,21 @@ async function resolveAuthForUrl(
 		const auth = await ctx.credentialProvider(url);
 		if (auth) return auth;
 	}
-	return resolveAuth(env);
+	const envAuth = resolveAuth(env);
+	if (envAuth) return envAuth;
+	if (ctx.credentialCache) {
+		try {
+			return ctx.credentialCache.get(new URL(url).origin);
+		} catch {
+			return undefined;
+		}
+	}
+	return undefined;
 }
 
 /**
  * Create a transport for a URL. Supports local paths and HTTP(S) URLs.
+ * Strips embedded credentials from HTTP URLs, caching them for reuse.
  */
 export async function createTransportForUrl(
 	ctx: GitContext,
@@ -98,20 +151,22 @@ export async function createTransportForUrl(
 	env: Map<string, string>,
 	remoteRepo?: GitRepo,
 ): Promise<Transport> {
-	if (isHttpUrl(url)) {
-		const networkErr = validateNetworkAccess(url, ctx.networkPolicy);
+	const cleanUrl = stripAndCacheCredentials(url, ctx.credentialCache).url;
+
+	if (isHttpUrl(cleanUrl)) {
+		const networkErr = validateNetworkAccess(cleanUrl, ctx.networkPolicy);
 		if (networkErr) throw new Error(networkErr);
-		const auth = await resolveAuthForUrl(ctx, url, env);
-		return new SmartHttpTransport(ctx, url, auth, ctx.fetchFn);
+		const auth = await resolveAuthForUrl(ctx, cleanUrl, env);
+		return new SmartHttpTransport(ctx, cleanUrl, auth, ctx.fetchFn);
 	}
 	if (!remoteRepo && ctx.resolveRemote) {
-		remoteRepo = (await ctx.resolveRemote(url)) ?? undefined;
+		remoteRepo = (await ctx.resolveRemote(cleanUrl)) ?? undefined;
 	}
 	if (!remoteRepo) {
-		if (isSshUrl(url)) {
-			throw new Error(`SSH transport is not supported. Use an HTTPS URL instead of '${url}'.`);
+		if (isSshUrl(cleanUrl)) {
+			throw new Error(`SSH transport is not supported. Use an HTTPS URL instead of '${cleanUrl}'.`);
 		}
-		throw new Error(`'${url}' does not appear to be a git repository`);
+		throw new Error(`'${cleanUrl}' does not appear to be a git repository`);
 	}
 	return new LocalTransport(ctx, remoteRepo);
 }
@@ -119,6 +174,7 @@ export async function createTransportForUrl(
 /**
  * Resolve a remote name to a Transport instance.
  * Supports local paths and HTTP(S) URLs.
+ * Strips embedded credentials from HTTP URLs, caching them for reuse.
  */
 export async function resolveRemoteTransport(
 	ctx: GitContext,
@@ -128,30 +184,30 @@ export async function resolveRemoteTransport(
 	const remote = await getRemoteConfig(ctx, remoteName);
 	if (!remote) return null;
 
-	if (isHttpUrl(remote.url)) {
-		const networkErr = validateNetworkAccess(remote.url, ctx.networkPolicy);
+	const cleanUrl = stripAndCacheCredentials(remote.url, ctx.credentialCache).url;
+
+	if (isHttpUrl(cleanUrl)) {
+		const networkErr = validateNetworkAccess(cleanUrl, ctx.networkPolicy);
 		if (networkErr) throw new Error(networkErr);
-		const auth = env ? await resolveAuthForUrl(ctx, remote.url, env) : undefined;
+		const auth = env ? await resolveAuthForUrl(ctx, cleanUrl, env) : undefined;
 		return {
-			transport: new SmartHttpTransport(ctx, remote.url, auth, ctx.fetchFn),
-			config: remote,
+			transport: new SmartHttpTransport(ctx, cleanUrl, auth, ctx.fetchFn),
+			config: { ...remote, url: cleanUrl },
 		};
 	}
 
 	const remoteRepo: GitRepo | null =
-		(ctx.resolveRemote ? await ctx.resolveRemote(remote.url) : null) ??
-		(await findRepo(ctx.fs, remote.url));
+		(ctx.resolveRemote ? await ctx.resolveRemote(cleanUrl) : null) ??
+		(await findRepo(ctx.fs, cleanUrl));
 	if (!remoteRepo) {
-		if (isSshUrl(remote.url)) {
-			throw new Error(
-				`SSH transport is not supported. Use an HTTPS URL instead of '${remote.url}'.`,
-			);
+		if (isSshUrl(cleanUrl)) {
+			throw new Error(`SSH transport is not supported. Use an HTTPS URL instead of '${cleanUrl}'.`);
 		}
 		return null;
 	}
 
 	return {
 		transport: new LocalTransport(ctx, remoteRepo),
-		config: remote,
+		config: { ...remote, url: cleanUrl },
 	};
 }

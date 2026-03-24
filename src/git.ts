@@ -10,6 +10,7 @@ import {
 	type NetworkPolicy,
 	isRejection,
 } from "./hooks.ts";
+import type { CredentialCache } from "./lib/transport/remote.ts";
 import type { ObjectStore, RefStore, RemoteResolver } from "./lib/types.ts";
 
 export const VERSION = "1.5.1";
@@ -156,6 +157,8 @@ export interface GitExtensions {
 	gitDir?: string;
 	/** Pre-resolved worktree root. Used with `gitDir` to skip discovery. */
 	workTree?: string;
+	/** In-memory credential cache for URL-extracted auth, keyed by origin. */
+	credentialCache?: CredentialCache;
 }
 
 /** Simplified context for {@link Git.exec}. */
@@ -248,6 +251,7 @@ export class Git {
 			fetchFn: typeof network === "object" ? network.fetch : undefined,
 			networkPolicy: network,
 			resolveRemote: options?.resolveRemote,
+			credentialCache: new Map(),
 			...(options?.objectStore ? { objectStore: options.objectStore } : {}),
 			...(options?.refStore ? { refStore: options.refStore } : {}),
 			...(options?.gitDir

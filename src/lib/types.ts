@@ -8,6 +8,7 @@ import type {
 	NetworkPolicy,
 } from "../hooks.ts";
 import type { PackObject } from "./pack/packfile.ts";
+import type { CredentialCache } from "./transport/remote.ts";
 
 // ── Object identifiers ──────────────────────────────────────────────
 
@@ -258,6 +259,8 @@ export interface GitContext extends GitRepo {
 	resolveRemote?: RemoteResolver;
 	/** Operator-provided config overrides (locked values + defaults). */
 	configOverrides?: ConfigOverrides;
+	/** In-memory credential cache for URL-extracted auth, keyed by origin. */
+	credentialCache?: CredentialCache;
 }
 
 // ── Diff result types ───────────────────────────────────────────────
