@@ -122,10 +122,25 @@ async function fetchOneRemote(
 	const { transport, config } = resolved;
 
 	let fetchSpecs: Refspec[];
+	const configSpec = parseRefspec(config.fetchRefspec);
 	if (rawRefspecs && rawRefspecs.length > 0) {
-		fetchSpecs = rawRefspecs.map(parseRefspec);
+		fetchSpecs = rawRefspecs.map((raw) => {
+			const spec = parseRefspec(raw);
+			if (raw.includes(":")) return spec;
+			// Bare name (no colon) — expand through configured fetch refspec
+			// to determine the proper destination ref. Real git resolves bare
+			// names by trying the literal value, refs/heads/<name>, then
+			// refs/tags/<name> against the configured refspec.
+			for (const candidate of [spec.src, `refs/heads/${spec.src}`, `refs/tags/${spec.src}`]) {
+				const dst = mapRefspec(configSpec, candidate);
+				if (dst !== null) {
+					return { force: spec.force || configSpec.force, src: candidate, dst };
+				}
+			}
+			return spec;
+		});
 	} else {
-		fetchSpecs = [parseRefspec(config.fetchRefspec)];
+		fetchSpecs = [configSpec];
 	}
 	const preFetchRej = await ext?.hooks?.preFetch?.({
 		repo: gitCtx,

@@ -130,6 +130,48 @@ describe("git fetch", () => {
 		expect(await pathExists(bash.fs, "/local/.git/refs/remotes/origin/stale")).toBe(false);
 	});
 
+	test("fetches with bare branch refspec (git fetch origin main)", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+
+		const before = await readFile(bash.fs, "/local/.git/refs/remotes/origin/main");
+
+		const result = await bash.exec("git fetch origin main", { cwd: "/local" });
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain("main -> origin/main");
+
+		const after = await readFile(bash.fs, "/local/.git/refs/remotes/origin/main");
+		expect(after).not.toBe(before);
+	});
+
+	test("fetches with fully-qualified refspec without colon", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+
+		const before = await readFile(bash.fs, "/local/.git/refs/remotes/origin/main");
+
+		const result = await bash.exec("git fetch origin refs/heads/main", { cwd: "/local" });
+		expect(result.exitCode).toBe(0);
+
+		const after = await readFile(bash.fs, "/local/.git/refs/remotes/origin/main");
+		expect(after).not.toBe(before);
+	});
+
+	test("fetches with explicit src:dst refspec", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+
+		const result = await bash.exec("git fetch origin refs/heads/main:refs/custom/main", {
+			cwd: "/local",
+		});
+		expect(result.exitCode).toBe(0);
+
+		expect(await pathExists(bash.fs, "/local/.git/refs/custom/main")).toBe(true);
+	});
+
 	test("not a repo error", async () => {
 		const bash = createTestBash({ env: ENV, cwd: "/tmp" });
 		await bash.exec("mkdir -p /tmp");
