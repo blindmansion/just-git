@@ -509,7 +509,7 @@ await server.updateRefs("my-repo", [
 ]);
 ```
 
-The `commit()` helper from `just-git/repo` also creates commits, but it advances refs via raw `writeRef` without CAS. Use it for VFS-backed repos (client-side sandboxes) or test setup where CAS protection isn't needed.
+The `commit()` helper from `just-git/repo` also creates commits, but it advances refs via raw `writeRef` without CAS. Without CAS, if another writer (a push, another `commit()` call) advances the branch between reading the parent and writing the ref, the concurrent commit is silently lost. No error, no merge conflict, the branch just skips over it. Use the repo module's `commit()` for VFS-backed repos (client-side sandboxes) or test setup where there's only one writer.
 
 ## Working with pushed code
 
