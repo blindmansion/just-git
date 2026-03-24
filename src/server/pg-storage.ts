@@ -17,7 +17,7 @@ interface PgPoolClient {
 // ── Schema ──────────────────────────────────────────────────────────
 
 const SCHEMA = `
-CREATE TABLE IF NOT EXISTS repos (
+CREATE TABLE IF NOT EXISTS git_repos (
   id TEXT PRIMARY KEY
 );
 
@@ -42,9 +42,9 @@ CREATE TABLE IF NOT EXISTS git_refs (
 // ── SQL queries ─────────────────────────────────────────────────────
 
 const SQL = {
-	repoInsert: "INSERT INTO repos (id) VALUES ($1)",
-	repoExists: "SELECT 1 FROM repos WHERE id = $1 LIMIT 1",
-	repoDelete: "DELETE FROM repos WHERE id = $1",
+	repoInsert: "INSERT INTO git_repos (id) VALUES ($1)",
+	repoExists: "SELECT 1 FROM git_repos WHERE id = $1 LIMIT 1",
+	repoDelete: "DELETE FROM git_repos WHERE id = $1",
 
 	objInsert:
 		"INSERT INTO git_objects (repo_id, hash, type, content) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",

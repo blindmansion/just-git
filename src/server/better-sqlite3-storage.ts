@@ -20,7 +20,7 @@ export interface BetterSqlite3Database {
 // ── Schema ──────────────────────────────────────────────────────────
 
 const SCHEMA = `
-CREATE TABLE IF NOT EXISTS repos (
+CREATE TABLE IF NOT EXISTS git_repos (
   id TEXT PRIMARY KEY
 );
 
@@ -87,9 +87,9 @@ interface Statements {
 
 function prepareStatements(db: BetterSqlite3Database): Statements {
 	return {
-		repoInsert: wrapStmt(db.prepare("INSERT INTO repos (id) VALUES (?)")),
-		repoExists: wrapStmt(db.prepare("SELECT 1 FROM repos WHERE id = ? LIMIT 1")),
-		repoDelete: wrapStmt(db.prepare("DELETE FROM repos WHERE id = ?")),
+		repoInsert: wrapStmt(db.prepare("INSERT INTO git_repos (id) VALUES (?)")),
+		repoExists: wrapStmt(db.prepare("SELECT 1 FROM git_repos WHERE id = ? LIMIT 1")),
+		repoDelete: wrapStmt(db.prepare("DELETE FROM git_repos WHERE id = ?")),
 
 		objInsert: wrapStmt(
 			db.prepare(

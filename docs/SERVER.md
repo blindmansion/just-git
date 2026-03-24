@@ -373,6 +373,18 @@ const server = createServer({
 await server.createRepo("my-repo");
 ```
 
+### Database schema
+
+The SQL backends (`BunSqliteStorage`, `BetterSqlite3Storage`, `PgStorage`) create three tables on the provided database if they don't already exist:
+
+| Table         | Purpose                                       | Key                |
+| ------------- | --------------------------------------------- | ------------------ |
+| `git_repos`   | Repo registry, one row per repo ID            | `id` (primary key) |
+| `git_objects` | Raw git objects (blobs, trees, commits, tags) | `(repo_id, hash)`  |
+| `git_refs`    | Refs (branches, tags, HEAD, symrefs)          | `(repo_id, name)`  |
+
+All tables are partitioned by `repo_id`. The library only references the `id` column on `git_repos`, so you can safely add your own columns (owner, description, visibility, etc.). Just make sure they're nullable or have defaults, since `createRepo` inserts with `id` only.
+
 ### Custom storage
 
 Implement the `Storage` interface to back repos with any datastore — DynamoDB, Turso, Firestore, a REST API, etc. The interface is intentionally thin: raw key-value CRUD for objects and refs, plus one atomicity primitive. All git-aware logic (object hashing, pack ingestion, symref resolution, compare-and-swap) is handled by the adapter layer — your implementation doesn't need to know anything about git.

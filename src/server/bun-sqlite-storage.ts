@@ -20,7 +20,7 @@ export interface BunSqliteDatabase {
 // ── Schema ──────────────────────────────────────────────────────────
 
 const SCHEMA = `
-CREATE TABLE IF NOT EXISTS repos (
+CREATE TABLE IF NOT EXISTS git_repos (
   id TEXT PRIMARY KEY
 );
 
@@ -67,9 +67,9 @@ interface Statements {
 
 function prepareStatements(db: BunSqliteDatabase): Statements {
 	return {
-		repoInsert: db.prepare("INSERT INTO repos (id) VALUES (?)"),
-		repoExists: db.prepare("SELECT 1 FROM repos WHERE id = ? LIMIT 1"),
-		repoDelete: db.prepare("DELETE FROM repos WHERE id = ?"),
+		repoInsert: db.prepare("INSERT INTO git_repos (id) VALUES (?)"),
+		repoExists: db.prepare("SELECT 1 FROM git_repos WHERE id = ? LIMIT 1"),
+		repoDelete: db.prepare("DELETE FROM git_repos WHERE id = ?"),
 
 		objInsert: db.prepare(
 			"INSERT OR IGNORE INTO git_objects (repo_id, hash, type, content) VALUES (?, ?, ?, ?)",
