@@ -194,7 +194,7 @@ Key behaviors:
 
 **Unified server (`createServer`):**
 
-`createServer<S = Session>(config?)` returns a `GitServer` with both `fetch` (HTTP) and `handleSession` (SSH) methods, plus repo management (`createRepo`, `repo`, `requireRepo`, `deleteRepo`). One server object handles both protocols with shared config:
+`createServer<A = Auth>(config?)` returns a `GitServer` with both `fetch` (HTTP) and `handleSession` (SSH) methods, plus repo management (`createRepo`, `repo`, `requireRepo`, `deleteRepo`). One server object handles both protocols with shared config:
 
 - `storage?: Storage` — the storage driver for git object and ref persistence. Defaults to `MemoryStorage`. `createStorageAdapter()` is called internally.
 - `resolve?: (path: string) => string | null` — maps request path to repo ID. Default: identity (URL path = repo ID).
@@ -206,16 +206,16 @@ Key behaviors:
 - `server.requireRepo(id)` — get a repo by ID, or throw if it doesn't exist.
 - `server.deleteRepo(id)` — delete a repo and all its data.
 - `server.commit(repoId, options)` — commit files to a branch with CAS protection. Uses `buildCommit()` from `just-git/repo` for object creation, then `updateRefs()` for ref advancement. Throws if CAS fails (concurrent branch update) or the repo doesn't exist.
-- `server.asNetwork(baseUrl?)` — returns a `NetworkPolicy` that routes HTTP transport calls to the server in-process, bypassing the network stack. Pass the result as `network` to `createGit`. Default base URL is `"http://git"`. All server hooks, session building, and policy enforcement work identically to real HTTP.
+- `server.asNetwork(baseUrl?)` — returns a `NetworkPolicy` that routes HTTP transport calls to the server in-process, bypassing the network stack. Pass the result as `network` to `createGit`. Default base URL is `"http://git"`. All server hooks, auth, and policy enforcement work identically to real HTTP.
 - `server.close(options?)` — graceful shutdown. New HTTP requests get 503, new SSH sessions get exit 128. Resolves when all in-flight operations complete and pack cache is released. Accepts `{ signal?: AbortSignal }` for timeout. Idempotent.
 - `server.closed` — `true` after `close()` is called.
-- `session?: SessionBuilder<S>` — custom session builder. Provides `http: (request) => S` and `ssh: (info) => S` functions that transform raw transport input into a typed session object threaded through all hooks. When omitted, the built-in `Session` type is used as default.
+- `auth?: AuthProvider<A>` — auth provider. Provides `http: (request) => A` and `ssh: (info) => A` callbacks that transform raw transport input into a typed auth context threaded through all hooks. When omitted, the built-in `Auth` type is used as default.
 
 SSH library wiring lives in userland — the core package remains zero-dependency. The `SshChannel` interface wraps any SSH library's streams into web-standard `ReadableStream`/`WritableStream`.
 
-**Session builder:** `createServer` accepts an optional `session` config with two builder functions — one for HTTP (`Request → S | Response`), one for SSH (`SshSessionInfo → S`). TypeScript infers `S` from the builder return types, and all hooks (`ServerHooks<S>`) receive the inferred type. When `session` is omitted, `S` defaults to the built-in `Session` type (which carries `transport`, optional `username`, optional `request`). The HTTP builder can return a `Response` to short-circuit the request (e.g. 401 with `WWW-Authenticate` header) — this is the primary mechanism for HTTP auth. SSH auth is handled at the transport layer (e.g. ssh2's `authentication` event) before the session builder runs, so the SSH builder only enriches the session. `SshSessionInfo` has an optional `metadata?: Record<string, unknown>` bag for threading SSH-layer details (key fingerprint, client IP, roles, etc.) into the session builder.
+**Auth provider:** `createServer` accepts an optional `auth` config with two callbacks — one for HTTP (`Request → A | Response`), one for SSH (`SshSessionInfo → A`). TypeScript infers `A` from the callback return types, and all hooks (`ServerHooks<A>`) receive the inferred type. When `auth` is omitted, `A` defaults to the built-in `Auth` type (which carries `transport`, optional `username`, optional `request`). The HTTP callback can return a `Response` to short-circuit the request (e.g. 401 with `WWW-Authenticate` header) — this is the primary mechanism for HTTP auth. SSH auth is handled at the transport layer (e.g. ssh2's `authentication` event) before the auth provider runs, so the SSH callback only enriches the auth context. `SshSessionInfo` has an optional `metadata?: Record<string, unknown>` bag for threading SSH-layer details (key fingerprint, client IP, roles, etc.) into the auth provider.
 
-**Auth:** HTTP auth is handled by the session builder returning a `Response` on failure. Per-repo read auth uses `advertiseRefs` hook which can return a `Rejection` to deny access entirely (HTTP returns 403, SSH returns exit 128 with stderr message). Per-repo push auth uses `preReceive` hook.
+**Auth:** HTTP auth is handled by the auth provider returning a `Response` on failure. Per-repo read auth uses `advertiseRefs` hook which can return a `Rejection` to deny access entirely (HTTP returns 403, SSH returns exit 128 with stderr message). Per-repo push auth uses `preReceive` hook.
 
 **Node.js HTTP adapter:**
 

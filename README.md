@@ -83,8 +83,8 @@ const server = createServer({
   autoCreate: true,
   policy: { protectedBranches: ["main"] },
   hooks: {
-    preReceive: ({ session }) => {
-      if (!session.request?.headers.has("Authorization"))
+    preReceive: ({ auth }) => {
+      if (!auth.request?.headers.has("Authorization"))
         return { reject: true, message: "unauthorized" };
     },
     postReceive: async ({ repo, repoId, updates }) => {
@@ -134,7 +134,7 @@ See [REPO.md](docs/REPO.md) for the full API, the `GitRepo` interface, and the h
 - **Local paths**: direct filesystem transfer between repositories.
 - **Cross-VFS**: clone, fetch, and push between isolated in-memory filesystems via `resolveRemote`. See [CLIENT.md](docs/CLIENT.md#multi-agent-collaboration).
 - **Smart HTTP**: clone, fetch, and push against real Git servers (e.g. GitHub) via Git Smart HTTP protocol. Auth via `credentials` option or `GIT_HTTP_BEARER_TOKEN` / `GIT_HTTP_USER` + `GIT_HTTP_PASSWORD` env vars.
-- **In-process server**: connect a git client to a `GitServer` without any network stack via `server.asNetwork()`. All server hooks, sessions, and policy enforcement work identically to real HTTP. See [CLIENT.md](docs/CLIENT.md#in-process-server).
+- **In-process server**: connect a git client to a `GitServer` without any network stack via `server.asNetwork()`. All server hooks, auth, and policy enforcement work identically to real HTTP. See [CLIENT.md](docs/CLIENT.md#in-process-server).
 
 ### Internals
 

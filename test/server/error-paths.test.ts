@@ -606,15 +606,15 @@ describe("onError callback", () => {
 		}
 	});
 
-	test("custom onError receives error and session", async () => {
-		let captured: { err: unknown; session: unknown } | null = null;
+	test("custom onError receives error and auth", async () => {
+		let captured: { err: unknown; auth: unknown } | null = null;
 		const server = createServer({
 			storage: new MemoryStorage(),
 			resolve: async () => {
 				throw new Error("custom error");
 			},
-			onError: (err, session) => {
-				captured = { err, session };
+			onError: (err, auth) => {
+				captured = { err, auth };
 			},
 		});
 
@@ -624,9 +624,9 @@ describe("onError callback", () => {
 		expect(captured).not.toBeNull();
 		expect(captured!.err).toBeInstanceOf(Error);
 		expect((captured!.err as Error).message).toBe("custom error");
-		const session = captured!.session as { transport: string; request: Request };
-		expect(session.transport).toBe("http");
-		expect(session.request.url).toBe(req.url);
+		const auth = captured!.auth as { transport: string; request: Request };
+		expect(auth.transport).toBe("http");
+		expect(auth.request.url).toBe(req.url);
 	});
 
 	test("onError: false suppresses all logging", async () => {

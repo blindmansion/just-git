@@ -274,17 +274,17 @@ export interface AdvertiseResult {
  * Both HTTP and SSH code paths use this — the caller handles the
  * transport-specific response (HTTP 403 vs SSH exit 128).
  */
-export async function advertiseRefsWithHooks<S>(
+export async function advertiseRefsWithHooks<A>(
 	repo: GitRepo,
 	repoId: string,
 	service: "git-upload-pack" | "git-receive-pack",
-	hooks: ServerHooks<S> | undefined,
-	session: S,
+	hooks: ServerHooks<A> | undefined,
+	auth: A,
 ): Promise<AdvertiseResult | Rejection> {
 	const { refs: allRefs, headTarget } = await collectRefs(repo);
 	let refs = allRefs;
 	if (hooks?.advertiseRefs) {
-		const result = await hooks.advertiseRefs({ repo, repoId, refs: allRefs, service, session });
+		const result = await hooks.advertiseRefs({ repo, repoId, refs: allRefs, service, auth });
 		if (isRejection(result)) return result;
 		if (result) refs = result;
 	}
@@ -710,12 +710,12 @@ export async function applyCasRefUpdates(
 
 // ── Receive-pack lifecycle (transport-agnostic) ─────────────────────
 
-export interface ApplyReceivePackOptions<S = unknown> {
+export interface ApplyReceivePackOptions<A = unknown> {
 	repo: GitRepo;
 	repoId: string;
 	ingestResult: ReceivePackResult;
-	hooks?: ServerHooks<S>;
-	session: S;
+	hooks?: ServerHooks<A>;
+	auth: A;
 }
 
 /**
@@ -727,15 +727,15 @@ export interface ApplyReceivePackOptions<S = unknown> {
  * Does NOT handle unpack failures — the caller should check
  * `ingestResult.unpackOk` and short-circuit before calling this.
  */
-export async function applyReceivePack<S = unknown>(
-	options: ApplyReceivePackOptions<S>,
+export async function applyReceivePack<A = unknown>(
+	options: ApplyReceivePackOptions<A>,
 ): Promise<RefUpdateResult> {
-	const { repo, repoId, ingestResult, hooks, session } = options;
+	const { repo, repoId, ingestResult, hooks, auth } = options;
 	const { updates } = ingestResult;
 
 	// Pre-receive hook: abort entire push on rejection
 	if (hooks?.preReceive) {
-		const result = await hooks.preReceive({ repo, repoId, updates, session });
+		const result = await hooks.preReceive({ repo, repoId, updates, auth });
 		if (isRejection(result)) {
 			const msg = result.message ?? "pre-receive hook declined";
 			return {
@@ -761,7 +761,7 @@ export async function applyReceivePack<S = unknown>(
 		}
 
 		if (hooks?.update) {
-			const result = await hooks.update({ repo, repoId, update, session });
+			const result = await hooks.update({ repo, repoId, update, auth });
 			if (isRejection(result)) {
 				refResults.push({
 					ref: update.ref,
@@ -802,7 +802,7 @@ export async function applyReceivePack<S = unknown>(
 	// Post-receive hook (fire-and-forget, only for successful updates)
 	if (hooks?.postReceive && applied.length > 0) {
 		try {
-			await hooks.postReceive({ repo, repoId, updates: applied, session });
+			await hooks.postReceive({ repo, repoId, updates: applied, auth });
 		} catch {
 			// Post-receive errors don't affect the result
 		}
@@ -883,19 +883,19 @@ export function buildV2CapabilityAdvertisementBytes(): Uint8Array {
  * then builds a v2 ls-refs response respecting the client's requested
  * attributes (symrefs, peel, ref-prefix, unborn).
  */
-export async function handleLsRefs<S>(
+export async function handleLsRefs<A>(
 	repo: GitRepo,
 	repoId: string,
 	args: string[],
-	hooks: ServerHooks<S> | undefined,
-	session: S,
+	hooks: ServerHooks<A> | undefined,
+	auth: A,
 ): Promise<Uint8Array | Rejection> {
 	const wantSymrefs = args.includes("symrefs");
 	const wantPeel = args.includes("peel");
 	const wantUnborn = args.includes("unborn");
 	const prefixes = args.filter((a) => a.startsWith("ref-prefix ")).map((a) => a.slice(11));
 
-	const adv = await advertiseRefsWithHooks(repo, repoId, "git-upload-pack", hooks, session);
+	const adv = await advertiseRefsWithHooks(repo, repoId, "git-upload-pack", hooks, auth);
 	if (isRejection(adv)) return adv;
 
 	const { refs: allRefs, headTarget } = adv;

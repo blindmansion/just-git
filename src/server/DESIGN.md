@@ -121,7 +121,7 @@ Standalone functions for working with `GitRepo` directly, exported from `just-gi
 
 **Policy** (`handler.ts` — `buildPolicyHooks`)
 
-Declarative push rules on `GitServerConfig.policy`: branch protection, force-push denial, delete denial, tag immutability. Non-generic, session-independent. Internally generates hooks that run before user-provided hooks.
+Declarative push rules on `GitServerConfig.policy`: branch protection, force-push denial, delete denial, tag immutability. Non-generic, auth-independent. Internally generates hooks that run before user-provided hooks.
 
 **Storage** (`storage.ts`, `bun-sqlite-storage.ts`, `better-sqlite3-storage.ts`, `memory-storage.ts`, `pg-storage.ts`)
 
@@ -159,7 +159,7 @@ const server = createServer({
     /* optional ServerHooks */
   },
   basePath: "/git", // optional URL prefix to strip
-  onError: (err, session) => {
+  onError: (err, auth) => {
     // Custom error logging. Default logs just the message (no stack trace).
     // Set to `false` to suppress all output.
     myLogger.error("git server error", { err });
@@ -284,8 +284,8 @@ const server = createServer({
     denyDeletes: true,
   },
   hooks: {
-    preReceive: ({ session }) => {
-      if (!session?.request?.headers.has("Authorization"))
+    preReceive: ({ auth }) => {
+      if (!auth.request?.headers.has("Authorization"))
         return { reject: true, message: "unauthorized" };
     },
     postReceive: async ({ updates }) => {

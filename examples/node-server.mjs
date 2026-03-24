@@ -8,7 +8,7 @@ const server = createServer({
 	storage: new BetterSqlite3Storage(new Database("repos.sqlite")),
 	autoCreate: true,
 
-	session: {
+	auth: {
 		http: (request) => {
 			if (!GIT_TOKEN) return { transport: "http", request };
 

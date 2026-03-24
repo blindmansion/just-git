@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import type { GitServer } from "../../src/server/types.ts";
-import { envAt, createServerClient, startServer, startServerWithSessionAuth } from "./util.ts";
+import { envAt, createServerClient, startServer, startServerWithAuth } from "./util.ts";
 
 describe("server policy", () => {
 	let driver: MemoryStorage;
@@ -342,9 +342,9 @@ describe("server policy", () => {
 		});
 	});
 
-	describe("session auth via hooks", () => {
-		test("rejects clone when session builder rejects", async () => {
-			const { srv, port } = startServerWithSessionAuth(() => false, {
+	describe("auth via hooks", () => {
+		test("rejects clone when auth provider rejects", async () => {
+			const { srv, port } = startServerWithAuth(() => false, {
 				storage: driver,
 			});
 
@@ -359,8 +359,8 @@ describe("server policy", () => {
 			}
 		});
 
-		test("allows clone when session builder allows", async () => {
-			const { srv, port } = startServerWithSessionAuth(() => true, {
+		test("allows clone when auth provider allows", async () => {
+			const { srv, port } = startServerWithAuth(() => true, {
 				storage: driver,
 			});
 
@@ -375,8 +375,8 @@ describe("server policy", () => {
 			}
 		});
 
-		test("returns custom Response from session builder", async () => {
-			const { srv, port } = startServerWithSessionAuth(
+		test("returns custom Response from auth provider", async () => {
+			const { srv, port } = startServerWithAuth(
 				() =>
 					new Response("Unauthorized", {
 						status: 401,
@@ -394,8 +394,8 @@ describe("server policy", () => {
 			}
 		});
 
-		test("gates push when session builder rejects", async () => {
-			const { srv, port } = startServerWithSessionAuth(
+		test("gates push when auth provider rejects", async () => {
+			const { srv, port } = startServerWithAuth(
 				(req) => req.headers.get("Authorization") === "Bearer secret",
 				{ storage: driver },
 			);
@@ -414,8 +414,8 @@ describe("server policy", () => {
 			}
 		});
 
-		test("composes session auth with policy", async () => {
-			const { srv, port } = startServerWithSessionAuth(() => true, {
+		test("composes auth provider with policy", async () => {
+			const { srv, port } = startServerWithAuth(() => true, {
 				storage: driver,
 				policy: { protectedBranches: ["main"] },
 			});

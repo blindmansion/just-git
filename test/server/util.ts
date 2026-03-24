@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { createGit } from "../../src/index.ts";
 import { createServer } from "../../src/server/handler.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
-import type { GitServerConfig, Session } from "../../src/server/types.ts";
+import type { Auth, GitServerConfig } from "../../src/server/types.ts";
 
 // ── Test env ────────────────────────────────────────────────────────
 
@@ -76,28 +76,28 @@ export function startServer(config: GitServerConfig) {
 	return { server, srv, port: srv.port!, stop: () => srv.stop() };
 }
 
-export const defaultHttpSession = (req: Request): Session => ({
+export const defaultHttpAuth = (req: Request): Auth => ({
 	transport: "http",
 	request: req,
 });
 
 /**
- * Start a server with session-builder-based HTTP auth.
+ * Start a server with auth-provider-based HTTP auth.
  * The authorize callback returns true to allow, false for 403,
  * or a Response to send directly (e.g. 401).
  */
-export function startServerWithSessionAuth(
+export function startServerWithAuth(
 	authorize: (request: Request) => boolean | Response | Promise<boolean | Response>,
 	config: GitServerConfig,
 ) {
 	const server = createServer({
 		...config,
-		session: {
+		auth: {
 			http: async (req) => {
 				const result = await authorize(req);
 				if (result instanceof Response) return result;
 				if (!result) return new Response("Forbidden", { status: 403 });
-				return defaultHttpSession(req);
+				return defaultHttpAuth(req);
 			},
 		},
 	});

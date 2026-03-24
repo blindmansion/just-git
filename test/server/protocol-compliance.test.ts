@@ -8,7 +8,7 @@ import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import { createStorageAdapter } from "../../src/server/storage.ts";
 import type { NodeHttpRequest, NodeHttpResponse } from "../../src/server/types.ts";
 import { pathExists, readFile } from "../util.ts";
-import { envAt, createServerClient, startServer, defaultHttpSession } from "./util.ts";
+import { envAt, createServerClient, startServer, defaultHttpAuth } from "./util.ts";
 
 const TEST_IDENTITY: Identity = {
 	name: "Test",
@@ -577,10 +577,10 @@ describe("nodeHandler", () => {
 		const server = createServer({
 			storage: new MemoryStorage(),
 			resolve: () => null,
-			session: {
+			auth: {
 				http: (req) => {
 					capturedHeaders = req.headers;
-					return defaultHttpSession(req);
+					return defaultHttpAuth(req);
 				},
 			},
 		});
@@ -605,10 +605,10 @@ describe("nodeHandler", () => {
 		const server = createServer({
 			storage: new MemoryStorage(),
 			resolve: () => null,
-			session: {
+			auth: {
 				http: async (req) => {
 					capturedBody = new Uint8Array(await req.clone().arrayBuffer());
-					return defaultHttpSession(req);
+					return defaultHttpAuth(req);
 				},
 			},
 		});
@@ -657,11 +657,11 @@ describe("nodeHandler", () => {
 		const server = createServer({
 			storage: new MemoryStorage(),
 			resolve: () => null,
-			session: {
+			auth: {
 				http: (req) => {
 					capturedMethod = req.method;
 					capturedUrl = new URL(req.url).pathname;
-					return defaultHttpSession(req);
+					return defaultHttpAuth(req);
 				},
 			},
 		});

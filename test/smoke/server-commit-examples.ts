@@ -190,14 +190,14 @@ import { buildCommit, readFileAtCommit, readCommit, resolveRef } from "../../src
 {
 	const server = createServer({
 		storage: new BunSqliteStorage(new Database(":memory:")),
-		session: {
+		auth: {
 			http: (req) => ({
 				canWrite: req.headers.has("Authorization"),
 			}),
 		},
 		hooks: {
-			preReceive: ({ session }) => {
-				if (!session.canWrite) return { reject: true, message: "write access denied" };
+			preReceive: ({ auth }) => {
+				if (!auth.canWrite) return { reject: true, message: "write access denied" };
 			},
 		},
 	});
@@ -219,12 +219,9 @@ import { buildCommit, readFileAtCommit, readCommit, resolveRef } from "../../src
 	});
 	const pushResp = await server.fetch(pushReq);
 	// The push will fail at the protocol level (empty body), but the key
-	// point is that hooks fire on transport and session.canWrite is accessible
-	// without optional chaining — session is always present in transport hooks
-	console.assert(
-		pushResp.status !== 501,
-		"HTTP should not return 501 (session builder configured)",
-	);
+	// point is that hooks fire on transport and auth.canWrite is accessible
+	// without optional chaining — auth is always present in transport hooks
+	console.assert(pushResp.status !== 501, "HTTP should not return 501 (auth provider configured)");
 
 	console.log("SERVER.MD hook enforcement via transport: OK");
 }

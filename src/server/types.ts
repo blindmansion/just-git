@@ -4,16 +4,16 @@ import type { CommitOptions } from "../repo/writing.ts";
 import type { Storage, CreateRepoOptions } from "./storage.ts";
 import type { GcOptions, GcResult } from "./gc.ts";
 
-// ── Session ─────────────────────────────────────────────────────────
+// ── Auth ─────────────────────────────────────────────────────────────
 
 /**
- * Default session type, produced by the built-in session builder when
- * no custom `session` config is provided to `createServer`.
+ * Default auth context type, produced by the built-in auth provider when
+ * no custom `auth` config is provided to `createServer`.
  *
  * HTTP requests produce `{ transport: "http", request }`.
  * SSH sessions produce `{ transport: "ssh", username }`.
  */
-export interface Session {
+export interface Auth {
 	transport: "http" | "ssh";
 	/** Authenticated username, when available. */
 	username?: string;
@@ -22,53 +22,53 @@ export interface Session {
 }
 
 /**
- * User-provided session builder that transforms raw transport input
- * into a typed session object threaded through all hooks.
+ * Auth provider that transforms raw transport input into a typed
+ * auth context threaded through all hooks.
  *
  * Both properties are optional — provide only the transports you use.
- * TypeScript infers `S` from whichever builders are present.
+ * TypeScript infers `A` from whichever callbacks are present.
  *
- * If a transport is used at runtime but its builder is missing, the
+ * If a transport is used at runtime but its callback is missing, the
  * server returns an error (HTTP 501 / SSH exit 128).
  *
  * ```ts
  * // HTTP-only — no need to provide ssh
  * const server = createServer({
  *   storage: new BunSqliteStorage(db),
- *   session: {
+ *   auth: {
  *     http: (req) => ({
  *       userId: parseJwt(req).sub,
  *       roles: parseJwt(req).roles,
  *     }),
  *   },
  *   hooks: {
- *     preReceive: ({ session }) => {
- *       // session is { userId: string, roles: string[] } — inferred!
- *       if (!session?.roles.includes("push"))
+ *     preReceive: ({ auth }) => {
+ *       // auth is { userId: string, roles: string[] } — inferred!
+ *       if (!auth.roles.includes("push"))
  *         return { reject: true, message: "forbidden" };
  *     },
  *   },
  * });
  * ```
  */
-export interface SessionBuilder<S> {
+export interface AuthProvider<A> {
 	/**
-	 * Build a session from an HTTP request.
+	 * Authenticate an HTTP request.
 	 *
-	 * Return `S` to proceed, or return a `Response` to short-circuit
+	 * Return `A` to proceed, or return a `Response` to short-circuit
 	 * the request (e.g. 401 with `WWW-Authenticate` header). This is
 	 * the primary mechanism for HTTP auth — no separate middleware needed.
 	 *
 	 * When omitted, HTTP requests receive a 501 response.
 	 */
-	http?: (request: Request) => S | Response | Promise<S | Response>;
+	http?: (request: Request) => A | Response | Promise<A | Response>;
 	/**
-	 * Build a session from SSH session info.
+	 * Authenticate an SSH session.
 	 *
 	 * When omitted, SSH sessions receive exit code 128 with a
 	 * diagnostic message.
 	 */
-	ssh?: (info: SshSessionInfo) => S | Promise<S>;
+	ssh?: (info: SshSessionInfo) => A | Promise<A>;
 }
 
 // ── SSH types ───────────────────────────────────────────────────────
@@ -80,7 +80,7 @@ export interface SshSessionInfo {
 	/**
 	 * Arbitrary metadata from the SSH auth layer.
 	 * Stash key fingerprints, client IPs, roles, etc. here —
-	 * the session builder can extract and type them.
+	 * the auth provider can extract and type them.
 	 */
 	metadata?: Record<string, unknown>;
 }
@@ -127,8 +127,8 @@ export interface NodeHttpResponse {
 /**
  * Declarative push rules applied before user-provided hooks.
  *
- * These are git-level constraints that don't depend on the session.
- * For session-dependent logic (auth, logging), use hooks directly.
+ * These are git-level constraints that don't depend on the caller's
+ * identity. For auth-dependent logic, use hooks directly.
  */
 export interface ServerPolicy {
 	/** Branches that cannot be force-pushed to or deleted. */
@@ -143,7 +143,7 @@ export interface ServerPolicy {
 
 // ── Server config ───────────────────────────────────────────────────
 
-export interface GitServerConfig<S = Session> {
+export interface GitServerConfig<A = Auth> {
 	/**
 	 * Storage backend for git object and ref persistence.
 	 *
@@ -175,24 +175,24 @@ export interface GitServerConfig<S = Session> {
 	autoCreate?: boolean | { defaultBranch?: string };
 
 	/** Server-side hooks. All optional. */
-	hooks?: ServerHooks<S>;
+	hooks?: ServerHooks<A>;
 
 	/**
 	 * Declarative push policy. Rules run before user-provided hooks.
 	 *
-	 * For session-dependent logic (auth, post-push actions), use `hooks`.
+	 * For auth-dependent logic (permissions, post-push actions), use `hooks`.
 	 */
 	policy?: ServerPolicy;
 
 	/**
-	 * Custom session builder. Provide `http`, `ssh`, or both —
+	 * Auth provider. Provide `http`, `ssh`, or both —
 	 * the server calls whichever is present for that transport.
-	 * If a transport is used but its builder is missing, the server
+	 * If a transport is used but its callback is missing, the server
 	 * returns an error (HTTP 501 / SSH exit 128).
 	 *
-	 * When omitted entirely, the built-in `Session` type is used.
+	 * When omitted entirely, the built-in `Auth` type is used.
 	 */
-	session?: SessionBuilder<S>;
+	auth?: AuthProvider<A>;
 
 	/** Base path prefix to strip from HTTP URLs (e.g. "/git"). */
 	basePath?: string;
@@ -226,7 +226,7 @@ export interface GitServerConfig<S = Session> {
 	 * Override to integrate with your own logging, or set to `false` to
 	 * suppress all error output.
 	 */
-	onError?: false | ((err: unknown, session?: S) => void);
+	onError?: false | ((err: unknown, auth?: A) => void);
 }
 
 /**
@@ -419,27 +419,27 @@ export interface GitServer {
 
 // ── Hooks ───────────────────────────────────────────────────────────
 
-export interface ServerHooks<S = Session> {
+export interface ServerHooks<A = Auth> {
 	/**
 	 * Called after objects are unpacked but before any refs update.
 	 * Receives ALL ref updates as a batch. Return a Rejection to abort
 	 * the entire push. Auth, branch protection, and repo-wide policy
 	 * belong here.
 	 */
-	preReceive?: (event: PreReceiveEvent<S>) => void | Rejection | Promise<void | Rejection>;
+	preReceive?: (event: PreReceiveEvent<A>) => void | Rejection | Promise<void | Rejection>;
 
 	/**
 	 * Called per-ref, after preReceive passes.
 	 * Return a Rejection to block this specific ref update while
 	 * allowing others. Per-branch rules belong here.
 	 */
-	update?: (event: UpdateEvent<S>) => void | Rejection | Promise<void | Rejection>;
+	update?: (event: UpdateEvent<A>) => void | Rejection | Promise<void | Rejection>;
 
 	/**
 	 * Called after all ref updates succeed. Cannot reject.
 	 * CI triggers, webhooks, notifications belong here.
 	 */
-	postReceive?: (event: PostReceiveEvent<S>) => void | Promise<void>;
+	postReceive?: (event: PostReceiveEvent<A>) => void | Promise<void>;
 
 	/**
 	 * Called when a client wants to fetch or push (during ref advertisement).
@@ -447,7 +447,7 @@ export interface ServerHooks<S = Session> {
 	 * access entirely, or void to advertise all refs.
 	 */
 	advertiseRefs?: (
-		event: AdvertiseRefsEvent<S>,
+		event: AdvertiseRefsEvent<A>,
 	) => RefAdvertisement[] | void | Rejection | Promise<RefAdvertisement[] | void | Rejection>;
 }
 
@@ -470,44 +470,44 @@ export interface RefUpdate {
 }
 
 /** Fired after objects are unpacked but before refs are updated. */
-export interface PreReceiveEvent<S = Session> {
+export interface PreReceiveEvent<A = Auth> {
 	repo: GitRepo;
 	/** Resolved repo ID (the value returned by `resolve`, or the raw path when `resolve` is not set). */
 	repoId: string;
 	updates: readonly RefUpdate[];
-	/** Session built by the transport's session builder. Always present — hooks only fire from HTTP/SSH transport. */
-	session: S;
+	/** Auth context from the transport's auth provider. Always present — hooks only fire from HTTP/SSH transport. */
+	auth: A;
 }
 
 /** Fired per-ref after preReceive passes. */
-export interface UpdateEvent<S = Session> {
+export interface UpdateEvent<A = Auth> {
 	repo: GitRepo;
 	/** Resolved repo ID (the value returned by `resolve`, or the raw path when `resolve` is not set). */
 	repoId: string;
 	update: RefUpdate;
-	/** Session built by the transport's session builder. Always present — hooks only fire from HTTP/SSH transport. */
-	session: S;
+	/** Auth context from the transport's auth provider. Always present — hooks only fire from HTTP/SSH transport. */
+	auth: A;
 }
 
 /** Fired after all ref updates succeed. */
-export interface PostReceiveEvent<S = Session> {
+export interface PostReceiveEvent<A = Auth> {
 	repo: GitRepo;
 	/** Resolved repo ID (the value returned by `resolve`, or the raw path when `resolve` is not set). */
 	repoId: string;
 	updates: readonly RefUpdate[];
-	/** Session built by the transport's session builder. Always present — hooks only fire from HTTP/SSH transport. */
-	session: S;
+	/** Auth context from the transport's auth provider. Always present — hooks only fire from HTTP/SSH transport. */
+	auth: A;
 }
 
 /** Fired during ref advertisement (info/refs). */
-export interface AdvertiseRefsEvent<S = Session> {
+export interface AdvertiseRefsEvent<A = Auth> {
 	repo: GitRepo;
 	/** Resolved repo ID (the value returned by `resolve`, or the raw path when `resolve` is not set). */
 	repoId: string;
 	refs: RefAdvertisement[];
 	service: "git-upload-pack" | "git-receive-pack";
-	/** Session built by the transport's session builder. Always present — hooks only fire from HTTP/SSH transport. */
-	session: S;
+	/** Auth context from the transport's auth provider. Always present — hooks only fire from HTTP/SSH transport. */
+	auth: A;
 }
 
 /** A ref name and hash advertised to clients during fetch/push discovery. */

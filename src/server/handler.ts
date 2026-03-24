@@ -45,14 +45,14 @@ import type {
 	Rejection,
 	ServerHooks,
 	ServerPolicy,
-	Session,
-	SessionBuilder,
+	Auth,
+	AuthProvider,
 	SshChannel,
 	SshSessionInfo,
 	UpdateEvent,
 } from "./types.ts";
 
-const defaultSessionBuilder: SessionBuilder<Session> = {
+const defaultAuthProvider: AuthProvider<Auth> = {
 	http: (request) => ({ transport: "http", request }),
 	ssh: (info) => ({ transport: "ssh", username: info.username }),
 };
@@ -93,8 +93,8 @@ export function isValidRepoId(id: string): boolean {
  * server.handleSession(command, channel, { username });
  * ```
  */
-export function createServer<S = Session>(
-	config: GitServerConfig<S> = {} as GitServerConfig<S>,
+export function createServer<A = Auth>(
+	config: GitServerConfig<A> = {} as GitServerConfig<A>,
 ): GitServer {
 	const rawStorage = config.storage ?? new MemoryStorage();
 	const storage = createStorageAdapter(rawStorage);
@@ -115,8 +115,8 @@ export function createServer<S = Session>(
 		return { repo: await storage.createRepo(id, opts), repoId: id };
 	}
 	const hooks = mergePolicyAndHooks(config.policy, config.hooks);
-	// Safe: when config.session is omitted, S defaults to Session, matching defaultSessionBuilder.
-	const buildSession = (config.session ?? defaultSessionBuilder) as SessionBuilder<S>;
+	// Safe: when config.auth is omitted, A defaults to Auth, matching defaultAuthProvider.
+	const buildAuth = (config.auth ?? defaultAuthProvider) as AuthProvider<A>;
 
 	const packCache =
 		config.packCache === false ? undefined : new PackCache(config.packCache?.maxBytes);
@@ -149,14 +149,14 @@ export function createServer<S = Session>(
 	const server: GitServer = {
 		async fetch(req: Request): Promise<Response> {
 			if (!enter()) return new Response("Service Unavailable", { status: 503 });
-			let session: S | undefined;
+			let auth: A | undefined;
 			try {
-				if (!buildSession.http) {
-					return new Response("HTTP session builder not configured", { status: 501 });
+				if (!buildAuth.http) {
+					return new Response("HTTP auth provider not configured", { status: 501 });
 				}
-				const sessionOrResponse = await buildSession.http(req);
-				if (sessionOrResponse instanceof Response) return sessionOrResponse;
-				session = sessionOrResponse;
+				const authOrResponse = await buildAuth.http(req);
+				if (authOrResponse instanceof Response) return authOrResponse;
+				auth = authOrResponse;
 
 				const url = new URL(req.url);
 				let pathname = decodeURIComponent(url.pathname);
@@ -192,7 +192,7 @@ export function createServer<S = Session>(
 							resolved.repoId,
 							service,
 							hooks,
-							session,
+							auth,
 						);
 						if (isRejection(adv)) {
 							return new Response(adv.message ?? "Forbidden", { status: 403 });
@@ -211,7 +211,7 @@ export function createServer<S = Session>(
 						resolved.repoId,
 						service,
 						hooks,
-						session,
+						auth,
 					);
 					if (isRejection(adv)) {
 						return new Response(adv.message ?? "Forbidden", { status: 403 });
@@ -245,7 +245,7 @@ export function createServer<S = Session>(
 								resolved.repoId,
 								cmd.args,
 								hooks,
-								session,
+								auth,
 							);
 							if (isRejection(result)) {
 								return new Response(result.message ?? "Forbidden", { status: 403 });
@@ -316,7 +316,7 @@ export function createServer<S = Session>(
 						repoId: resolved.repoId,
 						ingestResult,
 						hooks,
-						session,
+						auth,
 					});
 
 					if (useReportStatus) {
@@ -337,7 +337,7 @@ export function createServer<S = Session>(
 
 				return new Response("Not Found", { status: 404 });
 			} catch (err) {
-				onError?.(err, session);
+				onError?.(err, auth);
 				return new Response("Internal Server Error", { status: 500 });
 			} finally {
 				leave();
@@ -354,20 +354,20 @@ export function createServer<S = Session>(
 				return 128;
 			}
 			try {
-				if (!buildSession.ssh) {
+				if (!buildAuth.ssh) {
 					channel.writeStderr?.(
-						new TextEncoder().encode("fatal: SSH session builder not configured\n"),
+						new TextEncoder().encode("fatal: SSH auth provider not configured\n"),
 					);
 					return 128;
 				}
-				const session = await buildSession.ssh(sshSession ?? {});
+				const auth = await buildAuth.ssh(sshSession ?? {});
 				return await handleSshSession(command, channel, {
 					resolveRepo,
 					hooks,
 					packCache,
 					packOptions: config.packOptions,
-					session,
-					onError: onError ? (err) => onError(err, session) : undefined,
+					auth,
+					onError: onError ? (err) => onError(err, auth) : undefined,
 				});
 			} finally {
 				leave();
@@ -621,10 +621,10 @@ function buildPolicyHooks(policy: ServerPolicy): ServerHooks<any> {
 	return hooks;
 }
 
-function mergePolicyAndHooks<S>(
+function mergePolicyAndHooks<A>(
 	policy: ServerPolicy | undefined,
-	hooks: ServerHooks<S> | undefined,
-): ServerHooks<S> | undefined {
+	hooks: ServerHooks<A> | undefined,
+): ServerHooks<A> | undefined {
 	const policyHooks = policy ? buildPolicyHooks(policy) : undefined;
 	if (policyHooks && hooks) return composeHooks(policyHooks, hooks);
 	return policyHooks ?? hooks;
@@ -641,14 +641,14 @@ function mergePolicyAndHooks<S>(
  *   refs returned by the previous one. Short-circuits on `Rejection`.
  *   Returning void passes through unchanged.
  */
-export function composeHooks<S = Session>(
-	...hookSets: (ServerHooks<S> | undefined)[]
-): ServerHooks<S> {
-	const sets = hookSets.filter((h): h is ServerHooks<S> => h != null);
+export function composeHooks<A = Auth>(
+	...hookSets: (ServerHooks<A> | undefined)[]
+): ServerHooks<A> {
+	const sets = hookSets.filter((h): h is ServerHooks<A> => h != null);
 	if (sets.length === 0) return {};
 	if (sets.length === 1) return sets[0]!;
 
-	const composed: ServerHooks<S> = {};
+	const composed: ServerHooks<A> = {};
 
 	const preReceiveHandlers = sets.filter((s) => s.preReceive).map((s) => s.preReceive!);
 	if (preReceiveHandlers.length > 0) {

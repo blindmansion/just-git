@@ -2,12 +2,13 @@ import { describe, expect, test } from "bun:test";
 import type { GitRepo } from "../../src/lib/types.ts";
 import { composeHooks } from "../../src/server/handler.ts";
 import type {
+	Auth,
+	AdvertiseRefsEvent,
 	PostReceiveEvent,
 	PreReceiveEvent,
-	UpdateEvent,
-	AdvertiseRefsEvent,
-	ServerHooks,
 	RefUpdate,
+	ServerHooks,
+	UpdateEvent,
 } from "../../src/server/types.ts";
 
 function stubRepo(): GitRepo {
@@ -17,9 +18,7 @@ function stubRepo(): GitRepo {
 	};
 }
 
-import type { Session } from "../../src/server/types.ts";
-
-function stubSession(): Session {
+function stubAuth(): Auth {
 	return { transport: "http", request: new Request("http://localhost/test") };
 }
 
@@ -32,7 +31,7 @@ function preReceiveEvent(overrides?: Partial<PreReceiveEvent>): PreReceiveEvent 
 		repo: stubRepo(),
 		repoId: "my-repo",
 		updates: [refUpdate()],
-		session: stubSession(),
+		auth: stubAuth(),
 		...overrides,
 	};
 }
@@ -42,7 +41,7 @@ function updateEvent(overrides?: Partial<UpdateEvent>): UpdateEvent {
 		repo: stubRepo(),
 		repoId: "my-repo",
 		update: refUpdate(),
-		session: stubSession(),
+		auth: stubAuth(),
 		...overrides,
 	};
 }
@@ -52,7 +51,7 @@ function postReceiveEvent(overrides?: Partial<PostReceiveEvent>): PostReceiveEve
 		repo: stubRepo(),
 		repoId: "my-repo",
 		updates: [refUpdate()],
-		session: stubSession(),
+		auth: stubAuth(),
 		...overrides,
 	};
 }
@@ -66,7 +65,7 @@ function advertiseRefsEvent(overrides?: Partial<AdvertiseRefsEvent>): AdvertiseR
 			{ name: "refs/heads/feature", hash: "bbb" },
 		],
 		service: "git-upload-pack",
-		session: stubSession(),
+		auth: stubAuth(),
 		...overrides,
 	};
 }

@@ -119,19 +119,19 @@ Authentication (verifying identity) and authorization (checking permissions) liv
 
 | Layer                | Concern                                                          | Mechanism                                              |
 | -------------------- | ---------------------------------------------------------------- | ------------------------------------------------------ |
-| Session builder      | **Authentication** — parse credentials, verify identity          | Return `Response` to reject, or return a typed session |
+| Auth provider        | **Authentication** — parse credentials, verify identity          | Return `Response` to reject, or return a typed context |
 | `advertiseRefs` hook | **Read authorization** — control who can clone/fetch             | Return `Rejection` to deny repo access                 |
 | `preReceive` hook    | **Write authorization** (batch) — control who can push           | Return `Rejection` to deny the entire push             |
 | `update` hook        | **Write authorization** (per-ref) — control specific ref updates | Return `Rejection` to deny one ref                     |
 
-### Session builder
+### Auth provider
 
-The session builder runs first, before any git protocol handling. It parses credentials and produces a typed session object that hooks can inspect. For HTTP, returning a `Response` short-circuits the request (e.g. 401). For SSH, authentication happens at the transport layer (e.g. ssh2's `authentication` event) before the session builder runs — the SSH builder is for enrichment, not authentication.
+The auth provider runs first, before any git protocol handling. It parses credentials and produces a typed auth context that hooks can inspect. For HTTP, returning a `Response` short-circuits the request (e.g. 401). For SSH, authentication happens at the transport layer (e.g. ssh2's `authentication` event) before the auth provider runs — the SSH callback is for enrichment, not authentication.
 
 ```ts
 const server = createServer({
   storage: new BunSqliteStorage(db),
-  session: {
+  auth: {
     http: (request) => {
       const header = request.headers.get("Authorization");
       if (!header) {
@@ -147,16 +147,16 @@ const server = createServer({
 });
 ```
 
-When `session` is omitted, the server uses a default `Session` type with `transport`, optional `username`, and optional `request`.
+When `auth` is omitted, the server uses a default `Auth` type with `transport`, optional `username`, and optional `request`.
 
 ### Fully private repos
 
-When all access requires authentication, reject in the session builder and use hooks for authorization decisions:
+When all access requires authentication, reject in the auth provider and use hooks for authorization decisions:
 
 ```ts
 const server = createServer({
   storage: new BunSqliteStorage(db),
-  session: {
+  auth: {
     http: (request) => {
       const header = request.headers.get("Authorization");
       if (!header) {
@@ -170,8 +170,8 @@ const server = createServer({
     ssh: (info) => ({ userId: info.username!, canWrite: true }),
   },
   hooks: {
-    preReceive: ({ session }) => {
-      if (!session.canWrite) return { reject: true, message: "read-only access" };
+    preReceive: ({ auth }) => {
+      if (!auth.canWrite) return { reject: true, message: "read-only access" };
     },
   },
 });
@@ -179,18 +179,18 @@ const server = createServer({
 
 ### Public read, private write
 
-Anyone can clone, only authorized users can push. The session builder extracts auth when present but doesn't reject anonymous requests — the `preReceive` hook enforces write authorization:
+Anyone can clone, only authorized users can push. The auth provider extracts auth when present but doesn't reject anonymous requests — the `preReceive` hook enforces write authorization:
 
 ```ts
 const server = createServer({
   storage: new BunSqliteStorage(db),
-  session: {
+  auth: {
     http: (req) => ({ authorized: req.headers.has("Authorization") }),
     ssh: (info) => ({ authorized: info.username != null }),
   },
   hooks: {
-    preReceive: ({ session }) => {
-      if (!session.authorized) return { reject: true, message: "push requires authentication" };
+    preReceive: ({ auth }) => {
+      if (!auth.authorized) return { reject: true, message: "push requires authentication" };
     },
   },
 });
@@ -244,13 +244,13 @@ new Server({ hostKeys: [hostKey] }, (client) => {
 }).listen(2222);
 ```
 
-`handleSession` takes an optional `SshSessionInfo` with `username` and a `metadata` bag for passing along SSH-layer details (key fingerprint, client IP, etc.) — the session builder can extract and type these.
+`handleSession` takes an optional `SshSessionInfo` with `username` and a `metadata` bag for passing along SSH-layer details (key fingerprint, client IP, etc.) — the auth provider can extract and type these.
 
 > **Protocol version:** Both protocol v1 and v2 are supported over HTTP and SSH. Protocol v2 is used for upload-pack (`fetch`/`clone`) when the client requests it via `GIT_PROTOCOL_VERSION=2` or the `git-protocol` header. Receive-pack (`push`) always uses v1.
 
 ## Policy
 
-Declarative push rules that run before hooks. These are git-level constraints that don't depend on the session — for auth logic, use [hooks](#hooks).
+Declarative push rules that run before hooks. These are git-level constraints that don't depend on the caller's identity — for auth logic, use [hooks](#hooks).
 
 ```ts
 const server = createServer({
@@ -281,8 +281,8 @@ Server hooks fire during push and ref advertisement. All are optional.
 const server = createServer({
   storage: new BunSqliteStorage(db),
   hooks: {
-    preReceive: async ({ repo, updates, session }) => {
-      if (!session.canWrite) return { reject: true, message: "write access denied" };
+    preReceive: async ({ repo, updates, auth }) => {
+      if (!auth.canWrite) return { reject: true, message: "write access denied" };
     },
 
     update: async ({ repo, update }) => {
@@ -298,7 +298,7 @@ const server = createServer({
       }
     },
 
-    advertiseRefs: async ({ refs, repoId, session }) => {
+    advertiseRefs: async ({ refs, repoId, auth }) => {
       return refs.filter((r) => !r.name.startsWith("refs/internal/"));
     },
   },
@@ -312,13 +312,13 @@ const server = createServer({
 | `postReceive`   | After all ref updates succeed                      | No                         |
 | `advertiseRefs` | Client requests ref listing (clone/fetch/push)     | Yes (denies repo access)   |
 
-All hook payloads include `repo: GitRepo`, `repoId`, and `session` (from the session builder). Pre-hooks return `{ reject: true, message? }` to block the operation, using the same `Rejection` protocol as [client-side hooks](HOOKS.md).
+All hook payloads include `repo: GitRepo`, `repoId`, and `auth` (from the auth provider). Pre-hooks return `{ reject: true, message? }` to block the operation, using the same `Rejection` protocol as [client-side hooks](HOOKS.md).
 
 ### Composing hooks
 
 Combine multiple hook sets with `composeHooks()`. Pre-hooks chain in order and short-circuit on the first rejection. Post-hooks all run regardless.
 
-All composed hook sets must share the same session type `S`. For reusable hooks that don't inspect the session, use `ServerHooks<unknown>` — it composes with any concrete session type thanks to contravariance.
+All composed hook sets must share the same auth type `A`. For reusable hooks that don't inspect the auth context, use `ServerHooks<unknown>` — it composes with any concrete auth type thanks to contravariance.
 
 ```ts
 import { createServer, composeHooks } from "just-git/server";
@@ -570,7 +570,7 @@ There are two ways to interact with a server programmatically — without starti
 
 **Direct API** — `server.commit()` and `server.updateRefs()` write to repos with CAS protection. Best for bots, scripts, and platform features that create commits server-side. See [Programmatic commits](#programmatic-commits).
 
-**In-process transport** — `server.asNetwork()` returns a `NetworkPolicy` that routes a [`createGit`](CLIENT.md) client through the server's request handler. The full git protocol runs in-process — clone, fetch, push all work with hooks, sessions, and policy. Best for sandboxed agents that need a full git workflow:
+**In-process transport** — `server.asNetwork()` returns a `NetworkPolicy` that routes a [`createGit`](CLIENT.md) client through the server's request handler. The full git protocol runs in-process — clone, fetch, push all work with hooks, auth, and policy. Best for sandboxed agents that need a full git workflow:
 
 ```ts
 import { Bash, InMemoryFs } from "just-bash";

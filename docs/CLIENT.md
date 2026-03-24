@@ -177,7 +177,7 @@ Four transport modes for moving objects between repositories:
 - **Local paths**: direct filesystem transfer between repositories on the same VFS.
 - **Cross-VFS**: clone, fetch, and push between isolated in-memory filesystems via `resolveRemote`. The remote can be any `GitRepo` (VFS-backed, SQLite-backed, or any custom `ObjectStore` + `RefStore`). See [Multi-agent collaboration](#multi-agent-collaboration).
 - **Smart HTTP**: clone, fetch, and push against real Git servers (e.g. GitHub) via Git Smart HTTP protocol. Auth via `credentials` option or `GIT_HTTP_BEARER_TOKEN` / `GIT_HTTP_USER` + `GIT_HTTP_PASSWORD` env vars. Restrict access with the `network` option.
-- **In-process server**: connect a `createGit` client to a `GitServer` without any network stack. Use `server.asNetwork()` to get a `NetworkPolicy` that routes HTTP transport calls directly to the server's `fetch` handler in-process. All server hooks, session building, and policy enforcement work exactly as they do over real HTTP. See [In-process server](#in-process-server).
+- **In-process server**: connect a `createGit` client to a `GitServer` without any network stack. Use `server.asNetwork()` to get a `NetworkPolicy` that routes HTTP transport calls directly to the server's `fetch` handler in-process. All server hooks, auth, and policy enforcement work exactly as they do over real HTTP. See [In-process server](#in-process-server).
 
 ## In-process server
 
@@ -210,4 +210,4 @@ const git = createGit({
 await bash.exec("git clone http://my-server:8080/my-repo /work");
 ```
 
-This is the recommended approach for connecting virtual git clients to a `GitServer`. Server hooks (`preReceive`, `postReceive`, `advertiseRefs`, etc.), session building, policy enforcement, pack caching, and graceful shutdown all work identically to real HTTP — the only difference is no TCP.
+This is the recommended approach for connecting virtual git clients to a `GitServer`. Server hooks (`preReceive`, `postReceive`, `advertiseRefs`, etc.), auth, policy enforcement, pack caching, and graceful shutdown all work identically to real HTTP — the only difference is no TCP.

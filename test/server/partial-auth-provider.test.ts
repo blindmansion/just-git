@@ -14,15 +14,15 @@ const TEST_IDENTITY = {
 async function setupRepo() {
 	const server = createServer({
 		storage: new MemoryStorage(),
-		session: {
+		auth: {
 			http: (req) => {
 				const token = req.headers.get("Authorization");
 				return { userId: token ?? "anonymous", roles: ["read"] as string[] };
 			},
 		},
 		hooks: {
-			preReceive: ({ session }) => {
-				if (!session?.roles.includes("push")) {
+			preReceive: ({ auth }) => {
+				if (!auth?.roles.includes("push")) {
 					return { reject: true, message: "forbidden" };
 				}
 			},
@@ -42,8 +42,8 @@ async function setupRepo() {
 	return server;
 }
 
-describe("partial session builder", () => {
-	test("http-only session builder: HTTP requests work", async () => {
+describe("partial auth provider", () => {
+	test("http-only auth provider: HTTP requests work", async () => {
 		const server = await setupRepo();
 		const res = await server.fetch(
 			new Request("http://localhost/test/info/refs?service=git-upload-pack"),
@@ -51,15 +51,15 @@ describe("partial session builder", () => {
 		expect(res.status).toBe(200);
 	});
 
-	test("http-only session builder: hooks receive typed session", async () => {
+	test("http-only auth provider: hooks receive typed auth", async () => {
 		const server = createServer({
 			storage: new MemoryStorage(),
-			session: {
+			auth: {
 				http: () => ({ userId: "alice", roles: ["read"] }),
 			},
 			hooks: {
-				advertiseRefs: ({ session }) => {
-					if (!session?.roles.includes("read")) {
+				advertiseRefs: ({ auth }) => {
+					if (!auth?.roles.includes("read")) {
 						return { reject: true, message: "no read access" };
 					}
 				},
@@ -73,7 +73,7 @@ describe("partial session builder", () => {
 		expect(res.status).toBe(200);
 	});
 
-	test("http-only session builder: SSH returns 128", async () => {
+	test("http-only auth provider: SSH returns 128", async () => {
 		const server = await setupRepo();
 
 		let stderrOutput = "";
@@ -87,26 +87,26 @@ describe("partial session builder", () => {
 
 		const exitCode = await server.handleSession("git-upload-pack 'test'", channel);
 		expect(exitCode).toBe(128);
-		expect(stderrOutput).toContain("SSH session builder not configured");
+		expect(stderrOutput).toContain("SSH auth provider not configured");
 	});
 
-	test("ssh-only session builder: SSH works", async () => {
+	test("ssh-only auth provider: SSH works", async () => {
 		const server = createServer({
 			storage: new MemoryStorage(),
-			session: {
+			auth: {
 				ssh: (info) => ({ userId: info.username ?? "anon" }),
 			},
 		});
 		await server.createRepo("test");
 
-		// SSH session builder is present — shouldn't error on construction
+		// SSH auth provider is present — shouldn't error on construction
 		expect(server).toBeDefined();
 	});
 
-	test("ssh-only session builder: HTTP returns 501", async () => {
+	test("ssh-only auth provider: HTTP returns 501", async () => {
 		const server = createServer({
 			storage: new MemoryStorage(),
-			session: {
+			auth: {
 				ssh: (info) => ({ userId: info.username ?? "anon" }),
 			},
 		});
@@ -115,10 +115,10 @@ describe("partial session builder", () => {
 			new Request("http://localhost/test/info/refs?service=git-upload-pack"),
 		);
 		expect(res.status).toBe(501);
-		expect(await res.text()).toBe("HTTP session builder not configured");
+		expect(await res.text()).toBe("HTTP auth provider not configured");
 	});
 
-	test("no session config: both transports use defaults", async () => {
+	test("no auth config: both transports use defaults", async () => {
 		const server = createServer({
 			storage: new MemoryStorage(),
 		});

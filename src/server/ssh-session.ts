@@ -20,7 +20,7 @@ import {
 	applyReceivePack,
 } from "./operations.ts";
 import { buildReportStatus, type PushCommand } from "./protocol.ts";
-import type { ServerHooks, Session, SshChannel } from "./types.ts";
+import type { ServerHooks, Auth, SshChannel } from "./types.ts";
 
 // ── Command parser ──────────────────────────────────────────────────
 
@@ -52,14 +52,14 @@ export function parseGitSshCommand(
 
 const encoder = new TextEncoder();
 
-interface HandleSessionOptions<S = Session> {
+interface HandleSessionOptions<A = Auth> {
 	resolveRepo: (
 		path: string,
 	) => { repo: GitRepo; repoId: string } | null | Promise<{ repo: GitRepo; repoId: string } | null>;
-	hooks?: ServerHooks<S>;
+	hooks?: ServerHooks<A>;
 	packCache?: PackCache;
 	packOptions?: { noDelta?: boolean; deltaWindow?: number };
-	session: S;
+	auth: A;
 	onError?: (err: unknown) => void;
 }
 
@@ -67,12 +67,12 @@ interface HandleSessionOptions<S = Session> {
  * Handle a single git-over-SSH session. Called by the unified server's
  * `handleSession` method — not meant to be used directly.
  */
-export async function handleSshSession<S = Session>(
+export async function handleSshSession<A = Auth>(
 	command: string,
 	channel: SshChannel,
-	options: HandleSessionOptions<S>,
+	options: HandleSessionOptions<A>,
 ): Promise<number> {
-	const { resolveRepo, hooks, packCache, packOptions, session } = options;
+	const { resolveRepo, hooks, packCache, packOptions, auth } = options;
 	const writer = channel.writable.getWriter();
 	try {
 		const parsed = parseGitSshCommand(command);
@@ -91,7 +91,7 @@ export async function handleSshSession<S = Session>(
 
 		// Protocol v2 over SSH: send capability advertisement, then command loop
 		if (parsed.protocolV2 && service === "git-upload-pack") {
-			const adv = await advertiseRefsWithHooks(repo, repoId, service, hooks, session);
+			const adv = await advertiseRefsWithHooks(repo, repoId, service, hooks, auth);
 			if (isRejection(adv)) {
 				sendStderr(channel, `fatal: ${adv.message ?? "access denied"}\n`);
 				return 128;
@@ -105,7 +105,7 @@ export async function handleSshSession<S = Session>(
 					hooks,
 					packCache,
 					packOptions,
-					session,
+					auth,
 				});
 			} finally {
 				streamReader.release();
@@ -114,7 +114,7 @@ export async function handleSshSession<S = Session>(
 		}
 
 		// V2 not applicable for receive-pack — fall through to v1
-		const adv = await advertiseRefsWithHooks(repo, repoId, service, hooks, session);
+		const adv = await advertiseRefsWithHooks(repo, repoId, service, hooks, auth);
 		if (isRejection(adv)) {
 			sendStderr(channel, `fatal: ${adv.message ?? "access denied"}\n`);
 			return 128;
@@ -144,7 +144,7 @@ export async function handleSshSession<S = Session>(
 					capabilities,
 					packStream,
 					hooks,
-					session,
+					auth,
 				});
 			}
 		} finally {
@@ -167,19 +167,19 @@ export async function handleSshSession<S = Session>(
 
 // ── Receive-pack ────────────────────────────────────────────────────
 
-interface ServeReceivePackOptions<S> {
+interface ServeReceivePackOptions<A> {
 	writer: WritableStreamDefaultWriter<Uint8Array>;
 	repo: GitRepo;
 	repoId: string;
 	commands: PushCommand[];
 	capabilities: string[];
 	packStream: AsyncIterable<Uint8Array>;
-	hooks?: ServerHooks<S>;
-	session: S;
+	hooks?: ServerHooks<A>;
+	auth: A;
 }
 
-async function serveReceivePackStreaming<S>(options: ServeReceivePackOptions<S>): Promise<void> {
-	const { writer, repo, repoId, commands, capabilities, packStream, hooks, session } = options;
+async function serveReceivePackStreaming<A>(options: ServeReceivePackOptions<A>): Promise<void> {
+	const { writer, repo, repoId, commands, capabilities, packStream, hooks, auth } = options;
 	const ingestResult = await ingestReceivePackFromStream(repo, commands, capabilities, packStream);
 	if (ingestResult.updates.length === 0) return;
 
@@ -203,7 +203,7 @@ async function serveReceivePackStreaming<S>(options: ServeReceivePackOptions<S>)
 		repoId,
 		ingestResult,
 		hooks,
-		session,
+		auth,
 	});
 
 	if (useReportStatus) {
@@ -378,11 +378,11 @@ async function readReceivePackCommands(
 
 // ── V2 SSH command loop ─────────────────────────────────────────────
 
-interface V2SshCommandLoopOptions<S> {
-	hooks?: ServerHooks<S>;
+interface V2SshCommandLoopOptions<A> {
+	hooks?: ServerHooks<A>;
 	packCache?: PackCache;
 	packOptions?: { noDelta?: boolean; deltaWindow?: number };
-	session: S;
+	auth: A;
 }
 
 /**
@@ -390,21 +390,21 @@ interface V2SshCommandLoopOptions<S> {
  * Continues until the client sends a flush-pkt (empty request) or EOF.
  * Responses end with flush-pkt (stateful connection).
  */
-async function handleV2SshCommandLoop<S>(
+async function handleV2SshCommandLoop<A>(
 	reader: StreamPktLineReader,
 	writer: WritableStreamDefaultWriter<Uint8Array>,
 	repo: GitRepo,
 	repoId: string,
-	options: V2SshCommandLoopOptions<S>,
+	options: V2SshCommandLoopOptions<A>,
 ): Promise<void> {
-	const { hooks, packCache, packOptions, session } = options;
+	const { hooks, packCache, packOptions, auth } = options;
 
 	while (true) {
 		const cmd = await readV2CommandFromStream(reader);
 		if (!cmd) break;
 
 		if (cmd.command === "ls-refs") {
-			const result = await handleLsRefs(repo, repoId, cmd.args, hooks, session);
+			const result = await handleLsRefs(repo, repoId, cmd.args, hooks, auth);
 			if (isRejection(result)) break;
 			await writer.write(result);
 		} else if (cmd.command === "fetch") {

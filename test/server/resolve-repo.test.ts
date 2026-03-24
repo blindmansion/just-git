@@ -3,7 +3,7 @@ import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { createServer } from "../../src/server/handler.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import type { GitServerConfig } from "../../src/server/types.ts";
-import { defaultHttpSession } from "./util.ts";
+import { defaultHttpAuth } from "./util.ts";
 
 const TEST_IDENTITY = {
 	name: "Test",
@@ -12,7 +12,7 @@ const TEST_IDENTITY = {
 	timezone: "+0000",
 };
 
-async function setupServerRepo(options?: Pick<GitServerConfig, "session">) {
+async function setupServerRepo(options?: Pick<GitServerConfig, "auth">) {
 	const driver = new MemoryStorage();
 	const server = createServer({ storage: driver, ...options });
 	const repo = await server.createRepo("test");
@@ -29,7 +29,7 @@ async function setupServerRepo(options?: Pick<GitServerConfig, "session">) {
 	return { server, driver };
 }
 
-describe("resolveRepo and session auth", () => {
+describe("resolveRepo and auth provider", () => {
 	test("returns 404 when resolveRepo returns null", async () => {
 		const server = createServer({
 			storage: new MemoryStorage(),
@@ -42,11 +42,11 @@ describe("resolveRepo and session auth", () => {
 		expect(res.status).toBe(404);
 	});
 
-	test("session builder returns custom Response for auth failure", async () => {
+	test("auth provider returns custom Response for auth failure", async () => {
 		const server = createServer({
 			storage: new MemoryStorage(),
 			resolve: () => null,
-			session: {
+			auth: {
 				http: (req) => {
 					if (req.headers.get("Authorization") !== "Bearer secret") {
 						return new Response("Unauthorized", {
@@ -54,7 +54,7 @@ describe("resolveRepo and session auth", () => {
 							headers: { "WWW-Authenticate": 'Bearer realm="git"' },
 						});
 					}
-					return defaultHttpSession(req);
+					return defaultHttpAuth(req);
 				},
 			},
 		});
@@ -67,11 +67,11 @@ describe("resolveRepo and session auth", () => {
 		expect(await res.text()).toBe("Unauthorized");
 	});
 
-	test("session builder rejects → 403 for upload-pack", async () => {
+	test("auth provider rejects → 403 for upload-pack", async () => {
 		const server = createServer({
 			storage: new MemoryStorage(),
 			resolve: () => null,
-			session: {
+			auth: {
 				http: () => new Response("Forbidden", { status: 403 }),
 			},
 		});
@@ -85,11 +85,11 @@ describe("resolveRepo and session auth", () => {
 		expect(res.status).toBe(403);
 	});
 
-	test("session builder rejects → 403 for receive-pack", async () => {
+	test("auth provider rejects → 403 for receive-pack", async () => {
 		const server = createServer({
 			storage: new MemoryStorage(),
 			resolve: () => null,
-			session: {
+			auth: {
 				http: () => new Response("Forbidden", { status: 403 }),
 			},
 		});
@@ -116,12 +116,12 @@ describe("resolveRepo and session auth", () => {
 	test("auth gate: rejects without token, allows with token", async () => {
 		const server = (
 			await setupServerRepo({
-				session: {
+				auth: {
 					http: (req) => {
 						if (req.headers.get("Authorization") !== "Bearer valid-token") {
 							return new Response("", { status: 401 });
 						}
-						return defaultHttpSession(req);
+						return defaultHttpAuth(req);
 					},
 				},
 			})

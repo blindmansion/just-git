@@ -202,11 +202,11 @@ describe("asNetwork", () => {
 		expect(await fs.readFile("/work/.git/HEAD")).toContain("refs/heads/main");
 	});
 
-	test("session builder receives proper requests", async () => {
+	test("auth provider receives proper requests", async () => {
 		const seenUrls: string[] = [];
 		const { server } = setup({
 			autoCreate: true,
-			session: {
+			auth: {
 				http: (req) => {
 					seenUrls.push(new URL(req.url).pathname);
 					return { transport: "http" as const, request: req };

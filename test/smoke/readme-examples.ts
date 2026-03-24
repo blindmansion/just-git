@@ -92,10 +92,10 @@ import type { GitHooks } from "../../src";
 		storage: new BunSqliteStorage(new Database(":memory:")),
 		policy: { protectedBranches: ["main"] },
 		hooks: {
-		preReceive: ({ session }) => {
-			if (!session.request?.headers.has("Authorization"))
-				return { reject: true, message: "unauthorized" };
-		},
+			preReceive: ({ auth }) => {
+				if (!auth.request?.headers.has("Authorization"))
+					return { reject: true, message: "unauthorized" };
+			},
 			postReceive: async ({ repo, updates }) => {
 				for (const u of updates) {
 					const files = await getChangedFiles(repo, u.oldHash, u.newHash);
@@ -767,12 +767,12 @@ import type { GitHooks } from "../../src";
 // SERVER.md examples
 // ═══════════════════════════════════════════════════════════════════
 
-// ── SERVER: Session builder (HTTP auth gate) ────────────────────────
+// ── SERVER: Auth provider (HTTP auth gate) ────────────────────────
 
 {
 	const server = createServer({
 		storage: new BunSqliteStorage(new Database(":memory:")),
-		session: {
+		auth: {
 			http: (request) => {
 				const header = request.headers.get("Authorization");
 				if (!header) {
@@ -787,11 +787,11 @@ import type { GitHooks } from "../../src";
 				userId: info.username ?? "anonymous",
 			}),
 		},
-	hooks: {
-		preReceive: ({ session }) => {
-			if (!session.userId) return { reject: true, message: "unauthorized" };
+		hooks: {
+			preReceive: ({ auth }) => {
+				if (!auth.userId) return { reject: true, message: "unauthorized" };
+			},
 		},
-	},
 	});
 	await server.createRepo("repo");
 
@@ -801,7 +801,7 @@ import type { GitHooks } from "../../src";
 	const noAuth = await server.fetch(
 		new Request(`http://localhost:${srv.port}/repo/info/refs?service=git-upload-pack`),
 	);
-	console.assert(noAuth.status === 401, "session builder should reject without token");
+	console.assert(noAuth.status === 401, "auth provider should reject without token");
 	console.assert(
 		noAuth.headers.get("WWW-Authenticate") === 'Bearer realm="git"',
 		"should include WWW-Authenticate header",
@@ -813,25 +813,25 @@ import type { GitHooks } from "../../src";
 			headers: { Authorization: "Bearer test-token" },
 		}),
 	);
-	console.assert(withAuth.status === 200, "session builder should allow with token");
+	console.assert(withAuth.status === 200, "auth provider should allow with token");
 
-	console.log("SERVER session builder: HTTP auth gate OK");
+	console.log("SERVER auth provider: HTTP auth gate OK");
 	srv.stop();
 }
 
-// ── SERVER: Custom session type (uniform auth across HTTP + SSH) ─────
+// ── SERVER: Custom auth type (uniform auth across HTTP + SSH) ─────
 
 {
 	const server = createServer({
 		storage: new BunSqliteStorage(new Database(":memory:")),
-		session: {
+		auth: {
 			http: (req) => ({ authorized: req.headers.has("Authorization") }),
 			ssh: (info) => ({ authorized: info.username != null }),
 		},
 		policy: { protectedBranches: ["main"] },
 		hooks: {
-			preReceive: ({ session }) => {
-				if (!session.authorized) return { reject: true, message: "unauthorized" };
+			preReceive: ({ auth }) => {
+				if (!auth.authorized) return { reject: true, message: "unauthorized" };
 			},
 		},
 	});
@@ -847,7 +847,7 @@ import type { GitHooks } from "../../src";
 		await bash.exec("echo 'hi' > file.txt && git add . && git commit -m 'init'");
 		await bash.exec(`git remote add origin ${srv.url}test-repo`);
 
-		// Push without auth should fail (session.authorized is false)
+		// Push without auth should fail (auth.authorized is false)
 		const noAuth = await bash.exec("git push -u origin main");
 		console.assert(noAuth.exitCode !== 0, "push without auth should fail");
 	}
@@ -858,12 +858,12 @@ import type { GitHooks } from "../../src";
 		});
 		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
 
-		// Push with auth should succeed (session.authorized is true)
+		// Push with auth should succeed (auth.authorized is true)
 		const withAuth = await bash.exec("git push -u origin main");
 		console.assert(withAuth.exitCode === 0, "push with auth should succeed");
 	}
 
-	console.log("SERVER custom session: uniform auth OK");
+	console.log("SERVER custom auth: uniform auth OK");
 	srv.stop();
 }
 
@@ -1027,7 +1027,7 @@ import type { GitHooks } from "../../src";
 		storage: new BunSqliteStorage(new Database(":memory:")),
 		autoCreate: true,
 		hooks: {
-			preReceive: ({ session: _session }) => {
+			preReceive: ({ auth: _auth }) => {
 				hookFired = true;
 			},
 		},
