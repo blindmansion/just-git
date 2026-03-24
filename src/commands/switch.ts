@@ -1,4 +1,5 @@
 import type { GitExtensions } from "../git.ts";
+import { isRejection } from "../hooks.ts";
 import {
 	buildDetachPreamble,
 	clearOperationState,
@@ -244,6 +245,13 @@ async function switchCreateBranch(
 	const opBlock = await checkActiveOperation(gitCtx);
 	if (opBlock) return opBlock;
 
+	const preRej = await ext?.hooks?.preCheckout?.({
+		repo: gitCtx,
+		target: branchName,
+		mode: "create-branch",
+	});
+	if (isRejection(preRej)) return { stdout: "", stderr: preRej.message ?? "", exitCode: 1 };
+
 	const currentHash = await resolveHead(gitCtx);
 	let currentIndex = await readIndex(gitCtx);
 
@@ -363,6 +371,12 @@ async function switchToBranch(
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
 	const opBlock = await checkActiveOperation(gitCtx);
 	if (opBlock) return opBlock;
+	const preRej = await ext?.hooks?.preCheckout?.({
+		repo: gitCtx,
+		target: branchName,
+		mode: "switch",
+	});
+	if (isRejection(preRej)) return { stdout: "", stderr: preRej.message ?? "", exitCode: 1 };
 	return switchBranchCore(gitCtx, branchName, refName, targetHash, env, ext);
 }
 
@@ -370,13 +384,19 @@ async function switchToBranch(
 
 async function switchDetachHead(
 	gitCtx: GitContext,
-	_target: string,
+	target: string,
 	targetHash: ObjectId,
 	env: Map<string, string>,
 	ext?: GitExtensions,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
 	const opBlock = await checkActiveOperation(gitCtx);
 	if (opBlock) return opBlock;
+	const preRej = await ext?.hooks?.preCheckout?.({
+		repo: gitCtx,
+		target,
+		mode: "detach",
+	});
+	if (isRejection(preRej)) return { stdout: "", stderr: preRej.message ?? "", exitCode: 1 };
 	return detachHeadCore(gitCtx, targetHash, env, ext);
 }
 

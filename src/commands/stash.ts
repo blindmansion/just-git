@@ -1,5 +1,4 @@
 import type { GitExtensions } from "../git.ts";
-import { isRejection } from "../hooks.ts";
 import {
 	type CommandResult,
 	err,
@@ -52,28 +51,6 @@ async function formatTreeDiff(ctx: GitRepo, diff: TreeDiffEntry): Promise<string
 	});
 }
 
-// ── Hook helpers ────────────────────────────────────────────────────
-
-type StashAction = "push" | "pop" | "apply" | "list" | "drop" | "show" | "clear";
-
-async function emitPreStash(
-	ext: GitExtensions | undefined,
-	repo: GitContext,
-	action: StashAction,
-	ref: string | null,
-) {
-	return ext?.hooks?.preStash?.({ repo, action, ref }) ?? null;
-}
-
-async function emitPostStash(
-	ext: GitExtensions | undefined,
-	repo: GitContext,
-	action: StashAction,
-	ok: boolean,
-) {
-	await ext?.hooks?.postStash?.({ repo, action, ok });
-}
-
 // ── Command registration ────────────────────────────────────────────
 
 export function registerStashCommand(parent: Command, ext?: GitExtensions) {
@@ -100,16 +77,7 @@ export function registerStashCommand(parent: Command, ext?: GitExtensions) {
 		handler: async (args, ctx) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
-			const abort = await emitPreStash(ext, gitCtxOrError, "push", null);
-			if (isRejection(abort)) return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-			const result = await handlePush(
-				gitCtxOrError,
-				ctx.env,
-				args.message,
-				args["include-untracked"],
-			);
-			await emitPostStash(ext, gitCtxOrError, "push", result.exitCode === 0);
-			return result;
+			return handlePush(gitCtxOrError, ctx.env, args.message, args["include-untracked"]);
 		},
 	});
 
@@ -122,16 +90,7 @@ export function registerStashCommand(parent: Command, ext?: GitExtensions) {
 		handler: async (args, ctx) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
-			const abort = await emitPreStash(ext, gitCtxOrError, "push", null);
-			if (isRejection(abort)) return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-			const result = await handlePush(
-				gitCtxOrError,
-				ctx.env,
-				args.message,
-				args["include-untracked"],
-			);
-			await emitPostStash(ext, gitCtxOrError, "push", result.exitCode === 0);
-			return result;
+			return handlePush(gitCtxOrError, ctx.env, args.message, args["include-untracked"]);
 		},
 	});
 
@@ -141,11 +100,7 @@ export function registerStashCommand(parent: Command, ext?: GitExtensions) {
 		handler: async (args, ctx) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
-			const abort = await emitPreStash(ext, gitCtxOrError, "pop", args.stash ?? null);
-			if (isRejection(abort)) return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-			const result = await handlePop(gitCtxOrError, args.stash);
-			await emitPostStash(ext, gitCtxOrError, "pop", result.exitCode === 0);
-			return result;
+			return handlePop(gitCtxOrError, args.stash);
 		},
 	});
 
@@ -155,11 +110,7 @@ export function registerStashCommand(parent: Command, ext?: GitExtensions) {
 		handler: async (args, ctx) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
-			const abort = await emitPreStash(ext, gitCtxOrError, "apply", args.stash ?? null);
-			if (isRejection(abort)) return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-			const result = await handleApply(gitCtxOrError, args.stash);
-			await emitPostStash(ext, gitCtxOrError, "apply", result.exitCode === 0);
-			return result;
+			return handleApply(gitCtxOrError, args.stash);
 		},
 	});
 
@@ -168,11 +119,7 @@ export function registerStashCommand(parent: Command, ext?: GitExtensions) {
 		handler: async (_args, ctx) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
-			const abort = await emitPreStash(ext, gitCtxOrError, "list", null);
-			if (isRejection(abort)) return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-			const result = await handleList(gitCtxOrError);
-			await emitPostStash(ext, gitCtxOrError, "list", result.exitCode === 0);
-			return result;
+			return handleList(gitCtxOrError);
 		},
 	});
 
@@ -182,11 +129,7 @@ export function registerStashCommand(parent: Command, ext?: GitExtensions) {
 		handler: async (args, ctx) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
-			const abort = await emitPreStash(ext, gitCtxOrError, "drop", args.stash ?? null);
-			if (isRejection(abort)) return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-			const result = await handleDrop(gitCtxOrError, args.stash);
-			await emitPostStash(ext, gitCtxOrError, "drop", result.exitCode === 0);
-			return result;
+			return handleDrop(gitCtxOrError, args.stash);
 		},
 	});
 
@@ -199,11 +142,7 @@ export function registerStashCommand(parent: Command, ext?: GitExtensions) {
 		handler: async (args, ctx) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
-			const abort = await emitPreStash(ext, gitCtxOrError, "show", args.stash ?? null);
-			if (isRejection(abort)) return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-			const result = await handleShow(gitCtxOrError, args.stash, args.patch);
-			await emitPostStash(ext, gitCtxOrError, "show", result.exitCode === 0);
-			return result;
+			return handleShow(gitCtxOrError, args.stash, args.patch);
 		},
 	});
 
@@ -212,11 +151,7 @@ export function registerStashCommand(parent: Command, ext?: GitExtensions) {
 		handler: async (_args, ctx) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
-			const abort = await emitPreStash(ext, gitCtxOrError, "clear", null);
-			if (isRejection(abort)) return { stdout: "", stderr: abort.message ?? "", exitCode: 1 };
-			const result = await handleClear(gitCtxOrError);
-			await emitPostStash(ext, gitCtxOrError, "clear", result.exitCode === 0);
-			return result;
+			return handleClear(gitCtxOrError);
 		},
 	});
 }

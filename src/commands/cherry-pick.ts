@@ -66,7 +66,7 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 				const preCpAbortRej = await ext?.hooks?.preCherryPick?.({
 					repo: gitCtx,
 					mode: "abort",
-					commit: null,
+					commitRef: null,
 				});
 				if (isRejection(preCpAbortRej)) {
 					return { stdout: "", stderr: preCpAbortRej.message ?? "", exitCode: 1 };
@@ -88,17 +88,18 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 				const preCpContinueRej = await ext?.hooks?.preCherryPick?.({
 					repo: gitCtx,
 					mode: "continue",
-					commit: null,
+					commitRef: null,
 				});
 				if (isRejection(preCpContinueRej)) {
 					return { stdout: "", stderr: preCpContinueRej.message ?? "", exitCode: 1 };
 				}
 				const result = await handleContinue(gitCtx, ctx.env);
 				if (result.exitCode === 0) {
+					const newHead = await resolveHead(gitCtx);
 					await ext?.hooks?.postCherryPick?.({
 						repo: gitCtx,
 						mode: "continue",
-						commitHash: null,
+						commitHash: newHead,
 						hadConflicts: false,
 					});
 				}
@@ -117,7 +118,7 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 			const preCpPickRej = await ext?.hooks?.preCherryPick?.({
 				repo: gitCtx,
 				mode: "pick",
-				commit: commitRef,
+				commitRef,
 			});
 			if (isRejection(preCpPickRej)) {
 				return { stdout: "", stderr: preCpPickRej.message ?? "", exitCode: 1 };

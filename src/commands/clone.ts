@@ -142,7 +142,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 
 			if (remoteRefs.length === 0) {
 				await ext?.hooks?.postClone?.({
-					repo: baseCtx,
+					repo: newCtx,
 					repository,
 					targetPath,
 					bare: args.bare,

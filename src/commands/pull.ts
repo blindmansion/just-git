@@ -21,7 +21,14 @@ import { writeStateFile } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 import { appendReflog } from "../lib/reflog.ts";
-import { branchNameFromRef, listRefs, readHead, resolveRef, updateRef } from "../lib/refs.ts";
+import {
+	branchNameFromRef,
+	listRefs,
+	readHead,
+	resolveHead,
+	resolveRef,
+	updateRef,
+} from "../lib/refs.ts";
 import {
 	applyShallowUpdates,
 	INFINITE_DEPTH,
@@ -278,12 +285,13 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				);
 
 				if (result.exitCode === 0) {
+					const rebasedHead = await resolveHead(gitCtx);
 					await ext?.hooks?.postPull?.({
 						repo: gitCtx,
 						remote: remoteName,
 						branch: pullBranch,
 						strategy: "rebase",
-						commitHash: null,
+						commitHash: rebasedHead,
 					});
 				}
 
@@ -366,7 +374,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 						remote: remoteName,
 						branch: pullBranch,
 						strategy: "fast-forward",
-						commitHash: null,
+						commitHash: theirsHash,
 					});
 				}
 				return ffResult;
@@ -440,7 +448,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			mergeMsg = msgEvent.message;
 			const preMergeCommitRej = await ext?.hooks?.preMergeCommit?.({
 				repo: gitCtx,
-				mergeMessage: mergeMsg,
+				message: mergeMsg,
 				treeHash,
 				headHash,
 				theirsHash,

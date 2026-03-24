@@ -87,11 +87,8 @@ describe("command lifecycle emissions", () => {
 		expect(targetHash).toHaveLength(40);
 	});
 
-	test("clean/rm/stash/cherry-pick pre hooks can reject", async () => {
+	test("cherry-pick pre hook can reject", async () => {
 		const hooks: GitHooks = {
-			preClean: () => ({ reject: true, message: "stop clean" }),
-			preRm: () => ({ reject: true, message: "stop rm" }),
-			preStash: () => ({ reject: true, message: "stop stash" }),
 			preCherryPick: () => ({ reject: true, message: "stop cherry-pick" }),
 		};
 
@@ -99,24 +96,11 @@ describe("command lifecycle emissions", () => {
 		await bash.exec("git init");
 		await bash.exec("git add .");
 		await bash.exec('git commit -m "init"');
-		await bash.exec("echo tmp > /repo/tmp.txt");
-		await bash.exec("echo x > /repo/rmme.txt");
-		await bash.exec("git add rmme.txt");
-		await bash.exec('git commit -m "add rmme"');
 		await bash.exec("git checkout -b feature");
 		await bash.exec("echo feat > /repo/feat.txt");
 		await bash.exec("git add feat.txt");
 		await bash.exec('git commit -m "feat"');
 		await bash.exec("git checkout main");
-
-		const clean = await bash.exec("git clean -f");
-		expect(clean.stderr).toBe("stop clean");
-
-		const rm = await bash.exec("git rm rmme.txt");
-		expect(rm.stderr).toBe("stop rm");
-
-		const stash = await bash.exec("git stash");
-		expect(stash.stderr).toBe("stop stash");
 
 		const hash = (await bash.exec("git rev-parse feature")).stdout.trim();
 		const cp = await bash.exec(`git cherry-pick ${hash}`);

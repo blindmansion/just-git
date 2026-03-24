@@ -34,7 +34,7 @@ import {
 	writeStateFile,
 } from "../lib/operation-state.ts";
 import { logRef } from "../lib/reflog.ts";
-import { branchNameFromRef, readHead, resolveRef, updateRef } from "../lib/refs.ts";
+import { branchNameFromRef, readHead, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
 import { generateLongFormStatus } from "../lib/status-format.ts";
 import { buildTreeFromIndex, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext } from "../lib/types.ts";
@@ -61,7 +61,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				const preRvAbortRej = await ext?.hooks?.preRevert?.({
 					repo: gitCtx,
 					mode: "abort",
-					commit: null,
+					commitRef: null,
 				});
 				if (isRejection(preRvAbortRej)) {
 					return { stdout: "", stderr: preRvAbortRej.message ?? "", exitCode: 1 };
@@ -83,17 +83,18 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				const preRvContinueRej = await ext?.hooks?.preRevert?.({
 					repo: gitCtx,
 					mode: "continue",
-					commit: null,
+					commitRef: null,
 				});
 				if (isRejection(preRvContinueRej)) {
 					return { stdout: "", stderr: preRvContinueRej.message ?? "", exitCode: 1 };
 				}
 				const result = await handleContinue(gitCtx, ctx.env);
 				if (result.exitCode === 0) {
+					const newHead = await resolveHead(gitCtx);
 					await ext?.hooks?.postRevert?.({
 						repo: gitCtx,
 						mode: "continue",
-						commitHash: null,
+						commitHash: newHead,
 						hadConflicts: false,
 					});
 				}
@@ -107,7 +108,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 			const preRvRevertRej = await ext?.hooks?.preRevert?.({
 				repo: gitCtx,
 				mode: "revert",
-				commit: commitRef,
+				commitRef,
 			});
 			if (isRejection(preRvRevertRej)) {
 				return { stdout: "", stderr: preRvRevertRej.message ?? "", exitCode: 1 };

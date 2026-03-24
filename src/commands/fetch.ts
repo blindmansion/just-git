@@ -308,7 +308,7 @@ async function fetchOneRemote(
 		repo: gitCtx,
 		remote: remoteName,
 		url: config.url,
-		refsUpdated: refUpdates.length,
+		updatedRefCount: refUpdates.length,
 	});
 	return response;
 }

@@ -65,19 +65,16 @@ Pre-hooks can reject operations by returning `{ reject: true, message?: string }
 - `preCommit` — `{ repo, index, treeHash }`. Fires before commit is created.
 - `commitMsg` — `{ repo, message }` (mutable message). Fires after preCommit, before commit write.
 - `mergeMsg` — `{ repo, message, treeHash, headHash, theirsHash }` (mutable message). Fires before merge commit.
-- `preMergeCommit` — `{ repo, mergeMessage, treeHash, headHash, theirsHash }`. Fires before three-way merge commit.
-- `preCheckout` — `{ repo, target, mode }`. `mode` is `"switch" | "detach" | "create-branch" | "paths"`.
+- `preMergeCommit` — `{ repo, message, treeHash, headHash, theirsHash }`. Fires before three-way merge commit.
+- `preCheckout` — `{ repo, target, mode }`. `mode` is `"switch" | "detach" | "create-branch"`. Fires from both `git checkout` and `git switch`.
 - `prePush` — `{ repo, remote, url, refs[] }`. Fires before object transfer.
 - `preFetch` — `{ repo, remote, url, refspecs, prune, tags }`. Fires before fetch.
 - `preClone` — `{ repo?, repository, targetPath, bare, branch }`. Fires before clone. `repo` is optional (repo doesn't exist yet).
 - `prePull` — `{ repo, remote, branch }`. Fires before pull.
 - `preRebase` — `{ repo, upstream, branch }`. Fires before rebase begins.
-- `preReset` — `{ repo, mode, target }`. `mode` is `"soft" | "mixed" | "hard" | "paths"`.
-- `preClean` — `{ repo, dryRun, force, removeDirs, removeIgnored, onlyIgnored }`.
-- `preRm` — `{ repo, paths, cached, recursive, force }`.
-- `preCherryPick` — `{ repo, mode, commit }`. `mode` is `"pick" | "continue" | "abort"`.
-- `preRevert` — `{ repo, mode, commit }`. `mode` is `"revert" | "continue" | "abort"`.
-- `preStash` — `{ repo, action, ref }`. `action` is `"push" | "pop" | "apply" | ...`.
+- `preReset` — `{ repo, mode, targetRef }`. `mode` is `"soft" | "mixed" | "hard" | "paths"`.
+- `preCherryPick` — `{ repo, mode, commitRef }`. `mode` is `"pick" | "continue" | "abort"`. Extends `PreApplyEvent`.
+- `preRevert` — `{ repo, mode, commitRef }`. `mode` is `"revert" | "continue" | "abort"`. Extends `PreApplyEvent`.
 
 Post-hooks are fire-and-forget (return value ignored):
 
@@ -85,15 +82,12 @@ Post-hooks are fire-and-forget (return value ignored):
 - `postMerge` — `{ repo, headHash, theirsHash, strategy, commitHash }`. `strategy` is `"fast-forward"` or `"three-way"`.
 - `postCheckout` — `{ repo, prevHead, newHead, isBranchCheckout }`.
 - `postPush` — same payload as `prePush`.
-- `postFetch` — `{ repo, remote, url, refsUpdated }`.
+- `postFetch` — `{ repo, remote, url, updatedRefCount }`.
 - `postClone` — `{ repo, repository, targetPath, bare, branch }`.
 - `postPull` — `{ repo, remote, branch, strategy, commitHash }`. `strategy` is `"up-to-date"`, `"fast-forward"`, `"three-way"`, or `"rebase"`.
 - `postReset` — `{ repo, mode, targetHash }`.
-- `postClean` — `{ repo, removed, dryRun }`.
-- `postRm` — `{ repo, removedPaths, cached }`.
-- `postCherryPick` — `{ repo, mode, commitHash, hadConflicts }`.
-- `postRevert` — `{ repo, mode, commitHash, hadConflicts }`.
-- `postStash` — `{ repo, action, ok }`.
+- `postCherryPick` — `{ repo, mode, commitHash, hadConflicts }`. Extends `PostApplyEvent`.
+- `postRevert` — `{ repo, mode, commitHash, hadConflicts }`. Extends `PostApplyEvent`.
 
 Low-level events (synchronous, fire-and-forget):
 
@@ -255,7 +249,7 @@ Re-exports `createGit`, `Git`, `GitOptions`, `GitCommandName`, `GitExtensions`, 
 - `BeforeCommandEvent` interface — `{ command, args, fs, cwd, env }` for command-level interception
 - `AfterCommandEvent` interface — `{ command, args, result }` for post-command observation
 
-**Event types:** `PreCommitEvent`, `CommitMsgEvent`, `MergeMsgEvent`, `PostCommitEvent`, `PreMergeCommitEvent`, `PostMergeEvent`, `PreCheckoutEvent`, `PostCheckoutEvent`, `PrePushEvent`, `PostPushEvent`, `PreFetchEvent`, `PostFetchEvent`, `PreCloneEvent`, `PostCloneEvent`, `PrePullEvent`, `PostPullEvent`, `PreRebaseEvent`, `PreResetEvent`, `PostResetEvent`, `PreCleanEvent`, `PostCleanEvent`, `PreRmEvent`, `PostRmEvent`, `PreCherryPickEvent`, `PostCherryPickEvent`, `PreRevertEvent`, `PostRevertEvent`, `PreStashEvent`, `PostStashEvent`, `RefUpdateEvent`, `RefDeleteEvent`, `ObjectWriteEvent`. All event payloads include `repo: GitRepo`.
+**Event types:** `PreCommitEvent`, `CommitMsgEvent`, `MergeMsgEvent`, `PostCommitEvent`, `PreMergeCommitEvent`, `PostMergeEvent`, `PreCheckoutEvent`, `PostCheckoutEvent`, `PrePushEvent`, `PostPushEvent`, `PreFetchEvent`, `PostFetchEvent`, `PreCloneEvent`, `PostCloneEvent`, `PrePullEvent`, `PostPullEvent`, `PreRebaseEvent`, `PreResetEvent`, `PostResetEvent`, `PreApplyEvent`, `PostApplyEvent`, `PreCherryPickEvent`, `PostCherryPickEvent`, `PreRevertEvent`, `PostRevertEvent`, `RefUpdateEvent`, `RefDeleteEvent`, `ObjectWriteEvent`. All event payloads include `repo: GitRepo`.
 
 ### `src/repo/` — Repo operations SDK (`just-git/repo`)
 

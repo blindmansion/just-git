@@ -89,7 +89,7 @@ const git = createGit({
 });
 ```
 
-Available pre-hooks: `preCommit`, `commitMsg`, `mergeMsg`, `preMergeCommit`, `preCheckout`, `prePush`, `preFetch`, `preClone`, `prePull`, `preRebase`, `preReset`, `preClean`, `preRm`, `preCherryPick`, `preRevert`, `preStash`. Available post-hooks: `postCommit`, `postMerge`, `postCheckout`, `postPush`, `postFetch`, `postClone`, `postPull`, `postReset`, `postClean`, `postRm`, `postCherryPick`, `postRevert`, `postStash`. Low-level events: `onRefUpdate`, `onRefDelete`, `onObjectWrite`. Command-level: `beforeCommand`, `afterCommand`.
+Available pre-hooks: `preCommit`, `commitMsg`, `mergeMsg`, `preMergeCommit`, `preCheckout`, `prePush`, `preFetch`, `preClone`, `prePull`, `preRebase`, `preReset`, `preCherryPick`, `preRevert`. Available post-hooks: `postCommit`, `postMerge`, `postCheckout`, `postPush`, `postFetch`, `postClone`, `postPull`, `postReset`, `postCherryPick`, `postRevert`. Low-level events: `onRefUpdate`, `onRefDelete`, `onObjectWrite`. Command-level: `beforeCommand`, `afterCommand`.
 
 See [HOOKS.md](HOOKS.md) for the full type reference.
 

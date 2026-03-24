@@ -331,7 +331,7 @@ async function handleThreeWayMerge(
 
 	const mcRej = await ext?.hooks?.preMergeCommit?.({
 		repo: gitCtx,
-		mergeMessage: mergeMsg,
+		message: mergeMsg,
 		treeHash,
 		headHash,
 		theirsHash,
@@ -554,7 +554,7 @@ async function handleContinue(
 
 	const mcRejContinue = await ext?.hooks?.preMergeCommit?.({
 		repo: gitCtx,
-		mergeMessage: message,
+		message: message,
 		treeHash,
 		headHash,
 		theirsHash: mergeHeadHash,

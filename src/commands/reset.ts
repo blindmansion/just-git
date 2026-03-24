@@ -116,7 +116,7 @@ async function resetPaths(
 	const preResetRej = await ext?.hooks?.preReset?.({
 		repo: gitCtx,
 		mode: "paths",
-		target: commitRef ?? null,
+		targetRef: commitRef ?? null,
 	});
 	if (isRejection(preResetRej))
 		return { stdout: "", stderr: preResetRej.message ?? "", exitCode: 1 };
@@ -266,7 +266,7 @@ async function resetToCommit(
 	const preResetRej = await ext?.hooks?.preReset?.({
 		repo: gitCtx,
 		mode,
-		target: commitRef,
+		targetRef: commitRef,
 	});
 	if (isRejection(preResetRej))
 		return { stdout: "", stderr: preResetRej.message ?? "", exitCode: 1 };

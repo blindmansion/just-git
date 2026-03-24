@@ -128,7 +128,7 @@ export interface PostCommitEvent {
 /** Fired before a three-way merge commit is written. Return a {@link Rejection} to block. */
 export interface PreMergeCommitEvent {
 	readonly repo: GitRepo;
-	readonly mergeMessage: string;
+	readonly message: string;
 	readonly treeHash: ObjectId;
 	readonly headHash: ObjectId;
 	readonly theirsHash: ObjectId;
@@ -180,7 +180,7 @@ export interface PreRebaseEvent {
 export interface PreCheckoutEvent {
 	readonly repo: GitRepo;
 	readonly target: string;
-	readonly mode: "switch" | "detach" | "create-branch" | "paths";
+	readonly mode: "switch" | "detach" | "create-branch";
 }
 
 /** Fired before a fetch begins. Return a {@link Rejection} to block. */
@@ -198,7 +198,7 @@ export interface PostFetchEvent {
 	readonly repo: GitRepo;
 	readonly remote: string;
 	readonly url: string;
-	readonly refsUpdated: number;
+	readonly updatedRefCount: number;
 }
 
 /** Fired before a clone begins. Return a {@link Rejection} to block. */
@@ -239,7 +239,7 @@ export interface PostPullEvent {
 export interface PreResetEvent {
 	readonly repo: GitRepo;
 	readonly mode: "soft" | "mixed" | "hard" | "paths";
-	readonly target: string | null;
+	readonly targetRef: string | null;
 }
 
 /** Fired after a reset completes. */
@@ -249,81 +249,39 @@ export interface PostResetEvent {
 	readonly targetHash: ObjectId | null;
 }
 
-/** Fired before `git clean`. Return a {@link Rejection} to block. */
-export interface PreCleanEvent {
+/** Base type for pre-hooks that apply a commit (cherry-pick, revert). */
+export interface PreApplyEvent {
 	readonly repo: GitRepo;
-	readonly dryRun: boolean;
-	readonly force: boolean;
-	readonly removeDirs: boolean;
-	readonly removeIgnored: boolean;
-	readonly onlyIgnored: boolean;
+	readonly mode: string;
+	readonly commitRef: string | null;
 }
 
-/** Fired after `git clean` completes. */
-export interface PostCleanEvent {
+/** Base type for post-hooks that apply a commit (cherry-pick, revert). */
+export interface PostApplyEvent {
 	readonly repo: GitRepo;
-	readonly removed: readonly string[];
-	readonly dryRun: boolean;
-}
-
-/** Fired before `git rm`. Return a {@link Rejection} to block. */
-export interface PreRmEvent {
-	readonly repo: GitRepo;
-	readonly paths: readonly string[];
-	readonly cached: boolean;
-	readonly recursive: boolean;
-	readonly force: boolean;
-}
-
-/** Fired after `git rm` completes. */
-export interface PostRmEvent {
-	readonly repo: GitRepo;
-	readonly removedPaths: readonly string[];
-	readonly cached: boolean;
+	readonly mode: string;
+	readonly commitHash: ObjectId | null;
+	readonly hadConflicts: boolean;
 }
 
 /** Fired before a cherry-pick. Return a {@link Rejection} to block. */
-export interface PreCherryPickEvent {
-	readonly repo: GitRepo;
+export interface PreCherryPickEvent extends PreApplyEvent {
 	readonly mode: "pick" | "continue" | "abort";
-	readonly commit: string | null;
 }
 
 /** Fired after a cherry-pick completes. */
-export interface PostCherryPickEvent {
-	readonly repo: GitRepo;
+export interface PostCherryPickEvent extends PostApplyEvent {
 	readonly mode: "pick" | "continue" | "abort";
-	readonly commitHash: ObjectId | null;
-	readonly hadConflicts: boolean;
 }
 
 /** Fired before a revert. Return a {@link Rejection} to block. */
-export interface PreRevertEvent {
-	readonly repo: GitRepo;
+export interface PreRevertEvent extends PreApplyEvent {
 	readonly mode: "revert" | "continue" | "abort";
-	readonly commit: string | null;
 }
 
 /** Fired after a revert completes. */
-export interface PostRevertEvent {
-	readonly repo: GitRepo;
+export interface PostRevertEvent extends PostApplyEvent {
 	readonly mode: "revert" | "continue" | "abort";
-	readonly commitHash: ObjectId | null;
-	readonly hadConflicts: boolean;
-}
-
-/** Fired before a stash operation. Return a {@link Rejection} to block. */
-export interface PreStashEvent {
-	readonly repo: GitRepo;
-	readonly action: "push" | "pop" | "apply" | "list" | "drop" | "show" | "clear";
-	readonly ref: string | null;
-}
-
-/** Fired after a stash operation completes. */
-export interface PostStashEvent {
-	readonly repo: GitRepo;
-	readonly action: "push" | "pop" | "apply" | "list" | "drop" | "show" | "clear";
-	readonly ok: boolean;
 }
 
 /** Fired whenever a ref is created or updated. */
@@ -395,11 +353,8 @@ export interface GitHooks {
 	prePull?: (event: PrePullEvent) => PreHookReturn;
 	preRebase?: (event: PreRebaseEvent) => PreHookReturn;
 	preReset?: (event: PreResetEvent) => PreHookReturn;
-	preClean?: (event: PreCleanEvent) => PreHookReturn;
-	preRm?: (event: PreRmEvent) => PreHookReturn;
 	preCherryPick?: (event: PreCherryPickEvent) => PreHookReturn;
 	preRevert?: (event: PreRevertEvent) => PreHookReturn;
-	preStash?: (event: PreStashEvent) => PreHookReturn;
 
 	postCommit?: (event: PostCommitEvent) => PostHookReturn;
 	postMerge?: (event: PostMergeEvent) => PostHookReturn;
@@ -409,11 +364,8 @@ export interface GitHooks {
 	postClone?: (event: PostCloneEvent) => PostHookReturn;
 	postPull?: (event: PostPullEvent) => PostHookReturn;
 	postReset?: (event: PostResetEvent) => PostHookReturn;
-	postClean?: (event: PostCleanEvent) => PostHookReturn;
-	postRm?: (event: PostRmEvent) => PostHookReturn;
 	postCherryPick?: (event: PostCherryPickEvent) => PostHookReturn;
 	postRevert?: (event: PostRevertEvent) => PostHookReturn;
-	postStash?: (event: PostStashEvent) => PostHookReturn;
 
 	onRefUpdate?: (event: RefUpdateEvent) => void;
 	onRefDelete?: (event: RefDeleteEvent) => void;
@@ -435,11 +387,8 @@ const PRE_HOOK_KEYS: (keyof GitHooks)[] = [
 	"prePull",
 	"preRebase",
 	"preReset",
-	"preClean",
-	"preRm",
 	"preCherryPick",
 	"preRevert",
-	"preStash",
 	"beforeCommand",
 ];
 
@@ -454,11 +403,8 @@ const POST_HOOK_KEYS: (keyof GitHooks)[] = [
 	"postClone",
 	"postPull",
 	"postReset",
-	"postClean",
-	"postRm",
 	"postCherryPick",
 	"postRevert",
-	"postStash",
 	"afterCommand",
 ];
 

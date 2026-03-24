@@ -36,19 +36,16 @@ Pre-hooks can reject the operation by returning `{ reject: true, message?: strin
 | `preCommit`      | `{ repo, index, treeHash }`                                       | `PreCommitEvent`      |
 | `commitMsg`      | `{ repo, message }` (mutable message)                             | `CommitMsgEvent`      |
 | `mergeMsg`       | `{ repo, message, treeHash, headHash, theirsHash }` (mutable msg) | `MergeMsgEvent`       |
-| `preMergeCommit` | `{ repo, mergeMessage, treeHash, headHash, theirsHash }`          | `PreMergeCommitEvent` |
+| `preMergeCommit` | `{ repo, message, treeHash, headHash, theirsHash }`               | `PreMergeCommitEvent` |
 | `preCheckout`    | `{ repo, target, mode }`                                          | `PreCheckoutEvent`    |
 | `prePush`        | `{ repo, remote, url, refs[] }`                                   | `PrePushEvent`        |
 | `preFetch`       | `{ repo, remote, url, refspecs, prune, tags }`                    | `PreFetchEvent`       |
 | `preClone`       | `{ repo?, repository, targetPath, bare, branch }`                 | `PreCloneEvent`       |
 | `prePull`        | `{ repo, remote, branch }`                                        | `PrePullEvent`        |
 | `preRebase`      | `{ repo, upstream, branch }`                                      | `PreRebaseEvent`      |
-| `preReset`       | `{ repo, mode, target }`                                          | `PreResetEvent`       |
-| `preClean`       | `{ repo, dryRun, force, removeDirs, removeIgnored, onlyIgnored }` | `PreCleanEvent`       |
-| `preRm`          | `{ repo, paths, cached, recursive, force }`                       | `PreRmEvent`          |
-| `preCherryPick`  | `{ repo, mode, commit }`                                          | `PreCherryPickEvent`  |
-| `preRevert`      | `{ repo, mode, commit }`                                          | `PreRevertEvent`      |
-| `preStash`       | `{ repo, action, ref }`                                           | `PreStashEvent`       |
+| `preReset`       | `{ repo, mode, targetRef }`                                       | `PreResetEvent`       |
+| `preCherryPick`  | `{ repo, mode, commitRef }`                                       | `PreCherryPickEvent`  |
+| `preRevert`      | `{ repo, mode, commitRef }`                                       | `PreRevertEvent`      |
 
 ## Post-hooks
 
@@ -60,15 +57,12 @@ Post-hooks are observational — return value is ignored.
 | `postMerge`      | `{ repo, headHash, theirsHash, strategy, commitHash }`. `strategy`: `"fast-forward"` or `"three-way"`.                        | `PostMergeEvent`      |
 | `postCheckout`   | `{ repo, prevHead, newHead, isBranchCheckout }`                                                                               | `PostCheckoutEvent`   |
 | `postPush`       | same payload as `prePush`                                                                                                     | `PostPushEvent`       |
-| `postFetch`      | `{ repo, remote, url, refsUpdated }`                                                                                          | `PostFetchEvent`      |
+| `postFetch`      | `{ repo, remote, url, updatedRefCount }`                                                                                      | `PostFetchEvent`      |
 | `postClone`      | `{ repo, repository, targetPath, bare, branch }`                                                                              | `PostCloneEvent`      |
 | `postPull`       | `{ repo, remote, branch, strategy, commitHash }`. `strategy`: `"up-to-date"`, `"fast-forward"`, `"three-way"`, or `"rebase"`. | `PostPullEvent`       |
 | `postReset`      | `{ repo, mode, targetHash }`                                                                                                  | `PostResetEvent`      |
-| `postClean`      | `{ repo, removed, dryRun }`                                                                                                   | `PostCleanEvent`      |
-| `postRm`         | `{ repo, removedPaths, cached }`                                                                                              | `PostRmEvent`         |
 | `postCherryPick` | `{ repo, mode, commitHash, hadConflicts }`                                                                                    | `PostCherryPickEvent` |
 | `postRevert`     | `{ repo, mode, commitHash, hadConflicts }`                                                                                    | `PostRevertEvent`     |
-| `postStash`      | `{ repo, action, ok }`                                                                                                        | `PostStashEvent`      |
 
 ## Low-level events
 
