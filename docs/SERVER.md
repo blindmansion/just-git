@@ -373,6 +373,83 @@ const server = createServer({
 await server.createRepo("my-repo");
 ```
 
+### Custom storage
+
+Implement the `Storage` interface to back repos with any datastore — DynamoDB, Turso, Firestore, a REST API, etc. The interface is intentionally thin: raw key-value CRUD for objects and refs, plus one atomicity primitive. All git-aware logic (object hashing, pack ingestion, symref resolution, compare-and-swap) is handled by the adapter layer — your implementation doesn't need to know anything about git.
+
+```ts
+import type { Storage } from "just-git/server";
+
+class MyStorage implements Storage {
+  // Repo lifecycle
+  hasRepo(repoId: string) {
+    /* ... */
+  }
+  insertRepo(repoId: string) {
+    /* ... */
+  }
+  deleteRepo(repoId: string) {
+    /* ... */
+  }
+
+  // Objects — keyed by (repoId, hash)
+  getObject(repoId, hash) {
+    /* return { type, content } or null */
+  }
+  putObject(repoId, hash, type, content) {
+    /* upsert, ignore duplicates */
+  }
+  putObjects(repoId, objects) {
+    /* batch insert — use a transaction if available */
+  }
+  hasObject(repoId, hash) {
+    /* existence check */
+  }
+  findObjectsByPrefix(repoId, prefix) {
+    /* for short-hash resolution */
+  }
+  listObjectHashes(repoId) {
+    /* all hashes — used by GC */
+  }
+  deleteObjects(repoId, hashes) {
+    /* bulk delete — used by GC */
+  }
+
+  // Refs — keyed by (repoId, name)
+  getRef(repoId, name) {
+    /* return Ref or null */
+  }
+  putRef(repoId, name, ref) {
+    /* upsert */
+  }
+  removeRef(repoId, name) {
+    /* delete */
+  }
+  listRefs(repoId, prefix?) {
+    /* list, optionally filtered by prefix */
+  }
+  atomicRefUpdate(repoId, fn) {
+    /* wrap fn in a transaction or lock */
+  }
+}
+```
+
+Key things to know:
+
+- **Objects are immutable.** The same hash always maps to the same content, so `putObject` can safely ignore duplicates (SQL: `INSERT ... ON CONFLICT DO NOTHING`). No need for update logic.
+
+- **`content` is the raw object body** (a `Uint8Array`), not the full git envelope. The adapter handles hashing and envelope framing. Store it as a blob/bytea column or binary value.
+
+- **`putObjects` is the hot path.** It's called during push with every object in the pack. Wrapping it in a single transaction (rather than one insert per object) makes a large difference for SQL backends.
+
+- **Refs are either direct or symbolic.** A `Ref` is `{ type: "direct", hash: string }` or `{ type: "symbolic", target: string }`. Store and return them as-is — the adapter resolves symref chains. `HEAD` is typically a symbolic ref pointing to `refs/heads/main`.
+
+- **`atomicRefUpdate` provides isolation.** The adapter calls it to do compare-and-swap on refs (e.g. advancing a branch during a push). Wrap the callback in a SQL transaction, a mutex, or whatever your datastore supports. The callback receives `{ getRef, putRef, removeRef }` scoped to the transaction. For async backends, the callback returns a `Promise`.
+
+- **All methods use `MaybeAsync<T>`.** Return `T` directly for sync backends (SQLite), or `Promise<T>` for async ones (Postgres, HTTP). The adapter handles both transparently.
+
+- **`MemoryStorage` is the reference implementation** — it's under 150 lines and covers every method. Start there when building a new backend.
+
 ## Working with pushed code
 
 Use the [repo module](REPO.md) (`just-git/repo`) inside hooks to inspect pushed commits, read files, diff trees, and more:

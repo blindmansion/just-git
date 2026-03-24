@@ -111,6 +111,7 @@ export class MemoryStorage implements Storage {
 	}
 
 	atomicRefUpdate<T>(repoId: string, fn: (ops: RefOps) => T): T {
+		// Single-threaded JS — no lock needed; just delegate to the same maps.
 		const refMap = this.getRefMap(repoId);
 		return fn({
 			getRef: (name) => refMap.get(name) ?? null,
@@ -123,9 +124,14 @@ export class MemoryStorage implements Storage {
 		});
 	}
 
+	// ── Extras (not part of Storage interface) ──────────────────
+
+	/** List all created repo IDs. Convenience for tests and debugging. */
 	repoIds(): string[] {
 		return Array.from(this.repos);
 	}
+
+	// ── Internal helpers ────────────────────────────────────────
 
 	private getObjMap(repoId: string): Map<string, RawObject> {
 		let map = this.objects.get(repoId);
