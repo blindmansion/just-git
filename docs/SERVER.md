@@ -564,8 +564,35 @@ const server = createServer({
     noDelta: false, // true = faster pack generation, larger packs
     deltaWindow: 10, // smaller = faster, worse compression
   },
+
+  // Push (receive-pack) limits
+  receiveLimits: {
+    maxRequestBytes: 128 * 1024 * 1024, // 128 MB (HTTP body)
+    maxInflatedBytes: 256 * 1024 * 1024, // 256 MB (gzip bomb guard, HTTP only)
+    maxPackBytes: 128 * 1024 * 1024, // 128 MB (pack payload)
+    maxPackObjects: 250_000, // objects declared in pack header
+  },
+
+  // Fetch/clone (upload-pack) limits
+  fetchLimits: {
+    maxRequestBytes: 10 * 1024 * 1024, // 10 MB (HTTP body)
+    maxInflatedBytes: 20 * 1024 * 1024, // 20 MB (gzip bomb guard, HTTP only)
+  },
 });
 ```
+
+### Request limits
+
+`receiveLimits` and `fetchLimits` cap the size of incoming HTTP and SSH request bodies. Defaults are shown above.
+
+| Property           | Applies to      | Transport  | Purpose                                                                                                                                                                         |
+| ------------------ | --------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maxRequestBytes`  | both            | HTTP + SSH | Maximum raw (or compressed) request body size                                                                                                                                   |
+| `maxInflatedBytes` | both            | HTTP only  | Maximum decompressed body size — guards against gzip bombs (`Content-Encoding: gzip`). SSH has no application-layer compression, so `maxRequestBytes` alone is sufficient there |
+| `maxPackBytes`     | `receiveLimits` | HTTP + SSH | Maximum pack payload size after pkt-line framing is stripped                                                                                                                    |
+| `maxPackObjects`   | `receiveLimits` | HTTP + SSH | Maximum object count declared in the pack header                                                                                                                                |
+
+`fetchLimits` are intentionally tighter than `receiveLimits` because upload-pack request bodies only contain pkt-line want/have negotiation — no pack data. Oversized requests return HTTP 413 or close the SSH channel with exit 128.
 
 ## In-process access
 

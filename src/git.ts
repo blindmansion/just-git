@@ -252,9 +252,9 @@ export class Git {
 			...(options?.refStore ? { refStore: options.refStore } : {}),
 			...(options?.gitDir
 				? {
-					gitDir: options.gitDir,
-					workTree: this.defaultCwd,
-				}
+						gitDir: options.gitDir,
+						workTree: this.defaultCwd,
+					}
 				: {}),
 			...(configOverrides ? { configOverrides } : {}),
 		};
