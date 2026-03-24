@@ -27,7 +27,6 @@ import type { ShallowUpdate } from "../lib/shallow.ts";
 import {
 	type AdvertisedRef,
 	type PushCommand,
-	type V2FetchRequest,
 	type V2FetchResponseOptions,
 	type V2LsRefsRef,
 	buildRefAdvertisement,
@@ -382,142 +381,79 @@ export async function handleUploadPack(
 		}
 	}
 
+	const includeTag = capabilities.includes("include-tag");
+	const packOpts: PackBuildOptions = {
+		repo,
+		wants,
+		haves,
+		includeTag,
+		shallowBoundary,
+		clientShallowBoundary: clientShallowSet,
+		cache: options?.cache,
+		cacheKey,
+		deltaWindow: options?.deltaWindow,
+	};
+
 	if (options?.noDelta) {
-		return handleUploadPackStreaming(
-			repo,
-			wants,
-			haves,
-			capabilities,
-			useSideband,
-			commonHashes,
-			shallowInfo,
-			shallowBoundary,
-			clientShallowSet,
+		const packChunks = await buildPackStreaming(packOpts);
+		if (!packChunks) {
+			const { data: emptyPack } = await writePackDeltified([]);
+			return buildUploadPackResponse(emptyPack, useSideband, commonHashes, shallowInfo);
+		}
+		return asyncIterableToStream(
+			buildUploadPackResponseStreaming(packChunks, useSideband, commonHashes, shallowInfo),
 		);
 	}
 
-	return handleUploadPackBuffered(
-		repo,
-		wants,
-		haves,
-		capabilities,
-		useSideband,
-		commonHashes,
-		options,
-		cacheKey,
-		shallowInfo,
-		shallowBoundary,
-		clientShallowSet,
-	);
+	const packData = await buildPackBuffered(packOpts);
+	return buildUploadPackResponse(packData, useSideband, commonHashes, shallowInfo);
 }
 
-/**
- * Streaming upload-pack: enumerates objects, reads content lazily, and
- * streams undeltified pack entries to the client as they're produced.
- */
-async function handleUploadPackStreaming(
+// ── Shared pack-building pipeline ───────────────────────────────────
+
+interface PackBuildOptions {
+	repo: GitRepo;
+	wants: string[];
+	haves: string[];
+	includeTag: boolean;
+	shallowBoundary?: Set<ObjectId>;
+	clientShallowBoundary?: Set<ObjectId>;
+	cache?: PackCache;
+	cacheKey?: string | null;
+	deltaWindow?: number;
+}
+
+async function collectIncludedTags(
 	repo: GitRepo,
-	wants: string[],
-	haves: string[],
-	capabilities: string[],
-	useSideband: boolean,
-	commonHashes: string[] | undefined,
-	shallowInfo?: ShallowUpdate,
-	shallowBoundary?: Set<ObjectId>,
-	clientShallowBoundary?: Set<ObjectId>,
-): Promise<ReadableStream<Uint8Array>> {
-	const { count, objects: walkObjects } = await enumerateObjects(
-		repo,
-		wants,
-		haves,
-		shallowBoundary,
-		clientShallowBoundary,
-	);
-
-	if (count === 0) {
-		const { data: emptyPack } = await writePackDeltified([]);
-		const empty = buildUploadPackResponse(emptyPack, useSideband, commonHashes, shallowInfo);
-		return new ReadableStream({
-			start(controller) {
-				controller.enqueue(empty);
-				controller.close();
-			},
-		});
-	}
-
-	const walkList: { hash: ObjectId; type: string }[] = [];
-	for await (const obj of walkObjects) walkList.push(obj);
-
-	// include-tag: find tag objects whose targets are in the pack
-	const sentHashes = new Set(walkList.map((o) => o.hash));
-	const extraTags: WalkObjectWithContent[] = [];
-
-	if (capabilities.includes("include-tag")) {
-		const tagRefs = await repo.refStore.listRefs("refs/tags");
-		for (const tagRef of tagRefs) {
-			if (sentHashes.has(tagRef.hash)) continue;
-			try {
-				const obj = await repo.objectStore.read(tagRef.hash);
-				if (obj.type === "tag") {
-					const tag = parseTag(obj.content);
-					if (sentHashes.has(tag.object)) {
-						extraTags.push({ hash: tagRef.hash, type: "tag", content: obj.content });
-					}
+	sentHashes: Set<string>,
+): Promise<WalkObjectWithContent[]> {
+	const extra: WalkObjectWithContent[] = [];
+	const tagRefs = await repo.refStore.listRefs("refs/tags");
+	for (const tagRef of tagRefs) {
+		if (sentHashes.has(tagRef.hash)) continue;
+		try {
+			const obj = await repo.objectStore.read(tagRef.hash);
+			if (obj.type === "tag") {
+				const tag = parseTag(obj.content);
+				if (sentHashes.has(tag.object)) {
+					extra.push({ hash: tagRef.hash, type: "tag", content: obj.content });
+					sentHashes.add(tagRef.hash);
 				}
-			} catch {
-				// Tag object missing or unreadable; skip
 			}
+		} catch {
+			// skip
 		}
 	}
-
-	const totalCount = walkList.length + extraTags.length;
-	async function* streamObjects(): AsyncGenerator<PackInput> {
-		for (const obj of walkList) {
-			const raw = await repo.objectStore.read(obj.hash);
-			yield { type: raw.type, content: raw.content };
-		}
-		for (const tag of extraTags) {
-			yield { type: tag.type, content: tag.content };
-		}
-	}
-
-	const packChunks = writePackStreaming(totalCount, streamObjects());
-	const responseChunks = buildUploadPackResponseStreaming(
-		packChunks,
-		useSideband,
-		commonHashes,
-		shallowInfo,
-	);
-
-	return new ReadableStream({
-		async pull(controller) {
-			const { value, done } = await responseChunks.next();
-			if (done) {
-				controller.close();
-			} else {
-				controller.enqueue(value);
-			}
-		},
-	});
+	return extra;
 }
 
 /**
- * Buffered upload-pack: collects all objects, computes deltas (unless noDelta),
- * and returns the full response as a Uint8Array.
+ * Buffered pack builder: enumerates objects with content, computes deltas,
+ * writes a deltified pack, and optionally caches the result.
  */
-async function handleUploadPackBuffered(
-	repo: GitRepo,
-	wants: string[],
-	haves: string[],
-	capabilities: string[],
-	useSideband: boolean,
-	commonHashes: string[] | undefined,
-	options: UploadPackOptions | undefined,
-	cacheKey: string | null,
-	shallowInfo?: ShallowUpdate,
-	shallowBoundary?: Set<ObjectId>,
-	clientShallowBoundary?: Set<ObjectId>,
-): Promise<Uint8Array> {
+async function buildPackBuffered(opts: PackBuildOptions): Promise<Uint8Array> {
+	const { repo, wants, haves, includeTag, shallowBoundary, clientShallowBoundary } = opts;
+
 	const enumResult = await enumerateObjectsWithContent(
 		repo,
 		wants,
@@ -527,34 +463,19 @@ async function handleUploadPackBuffered(
 	);
 
 	if (enumResult.count === 0) {
-		const { data: emptyPack } = await writePackDeltified([]);
-		return buildUploadPackResponse(emptyPack, useSideband, commonHashes, shallowInfo);
+		const { data } = await writePackDeltified([]);
+		return data;
 	}
 
 	const collected: WalkObjectWithContent[] = await collectEnumeration(enumResult);
-
 	const sentHashes = new Set(collected.map((o) => o.hash));
 
-	if (capabilities.includes("include-tag")) {
-		const tagRefs = await repo.refStore.listRefs("refs/tags");
-		for (const tagRef of tagRefs) {
-			if (sentHashes.has(tagRef.hash)) continue;
-			try {
-				const obj = await repo.objectStore.read(tagRef.hash);
-				if (obj.type === "tag") {
-					const tag = parseTag(obj.content);
-					if (sentHashes.has(tag.object)) {
-						collected.push({ hash: tagRef.hash, type: "tag", content: obj.content });
-						sentHashes.add(tagRef.hash);
-					}
-				}
-			} catch {
-				// Tag object missing or unreadable; skip
-			}
-		}
+	if (includeTag) {
+		const extra = await collectIncludedTags(repo, sentHashes);
+		collected.push(...extra);
 	}
 
-	const windowOpt = options?.deltaWindow ? { window: options.deltaWindow } : undefined;
+	const windowOpt = opts.deltaWindow ? { window: opts.deltaWindow } : undefined;
 	const deltas = findBestDeltas(collected, windowOpt);
 
 	const inputs: DeltaPackInput[] = deltas.map((r) => ({
@@ -567,12 +488,62 @@ async function handleUploadPackBuffered(
 
 	const { data: packData } = await writePackDeltified(inputs);
 
-	if (cacheKey && options?.cache) {
+	if (opts.cacheKey && opts.cache) {
 		const deltaCount = deltas.filter((d) => d.delta).length;
-		options.cache.set(cacheKey, { packData, objectCount: collected.length, deltaCount });
+		opts.cache.set(opts.cacheKey, { packData, objectCount: collected.length, deltaCount });
 	}
 
-	return buildUploadPackResponse(packData, useSideband, commonHashes, shallowInfo);
+	return packData;
+}
+
+/**
+ * Streaming pack builder: enumerates objects lazily and streams undeltified
+ * pack entries. Returns null when there are no objects to send.
+ */
+async function buildPackStreaming(
+	opts: PackBuildOptions,
+): Promise<AsyncIterable<Uint8Array> | null> {
+	const { repo, wants, haves, includeTag, shallowBoundary, clientShallowBoundary } = opts;
+
+	const { count, objects: walkObjects } = await enumerateObjects(
+		repo,
+		wants,
+		haves,
+		shallowBoundary,
+		clientShallowBoundary,
+	);
+
+	if (count === 0) return null;
+
+	const walkList: { hash: ObjectId; type: string }[] = [];
+	for await (const obj of walkObjects) walkList.push(obj);
+
+	const sentHashes = new Set(walkList.map((o) => o.hash));
+	const extraTags = includeTag ? await collectIncludedTags(repo, sentHashes) : [];
+
+	const totalCount = walkList.length + extraTags.length;
+	async function* streamObjects(): AsyncGenerator<PackInput> {
+		for (const obj of walkList) {
+			const raw = await repo.objectStore.read(obj.hash);
+			yield { type: raw.type, content: raw.content };
+		}
+		for (const tag of extraTags) {
+			yield { type: tag.type, content: tag.content };
+		}
+	}
+
+	return writePackStreaming(totalCount, streamObjects());
+}
+
+function asyncIterableToStream(iterable: AsyncIterable<Uint8Array>): ReadableStream<Uint8Array> {
+	const iterator = iterable[Symbol.asyncIterator]();
+	return new ReadableStream({
+		async pull(controller) {
+			const { value, done } = await iterator.next();
+			if (done) controller.close();
+			else controller.enqueue(value);
+		},
+	});
 }
 
 // ── Receive-pack (push handling) ────────────────────────────────────
@@ -844,10 +815,6 @@ const V2_UPLOAD_PACK_CAPS = [
 	"object-format=sha1",
 ];
 
-/**
- * Build the v2 capability advertisement bytes for HTTP info/refs.
- * Only upload-pack uses v2; receive-pack falls back to v1.
- */
 export function buildV2CapabilityAdvertisementBytes(): Uint8Array {
 	return buildV2CapabilityAdvertisement(V2_UPLOAD_PACK_CAPS);
 }
@@ -875,17 +842,11 @@ export async function handleLsRefs<S>(
 	if (isRejection(adv)) return adv;
 
 	const { refs: allRefs, headTarget } = adv;
-
 	const result: V2LsRefsRef[] = [];
 
 	for (const ref of allRefs) {
-		// Skip peeled refs from v1 format — v2 uses the peeled attribute instead
 		if (ref.name.endsWith("^{}")) continue;
-
-		// Apply prefix filter
-		if (prefixes.length > 0 && !prefixes.some((p) => ref.name.startsWith(p))) {
-			continue;
-		}
+		if (prefixes.length > 0 && !prefixes.some((p) => ref.name.startsWith(p))) continue;
 
 		const entry: V2LsRefsRef = { hash: ref.hash, name: ref.name };
 
@@ -895,15 +856,12 @@ export async function handleLsRefs<S>(
 
 		if (wantPeel && ref.name.startsWith("refs/tags/")) {
 			const peeled = allRefs.find((r) => r.name === `${ref.name}^{}`);
-			if (peeled) {
-				entry.peeledHash = peeled.hash;
-			}
+			if (peeled) entry.peeledHash = peeled.hash;
 		}
 
 		result.push(entry);
 	}
 
-	// Handle unborn HEAD: report HEAD even if it points to a non-existent branch
 	if (wantUnborn && !result.some((r) => r.name === "HEAD") && headTarget) {
 		const matchesPrefix = prefixes.length === 0 || prefixes.some((p) => "HEAD".startsWith(p));
 		if (matchesPrefix) {
@@ -916,48 +874,34 @@ export async function handleLsRefs<S>(
 
 // ── V2 fetch ────────────────────────────────────────────────────────
 
-interface V2FetchOptions extends UploadPackOptions {}
-
 /**
  * Handle a v2 `fetch` command. Parses fetch args, performs object
- * enumeration and pack building (reusing the v1 pipeline), then
+ * enumeration and pack building via the shared pipeline, then
  * builds a v2 section-based response.
  */
 export async function handleV2Fetch(
 	repo: GitRepo,
 	args: string[],
-	options?: V2FetchOptions,
+	options?: UploadPackOptions,
 ): Promise<Uint8Array | ReadableStream<Uint8Array>> {
-	const req = parseV2FetchArgs(args);
-	return handleV2FetchParsed(repo, req, options);
-}
-
-async function handleV2FetchParsed(
-	repo: GitRepo,
-	req: V2FetchRequest,
-	options?: V2FetchOptions,
-): Promise<Uint8Array | ReadableStream<Uint8Array>> {
-	const { wants, haves, done, clientShallows, depth, includeTag, wantRefs } = req;
+	const { wants, haves, done, clientShallows, depth, includeTag, wantRefs } =
+		parseV2FetchArgs(args);
 
 	if (wants.length === 0 && wantRefs.length === 0) {
 		const { data: emptyPack } = await writePackDeltified([]);
 		return buildV2FetchResponse(emptyPack);
 	}
 
-	// Resolve want-ref names to hashes
 	const resolvedWantRefs: Array<{ hash: string; name: string }> = [];
 	const allWants = [...wants];
 	for (const refName of wantRefs) {
 		const hash = await resolveRef(repo, refName);
 		if (hash) {
 			resolvedWantRefs.push({ hash, name: refName });
-			if (!allWants.includes(hash)) {
-				allWants.push(hash);
-			}
+			if (!allWants.includes(hash)) allWants.push(hash);
 		}
 	}
 
-	// Compute shallow boundary
 	let shallowInfo: ShallowUpdate | undefined;
 	let shallowBoundary: Set<ObjectId> | undefined;
 	let clientShallowSet: Set<ObjectId> | undefined;
@@ -977,14 +921,11 @@ async function handleV2FetchParsed(
 		shallowBoundary = new Set(boundary.shallow);
 	}
 
-	// ACK computation — check which haves the server recognizes
 	let commonHashes: string[] | undefined;
 	if (haves.length > 0) {
 		commonHashes = [];
 		for (const hash of haves) {
-			if (await repo.objectStore.exists(hash)) {
-				commonHashes.push(hash);
-			}
+			if (await repo.objectStore.exists(hash)) commonHashes.push(hash);
 		}
 		if (commonHashes.length === 0) commonHashes = undefined;
 	}
@@ -996,218 +937,44 @@ async function handleV2FetchParsed(
 	if (!done && !hasCommon) {
 		return buildV2FetchAcknowledgments(commonHashes ?? []);
 	}
-	// From here on, either "done" was sent or we're ready to send pack
 
-	// Cache lookup (same logic as v1)
 	const cacheKey =
 		!shallowBoundary && options?.cache && options.cacheKey
 			? PackCache.key(options.cacheKey, allWants, haves)
 			: null;
 
+	const v2ResponseOpts: V2FetchResponseOptions = {
+		commonHashes,
+		shallowInfo,
+		wantedRefs: resolvedWantRefs.length > 0 ? resolvedWantRefs : undefined,
+	};
+
 	if (cacheKey && options?.cache) {
 		const cached = options.cache.get(cacheKey);
-		if (cached) {
-			return buildV2FetchResponse(cached.packData, {
-				commonHashes,
-				shallowInfo,
-				wantedRefs: resolvedWantRefs.length > 0 ? resolvedWantRefs : undefined,
-			});
-		}
+		if (cached) return buildV2FetchResponse(cached.packData, v2ResponseOpts);
 	}
 
-	if (options?.noDelta) {
-		return handleV2FetchStreaming(
-			repo,
-			allWants,
-			haves,
-			includeTag,
-			commonHashes,
-			shallowInfo,
-			shallowBoundary,
-			clientShallowSet,
-			resolvedWantRefs,
-			options,
-		);
-	}
-
-	return handleV2FetchBuffered(
+	const packOpts: PackBuildOptions = {
 		repo,
-		allWants,
+		wants: allWants,
 		haves,
 		includeTag,
-		commonHashes,
-		options,
+		shallowBoundary,
+		clientShallowBoundary: clientShallowSet,
+		cache: options?.cache,
 		cacheKey,
-		shallowInfo,
-		shallowBoundary,
-		clientShallowSet,
-		resolvedWantRefs,
-	);
-}
-
-async function handleV2FetchStreaming(
-	repo: GitRepo,
-	wants: string[],
-	haves: string[],
-	includeTag: boolean,
-	commonHashes: string[] | undefined,
-	shallowInfo: ShallowUpdate | undefined,
-	shallowBoundary: Set<ObjectId> | undefined,
-	clientShallowBoundary: Set<ObjectId> | undefined,
-	wantedRefs: Array<{ hash: string; name: string }>,
-	_options?: V2FetchOptions,
-): Promise<ReadableStream<Uint8Array>> {
-	const { count, objects: walkObjects } = await enumerateObjects(
-		repo,
-		wants,
-		haves,
-		shallowBoundary,
-		clientShallowBoundary,
-	);
-
-	if (count === 0) {
-		const { data: emptyPack } = await writePackDeltified([]);
-		const empty = buildV2FetchResponse(emptyPack, {
-			commonHashes,
-			shallowInfo,
-			wantedRefs: wantedRefs.length > 0 ? wantedRefs : undefined,
-		});
-		return new ReadableStream({
-			start(controller) {
-				controller.enqueue(empty);
-				controller.close();
-			},
-		});
-	}
-
-	const walkList: { hash: ObjectId; type: string }[] = [];
-	for await (const obj of walkObjects) walkList.push(obj);
-
-	const sentHashes = new Set(walkList.map((o) => o.hash));
-	const extraTags: WalkObjectWithContent[] = [];
-
-	if (includeTag) {
-		const tagRefs = await repo.refStore.listRefs("refs/tags");
-		for (const tagRef of tagRefs) {
-			if (sentHashes.has(tagRef.hash)) continue;
-			try {
-				const obj = await repo.objectStore.read(tagRef.hash);
-				if (obj.type === "tag") {
-					const tag = parseTag(obj.content);
-					if (sentHashes.has(tag.object)) {
-						extraTags.push({ hash: tagRef.hash, type: "tag", content: obj.content });
-					}
-				}
-			} catch {
-				// skip
-			}
-		}
-	}
-
-	const totalCount = walkList.length + extraTags.length;
-	async function* streamObjects(): AsyncGenerator<PackInput> {
-		for (const obj of walkList) {
-			const raw = await repo.objectStore.read(obj.hash);
-			yield { type: raw.type, content: raw.content };
-		}
-		for (const tag of extraTags) {
-			yield { type: tag.type, content: tag.content };
-		}
-	}
-
-	const packChunks = writePackStreaming(totalCount, streamObjects());
-	const v2Options: V2FetchResponseOptions = {
-		commonHashes,
-		shallowInfo,
-		wantedRefs: wantedRefs.length > 0 ? wantedRefs : undefined,
+		deltaWindow: options?.deltaWindow,
 	};
-	const responseChunks = buildV2FetchResponseStreaming(packChunks, v2Options);
 
-	return new ReadableStream({
-		async pull(controller) {
-			const { value, done } = await responseChunks.next();
-			if (done) {
-				controller.close();
-			} else {
-				controller.enqueue(value);
-			}
-		},
-	});
-}
-
-async function handleV2FetchBuffered(
-	repo: GitRepo,
-	wants: string[],
-	haves: string[],
-	includeTag: boolean,
-	commonHashes: string[] | undefined,
-	options: V2FetchOptions | undefined,
-	cacheKey: string | null,
-	shallowInfo: ShallowUpdate | undefined,
-	shallowBoundary: Set<ObjectId> | undefined,
-	clientShallowBoundary: Set<ObjectId> | undefined,
-	wantedRefs: Array<{ hash: string; name: string }>,
-): Promise<Uint8Array> {
-	const enumResult = await enumerateObjectsWithContent(
-		repo,
-		wants,
-		haves,
-		shallowBoundary,
-		clientShallowBoundary,
-	);
-
-	if (enumResult.count === 0) {
-		const { data: emptyPack } = await writePackDeltified([]);
-		return buildV2FetchResponse(emptyPack, {
-			commonHashes,
-			shallowInfo,
-			wantedRefs: wantedRefs.length > 0 ? wantedRefs : undefined,
-		});
-	}
-
-	const collected: WalkObjectWithContent[] = await collectEnumeration(enumResult);
-	const sentHashes = new Set(collected.map((o) => o.hash));
-
-	if (includeTag) {
-		const tagRefs = await repo.refStore.listRefs("refs/tags");
-		for (const tagRef of tagRefs) {
-			if (sentHashes.has(tagRef.hash)) continue;
-			try {
-				const obj = await repo.objectStore.read(tagRef.hash);
-				if (obj.type === "tag") {
-					const tag = parseTag(obj.content);
-					if (sentHashes.has(tag.object)) {
-						collected.push({ hash: tagRef.hash, type: "tag", content: obj.content });
-						sentHashes.add(tagRef.hash);
-					}
-				}
-			} catch {
-				// skip
-			}
+	if (options?.noDelta) {
+		const packChunks = await buildPackStreaming(packOpts);
+		if (!packChunks) {
+			const { data: emptyPack } = await writePackDeltified([]);
+			return buildV2FetchResponse(emptyPack, v2ResponseOpts);
 		}
+		return asyncIterableToStream(buildV2FetchResponseStreaming(packChunks, v2ResponseOpts));
 	}
 
-	const windowOpt = options?.deltaWindow ? { window: options.deltaWindow } : undefined;
-	const deltas = findBestDeltas(collected, windowOpt);
-
-	const inputs: DeltaPackInput[] = deltas.map((r) => ({
-		hash: r.hash,
-		type: r.type,
-		content: r.content,
-		delta: r.delta,
-		deltaBaseHash: r.deltaBase,
-	}));
-
-	const { data: packData } = await writePackDeltified(inputs);
-
-	if (cacheKey && options?.cache) {
-		const deltaCount = deltas.filter((d) => d.delta).length;
-		options.cache.set(cacheKey, { packData, objectCount: collected.length, deltaCount });
-	}
-
-	return buildV2FetchResponse(packData, {
-		commonHashes,
-		shallowInfo,
-		wantedRefs: wantedRefs.length > 0 ? wantedRefs : undefined,
-	});
+	const packData = await buildPackBuffered(packOpts);
+	return buildV2FetchResponse(packData, v2ResponseOpts);
 }
