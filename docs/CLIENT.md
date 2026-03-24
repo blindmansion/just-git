@@ -210,4 +210,24 @@ const git = createGit({
 await bash.exec("git clone http://my-server:8080/my-repo /work");
 ```
 
+When the operator controls both client and server, pass the auth context directly to skip `auth.http`:
+
+```ts
+const server = createServer<{ userId: string; roles: string[] }>({
+  hooks: {
+    preReceive: ({ auth }) => {
+      if (!auth.roles.includes("push")) return { reject: true };
+    },
+  },
+});
+
+const network = server.asNetwork("http://git", {
+  userId: "agent-1",
+  roles: ["push", "read"],
+});
+const git = createGit({ network });
+```
+
+When `auth` is omitted, `auth.http` runs on every request as before — useful when the client is untrusted and must prove its identity via HTTP credentials.
+
 This is the recommended approach for connecting virtual git clients to a `GitServer`. Server hooks (`preReceive`, `postReceive`, `advertiseRefs`, etc.), auth, policy enforcement, pack caching, and graceful shutdown all work identically to real HTTP — the only difference is no TCP.

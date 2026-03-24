@@ -219,4 +219,145 @@ describe("asNetwork", () => {
 
 		expect(seenUrls.some((u) => u.includes("/repo/"))).toBe(true);
 	});
+
+	test("asNetwork auth bypasses auth.http", async () => {
+		let httpAuthCalls = 0;
+		const server = createServer({
+			autoCreate: true,
+			auth: {
+				http: () => {
+					httpAuthCalls++;
+					return { userId: "from-http", roles: ["read"] };
+				},
+			},
+		});
+
+		const fs = new InMemoryFs();
+		const network = server.asNetwork(BASE, { userId: "agent-1", roles: ["push"] });
+		const git = createGit({ network });
+		const bash = new Bash({ fs, cwd: "/", customCommands: [git] });
+
+		await bash.exec(`git clone ${BASE}/repo /work`, { env: envAt(1000000000) });
+
+		expect(httpAuthCalls).toBe(0);
+	});
+
+	test("asNetwork auth flows through to server hooks", async () => {
+		const receivedAuth: Array<{ userId: string; roles: string[] }> = [];
+		const server = createServer<{ userId: string; roles: string[] }>({
+			storage: new MemoryStorage(),
+			autoCreate: true,
+			auth: {
+				http: () => ({ userId: "should-not-appear", roles: [] }),
+			},
+			hooks: {
+				advertiseRefs: ({ auth }) => {
+					receivedAuth.push(auth);
+				},
+				postReceive: ({ auth }) => {
+					receivedAuth.push(auth);
+				},
+			},
+		});
+
+		const agentAuth = { userId: "agent-42", roles: ["push", "read"] };
+		const fs = new InMemoryFs();
+		const network = server.asNetwork(BASE, agentAuth);
+		const git = createGit({ network });
+		const bash = new Bash({ fs, cwd: "/", customCommands: [git] });
+
+		await bash.exec(`git clone ${BASE}/repo /work`, { env: envAt(1000000000) });
+		await bash.writeFile("/work/README.md", "# Auth test");
+		await bash.exec("git add .", { cwd: "/work", env: envAt(1000000000) });
+		await bash.exec('git commit -m "auth"', { cwd: "/work", env: envAt(1000000000) });
+		await bash.exec("git push origin main", { cwd: "/work" });
+
+		expect(receivedAuth.length).toBeGreaterThan(0);
+		for (const auth of receivedAuth) {
+			expect(auth.userId).toBe("agent-42");
+			expect(auth.roles).toEqual(["push", "read"]);
+		}
+	});
+
+	test("asNetwork without auth still calls auth.http", async () => {
+		let httpAuthCalls = 0;
+		const server = createServer({
+			storage: new MemoryStorage(),
+			autoCreate: true,
+			auth: {
+				http: (req) => {
+					httpAuthCalls++;
+					return { transport: "http" as const, request: req };
+				},
+			},
+		});
+
+		const fs = new InMemoryFs();
+		const network = server.asNetwork(BASE);
+		const git = createGit({ network });
+		const bash = new Bash({ fs, cwd: "/", customCommands: [git] });
+
+		await bash.exec(`git clone ${BASE}/repo /work`, { env: envAt(1000000000) });
+
+		expect(httpAuthCalls).toBeGreaterThan(0);
+	});
+
+	test("asNetwork auth with preReceive rejection uses provided auth", async () => {
+		const server = createServer<{ userId: string; canPush: boolean }>({
+			storage: new MemoryStorage(),
+			autoCreate: true,
+			auth: {
+				http: () => ({ userId: "http-user", canPush: true }),
+			},
+			hooks: {
+				preReceive: ({ auth }) => {
+					if (!auth.canPush) return { reject: true, message: "push denied" };
+				},
+			},
+		});
+
+		const noPush = server.asNetwork(BASE, { userId: "reader", canPush: false });
+		const yesPush = server.asNetwork(BASE, { userId: "writer", canPush: true });
+
+		// Seed the repo via the writer
+		const writerFs = new InMemoryFs();
+		const writerGit = createGit({ network: yesPush });
+		const writerBash = new Bash({ fs: writerFs, cwd: "/", customCommands: [writerGit] });
+		await writerBash.exec(`git clone ${BASE}/repo /work`, { env: envAt(1000000000) });
+		await writerBash.writeFile("/work/README.md", "# Seeded");
+		await writerBash.exec("git add .", { cwd: "/work", env: envAt(1000000000) });
+		await writerBash.exec('git commit -m "seed"', { cwd: "/work", env: envAt(1000000000) });
+		const seedPush = await writerBash.exec("git push origin main", { cwd: "/work" });
+		expect(seedPush.exitCode).toBe(0);
+
+		// Reader clones and tries to push — should be rejected
+		const readerFs = new InMemoryFs();
+		const readerGit = createGit({ network: noPush });
+		const readerBash = new Bash({ fs: readerFs, cwd: "/", customCommands: [readerGit] });
+		await readerBash.exec(`git clone ${BASE}/repo /work`, { env: envAt(1000000100) });
+		await readerBash.writeFile("/work/new.txt", "blocked");
+		await readerBash.exec("git add .", { cwd: "/work", env: envAt(1000000200) });
+		await readerBash.exec('git commit -m "blocked"', { cwd: "/work", env: envAt(1000000200) });
+		const pushResult = await readerBash.exec("git push origin main", { cwd: "/work" });
+		expect(pushResult.exitCode).not.toBe(0);
+	});
+
+	test("asNetwork auth works without auth.http configured", async () => {
+		const server = createServer<{ agentId: string }>({
+			storage: new MemoryStorage(),
+			autoCreate: true,
+			auth: {
+				ssh: () => ({ agentId: "ssh-only" }),
+			},
+		});
+
+		const fs = new InMemoryFs();
+		const network = server.asNetwork(BASE, { agentId: "in-process" });
+		const git = createGit({ network });
+		const bash = new Bash({ fs, cwd: "/", customCommands: [git] });
+
+		// Should work even though auth.http is not configured
+		const result = await bash.exec(`git clone ${BASE}/repo /work`, { env: envAt(1000000000) });
+		expect(result.exitCode).toBe(0);
+	});
 });

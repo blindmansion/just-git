@@ -596,6 +596,28 @@ const git = createGit({
 });
 ```
 
+**Auth passthrough** — when both client and server are wired by the same operator, pass the auth context directly to `asNetwork` to bypass `auth.http` entirely. Server hooks receive the provided value as their `auth` parameter:
+
+```ts
+const server = createServer<{ userId: string; roles: string[] }>({
+  auth: { http: (req) => parseToken(req) }, // used for real HTTP clients
+  hooks: {
+    preReceive: ({ auth }) => {
+      if (!auth.roles.includes("push")) return { reject: true };
+    },
+  },
+});
+
+// In-process agent — no credentials or headers needed
+const network = server.asNetwork("http://git", {
+  userId: "agent-1",
+  roles: ["push", "read"],
+});
+const git = createGit({ network });
+```
+
+When `auth` is omitted, `auth.http` runs on every request as before.
+
 ## Graceful shutdown
 
 `close()` stops accepting new requests and waits for in-flight operations to finish. After calling, HTTP requests receive 503 and SSH sessions get exit 128.

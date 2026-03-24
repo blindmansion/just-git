@@ -252,7 +252,7 @@ export interface RefUpdateRequest {
 	oldHash?: string | null;
 }
 
-export interface GitServer {
+export interface GitServer<A = Auth> {
 	/** Standard fetch-API handler for HTTP: (Request) => Response */
 	fetch(request: Request): Promise<Response>;
 
@@ -409,12 +409,29 @@ export interface GitServer {
 	 * await git.exec("clone http://git/my-repo /work");
 	 * ```
 	 *
+	 * When `auth` is provided, in-process requests bypass the server's
+	 * `auth.http` callback entirely — hooks receive the supplied auth
+	 * context directly. This is the recommended approach for operator-
+	 * controlled agents where identity is known at wiring time:
+	 *
+	 * ```ts
+	 * const network = server.asNetwork("http://git", {
+	 *   userId: "agent-1",
+	 *   roles: ["push"],
+	 * });
+	 * const git = createGit({ network });
+	 * ```
+	 *
+	 * When `auth` is omitted, `auth.http` runs on every request as usual.
+	 *
 	 * @param baseUrl - Base URL used in clone/push/fetch commands.
 	 *   Only the hostname matters (for the `allowed` list). The URL
 	 *   never hits the network — it's resolved by the server's
 	 *   `resolve` function. Defaults to `"http://git"`.
+	 * @param auth - Pre-resolved auth context injected into server hooks,
+	 *   bypassing `auth.http`. Must match the server's `A` type.
 	 */
-	asNetwork(baseUrl?: string): NetworkPolicy;
+	asNetwork(baseUrl?: string, auth?: A): NetworkPolicy;
 }
 
 // ── Hooks ───────────────────────────────────────────────────────────

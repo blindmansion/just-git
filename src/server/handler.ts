@@ -18,6 +18,8 @@
 import { isRejection } from "../hooks.ts";
 import { buildCommit } from "../repo/writing.ts";
 import type { GitRepo } from "../lib/types.ts";
+
+const inProcessAuth = new WeakMap<Request, unknown>();
 import {
 	PackCache,
 	advertiseRefsWithHooks,
@@ -95,7 +97,7 @@ export function isValidRepoId(id: string): boolean {
  */
 export function createServer<A = Auth>(
 	config: GitServerConfig<A> = {} as GitServerConfig<A>,
-): GitServer {
+): GitServer<A> {
 	const rawStorage = config.storage ?? new MemoryStorage();
 	const storage = createStorageAdapter(rawStorage);
 	const resolve = config.resolve ?? ((path: string) => path);
@@ -146,17 +148,22 @@ export function createServer<A = Auth>(
 		if (closed && inflight === 0) drainResolve?.();
 	}
 
-	const server: GitServer = {
+	const server: GitServer<A> = {
 		async fetch(req: Request): Promise<Response> {
 			if (!enter()) return new Response("Service Unavailable", { status: 503 });
 			let auth: A | undefined;
 			try {
-				if (!buildAuth.http) {
-					return new Response("HTTP auth provider not configured", { status: 501 });
+				const embedded = inProcessAuth.get(req) as A | undefined;
+				if (embedded !== undefined) {
+					auth = embedded;
+				} else {
+					if (!buildAuth.http) {
+						return new Response("HTTP auth provider not configured", { status: 501 });
+					}
+					const authOrResponse = await buildAuth.http(req);
+					if (authOrResponse instanceof Response) return authOrResponse;
+					auth = authOrResponse;
 				}
-				const authOrResponse = await buildAuth.http(req);
-				if (authOrResponse instanceof Response) return authOrResponse;
-				auth = authOrResponse;
 
 				const url = new URL(req.url);
 				let pathname = decodeURIComponent(url.pathname);
@@ -449,12 +456,15 @@ export function createServer<A = Auth>(
 			return closed;
 		},
 
-		asNetwork(baseUrl = "http://git") {
+		asNetwork(baseUrl = "http://git", auth?: A) {
 			const normalized = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
 			return {
 				allowed: [normalized],
-				fetch: (input: string | URL | Request, init?: RequestInit) =>
-					server.fetch(new Request(input as string, init)),
+				fetch: (input: string | URL | Request, init?: RequestInit) => {
+					const req = new Request(input as string, init);
+					if (auth !== undefined) inProcessAuth.set(req, auth);
+					return server.fetch(req);
+				},
 			};
 		},
 
@@ -512,7 +522,7 @@ async function readRequestBody(req: Request): Promise<Uint8Array> {
 // ── Node.js adapter internals ───────────────────────────────────────
 
 async function nodeRequestToFetch(
-	server: Pick<GitServer, "fetch">,
+	server: Pick<GitServer<any>, "fetch">,
 	req: NodeHttpRequest,
 	chunks: Uint8Array[],
 	res: NodeHttpResponse,
