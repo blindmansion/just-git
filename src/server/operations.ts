@@ -52,6 +52,7 @@ import type {
 	Rejection,
 	ServerHooks,
 } from "./types.ts";
+import { RequestLimitError } from "./errors.ts";
 
 // ── Pack cache ──────────────────────────────────────────────────────
 
@@ -139,7 +140,6 @@ const UPLOAD_PACK_CAPS = [
 	"side-band-64k",
 	"ofs-delta",
 	"include-tag",
-	"allow-reachable-sha1-in-want",
 	"shallow",
 ];
 
@@ -304,6 +304,26 @@ interface UploadPackOptions {
 	deltaWindow?: number;
 }
 
+export interface AuthorizedFetchSet {
+	allowedRefHashes: Map<string, string>;
+	allowedWantHashes: Set<string>;
+}
+
+export interface ReceivePackLimitOptions {
+	maxPackBytes?: number;
+	maxPackObjects?: number;
+}
+
+export function buildAuthorizedFetchSet(adv: AdvertiseResult): AuthorizedFetchSet {
+	const allowedRefHashes = new Map<string, string>();
+	const allowedWantHashes = new Set<string>();
+	for (const ref of adv.refs) {
+		allowedRefHashes.set(ref.name, ref.hash);
+		allowedWantHashes.add(ref.hash);
+	}
+	return { allowedRefHashes, allowedWantHashes };
+}
+
 /**
  * Handle a `POST /git-upload-pack` request.
  *
@@ -313,13 +333,21 @@ interface UploadPackOptions {
 export async function handleUploadPack(
 	repo: GitRepo,
 	requestBody: Uint8Array,
-	options?: UploadPackOptions,
-): Promise<Uint8Array | ReadableStream<Uint8Array>> {
+	options?: UploadPackOptions & { authorizedFetchSet?: AuthorizedFetchSet },
+): Promise<Uint8Array | ReadableStream<Uint8Array> | Rejection> {
 	const { wants, haves, capabilities, clientShallows, depth, done } =
 		parseUploadPackRequest(requestBody);
 
 	if (wants.length === 0) {
 		return buildUploadPackResponse(new Uint8Array(0), false);
+	}
+
+	if (options?.authorizedFetchSet) {
+		for (const want of wants) {
+			if (!options.authorizedFetchSet.allowedWantHashes.has(want)) {
+				return { reject: true, message: `forbidden want ${want}` };
+			}
+		}
 	}
 
 	const useMultiAck = capabilities.includes("multi_ack_detailed");
@@ -564,14 +592,17 @@ export interface ReceivePackResult {
 export async function ingestReceivePack(
 	repo: GitRepo,
 	requestBody: Uint8Array,
+	limits?: ReceivePackLimitOptions,
 ): Promise<ReceivePackResult> {
 	const { commands, packData, capabilities, sawFlush } = parseReceivePackRequest(requestBody);
 
 	let unpackOk = true;
 	if (packData.byteLength > 0) {
 		try {
+			enforcePackLimits(packData, limits);
 			await repo.objectStore.ingestPack(packData);
-		} catch {
+		} catch (err) {
+			if (err instanceof RequestLimitError) throw err;
 			unpackOk = false;
 		}
 	}
@@ -596,6 +627,7 @@ export async function ingestReceivePackFromStream(
 	capabilities: string[],
 	packStream: AsyncIterable<Uint8Array>,
 	sawFlush = true,
+	limits?: ReceivePackLimitOptions,
 ): Promise<ReceivePackResult> {
 	let unpackOk = true;
 	const needsPack = commands.some((c) => c.newHash !== ZERO_HASH);
@@ -608,9 +640,10 @@ export async function ingestReceivePackFromStream(
 					return null;
 				}
 			};
-			const entries = readPackStreaming(packStream, externalBase);
+			const entries = readPackStreaming(limitPackStream(packStream, limits), externalBase);
 			await repo.objectStore.ingestPackStream(entries);
-		} catch {
+		} catch (err) {
+			if (err instanceof RequestLimitError) throw err;
 			unpackOk = false;
 		}
 	}
@@ -939,8 +972,8 @@ export async function handleLsRefs<A>(
 export async function handleV2Fetch(
 	repo: GitRepo,
 	args: string[],
-	options?: UploadPackOptions,
-): Promise<Uint8Array | ReadableStream<Uint8Array>> {
+	options?: UploadPackOptions & { authorizedFetchSet?: AuthorizedFetchSet },
+): Promise<Uint8Array | ReadableStream<Uint8Array> | Rejection> {
 	const { wants, haves, done, clientShallows, depth, includeTag, wantRefs } =
 		parseV2FetchArgs(args);
 
@@ -949,13 +982,31 @@ export async function handleV2Fetch(
 		return buildV2FetchResponse(emptyPack);
 	}
 
+	const authz = options?.authorizedFetchSet;
+
 	const resolvedWantRefs: Array<{ hash: string; name: string }> = [];
 	const allWants = [...wants];
 	for (const refName of wantRefs) {
-		const hash = await resolveRef(repo, refName);
-		if (hash) {
+		if (authz) {
+			const hash = authz.allowedRefHashes.get(refName);
+			if (!hash) {
+				return { reject: true, message: `forbidden want-ref ${refName}` };
+			}
 			resolvedWantRefs.push({ hash, name: refName });
 			if (!allWants.includes(hash)) allWants.push(hash);
+		} else {
+			const hash = await resolveRef(repo, refName);
+			if (hash) {
+				resolvedWantRefs.push({ hash, name: refName });
+				if (!allWants.includes(hash)) allWants.push(hash);
+			}
+		}
+	}
+	if (authz) {
+		for (const want of wants) {
+			if (!authz.allowedWantHashes.has(want)) {
+				return { reject: true, message: `forbidden want ${want}` };
+			}
 		}
 	}
 
@@ -1034,4 +1085,53 @@ export async function handleV2Fetch(
 
 	const packData = await buildPackBuffered(packOpts);
 	return buildV2FetchResponse(packData, v2ResponseOpts);
+}
+
+function enforcePackLimits(packData: Uint8Array, limits?: ReceivePackLimitOptions): void {
+	if (!limits) return;
+	if (limits.maxPackBytes !== undefined && packData.byteLength > limits.maxPackBytes) {
+		throw new RequestLimitError("Pack payload too large");
+	}
+	if (limits.maxPackObjects !== undefined && packData.byteLength >= 12) {
+		const view = new DataView(packData.buffer, packData.byteOffset, packData.byteLength);
+		const count = view.getUint32(8);
+		if (count > limits.maxPackObjects) {
+			throw new RequestLimitError("Pack contains too many objects");
+		}
+	}
+}
+
+async function* limitPackStream(
+	packStream: AsyncIterable<Uint8Array>,
+	limits?: ReceivePackLimitOptions,
+): AsyncGenerator<Uint8Array> {
+	if (!limits) {
+		for await (const chunk of packStream) yield chunk;
+		return;
+	}
+
+	let totalBytes = 0;
+	const header = new Uint8Array(12);
+	let headerLen = 0;
+
+	for await (const chunk of packStream) {
+		totalBytes += chunk.byteLength;
+		if (limits.maxPackBytes !== undefined && totalBytes > limits.maxPackBytes) {
+			throw new RequestLimitError("Pack payload too large");
+		}
+
+		if (headerLen < 12) {
+			const copyLen = Math.min(12 - headerLen, chunk.byteLength);
+			header.set(chunk.subarray(0, copyLen), headerLen);
+			headerLen += copyLen;
+			if (headerLen === 12 && limits.maxPackObjects !== undefined) {
+				const count = new DataView(header.buffer).getUint32(8);
+				if (count > limits.maxPackObjects) {
+					throw new RequestLimitError("Pack contains too many objects");
+				}
+			}
+		}
+
+		yield chunk;
+	}
 }

@@ -393,6 +393,110 @@ describe("handler HTTP conformance", () => {
 		expect(res.headers.get("Content-Type")).toBe("application/x-git-upload-pack-result");
 	});
 
+	test("denied advertiseRefs also blocks direct POST /git-upload-pack", async () => {
+		const driver = new MemoryStorage();
+		const storage = createStorageAdapter(driver);
+		const repo = await storage.createRepo("repo");
+		const blob = await writeBlob(repo, "classified");
+		const tree = await writeTree(repo, [{ name: "secret.txt", hash: blob }]);
+		const secretHash = await createCommit(repo, {
+			tree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "secret\n",
+		});
+		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: secretHash });
+
+		const server = createServer({
+			storage: driver,
+			hooks: {
+				advertiseRefs: async ({ service }) =>
+					service === "git-upload-pack" ? { reject: true, message: "denied" } : undefined,
+			},
+		});
+
+		const deniedInfoRefs = await server.fetch(
+			new Request("http://localhost/repo/info/refs?service=git-upload-pack"),
+		);
+		expect(deniedInfoRefs.status).toBe(403);
+
+		const uploadBody = concatPktLines(
+			encodePktLine(`want ${secretHash} side-band-64k\n`),
+			flushPkt(),
+			encodePktLine("done\n"),
+		);
+		const directUpload = await server.fetch(
+			new Request("http://localhost/repo/git-upload-pack", {
+				method: "POST",
+				body: uploadBody,
+			}),
+		);
+
+		expect(directUpload.status).toBe(403);
+		expect(await directUpload.text()).toContain("denied");
+	});
+
+	test("filtered hidden refs cannot be fetched by hash over v1 upload-pack", async () => {
+		const driver = new MemoryStorage();
+		const storage = createStorageAdapter(driver);
+		const repo = await storage.createRepo("repo");
+
+		const publicBlob = await writeBlob(repo, "public");
+		const publicTree = await writeTree(repo, [{ name: "README.md", hash: publicBlob }]);
+		const publicHash = await createCommit(repo, {
+			tree: publicTree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "public\n",
+		});
+		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: publicHash });
+
+		const hiddenBlob = await writeBlob(repo, "secret");
+		const hiddenTree = await writeTree(repo, [{ name: "secret.txt", hash: hiddenBlob }]);
+		const hiddenHash = await createCommit(repo, {
+			tree: hiddenTree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "hidden\n",
+		});
+		await repo.refStore.writeRef("refs/heads/internal", { type: "direct", hash: hiddenHash });
+
+		const server = createServer({
+			storage: driver,
+			hooks: {
+				advertiseRefs: async ({ refs, service }) =>
+					service === "git-upload-pack"
+						? refs.filter((ref) => ref.name !== "refs/heads/internal")
+						: refs,
+			},
+		});
+
+		const refsRes = await server.fetch(
+			new Request("http://localhost/repo/info/refs?service=git-upload-pack"),
+		);
+		expect(refsRes.status).toBe(200);
+		const refsText = new TextDecoder().decode(new Uint8Array(await refsRes.arrayBuffer()));
+		expect(refsText).not.toContain("refs/heads/internal");
+
+		const uploadBody = concatPktLines(
+			encodePktLine(`want ${hiddenHash} side-band-64k\n`),
+			flushPkt(),
+			encodePktLine("done\n"),
+		);
+		const res = await server.fetch(
+			new Request("http://localhost/repo/git-upload-pack", {
+				method: "POST",
+				body: uploadBody,
+			}),
+		);
+
+		expect(res.status).toBe(403);
+		expect(await res.text()).toContain("forbidden want");
+	});
+
 	test("POST /git-receive-pack returns correct Content-Type", async () => {
 		await setup();
 		// Send a minimal (empty) receive-pack body — just flush

@@ -25,6 +25,8 @@ import {
 	advertiseRefsWithHooks,
 	applyCasRefUpdates,
 	applyReceivePack,
+	buildAuthorizedFetchSet,
+	type AuthorizedFetchSet,
 	buildRefAdvertisementBytes,
 	buildV2CapabilityAdvertisementBytes,
 	handleLsRefs,
@@ -38,6 +40,7 @@ import { handleSshSession } from "./ssh-session.ts";
 import { gcRepo } from "./gc.ts";
 import { createStorageAdapter, type CreateRepoOptions } from "./storage.ts";
 import { MemoryStorage } from "./memory-storage.ts";
+import { RequestLimitError } from "./errors.ts";
 import type {
 	GitServerConfig,
 	GitServer,
@@ -103,6 +106,13 @@ export function createServer<A = Auth>(
 	const resolve = config.resolve ?? ((path: string) => path);
 	const autoCreate = config.autoCreate;
 	const { basePath } = config;
+	const receiveLimits = {
+		maxRequestBytes: 128 * 1024 * 1024,
+		maxInflatedBytes: 256 * 1024 * 1024,
+		maxPackBytes: 128 * 1024 * 1024,
+		maxPackObjects: 250_000,
+		...config.receiveLimits,
+	};
 
 	async function resolveRepo(path: string): Promise<{ repo: GitRepo; repoId: string } | null> {
 		if (!isValidRepoId(path)) return null;
@@ -201,9 +211,7 @@ export function createServer<A = Auth>(
 							hooks,
 							auth,
 						);
-						if (isRejection(adv)) {
-							return new Response(adv.message ?? "Forbidden", { status: 403 });
-						}
+						if (isRejection(adv)) return forbiddenResponse(adv);
 						const body = buildV2CapabilityAdvertisementBytes();
 						return new Response(body, {
 							headers: {
@@ -220,9 +228,7 @@ export function createServer<A = Auth>(
 						hooks,
 						auth,
 					);
-					if (isRejection(adv)) {
-						return new Response(adv.message ?? "Forbidden", { status: 403 });
-					}
+					if (isRejection(adv)) return forbiddenResponse(adv);
 
 					const body = buildRefAdvertisementBytes(adv.refs, service, adv.headTarget);
 					return new Response(body, {
@@ -239,7 +245,20 @@ export function createServer<A = Auth>(
 					const resolved = await resolveRepo(requestPath);
 					if (!resolved) return new Response("Not Found", { status: 404 });
 
-					const body = await readRequestBody(req);
+					let authorizedFetchSet: AuthorizedFetchSet | undefined;
+					if (hooks?.advertiseRefs) {
+						const adv = await advertiseRefsWithHooks(
+							resolved.repo,
+							resolved.repoId,
+							"git-upload-pack",
+							hooks,
+							auth,
+						);
+						if (isRejection(adv)) return forbiddenResponse(adv);
+						authorizedFetchSet = buildAuthorizedFetchSet(adv);
+					}
+
+					const body = await readRequestBody(req, receiveLimits);
 
 					// Protocol v2: command-based dispatch
 					if (isProtocolV2(req)) {
@@ -254,9 +273,7 @@ export function createServer<A = Auth>(
 								hooks,
 								auth,
 							);
-							if (isRejection(result)) {
-								return new Response(result.message ?? "Forbidden", { status: 403 });
-							}
+							if (isRejection(result)) return forbiddenResponse(result);
 							return new Response(result, { headers: { "Content-Type": contentType } });
 						}
 
@@ -266,7 +283,9 @@ export function createServer<A = Auth>(
 								cacheKey: resolved.repoId,
 								noDelta: config.packOptions?.noDelta,
 								deltaWindow: config.packOptions?.deltaWindow,
+								authorizedFetchSet,
 							});
+							if (isRejection(responseBody)) return forbiddenResponse(responseBody);
 							return new Response(responseBody, {
 								headers: { "Content-Type": contentType },
 							});
@@ -280,7 +299,9 @@ export function createServer<A = Auth>(
 						cacheKey: resolved.repoId,
 						noDelta: config.packOptions?.noDelta,
 						deltaWindow: config.packOptions?.deltaWindow,
+						authorizedFetchSet,
 					});
+					if (isRejection(responseBody)) return forbiddenResponse(responseBody);
 					return new Response(responseBody, {
 						headers: { "Content-Type": "application/x-git-upload-pack-result" },
 					});
@@ -292,8 +313,8 @@ export function createServer<A = Auth>(
 					const resolved = await resolveRepo(requestPath);
 					if (!resolved) return new Response("Not Found", { status: 404 });
 
-					const body = await readRequestBody(req);
-					const ingestResult = await ingestReceivePack(resolved.repo, body);
+					const body = await readRequestBody(req, receiveLimits);
+					const ingestResult = await ingestReceivePack(resolved.repo, body, receiveLimits);
 
 					if (!ingestResult.sawFlush && ingestResult.updates.length === 0) {
 						return new Response("Bad Request", { status: 400 });
@@ -344,6 +365,9 @@ export function createServer<A = Auth>(
 
 				return new Response("Not Found", { status: 404 });
 			} catch (err) {
+				if (err instanceof RequestLimitError) {
+					return new Response(err.message, { status: err.status });
+				}
 				onError?.(err, auth);
 				return new Response("Internal Server Error", { status: 500 });
 			} finally {
@@ -373,6 +397,7 @@ export function createServer<A = Auth>(
 					hooks,
 					packCache,
 					packOptions: config.packOptions,
+					receiveLimits,
 					auth,
 					onError: onError ? (err) => onError(err, auth) : undefined,
 				});
@@ -416,12 +441,36 @@ export function createServer<A = Auth>(
 
 		nodeHandler(req: NodeHttpRequest, res: NodeHttpResponse): void {
 			const chunks: Uint8Array[] = [];
-			req.on("data", (chunk: Uint8Array) => chunks.push(new Uint8Array(chunk)));
+			let totalBytes = 0;
+			let tooLarge = false;
+			req.on("data", (chunk: Uint8Array) => {
+				if (tooLarge) return;
+				totalBytes += chunk.byteLength;
+				if (
+					req.method !== "GET" &&
+					req.method !== "HEAD" &&
+					receiveLimits.maxRequestBytes !== undefined &&
+					totalBytes > receiveLimits.maxRequestBytes
+				) {
+					tooLarge = true;
+					chunks.length = 0;
+					res.writeHead(413);
+					res.end("Request body too large");
+					try {
+						(req as { destroy?: () => void }).destroy?.();
+					} catch {
+						// ignore
+					}
+					return;
+				}
+				chunks.push(new Uint8Array(chunk));
+			});
 			req.on("error", () => {
 				res.writeHead(500);
 				res.end("Internal Server Error");
 			});
 			req.on("end", () => {
+				if (tooLarge) return;
 				nodeRequestToFetch(server, req, chunks, res).catch(() => {
 					try {
 						res.writeHead(500);
@@ -521,6 +570,10 @@ export function createServer<A = Auth>(
 
 // ── Internal helpers ────────────────────────────────────────────────
 
+function forbiddenResponse(r: Rejection): Response {
+	return new Response(r.message ?? "Forbidden", { status: 403 });
+}
+
 function isProtocolV2(req: Request): boolean {
 	const proto = req.headers.get("git-protocol");
 	return proto !== null && proto.includes("version=2");
@@ -534,17 +587,72 @@ function extractRepoPath(pathname: string, suffix: string): string {
 	return repoPath;
 }
 
-async function readRequestBody(req: Request): Promise<Uint8Array> {
-	const raw = new Uint8Array(await req.arrayBuffer());
+async function readRequestBody(
+	req: Request,
+	limits: {
+		maxRequestBytes?: number;
+		maxInflatedBytes?: number;
+	},
+): Promise<Uint8Array> {
+	const contentLength = req.headers.get("content-length");
+	if (contentLength) {
+		const parsed = Number(contentLength);
+		if (
+			Number.isFinite(parsed) &&
+			limits.maxRequestBytes !== undefined &&
+			parsed > limits.maxRequestBytes
+		) {
+			throw new RequestLimitError("Request body too large");
+		}
+	}
+
+	const raw = await readStreamWithMax(req.body, limits.maxRequestBytes, "Request body too large");
 	const encoding = req.headers.get("content-encoding");
 	if (encoding === "gzip" || encoding === "x-gzip") {
 		const ds = new DecompressionStream("gzip");
 		const writer = ds.writable.getWriter();
-		writer.write(raw);
-		writer.close();
-		return new Uint8Array(await new Response(ds.readable).arrayBuffer());
+		const copy = new Uint8Array(raw.byteLength);
+		copy.set(raw);
+		await writer.write(copy);
+		await writer.close();
+		return readStreamWithMax(ds.readable, limits.maxInflatedBytes, "Decompressed body too large");
 	}
 	return raw;
+}
+
+async function readStreamWithMax(
+	stream: ReadableStream<Uint8Array> | null,
+	maxBytes: number | undefined,
+	errorMessage: string,
+): Promise<Uint8Array> {
+	if (!stream) return new Uint8Array(0);
+
+	const reader = stream.getReader();
+	const chunks: Uint8Array[] = [];
+	let totalBytes = 0;
+	try {
+		while (true) {
+			const { value, done } = await reader.read();
+			if (done) break;
+			if (!value) continue;
+			totalBytes += value.byteLength;
+			if (maxBytes !== undefined && totalBytes > maxBytes) {
+				throw new RequestLimitError(errorMessage);
+			}
+			chunks.push(value);
+		}
+	} finally {
+		reader.releaseLock();
+	}
+
+	if (chunks.length === 0) return new Uint8Array(0);
+	const result = new Uint8Array(totalBytes);
+	let offset = 0;
+	for (const chunk of chunks) {
+		result.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return result;
 }
 
 // ── Node.js adapter internals ───────────────────────────────────────

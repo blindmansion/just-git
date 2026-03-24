@@ -318,4 +318,47 @@ describe("server roundtrip", () => {
 			authSrv.stop();
 		}
 	});
+
+	test("reproduces security-review finding: rejected pushes still ingest objects", async () => {
+		const authServer = createServer({
+			storage: driver,
+			hooks: {
+				preReceive: async () => ({ reject: true, message: "Push not allowed" }),
+			},
+		});
+
+		const authSrv = Bun.serve({
+			fetch: authServer.fetch,
+			port: 0,
+		});
+
+		try {
+			const client = createServerClient();
+			await client.exec(`git clone http://localhost:${authSrv.port}/repo /local`, {
+				env: envAt(1000001400),
+			});
+
+			await client.writeFile("/local/rejected-object.txt", "orphaned content");
+			await client.exec("git add .", { cwd: "/local" });
+			await client.exec('git commit -m "rejected push"', {
+				cwd: "/local",
+				env: envAt(1000001500),
+			});
+
+			const headResult = await client.exec("git rev-parse HEAD", { cwd: "/local" });
+			expect(headResult.exitCode).toBe(0);
+			const rejectedCommitHash = headResult.stdout.trim();
+			expect(rejectedCommitHash).toMatch(/^[0-9a-f]{40}$/);
+
+			const repo = await server.requireRepo("repo");
+			expect(await repo.objectStore.exists(rejectedCommitHash)).toBe(false);
+
+			const pushResult = await client.exec("git push origin main", { cwd: "/local" });
+			expect(pushResult.exitCode).not.toBe(0);
+
+			expect(await repo.objectStore.exists(rejectedCommitHash)).toBe(true);
+		} finally {
+			authSrv.stop();
+		}
+	});
 });

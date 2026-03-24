@@ -266,6 +266,70 @@ describe("SSH session handler", () => {
 		expect(stderrOutput).toContain("no access");
 	});
 
+	test("protocol v2 fetch rejects hidden refs", async () => {
+		const testServer = createServer({
+			storage: driver,
+			hooks: {
+				advertiseRefs: async ({ refs, service }) =>
+					service === "git-upload-pack"
+						? refs.filter((ref) => ref.name !== "refs/heads/internal")
+						: refs,
+			},
+			onError: false,
+		});
+
+		const repo = (await testServer.repo("test-repo"))!;
+		const hiddenBlob = await writeBlob(repo, "internal");
+		const hiddenTree = await writeTree(repo, [{ name: "internal.txt", hash: hiddenBlob }]);
+		const hiddenHash = await createCommit(repo, {
+			tree: hiddenTree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "internal\n",
+		});
+		await repo.refStore.writeRef("refs/heads/internal", { type: "direct", hash: hiddenHash });
+
+		const delimPkt = new Uint8Array([0x30, 0x30, 0x30, 0x31]);
+		const flushPkt = new Uint8Array([0x30, 0x30, 0x30, 0x30]);
+		const fetchRequest = concatBytes(
+			encodePktLine("command=fetch\n"),
+			encodePktLine("agent=test\n"),
+			delimPkt,
+			encodePktLine("want-ref refs/heads/internal\n"),
+			encodePktLine("done\n"),
+			flushPkt,
+		);
+
+		let stderrOutput = "";
+		const responseChunks: Uint8Array[] = [];
+		const channel: SshChannel = {
+			readable: new ReadableStream({
+				start(controller) {
+					controller.enqueue(fetchRequest);
+					controller.close();
+				},
+			}),
+			writable: new WritableStream({
+				write(chunk) {
+					responseChunks.push(chunk);
+				},
+			}),
+			writeStderr(data) {
+				stderrOutput += new TextDecoder().decode(data);
+			},
+		};
+
+		const exitCode = await testServer.handleSession(
+			"git-upload-pack --protocol=version=2 '/test-repo'",
+			channel,
+		);
+
+		expect(exitCode).toBe(128);
+		expect(stderrOutput).toContain("forbidden want-ref");
+		expect(new TextDecoder().decode(concatBytes(...responseChunks))).toContain("version 2");
+	});
+
 	test("handleSession handles empty upload-pack (ls-remote)", async () => {
 		const testServer = createServer({ storage: driver });
 

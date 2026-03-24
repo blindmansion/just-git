@@ -220,6 +220,23 @@ export interface GitServerConfig<A = Auth> {
 	};
 
 	/**
+	 * Safety limits for incoming receive-pack requests.
+	 *
+	 * These bounds are enforced on buffered HTTP bodies and on pack ingestion
+	 * for both HTTP and SSH push paths.
+	 */
+	receiveLimits?: {
+		/** Maximum compressed/raw HTTP request body size in bytes. */
+		maxRequestBytes?: number;
+		/** Maximum decompressed HTTP request body size in bytes. */
+		maxInflatedBytes?: number;
+		/** Maximum pack payload size in bytes. */
+		maxPackBytes?: number;
+		/** Maximum number of objects declared by a received pack. */
+		maxPackObjects?: number;
+	};
+
+	/**
 	 * Called when the server catches an unhandled error.
 	 *
 	 * Defaults to logging `err.message` (no stack trace) to `console.error`.

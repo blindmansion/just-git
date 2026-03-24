@@ -11,6 +11,7 @@ import type { GitRepo } from "../lib/types.ts";
 import {
 	PackCache,
 	advertiseRefsWithHooks,
+	buildAuthorizedFetchSet,
 	buildRefListBytes,
 	buildV2CapabilityAdvertisementBytes,
 	handleLsRefs,
@@ -18,9 +19,12 @@ import {
 	handleV2Fetch,
 	ingestReceivePackFromStream,
 	applyReceivePack,
+	type AuthorizedFetchSet,
+	type ReceivePackLimitOptions,
 } from "./operations.ts";
 import { buildReportStatus, type PushCommand } from "./protocol.ts";
-import type { ServerHooks, Auth, SshChannel } from "./types.ts";
+import type { ServerHooks, Auth, SshChannel, Rejection } from "./types.ts";
+import { RequestLimitError } from "./errors.ts";
 
 // ── Command parser ──────────────────────────────────────────────────
 
@@ -59,6 +63,7 @@ interface HandleSessionOptions<A = Auth> {
 	hooks?: ServerHooks<A>;
 	packCache?: PackCache;
 	packOptions?: { noDelta?: boolean; deltaWindow?: number };
+	receiveLimits?: ReceivePackLimitOptions;
 	auth: A;
 	onError?: (err: unknown) => void;
 }
@@ -72,7 +77,7 @@ export async function handleSshSession<A = Auth>(
 	channel: SshChannel,
 	options: HandleSessionOptions<A>,
 ): Promise<number> {
-	const { resolveRepo, hooks, packCache, packOptions, auth } = options;
+	const { resolveRepo, hooks, packCache, packOptions, receiveLimits, auth } = options;
 	const writer = channel.writable.getWriter();
 	try {
 		const parsed = parseGitSshCommand(command);
@@ -92,46 +97,43 @@ export async function handleSshSession<A = Auth>(
 		// Protocol v2 over SSH: send capability advertisement, then command loop
 		if (parsed.protocolV2 && service === "git-upload-pack") {
 			const adv = await advertiseRefsWithHooks(repo, repoId, service, hooks, auth);
-			if (isRejection(adv)) {
-				sendStderr(channel, `fatal: ${adv.message ?? "access denied"}\n`);
-				return 128;
-			}
+			if (isRejection(adv)) return sendRejection(channel, adv);
 
 			await writer.write(buildV2CapabilityAdvertisementBytes());
 
 			const streamReader = new StreamPktLineReader(channel.readable);
 			try {
-				await handleV2SshCommandLoop(streamReader, writer, repo, repoId, {
+				return await handleV2SshCommandLoop(streamReader, writer, repo, repoId, channel, {
 					hooks,
 					packCache,
 					packOptions,
+					receiveLimits,
 					auth,
 				});
 			} finally {
 				streamReader.release();
 			}
-			return 0;
 		}
 
 		// V2 not applicable for receive-pack — fall through to v1
 		const adv = await advertiseRefsWithHooks(repo, repoId, service, hooks, auth);
-		if (isRejection(adv)) {
-			sendStderr(channel, `fatal: ${adv.message ?? "access denied"}\n`);
-			return 128;
-		}
+		if (isRejection(adv)) return sendRejection(channel, adv);
 
 		await writer.write(buildRefListBytes(adv.refs, service, adv.headTarget));
 
 		const streamReader = new StreamPktLineReader(channel.readable);
 		try {
 			if (service === "git-upload-pack") {
+				const authorizedFetchSet = hooks?.advertiseRefs ? buildAuthorizedFetchSet(adv) : undefined;
 				const requestBody = await readUploadPackRequest(streamReader);
 				const result = await handleUploadPack(repo, requestBody, {
 					cache: packCache,
 					cacheKey: repoId,
 					noDelta: packOptions?.noDelta,
 					deltaWindow: packOptions?.deltaWindow,
+					authorizedFetchSet,
 				});
+				if (isRejection(result)) return sendRejection(channel, result);
 				await writeResponse(writer, result);
 			} else {
 				const { commands, capabilities } = await readReceivePackCommands(streamReader);
@@ -144,6 +146,7 @@ export async function handleSshSession<A = Auth>(
 					capabilities,
 					packStream,
 					hooks,
+					receiveLimits,
 					auth,
 				});
 			}
@@ -153,6 +156,10 @@ export async function handleSshSession<A = Auth>(
 
 		return 0;
 	} catch (err) {
+		if (err instanceof RequestLimitError) {
+			sendStderr(channel, `fatal: ${err.message}\n`);
+			return 128;
+		}
 		options.onError?.(err);
 		sendStderr(channel, "fatal: internal error\n");
 		return 128;
@@ -175,12 +182,21 @@ interface ServeReceivePackOptions<A> {
 	capabilities: string[];
 	packStream: AsyncIterable<Uint8Array>;
 	hooks?: ServerHooks<A>;
+	receiveLimits?: ReceivePackLimitOptions;
 	auth: A;
 }
 
 async function serveReceivePackStreaming<A>(options: ServeReceivePackOptions<A>): Promise<void> {
-	const { writer, repo, repoId, commands, capabilities, packStream, hooks, auth } = options;
-	const ingestResult = await ingestReceivePackFromStream(repo, commands, capabilities, packStream);
+	const { writer, repo, repoId, commands, capabilities, packStream, hooks, receiveLimits, auth } =
+		options;
+	const ingestResult = await ingestReceivePackFromStream(
+		repo,
+		commands,
+		capabilities,
+		packStream,
+		true,
+		receiveLimits,
+	);
 	if (ingestResult.updates.length === 0) return;
 
 	const useSideband = ingestResult.capabilities.includes("side-band-64k");
@@ -220,6 +236,11 @@ async function serveReceivePackStreaming<A>(options: ServeReceivePackOptions<A>)
 
 function sendStderr(channel: SshChannel, message: string): void {
 	channel.writeStderr?.(encoder.encode(message));
+}
+
+function sendRejection(channel: SshChannel, r: Rejection): number {
+	sendStderr(channel, `fatal: ${r.message ?? "access denied"}\n`);
+	return 128;
 }
 
 // ── Protocol-aware stream reading ───────────────────────────────────
@@ -382,6 +403,7 @@ interface V2SshCommandLoopOptions<A> {
 	hooks?: ServerHooks<A>;
 	packCache?: PackCache;
 	packOptions?: { noDelta?: boolean; deltaWindow?: number };
+	receiveLimits?: ReceivePackLimitOptions;
 	auth: A;
 }
 
@@ -395,8 +417,9 @@ async function handleV2SshCommandLoop<A>(
 	writer: WritableStreamDefaultWriter<Uint8Array>,
 	repo: GitRepo,
 	repoId: string,
+	channel: SshChannel,
 	options: V2SshCommandLoopOptions<A>,
-): Promise<void> {
+): Promise<number> {
 	const { hooks, packCache, packOptions, auth } = options;
 
 	while (true) {
@@ -405,21 +428,31 @@ async function handleV2SshCommandLoop<A>(
 
 		if (cmd.command === "ls-refs") {
 			const result = await handleLsRefs(repo, repoId, cmd.args, hooks, auth);
-			if (isRejection(result)) break;
+			if (isRejection(result)) return sendRejection(channel, result);
 			await writer.write(result);
 		} else if (cmd.command === "fetch") {
+			let authorizedFetchSet: AuthorizedFetchSet | undefined;
+			if (hooks?.advertiseRefs) {
+				const adv = await advertiseRefsWithHooks(repo, repoId, "git-upload-pack", hooks, auth);
+				if (isRejection(adv)) return sendRejection(channel, adv);
+				authorizedFetchSet = buildAuthorizedFetchSet(adv);
+			}
 			const result = await handleV2Fetch(repo, cmd.args, {
 				cache: packCache,
 				cacheKey: repoId,
 				noDelta: packOptions?.noDelta,
 				deltaWindow: packOptions?.deltaWindow,
+				authorizedFetchSet,
 			});
+			if (isRejection(result)) return sendRejection(channel, result);
 			await writeResponse(writer, result);
 		} else {
 			// Unknown command — silently ignore per v2 spec
 			break;
 		}
 	}
+
+	return 0;
 }
 
 interface V2StreamCommand {

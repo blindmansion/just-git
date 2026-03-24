@@ -11,6 +11,7 @@ import {
 	pktLineText,
 } from "../../src/lib/transport/pkt-line.ts";
 import { sha1 } from "../../src/lib/sha1.ts";
+import { writePack } from "../../src/lib/pack/packfile.ts";
 
 const TEST_IDENTITY = {
 	name: "Test",
@@ -207,6 +208,43 @@ describe("malformed receive-pack body", () => {
 		expect(res.status).toBe(200);
 		expect(res.headers.get("Content-Type")).toBe("application/x-git-receive-pack-result");
 	});
+
+	test("oversized receive-pack request returns 413", async () => {
+		const { driver } = await setupRepo();
+		const server = createServer({
+			storage: driver,
+			receiveLimits: { maxRequestBytes: 3 },
+			onError: false,
+		});
+
+		const res = await server.fetch(
+			new Request("http://localhost/repo/git-receive-pack", {
+				method: "POST",
+				body: flushPkt(),
+			}),
+		);
+		expect(res.status).toBe(413);
+		expect(await res.text()).toContain("Request body too large");
+	});
+
+	test("oversized decompressed receive-pack request returns 413", async () => {
+		const { driver } = await setupRepo();
+		const server = createServer({
+			storage: driver,
+			receiveLimits: { maxRequestBytes: 1024, maxInflatedBytes: 3 },
+			onError: false,
+		});
+
+		const res = await server.fetch(
+			new Request("http://localhost/repo/git-receive-pack", {
+				method: "POST",
+				headers: { "Content-Encoding": "gzip" },
+				body: await gzipBytes(flushPkt()),
+			}),
+		);
+		expect(res.status).toBe(413);
+		expect(await res.text()).toContain("Decompressed body too large");
+	});
 });
 
 function buildPushBody(
@@ -253,6 +291,16 @@ function buildCorruptPack(): Uint8Array {
 	view.setUint32(4, 2);
 	view.setUint32(8, 0); // 0 objects — triggers the early-return bug
 	return pack;
+}
+
+async function gzipBytes(data: Uint8Array): Promise<Uint8Array> {
+	const cs = new CompressionStream("gzip");
+	const writer = cs.writable.getWriter();
+	const copy = new Uint8Array(data.byteLength);
+	copy.set(data);
+	await writer.write(copy);
+	await writer.close();
+	return new Uint8Array(await new Response(cs.readable).arrayBuffer());
 }
 
 describe("push with bad pack data", () => {
@@ -350,6 +398,50 @@ describe("push with bad pack data", () => {
 			if (pktLineText(line).startsWith("ok refs/heads/new-branch")) foundOk = true;
 		}
 		expect(foundOk).toBe(true);
+	});
+
+	test("pack byte limit returns 413", async () => {
+		const { driver } = await setupRepo();
+		const server = createServer({
+			storage: driver,
+			receiveLimits: { maxPackBytes: 16 },
+			onError: false,
+		});
+		const zeroHash = "0".repeat(40);
+		const fakeHash = "a".repeat(40);
+
+		const body = buildPushBody(
+			[{ oldHash: zeroHash, newHash: fakeHash, refName: "refs/heads/hack" }],
+			buildCorruptPack(),
+		);
+
+		const res = await server.fetch(
+			new Request("http://localhost/repo/git-receive-pack", { method: "POST", body }),
+		);
+		expect(res.status).toBe(413);
+		expect(await res.text()).toContain("Pack payload too large");
+	});
+
+	test("pack object-count limit returns 413", async () => {
+		const { driver } = await setupRepo();
+		const server = createServer({
+			storage: driver,
+			receiveLimits: { maxPackObjects: 0, maxPackBytes: 1024 },
+			onError: false,
+		});
+		const zeroHash = "0".repeat(40);
+		const fakeHash = "a".repeat(40);
+		const packData = await writePack([{ type: "blob", content: new TextEncoder().encode("x") }]);
+		const body = buildPushBody(
+			[{ oldHash: zeroHash, newHash: fakeHash, refName: "refs/heads/hack" }],
+			packData,
+		);
+
+		const res = await server.fetch(
+			new Request("http://localhost/repo/git-receive-pack", { method: "POST", body }),
+		);
+		expect(res.status).toBe(413);
+		expect(await res.text()).toContain("Pack contains too many objects");
 	});
 });
 

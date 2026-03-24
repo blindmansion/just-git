@@ -478,6 +478,103 @@ describe("HTTP protocol v2", () => {
 		expect(lines[lines.length - 1]!.type).toBe("flush");
 	});
 
+	test("hidden refs cannot be fetched via want-ref or direct want", async () => {
+		const driver = new MemoryStorage();
+		const storage = createStorageAdapter(driver);
+		const repo = await storage.createRepo("repo");
+
+		const publicBlob = await writeBlob(repo, "public");
+		const publicTree = await writeTree(repo, [{ name: "README.md", hash: publicBlob }]);
+		const publicHash = await createCommit(repo, {
+			tree: publicTree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "public\n",
+		});
+		await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: publicHash });
+
+		const secretBlob = await writeBlob(repo, "internal only");
+		const secretTree = await writeTree(repo, [{ name: "internal.txt", hash: secretBlob }]);
+		const hiddenHash = await createCommit(repo, {
+			tree: secretTree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "internal\n",
+		});
+		await repo.refStore.writeRef("refs/heads/internal", { type: "direct", hash: hiddenHash });
+
+		const server = createServer({
+			storage: driver,
+			hooks: {
+				advertiseRefs: async ({ refs, service }) =>
+					service === "git-upload-pack"
+						? refs.filter((ref) => ref.name !== "refs/heads/internal")
+						: refs,
+			},
+		});
+
+		const lsRefsBody = concatPktLines(
+			encodePktLine("command=ls-refs\n"),
+			encodePktLine("agent=test\n"),
+			delimPkt(),
+			encodePktLine("symrefs\n"),
+			encodePktLine("ref-prefix refs/heads/\n"),
+			encodePktLine("ref-prefix HEAD\n"),
+			flushPkt(),
+		);
+		const lsRefsRes = await server.fetch(
+			new Request("http://localhost/repo/git-upload-pack", {
+				method: "POST",
+				headers: v2Headers(),
+				body: lsRefsBody,
+			}),
+		);
+		expect(lsRefsRes.status).toBe(200);
+
+		const lsRefsLines = parsePktLineStream(new Uint8Array(await lsRefsRes.arrayBuffer()));
+		const lsRefsTexts = lsRefsLines.filter((l) => l.type === "data").map((l) => pktLineText(l));
+		expect(lsRefsTexts.some((line) => line.includes("refs/heads/main"))).toBe(true);
+		expect(lsRefsTexts.some((line) => line.includes("refs/heads/internal"))).toBe(false);
+
+		const fetchBody = concatPktLines(
+			encodePktLine("command=fetch\n"),
+			encodePktLine("agent=test\n"),
+			delimPkt(),
+			encodePktLine("want-ref refs/heads/internal\n"),
+			encodePktLine("done\n"),
+			flushPkt(),
+		);
+		const fetchRes = await server.fetch(
+			new Request("http://localhost/repo/git-upload-pack", {
+				method: "POST",
+				headers: v2Headers(),
+				body: fetchBody,
+			}),
+		);
+		expect(fetchRes.status).toBe(403);
+		expect(await fetchRes.text()).toContain("forbidden want-ref");
+
+		const directWantBody = concatPktLines(
+			encodePktLine("command=fetch\n"),
+			encodePktLine("agent=test\n"),
+			delimPkt(),
+			encodePktLine(`want ${hiddenHash}\n`),
+			encodePktLine("done\n"),
+			flushPkt(),
+		);
+		const directWantRes = await server.fetch(
+			new Request("http://localhost/repo/git-upload-pack", {
+				method: "POST",
+				headers: v2Headers(),
+				body: directWantBody,
+			}),
+		);
+		expect(directWantRes.status).toBe(403);
+		expect(await directWantRes.text()).toContain("forbidden want");
+	});
+
 	test("POST unknown v2 command returns 400", async () => {
 		const reqBody = concatPktLines(encodePktLine("command=foobar\n"), delimPkt(), flushPkt());
 		const res = await serverFetch(

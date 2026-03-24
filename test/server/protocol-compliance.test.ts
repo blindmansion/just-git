@@ -206,8 +206,8 @@ describe("include-tag via server", () => {
 
 // ── allow-reachable-sha1-in-want ────────────────────────────────────
 
-describe("allow-reachable-sha1-in-want", () => {
-	test("capability is advertised for upload-pack", async () => {
+describe("upload-pack capabilities", () => {
+	test("stricter auth model does not advertise allow-reachable-sha1-in-want", async () => {
 		const driver = new MemoryStorage();
 		const storage = createStorageAdapter(driver);
 		const repo = await storage.createRepo("repo");
@@ -235,7 +235,8 @@ describe("allow-reachable-sha1-in-want", () => {
 			if (line.type === "data") {
 				const raw = new TextDecoder().decode(line.data);
 				if (raw.includes("\0")) {
-					expect(raw).toContain("allow-reachable-sha1-in-want");
+					expect(raw).not.toContain("allow-reachable-sha1-in-want");
+					expect(raw).toContain("multi_ack_detailed");
 					capsFound = true;
 					break;
 				}
