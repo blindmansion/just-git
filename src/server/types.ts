@@ -1,6 +1,6 @@
 import type { GitRepo } from "../lib/types.ts";
 import type { NetworkPolicy, Rejection } from "../hooks.ts";
-import type { CommitOptions } from "../repo/writing.ts";
+import type { CommitOptions, CommitResult } from "../repo/writing.ts";
 import type { Storage, CreateRepoOptions } from "./storage.ts";
 import type { GcOptions, GcResult } from "./gc.ts";
 
@@ -331,7 +331,7 @@ export interface GitServer {
 	 * {@link asNetwork} instead.
 	 *
 	 * ```ts
-	 * const hash = await server.commit("my-repo", {
+	 * const { hash } = await server.commit("my-repo", {
 	 *   files: { "README.md": "# Hello\n" },
 	 *   message: "auto-fix",
 	 *   author: { name: "Bot", email: "bot@example.com" },
@@ -342,11 +342,11 @@ export interface GitServer {
 	 * For lower-level control (e.g. constructing trees manually, multi-ref
 	 * updates), use `buildCommit()` + {@link updateRefs} directly.
 	 *
-	 * @returns The new commit's hash.
+	 * @returns The new commit's hash and parent hash.
 	 * @throws If the repo does not exist, the server is shutting down,
 	 *   or a concurrent write moved the branch.
 	 */
-	commit(repoId: string, options: CommitOptions): Promise<string>;
+	commit(repoId: string, options: CommitOptions): Promise<CommitResult>;
 
 	/**
 	 * Node.js `http.createServer` compatible handler.

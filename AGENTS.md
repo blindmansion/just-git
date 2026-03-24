@@ -205,7 +205,7 @@ Key behaviors:
 - `server.repo(id)` — get a repo by ID, or `null` if it doesn't exist.
 - `server.requireRepo(id)` — get a repo by ID, or throw if it doesn't exist.
 - `server.deleteRepo(id)` — delete a repo and all its data.
-- `server.commit(repoId, options)` — commit files to a branch with CAS protection. Uses `buildCommit()` from `just-git/repo` for object creation, then `updateRefs()` for ref advancement. Throws if CAS fails (concurrent branch update) or the repo doesn't exist.
+- `server.commit(repoId, options)` — commit files to a branch with CAS protection. Uses `buildCommit()` from `just-git/repo` for object creation, then `updateRefs()` for ref advancement. Returns `CommitResult` (`{ hash, parentHash }`). Throws if CAS fails (concurrent branch update) or the repo doesn't exist.
 - `server.asNetwork(baseUrl?)` — returns a `NetworkPolicy` that routes HTTP transport calls to the server in-process, bypassing the network stack. Pass the result as `network` to `createGit`. Default base URL is `"http://git"`. All server hooks, auth, and policy enforcement work identically to real HTTP.
 - `server.close(options?)` — graceful shutdown. New HTTP requests get 503, new SSH sessions get exit 128. Resolves when all in-flight operations complete and pack cache is released. Accepts `{ signal?: AbortSignal }` for timeout. Idempotent.
 - `server.closed` — `true` after `close()` is called.

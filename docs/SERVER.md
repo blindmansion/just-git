@@ -481,7 +481,7 @@ Key things to know:
 `server.commit()` creates a commit with CAS protection — the recommended API for server-side writes:
 
 ```ts
-const hash = await server.commit("my-repo", {
+const { hash } = await server.commit("my-repo", {
   files: { "README.md": "# Hello\n", "src/index.ts": "export {};\n" },
   message: "auto-fix: lint errors",
   author: { name: "Bot", email: "bot@example.com" },

@@ -21,7 +21,7 @@ import { buildCommit, readFileAtCommit, readCommit, resolveRef } from "../../src
 	});
 	await server.createRepo("my-repo");
 
-	const hash = await server.commit("my-repo", {
+	const { hash, parentHash } = await server.commit("my-repo", {
 		files: { "README.md": "# Hello\n", "src/index.ts": "export {};\n" },
 		message: "auto-fix: lint errors",
 		author: { name: "Bot", email: "bot@example.com" },
@@ -29,6 +29,7 @@ import { buildCommit, readFileAtCommit, readCommit, resolveRef } from "../../src
 	});
 
 	console.assert(typeof hash === "string" && hash.length === 40, "should return a 40-char hash");
+	console.assert(parentHash === null, "root commit should have null parentHash");
 
 	const repo = await server.requireRepo("my-repo");
 	const readme = await readFileAtCommit(repo, hash, "README.md");
@@ -54,7 +55,7 @@ import { buildCommit, readFileAtCommit, readCommit, resolveRef } from "../../src
 	});
 	await server.createRepo("test");
 
-	const hash = await server.commit("test", {
+	const { hash } = await server.commit("test", {
 		files: { "file.txt": "content" },
 		message: "bypasses hooks",
 		author: { name: "Bot", email: "bot@example.com" },

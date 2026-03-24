@@ -15,7 +15,7 @@ describe("server.commit", () => {
 		const server = createServer({ storage: new MemoryStorage() });
 		await server.createRepo("test");
 
-		const hash = await server.commit("test", {
+		const { hash, parentHash } = await server.commit("test", {
 			files: { "README.md": "# Hello\n" },
 			message: "initial commit",
 			author: AUTHOR,
@@ -24,6 +24,7 @@ describe("server.commit", () => {
 
 		expect(hash).toBeString();
 		expect(hash).toHaveLength(40);
+		expect(parentHash).toBeNull();
 
 		const repo = await server.requireRepo("test");
 		const ref = await resolveRef(repo, "refs/heads/main");
@@ -37,14 +38,14 @@ describe("server.commit", () => {
 		const server = createServer({ storage: new MemoryStorage() });
 		await server.createRepo("test");
 
-		const hash1 = await server.commit("test", {
+		const { hash: hash1 } = await server.commit("test", {
 			files: { "a.txt": "first" },
 			message: "first",
 			author: AUTHOR,
 			branch: "main",
 		});
 
-		const hash2 = await server.commit("test", {
+		const { hash: hash2, parentHash } = await server.commit("test", {
 			files: { "b.txt": "second" },
 			message: "second",
 			author: AUTHOR,
@@ -52,6 +53,7 @@ describe("server.commit", () => {
 		});
 
 		expect(hash2).not.toBe(hash1);
+		expect(parentHash).toBe(hash1);
 
 		const repo = await server.requireRepo("test");
 		const commit = await readCommit(repo, hash2);
@@ -74,7 +76,7 @@ describe("server.commit", () => {
 			branch: "main",
 		});
 
-		const hash2 = await server.commit("test", {
+		const { hash: hash2 } = await server.commit("test", {
 			files: { "b.txt": null },
 			message: "delete b",
 			author: AUTHOR,
@@ -93,7 +95,7 @@ describe("server.commit", () => {
 		await server.createRepo("test");
 
 		const binary = new Uint8Array([0x00, 0xff, 0x42]);
-		const hash = await server.commit("test", {
+		const { hash } = await server.commit("test", {
 			files: { "data.bin": binary },
 			message: "binary file",
 			author: AUTHOR,
@@ -118,7 +120,7 @@ describe("server.commit", () => {
 		});
 		await server.createRepo("test");
 
-		const hash = await server.commit("test", {
+		const { hash } = await server.commit("test", {
 			files: { "file.txt": "content" },
 			message: "bypasses hooks",
 			author: AUTHOR,
@@ -226,7 +228,7 @@ describe("server.commit", () => {
 		const server = createServer({ storage: new MemoryStorage() });
 		await server.createRepo("test");
 
-		const firstHash = await server.commit("test", {
+		const { hash: firstHash } = await server.commit("test", {
 			files: { "a.txt": "first" },
 			message: "first",
 			author: AUTHOR,

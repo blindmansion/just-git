@@ -389,11 +389,11 @@ export function createServer<A = Auth>(
 			if (!enter()) throw new Error("Server is shutting down");
 			try {
 				const repo = await server.requireRepo(repoId);
-				const { hash, parentHash } = await buildCommit(repo, options);
+				const commitResult = await buildCommit(repo, options);
 
 				const branchRef = `refs/heads/${options.branch}`;
 				const updates = await resolveRefUpdates(repo, [
-					{ ref: branchRef, newHash: hash, oldHash: parentHash },
+					{ ref: branchRef, newHash: commitResult.hash, oldHash: commitResult.parentHash },
 				]);
 				const result = await applyCasRefUpdates(repo, updates);
 
@@ -401,7 +401,7 @@ export function createServer<A = Auth>(
 				if (!refResult?.ok) {
 					throw new Error(refResult?.error ?? "ref update failed");
 				}
-				return hash;
+				return commitResult;
 			} finally {
 				leave();
 			}
