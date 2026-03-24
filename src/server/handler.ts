@@ -442,11 +442,39 @@ export function createServer<A = Auth>(
 		},
 		deleteRepo: (id) => storage.deleteRepo(id) as Promise<void>,
 
+		async forkRepo(sourceId, targetId, options?) {
+			if (!enter()) throw new Error("Server is shutting down");
+			try {
+				return (await storage.forkRepo(sourceId, targetId, options)) as GitRepo;
+			} finally {
+				leave();
+			}
+		},
+
 		async gc(repoId, options?) {
 			if (!enter()) throw new Error("Server is shutting down");
 			try {
 				const repo = await server.requireRepo(repoId);
-				return gcRepo(repo, rawStorage, repoId, options);
+
+				let extraTips: string[] | undefined;
+				if (rawStorage.listForks && rawStorage.getForkParent) {
+					const parentId = await rawStorage.getForkParent(repoId);
+					if (!parentId) {
+						// This is a root repo — include fork ref tips
+						const forkIds = await rawStorage.listForks(repoId);
+						if (forkIds.length > 0) {
+							extraTips = [];
+							for (const forkId of forkIds) {
+								const forkRepo = await storage.repo(forkId);
+								if (!forkRepo) continue;
+								const refs = await forkRepo.refStore.listRefs();
+								for (const ref of refs) extraTips.push(ref.hash);
+							}
+						}
+					}
+				}
+
+				return gcRepo(repo, rawStorage, repoId, options, extraTips);
 			} finally {
 				leave();
 			}

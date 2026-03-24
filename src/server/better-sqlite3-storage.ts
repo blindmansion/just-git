@@ -40,6 +40,11 @@ CREATE TABLE IF NOT EXISTS git_refs (
   target  TEXT,
   PRIMARY KEY (repo_id, name)
 ) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS git_forks (
+  repo_id   TEXT PRIMARY KEY,
+  parent_id TEXT NOT NULL
+);
 `;
 
 // ── Normalized statement interface ──────────────────────────────────
@@ -83,6 +88,11 @@ interface Statements {
 	refList: Statement;
 	refListAll: Statement;
 	refDeleteAll: Statement;
+
+	forkInsert: Statement;
+	forkGetParent: Statement;
+	forkListChildren: Statement;
+	forkDelete: Statement;
 }
 
 function prepareStatements(db: BetterSqlite3Database): Statements {
@@ -125,6 +135,11 @@ function prepareStatements(db: BetterSqlite3Database): Statements {
 			db.prepare("SELECT name, type, hash, target FROM git_refs WHERE repo_id = ?"),
 		),
 		refDeleteAll: wrapStmt(db.prepare("DELETE FROM git_refs WHERE repo_id = ?")),
+
+		forkInsert: wrapStmt(db.prepare("INSERT INTO git_forks (repo_id, parent_id) VALUES (?, ?)")),
+		forkGetParent: wrapStmt(db.prepare("SELECT parent_id FROM git_forks WHERE repo_id = ?")),
+		forkListChildren: wrapStmt(db.prepare("SELECT repo_id FROM git_forks WHERE parent_id = ?")),
+		forkDelete: wrapStmt(db.prepare("DELETE FROM git_forks WHERE repo_id = ?")),
 	};
 }
 
@@ -192,6 +207,7 @@ export class BetterSqlite3Storage implements Storage {
 		this.stmts.repoDelete.run(repoId);
 		this.stmts.objDeleteAll.run(repoId);
 		this.stmts.refDeleteAll.run(repoId);
+		this.stmts.forkDelete.run(repoId);
 	}
 
 	// ── Objects ─────────────────────────────────────────────────
@@ -286,6 +302,22 @@ export class BetterSqlite3Storage implements Storage {
 			});
 		});
 		return tx();
+	}
+
+	// ── Forks ───────────────────────────────────────────────────
+
+	forkRepo(sourceId: string, targetId: string): void {
+		this.stmts.forkInsert.run(targetId, sourceId);
+	}
+
+	getForkParent(repoId: string): string | null {
+		const row = this.stmts.forkGetParent.get(repoId) as { parent_id: string } | null;
+		return row?.parent_id ?? null;
+	}
+
+	listForks(repoId: string): string[] {
+		const rows = this.stmts.forkListChildren.all(repoId) as Array<{ repo_id: string }>;
+		return rows.map((r) => r.repo_id);
 	}
 }
 

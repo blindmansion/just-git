@@ -33,17 +33,23 @@ export interface GcResult {
  * @param driver - The raw Storage backend (for listObjectHashes / deleteObjects).
  * @param repoId - The repo ID in the storage backend.
  * @param options - GC options.
+ * @param extraTips - Additional object hashes to treat as reachable (e.g. fork ref tips).
  */
 export async function gcRepo(
 	repo: GitRepo,
 	driver: Storage,
 	repoId: string,
 	options?: GcOptions,
+	extraTips?: string[],
 ): Promise<GcResult> {
 	const dryRun = options?.dryRun ?? false;
 
 	const beforeRefs = await snapshotRefs(repo);
 	const tips = refTips(beforeRefs);
+
+	if (extraTips) {
+		for (const tip of extraTips) tips.push(tip);
+	}
 
 	if (tips.length === 0) {
 		return { deleted: 0, retained: 0 };

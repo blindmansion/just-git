@@ -65,6 +65,7 @@ The server manages repos through three methods:
 | `repo(id)`                 | `GitRepo \| null` | Get a repo, or `null` if it hasn't been created.     |
 | `requireRepo(id)`          | `GitRepo`         | Get a repo, or throw if it doesn't exist.            |
 | `deleteRepo(id)`           | `void`            | Delete all data and the repo record.                 |
+| `forkRepo(src, target)`    | `GitRepo`         | Fork a repo. See [Forks](#forks).                    |
 
 ### Garbage collection
 
@@ -389,13 +390,14 @@ await server.createRepo("my-repo");
 
 ### Database schema
 
-The SQL backends (`BunSqliteStorage`, `BetterSqlite3Storage`, `PgStorage`) create three tables on the provided database if they don't already exist:
+The SQL backends (`BunSqliteStorage`, `BetterSqlite3Storage`, `PgStorage`) create four tables on the provided database if they don't already exist:
 
-| Table         | Purpose                                       | Key                |
-| ------------- | --------------------------------------------- | ------------------ |
-| `git_repos`   | Repo registry, one row per repo ID            | `id` (primary key) |
-| `git_objects` | Raw git objects (blobs, trees, commits, tags) | `(repo_id, hash)`  |
-| `git_refs`    | Refs (branches, tags, HEAD, symrefs)          | `(repo_id, name)`  |
+| Table         | Purpose                                       | Key                     |
+| ------------- | --------------------------------------------- | ----------------------- |
+| `git_repos`   | Repo registry, one row per repo ID            | `id` (primary key)      |
+| `git_objects` | Raw git objects (blobs, trees, commits, tags) | `(repo_id, hash)`       |
+| `git_refs`    | Refs (branches, tags, HEAD, symrefs)          | `(repo_id, name)`       |
+| `git_forks`   | Fork relationships (child → parent)           | `repo_id` (primary key) |
 
 All tables are partitioned by `repo_id`. The library only references the `id` column on `git_repos`, so you can safely add your own columns (owner, description, visibility, etc.). Just make sure they're nullable or have defaults, since `createRepo` inserts with `id` only.
 
@@ -617,6 +619,28 @@ const git = createGit({ network });
 ```
 
 When `auth` is omitted, `auth.http` runs on every request as before.
+
+## Forks
+
+`server.forkRepo()` creates a fork of an existing repo. The fork gets its own ref namespace but reads from the parent's object pool — no objects are copied. This makes fork creation instant regardless of repo size.
+
+```ts
+const upstream = await server.createRepo("upstream");
+// ... push commits to upstream ...
+
+const fork = await server.forkRepo("upstream", "user/fork");
+// fork has all of upstream's refs and can read its objects
+```
+
+**Object sharing:** The fork's object reads fall through to the root repo's partition when not found locally. Writes always go to the fork's own partition. This means pushing to a fork doesn't affect the upstream repo's objects.
+
+**Flat fork network:** Forking a fork resolves to the root. `forkRepo("fork-of-A", "B")` records B as a fork of A's root, not of the intermediate fork. Object reads always check exactly two partitions (self, then root).
+
+**Deletion:** Deleting a fork is clean — its objects and refs are removed, the parent is unaffected. Deleting a root repo that has active forks throws. Delete all forks first.
+
+**GC:** When GC'ing a root repo, the server includes all fork ref tips in the reachability walk, so objects referenced only by forks are not collected. When GC'ing a fork, only the fork's own partition is examined.
+
+**Storage requirements:** Fork support requires the storage backend to implement the optional `forkRepo`, `getForkParent`, and `listForks` methods. All built-in backends (`MemoryStorage`, `BunSqliteStorage`, `BetterSqlite3Storage`, `PgStorage`) support forks. Custom backends that don't implement these methods will throw `"storage backend does not support forks"` when `server.forkRepo()` is called — all other operations work unchanged.
 
 ## Graceful shutdown
 

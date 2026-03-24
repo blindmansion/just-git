@@ -183,7 +183,7 @@ Key behaviors:
 
 `createServer` accepts an optional `storage: Storage` config property (defaults to `MemoryStorage`) and builds the git-aware `Storage` adapter internally. Users only interact with `Storage` implementations — the `Storage` interface is an internal detail. `createRepo`, `repo`, `requireRepo`, and `deleteRepo` are exposed on the returned `GitServer` object. All backends partition multiple repos by ID in a single store.
 
-`Storage` (thin raw key-value CRUD) is the user-facing abstraction. Drivers implement raw object/ref I/O and an `atomicRefUpdate` primitive; the internal adapter handles object hashing, pack ingestion, symref resolution, and CAS semantics. All `Storage` methods use `MaybeAsync<T>` (`T | Promise<T>`) return types so sync (SQLite) and async (Pg) drivers both work.
+`Storage` (thin raw key-value CRUD) is the user-facing abstraction. Drivers implement raw object/ref I/O and an `atomicRefUpdate` primitive; the internal adapter handles object hashing, pack ingestion, symref resolution, and CAS semantics. All `Storage` methods use `MaybeAsync<T>` (`T | Promise<T>`) return types so sync (SQLite) and async (Pg) drivers both work. Three optional fork methods (`forkRepo?`, `getForkParent?`, `listForks?`) enable fork semantics — all built-in backends implement them. The adapter handles object fallback (fork reads from parent) and fork-of-fork flattening.
 
 | Backend                | File                               | Construction                   | Database interface                                |
 | ---------------------- | ---------------------------------- | ------------------------------ | ------------------------------------------------- |
@@ -194,7 +194,7 @@ Key behaviors:
 
 **Unified server (`createServer`):**
 
-`createServer<A = Auth>(config?)` returns a `GitServer` with both `fetch` (HTTP) and `handleSession` (SSH) methods, plus repo management (`createRepo`, `repo`, `requireRepo`, `deleteRepo`). One server object handles both protocols with shared config:
+`createServer<A = Auth>(config?)` returns a `GitServer` with both `fetch` (HTTP) and `handleSession` (SSH) methods, plus repo management (`createRepo`, `repo`, `requireRepo`, `deleteRepo`, `forkRepo`). One server object handles both protocols with shared config:
 
 - `storage?: Storage` — the storage driver for git object and ref persistence. Defaults to `MemoryStorage`. `createStorageAdapter()` is called internally.
 - `resolve?: (path: string) => string | null` — maps request path to repo ID. Default: identity (URL path = repo ID).
@@ -204,7 +204,8 @@ Key behaviors:
 - `server.createRepo(id, options?)` — create a new repo. Throws if it already exists.
 - `server.repo(id)` — get a repo by ID, or `null` if it doesn't exist.
 - `server.requireRepo(id)` — get a repo by ID, or throw if it doesn't exist.
-- `server.deleteRepo(id)` — delete a repo and all its data.
+- `server.deleteRepo(id)` — delete a repo and all its data. Throws if the repo has active forks.
+- `server.forkRepo(sourceId, targetId, options?)` — fork a repo. Copies refs from source, shares the source's object pool. Object reads fall through to the root's partition; writes go to the fork's own partition. Forking a fork resolves to the root (flat network — max one level of indirection). Throws if the storage backend doesn't support forks.
 - `server.commit(repoId, options)` — commit files to a branch with CAS protection. Uses `buildCommit()` from `just-git/repo` for object creation, then `updateRefs()` for ref advancement. Returns `CommitResult` (`{ hash, parentHash }`). Throws if CAS fails (concurrent branch update) or the repo doesn't exist.
 - `server.asNetwork(baseUrl?, auth?)` — returns a `NetworkPolicy` that routes HTTP transport calls to the server in-process, bypassing the network stack. Pass the result as `network` to `createGit`. Default base URL is `"http://git"`. When `auth` is provided (must match the server's `A` type), it bypasses `auth.http` entirely — server hooks receive the supplied auth context directly. When omitted, `auth.http` runs on every request as before. All server hooks and policy enforcement work identically to real HTTP.
 - `server.close(options?)` — graceful shutdown. New HTTP requests get 503, new SSH sessions get exit 128. Resolves when all in-flight operations complete and pack cache is released. Accepts `{ signal?: AbortSignal }` for timeout. Idempotent.

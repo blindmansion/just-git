@@ -367,8 +367,25 @@ export interface GitServer<A = Auth> {
 	/** Get a repo by ID, or throw if it doesn't exist. */
 	requireRepo(id: string): Promise<GitRepo>;
 
-	/** Delete a repo and all its data. */
+	/** Delete a repo and all its data. Throws if the repo has active forks. */
 	deleteRepo(id: string): Promise<void>;
+
+	/**
+	 * Fork an existing repo. Copies refs from the source repo to the
+	 * target. The fork shares the source's object pool — object reads
+	 * fall through to the root repo's partition, while writes go to
+	 * the fork's own partition.
+	 *
+	 * Forking a fork resolves to the root: `forkRepo("fork-of-A", "B")`
+	 * records B as a fork of A's root, not of the intermediate fork.
+	 *
+	 * Requires a storage backend that implements fork methods.
+	 *
+	 * @throws If the source doesn't exist, the target already exists,
+	 *   the storage backend doesn't support forks, or the server is
+	 *   shutting down.
+	 */
+	forkRepo(sourceId: string, targetId: string, options?: CreateRepoOptions): Promise<GitRepo>;
 
 	/**
 	 * Remove unreachable objects from a repo's storage.

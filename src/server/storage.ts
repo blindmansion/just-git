@@ -58,6 +58,15 @@ export interface StorageAdapter {
 
 	/** Delete all objects, refs, and the repo record. */
 	deleteRepo(repoId: string): void | Promise<void>;
+
+	/**
+	 * Fork an existing repo. Copies refs from source to target.
+	 * The forked repo's object reads fall through to the root's
+	 * object partition when not found locally.
+	 *
+	 * Only available when the storage backend implements fork methods.
+	 */
+	forkRepo(sourceId: string, targetId: string, options?: CreateRepoOptions): Promise<GitRepo>;
 }
 
 // ── Storage interface ─────────────────────────────────────────
@@ -187,6 +196,25 @@ export interface Storage {
 	 * The adapter uses this for compare-and-swap with symref resolution.
 	 */
 	atomicRefUpdate<T>(repoId: string, fn: (ops: RefOps) => MaybeAsync<T>): MaybeAsync<T>;
+
+	// ── Forks (optional) ───────────────────────────────────────────
+
+	/**
+	 * Record a fork relationship. `targetId` becomes a fork of `sourceId`.
+	 * The adapter layer handles ref copying and root resolution.
+	 */
+	forkRepo?(sourceId: string, targetId: string): MaybeAsync<void>;
+
+	/**
+	 * Get the parent (root) repo ID for a fork, or `null` if the repo
+	 * is not a fork.
+	 */
+	getForkParent?(repoId: string): MaybeAsync<string | null>;
+
+	/**
+	 * List all direct fork IDs of a repo.
+	 */
+	listForks?(repoId: string): MaybeAsync<string[]>;
 }
 
 // ── createStorageAdapter ───────────────────────────────────────────────────
@@ -198,9 +226,10 @@ export interface Storage {
  * pack ingestion, symref resolution, CAS) on top of the backend's raw I/O.
  */
 export function createStorageAdapter(driver: Storage): StorageAdapter {
-	function buildRepo(repoId: string): GitRepo {
+	async function buildRepo(repoId: string): Promise<GitRepo> {
+		const parentId = driver.getForkParent ? await driver.getForkParent(repoId) : null;
 		return {
-			objectStore: new AdaptedObjectStore(driver, repoId),
+			objectStore: new AdaptedObjectStore(driver, repoId, parentId),
 			refStore: new AdaptedRefStore(driver, repoId),
 		};
 	}
@@ -225,7 +254,55 @@ export function createStorageAdapter(driver: Storage): StorageAdapter {
 		},
 
 		async deleteRepo(repoId: string): Promise<void> {
+			if (driver.listForks) {
+				const forks = await driver.listForks(repoId);
+				if (forks.length > 0) {
+					throw new Error(`cannot delete repo '${repoId}': has ${forks.length} active fork(s)`);
+				}
+			}
 			await driver.deleteRepo(repoId);
+		},
+
+		async forkRepo(
+			sourceId: string,
+			targetId: string,
+			options?: CreateRepoOptions,
+		): Promise<GitRepo> {
+			if (!driver.forkRepo || !driver.getForkParent || !driver.listForks) {
+				throw new Error("storage backend does not support forks");
+			}
+
+			const sourceExists = await driver.hasRepo(sourceId);
+			if (!sourceExists) throw new Error(`source repo '${sourceId}' not found`);
+			const targetExists = await driver.hasRepo(targetId);
+			if (targetExists) throw new Error(`repo '${targetId}' already exists`);
+
+			// Resolve to root: if source is itself a fork, fork from its root
+			const sourceParent = await driver.getForkParent(sourceId);
+			const rootId = sourceParent ?? sourceId;
+
+			await driver.insertRepo(targetId);
+			await driver.forkRepo(rootId, targetId);
+
+			// Copy all refs from source to target
+			const refs = await driver.listRefs(sourceId);
+			for (const entry of refs) {
+				await driver.putRef(targetId, entry.name, entry.ref);
+			}
+
+			// Copy HEAD
+			const head = await driver.getRef(sourceId, "HEAD");
+			if (head) {
+				await driver.putRef(targetId, "HEAD", head);
+			} else {
+				const defaultBranch = options?.defaultBranch ?? "main";
+				await driver.putRef(targetId, "HEAD", {
+					type: "symbolic",
+					target: `refs/heads/${defaultBranch}`,
+				});
+			}
+
+			return buildRepo(targetId);
 		},
 	};
 }
@@ -238,6 +315,7 @@ class AdaptedObjectStore implements ObjectStore {
 	constructor(
 		private driver: Storage,
 		private repoId: string,
+		private parentId: string | null = null,
 	) {}
 
 	async write(type: ObjectType, content: Uint8Array): Promise<ObjectId> {
@@ -251,14 +329,19 @@ class AdaptedObjectStore implements ObjectStore {
 		const cached = this.cache.get(hash);
 		if (cached) return cached;
 
-		const obj = await this.driver.getObject(this.repoId, hash);
+		let obj = await this.driver.getObject(this.repoId, hash);
+		if (!obj && this.parentId) {
+			obj = await this.driver.getObject(this.parentId, hash);
+		}
 		if (!obj) throw new Error(`object ${hash} not found`);
 		this.cache.set(hash, obj);
 		return obj;
 	}
 
 	async exists(hash: ObjectId): Promise<boolean> {
-		return !!(await this.driver.hasObject(this.repoId, hash));
+		if (await this.driver.hasObject(this.repoId, hash)) return true;
+		if (this.parentId) return !!(await this.driver.hasObject(this.parentId, hash));
+		return false;
 	}
 
 	async ingestPack(packData: Uint8Array): Promise<number> {
@@ -279,9 +362,11 @@ class AdaptedObjectStore implements ObjectStore {
 
 		const driver = this.driver;
 		const repoId = this.repoId;
+		const parentId = this.parentId;
 
 		const entries = await readPack(packData, async (hash) => {
-			const obj = await driver.getObject(repoId, hash);
+			let obj = await driver.getObject(repoId, hash);
+			if (!obj && parentId) obj = await driver.getObject(parentId, hash);
 			if (!obj) return null;
 			return { type: obj.type, content: new Uint8Array(obj.content) };
 		});
@@ -305,7 +390,12 @@ class AdaptedObjectStore implements ObjectStore {
 
 	async findByPrefix(prefix: string): Promise<ObjectId[]> {
 		if (prefix.length < 4) return [];
-		return Array.from(await this.driver.findObjectsByPrefix(this.repoId, prefix));
+		const own = await this.driver.findObjectsByPrefix(this.repoId, prefix);
+		if (!this.parentId) return Array.from(own);
+		const parent = await this.driver.findObjectsByPrefix(this.parentId, prefix);
+		const set = new Set(own);
+		for (const h of parent) set.add(h);
+		return Array.from(set);
 	}
 }
 

@@ -434,4 +434,60 @@ describe("BunSqliteStorage", () => {
 			expect(await storage.repo("test-repo")).toBeNull();
 		});
 	});
+
+	// ── Forks ────────────────────────────────────────────────────
+
+	describe("Forks", () => {
+		test("forkRepo records relationship", async () => {
+			const driver = new BunSqliteStorage(db);
+			driver.insertRepo("upstream");
+			driver.forkRepo("upstream", "fork-a");
+
+			expect(driver.getForkParent("fork-a")).toBe("upstream");
+			expect(driver.getForkParent("upstream")).toBeNull();
+		});
+
+		test("listForks returns child IDs", async () => {
+			const driver = new BunSqliteStorage(db);
+			driver.insertRepo("upstream");
+			driver.forkRepo("upstream", "fork-a");
+			driver.forkRepo("upstream", "fork-b");
+
+			const forks = driver.listForks("upstream");
+			expect(forks).toContain("fork-a");
+			expect(forks).toContain("fork-b");
+			expect(forks.length).toBe(2);
+		});
+
+		test("deleteRepo cleans up fork record", async () => {
+			const driver = new BunSqliteStorage(db);
+			driver.insertRepo("upstream");
+			driver.insertRepo("fork-a");
+			driver.forkRepo("upstream", "fork-a");
+
+			expect(driver.getForkParent("fork-a")).toBe("upstream");
+			driver.deleteRepo("fork-a");
+			expect(driver.getForkParent("fork-a")).toBeNull();
+			expect(driver.listForks("upstream").length).toBe(0);
+		});
+
+		test("fork with adapter — object fallback works", async () => {
+			const driver = new BunSqliteStorage(db);
+			const adapter = createStorageAdapter(driver);
+
+			const upstream = await adapter.createRepo("upstream");
+			const blobContent = encoder.encode("hello from upstream");
+			const blobHash = await upstream.objectStore.write("blob", blobContent);
+
+			const fork = await adapter.forkRepo("upstream", "fork-a");
+
+			// Fork can read upstream's objects
+			const obj = await fork.objectStore.read(blobHash);
+			expect(obj.type).toBe("blob");
+			expect(new TextDecoder().decode(obj.content)).toBe("hello from upstream");
+
+			// Fork's own partition is empty
+			expect(driver.listObjectHashes("fork-a").length).toBe(0);
+		});
+	});
 });

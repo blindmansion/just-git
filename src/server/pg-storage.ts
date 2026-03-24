@@ -37,6 +37,11 @@ CREATE TABLE IF NOT EXISTS git_refs (
   target  TEXT,
   PRIMARY KEY (repo_id, name)
 );
+
+CREATE TABLE IF NOT EXISTS git_forks (
+  repo_id   TEXT PRIMARY KEY,
+  parent_id TEXT NOT NULL
+);
 `;
 
 // ── SQL queries ─────────────────────────────────────────────────────
@@ -63,6 +68,11 @@ const SQL = {
 	refList: "SELECT name, type, hash, target FROM git_refs WHERE repo_id = $1 AND name LIKE $2",
 	refListAll: "SELECT name, type, hash, target FROM git_refs WHERE repo_id = $1",
 	refDeleteAll: "DELETE FROM git_refs WHERE repo_id = $1",
+
+	forkInsert: "INSERT INTO git_forks (repo_id, parent_id) VALUES ($1, $2)",
+	forkGetParent: "SELECT parent_id FROM git_forks WHERE repo_id = $1",
+	forkListChildren: "SELECT repo_id FROM git_forks WHERE parent_id = $1",
+	forkDelete: "DELETE FROM git_forks WHERE repo_id = $1",
 } as const;
 
 // ── PgStorage ────────────────────────────────────────────────────────
@@ -116,6 +126,7 @@ export class PgStorage implements Storage {
 		await this.pool.query(SQL.repoDelete, [repoId]);
 		await this.pool.query(SQL.objDeleteAll, [repoId]);
 		await this.pool.query(SQL.refDeleteAll, [repoId]);
+		await this.pool.query(SQL.forkDelete, [repoId]);
 	}
 
 	// ── Objects ─────────────────────────────────────────────────
@@ -220,6 +231,22 @@ export class PgStorage implements Storage {
 				},
 			});
 		});
+	}
+
+	// ── Forks ───────────────────────────────────────────────────
+
+	async forkRepo(sourceId: string, targetId: string): Promise<void> {
+		await this.pool.query(SQL.forkInsert, [targetId, sourceId]);
+	}
+
+	async getForkParent(repoId: string): Promise<string | null> {
+		const { rows } = await this.pool.query<{ parent_id: string }>(SQL.forkGetParent, [repoId]);
+		return rows[0]?.parent_id ?? null;
+	}
+
+	async listForks(repoId: string): Promise<string[]> {
+		const { rows } = await this.pool.query<{ repo_id: string }>(SQL.forkListChildren, [repoId]);
+		return rows.map((r) => r.repo_id);
 	}
 }
 

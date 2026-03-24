@@ -19,6 +19,7 @@ export class MemoryStorage implements Storage {
 	private repos = new Set<string>();
 	private objects = new Map<string, Map<string, RawObject>>();
 	private refs = new Map<string, Map<string, Ref>>();
+	private forks = new Map<string, string>(); // targetId → rootId
 
 	hasRepo(repoId: string): boolean {
 		return this.repos.has(repoId);
@@ -34,6 +35,7 @@ export class MemoryStorage implements Storage {
 		this.objects.delete(repoId);
 		this.refs.get(repoId)?.clear();
 		this.refs.delete(repoId);
+		this.forks.delete(repoId);
 	}
 
 	getObject(repoId: string, hash: string): RawObject | null {
@@ -122,6 +124,24 @@ export class MemoryStorage implements Storage {
 				refMap.delete(name);
 			},
 		});
+	}
+
+	// ── Forks ──────────────────────────────────────────────────
+
+	forkRepo(sourceId: string, targetId: string): void {
+		this.forks.set(targetId, sourceId);
+	}
+
+	getForkParent(repoId: string): string | null {
+		return this.forks.get(repoId) ?? null;
+	}
+
+	listForks(repoId: string): string[] {
+		const result: string[] = [];
+		for (const [child, parent] of this.forks) {
+			if (parent === repoId) result.push(child);
+		}
+		return result;
 	}
 
 	// ── Extras (not part of Storage interface) ──────────────────
