@@ -10,6 +10,18 @@ import { createServer } from "just-git/server";
 
 ## Quick start
 
+Storage defaults to in-memory — no setup required:
+
+```ts
+import { createServer } from "just-git/server";
+
+const server = createServer({ autoCreate: true });
+Bun.serve({ fetch: server.fetch });
+// git clone http://localhost:3000/my-repo ← works immediately
+```
+
+For persistent storage, pass a SQLite or Postgres backend:
+
 ```ts
 import { createServer, BunSqliteStorage } from "just-git/server";
 import { Database } from "bun:sqlite";
@@ -37,7 +49,7 @@ await server.createRepo("my-repo");
 http.createServer(server.nodeHandler).listen(3000);
 ```
 
-That's enough for a working server. Clients can clone, fetch, and push:
+Clients can clone, fetch, and push:
 
 ```bash
 git clone http://localhost:3000/my-repo
@@ -51,6 +63,7 @@ The server manages repos through three methods:
 | -------------------------- | ----------------- | ---------------------------------------------------- |
 | `createRepo(id, options?)` | `GitRepo`         | Create a repo and initialize HEAD. Throws if exists. |
 | `repo(id)`                 | `GitRepo \| null` | Get a repo, or `null` if it hasn't been created.     |
+| `requireRepo(id)`          | `GitRepo`         | Get a repo, or throw if it doesn't exist.            |
 | `deleteRepo(id)`           | `void`            | Delete all data and the repo record.                 |
 
 ### Garbage collection
@@ -82,7 +95,6 @@ By default, requests to unknown repos return 404 (HTTP) or exit 128 (SSH). Set `
 
 ```ts
 const server = createServer({
-  storage: new BunSqliteStorage(new Database("repos.sqlite")),
   autoCreate: true, // or { defaultBranch: "main" }
 });
 ```
@@ -305,15 +317,18 @@ const server = createServer({
 
 ## Storage backends
 
-Pass a `Storage` to the server via `storage`. Multiple repos are partitioned by ID in a single store. Drivers also work with `resolveRemote` for in-process cross-VFS transport alongside HTTP access (use `server.repo(id)` or the throwing `server.requireRepo(id)` to get the `GitRepo`).
+Storage defaults to `MemoryStorage` when omitted. Pass a `Storage` to the server via `storage` for persistence. Multiple repos are partitioned by ID in a single store. Drivers also work with `resolveRemote` for in-process cross-VFS transport alongside HTTP access (use `server.repo(id)` or the throwing `server.requireRepo(id)` to get the `GitRepo`).
 
 ### `MemoryStorage`
+
+The default. Data lives in-process and is lost when the process exits. Useful for tests, ephemeral servers, and prototyping.
 
 ```ts
 import { createServer, MemoryStorage } from "just-git/server";
 
-const server = createServer({ storage: new MemoryStorage() });
-await server.createRepo("my-repo");
+// These are equivalent:
+const server = createServer();
+const server2 = createServer({ storage: new MemoryStorage() });
 ```
 
 ### `BunSqliteStorage`
@@ -386,6 +401,7 @@ const server = createServer({
 
 ```ts
 const server = createServer({
+  // Storage backend (default: MemoryStorage)
   storage,
   policy,
   hooks,
@@ -417,10 +433,9 @@ Connect a [`createGit`](CLIENT.md) client directly to the server without startin
 ```ts
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "just-git";
-import { createServer, MemoryStorage } from "just-git/server";
+import { createServer } from "just-git/server";
 
 const server = createServer({
-  storage: new MemoryStorage(),
   autoCreate: true,
   hooks: {
     preReceive: ({ session }) => {

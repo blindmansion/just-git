@@ -36,19 +36,17 @@ async function setupRepo() {
 	return { repo, driver };
 }
 
-describe("createServer config validation", () => {
-	test("missing storage throws descriptive error", () => {
-		expect(() => createServer({ resolve: async () => "repo" } as any)).toThrow(
-			"config.storage is required",
-		);
+describe("createServer defaults", () => {
+	test("omitting storage defaults to MemoryStorage", async () => {
+		const server = createServer();
+		const repo = await server.createRepo("test");
+		expect(repo).toBeTruthy();
 	});
 
-	test("passing empty config throws descriptive error", () => {
-		expect(() => createServer({} as any)).toThrow("config.storage is required");
-	});
-
-	test("passing null config throws descriptive error", () => {
-		expect(() => createServer(null as any)).toThrow("config.storage is required");
+	test("empty config defaults to MemoryStorage", async () => {
+		const server = createServer({});
+		const repo = await server.createRepo("test");
+		expect(repo).toBeTruthy();
 	});
 });
 

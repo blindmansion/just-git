@@ -10,10 +10,9 @@ import type { Storage, RawRefEntry, RefOps } from "./storage.ts";
  * Data is lost when the process exits.
  *
  * ```ts
- * const server = createServer({
- *   storage: new MemoryStorage(),
- * });
- * await server.createRepo("my-repo");
+ * // MemoryStorage is the default — these are equivalent:
+ * const server = createServer();
+ * const server2 = createServer({ storage: new MemoryStorage() });
  * ```
  */
 export class MemoryStorage implements Storage {

@@ -7,10 +7,7 @@
  * works with any SSH library (ssh2, etc.) through a thin adapter.
  *
  * ```ts
- * const server = createServer({
- *   storage: new MemoryStorage(),
- *   autoCreate: true,
- * });
+ * const server = createServer({ autoCreate: true });
  * await server.createRepo("my-repo");
  *
  * // HTTP
@@ -36,6 +33,7 @@ import { buildReportStatus, parseV2CommandRequest } from "./protocol.ts";
 import { handleSshSession } from "./ssh-session.ts";
 import { gcRepo } from "./gc.ts";
 import { createStorageAdapter, type CreateRepoOptions } from "./storage.ts";
+import { MemoryStorage } from "./memory-storage.ts";
 import type {
 	GitServerConfig,
 	GitServer,
@@ -82,7 +80,6 @@ export function isValidRepoId(id: string): boolean {
  *
  * ```ts
  * const server = createServer({
- *   storage: new MemoryStorage(),
  *   autoCreate: true,
  * });
  * await server.createRepo("my-repo");
@@ -94,15 +91,11 @@ export function isValidRepoId(id: string): boolean {
  * server.handleSession(command, channel, { username });
  * ```
  */
-export function createServer<S = Session>(config: GitServerConfig<S>): GitServer<S> {
-	if (!config || !config.storage) {
-		throw new TypeError(
-			"createServer: config.storage is required. " +
-				"Example: createServer({ storage: new MemoryStorage() })",
-		);
-	}
-
-	const storage = createStorageAdapter(config.storage);
+export function createServer<S = Session>(
+	config: GitServerConfig<S> = {} as GitServerConfig<S>,
+): GitServer<S> {
+	const rawStorage = config.storage ?? new MemoryStorage();
+	const storage = createStorageAdapter(rawStorage);
 	const resolve = config.resolve ?? ((path: string) => path);
 	const autoCreate = config.autoCreate;
 	const { basePath } = config;
@@ -429,7 +422,7 @@ export function createServer<S = Session>(config: GitServerConfig<S>): GitServer
 			if (!enter()) throw new Error("Server is shutting down");
 			try {
 				const repo = await server.requireRepo(repoId);
-				return gcRepo(repo, config.storage, repoId, options);
+				return gcRepo(repo, rawStorage, repoId, options);
 			} finally {
 				leave();
 			}

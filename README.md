@@ -61,7 +61,17 @@ Both `fs` and `cwd` can be set once in `createGit` and overridden per-call. `cwd
 
 ### Server
 
-Stand up a git server with built-in storage (SQLite or PostgreSQL), branch protection, auth, and push hooks:
+Stand up a git server in two lines. Storage defaults to in-memory; swap in SQLite or PostgreSQL for persistence:
+
+```ts
+import { createServer } from "just-git/server";
+
+const server = createServer({ autoCreate: true });
+Bun.serve({ fetch: server.fetch });
+// git push http://localhost:3000/my-repo main ← repo created on first push
+```
+
+Add branch protection, auth, and push hooks as needed:
 
 ```ts
 import { createServer, BunSqliteStorage } from "just-git/server";
@@ -77,17 +87,16 @@ const server = createServer({
       if (!session?.request?.headers.has("Authorization"))
         return { reject: true, message: "unauthorized" };
     },
-    postReceive: async ({ repo, repoPath, updates }) => {
+    postReceive: async ({ repo, repoId, updates }) => {
       for (const u of updates) {
         const files = await getChangedFiles(repo, u.oldHash, u.newHash);
-        console.log(`${repoPath}: ${u.ref} — ${files.length} files changed`);
+        console.log(`${repoId}: ${u.ref} — ${files.length} files changed`);
       }
     },
   },
 });
 
 Bun.serve({ fetch: server.fetch });
-// git clone http://localhost:3000/my-repo ← works with real git
 ```
 
 Uses web-standard `Request`/`Response`. Works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. For Node.js, use `server.nodeHandler` with `http.createServer` and `BetterSqlite3Storage` for `better-sqlite3`. SSH is supported via `server.handleSession`. See [SERVER.md](docs/SERVER.md) for the full API.

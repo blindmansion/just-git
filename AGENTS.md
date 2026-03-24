@@ -187,7 +187,7 @@ Key behaviors:
 
 ### Storage backends (`server/`)
 
-`createServer` accepts a `storage: Storage` config property and builds the git-aware `Storage` adapter internally. Users only interact with `Storage` implementations — the `Storage` interface is an internal detail. `createRepo`, `repo`, and `deleteRepo` are exposed on the returned `GitServer` object. All backends partition multiple repos by ID in a single store.
+`createServer` accepts an optional `storage: Storage` config property (defaults to `MemoryStorage`) and builds the git-aware `Storage` adapter internally. Users only interact with `Storage` implementations — the `Storage` interface is an internal detail. `createRepo`, `repo`, `requireRepo`, and `deleteRepo` are exposed on the returned `GitServer` object. All backends partition multiple repos by ID in a single store.
 
 `Storage` (thin raw key-value CRUD) is the user-facing abstraction. Drivers implement raw object/ref I/O and an `atomicRefUpdate` primitive; the internal adapter handles object hashing, pack ingestion, symref resolution, and CAS semantics. All `Storage` methods use `MaybeAsync<T>` (`T | Promise<T>`) return types so sync (SQLite) and async (Pg) drivers both work.
 
@@ -200,9 +200,9 @@ Key behaviors:
 
 **Unified server (`createServer`):**
 
-`createServer<S = Session>(config)` returns a `GitServer` with both `fetch` (HTTP) and `handleSession` (SSH) methods, plus repo management (`createRepo`, `repo`, `deleteRepo`). One server object handles both protocols with shared config:
+`createServer<S = Session>(config?)` returns a `GitServer` with both `fetch` (HTTP) and `handleSession` (SSH) methods, plus repo management (`createRepo`, `repo`, `requireRepo`, `deleteRepo`). One server object handles both protocols with shared config:
 
-- `storage: Storage` — the storage driver for git object and ref persistence. `createStorageAdapter()` is called internally.
+- `storage?: Storage` — the storage driver for git object and ref persistence. Defaults to `MemoryStorage`. `createStorageAdapter()` is called internally.
 - `resolve?: (path: string) => string | null` — maps request path to repo ID. Default: identity (URL path = repo ID).
 - `autoCreate?: boolean | { defaultBranch?: string }` — automatically create repos on first access.
 - `server.fetch(request)` — web-standard HTTP handler (Bun.serve, Hono, CF Workers, etc.).

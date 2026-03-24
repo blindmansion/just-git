@@ -149,8 +149,10 @@ export interface GitServerConfig<S = Session> {
 	 * The server calls `createStorageAdapter(storage)` internally to build the
 	 * git-aware adapter. Users provide the storage backend; they never see
 	 * the `StorageAdapter` interface.
+	 *
+	 * Defaults to {@link MemoryStorage} when omitted.
 	 */
-	storage: Storage;
+	storage?: Storage;
 
 	/**
 	 * Map a request path to a repo ID.
