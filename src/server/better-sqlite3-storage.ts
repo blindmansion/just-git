@@ -14,7 +14,7 @@ interface BetterSqlite3Statement {
 export interface BetterSqlite3Database {
 	exec(sql: string): any;
 	prepare(sql: string): BetterSqlite3Statement;
-	transaction<F extends (...args: any[]) => any>(fn: F): (...args: Parameters<F>) => ReturnType<F>;
+	transaction(fn: (...args: any[]) => any): (...args: any[]) => any;
 }
 
 // ── Schema ──────────────────────────────────────────────────────────
