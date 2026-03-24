@@ -8,6 +8,7 @@ import {
 	loadNetworkEnv,
 	type NetworkEnv,
 	skipLog,
+	skipNetwork,
 } from "./network-helpers.ts";
 
 const PUBLIC_REPO = "https://github.com/DeabLabs/cannoli.git";
@@ -48,42 +49,50 @@ describe("Smart HTTP clone (public)", () => {
 		expect(statusResult.exitCode).toBe(0);
 	}, 30000);
 
-	test.skip("clones into specified directory", async () => {
-		const bash = createTestBash({ env: ENV });
+	test.skipIf(skipNetwork)(
+		"clones into specified directory",
+		async () => {
+			const bash = createTestBash({ env: ENV });
 
-		const result = await bash.exec(`git clone ${PUBLIC_REPO} my-clone`);
-		if (skipOnNetworkFailure(result)) return;
+			const result = await bash.exec(`git clone ${PUBLIC_REPO} my-clone`);
+			if (skipOnNetworkFailure(result)) return;
 
-		expect(result.exitCode).toBe(0);
-		expect(result.stderr).toContain("Cloning into 'my-clone'");
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("Cloning into 'my-clone'");
 
-		const statusResult = await bash.exec("git status", {
-			cwd: "/repo/my-clone",
-		});
-		expect(statusResult.exitCode).toBe(0);
-	}, 30000);
+			const statusResult = await bash.exec("git status", {
+				cwd: "/repo/my-clone",
+			});
+			expect(statusResult.exitCode).toBe(0);
+		},
+		30000,
+	);
 
-	test.skip("checkout has correct file content", async () => {
-		const bash = createTestBash({ env: ENV });
+	test.skipIf(skipNetwork)(
+		"checkout has correct file content",
+		async () => {
+			const bash = createTestBash({ env: ENV });
 
-		const result = await bash.exec(`git clone ${PUBLIC_REPO}`);
-		if (skipOnNetworkFailure(result)) return;
+			const result = await bash.exec(`git clone ${PUBLIC_REPO}`);
+			if (skipOnNetworkFailure(result)) return;
 
-		const statusResult = await bash.exec("git status", {
-			cwd: "/repo/cannoli",
-		});
-		expect(statusResult.exitCode).toBe(0);
-		expect(statusResult.stdout).toContain("nothing to commit");
+			const statusResult = await bash.exec("git status", {
+				cwd: "/repo/cannoli",
+			});
+			expect(statusResult.exitCode).toBe(0);
+			expect(statusResult.stdout).toContain("nothing to commit");
 
-		const logResult = await bash.exec("git log -n 1", {
-			cwd: "/repo/cannoli",
-		});
-		expect(logResult.exitCode).toBe(0);
-		expect(logResult.stdout).toContain("commit ");
-	}, 30000);
+			const logResult = await bash.exec("git log -n 1", {
+				cwd: "/repo/cannoli",
+			});
+			expect(logResult.exitCode).toBe(0);
+			expect(logResult.stdout).toContain("commit ");
+		},
+		30000,
+	);
 });
 
-describe.skip("Smart HTTP clone (private, authenticated)", () => {
+describe.skipIf(skipNetwork)("Smart HTTP clone (private, authenticated)", () => {
 	let net: NetworkEnv | null;
 
 	test("clones a private repo with credentials", async () => {
@@ -147,7 +156,7 @@ describe.skip("Smart HTTP clone (private, authenticated)", () => {
 	}, 30000);
 });
 
-describe.skip("Credential paths", () => {
+describe.skipIf(skipNetwork)("Credential paths", () => {
 	test("GIT_HTTP_USER + GIT_HTTP_PASSWORD env vars", async () => {
 		const net = loadNetworkEnv();
 		if (!net) {

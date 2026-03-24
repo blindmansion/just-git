@@ -4,12 +4,13 @@ import {
 	loadNetworkEnv,
 	type NetworkEnv,
 	skipLog,
+	skipNetwork,
 	uniqueRef,
 } from "./network-helpers.ts";
 
 const TIMEOUT = 60000;
 
-describe.skip("Smart HTTP push", () => {
+describe.skipIf(skipNetwork)("Smart HTTP push", () => {
 	let net: NetworkEnv | null;
 	let cleanupBranches: string[] = [];
 	let cleanupTags: string[] = [];

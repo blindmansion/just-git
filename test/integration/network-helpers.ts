@@ -78,3 +78,7 @@ export function uniqueRef(prefix: string): string {
 export function skipLog(label: string): void {
 	console.log(`SKIP (${label}): GITHUB_TEST_TOKEN / GITHUB_TEST_REPO not set`);
 }
+
+/** True unless RUN_NETWORK=1 is set. Guards tests that were intentionally
+ *  skipped to keep `bun test` fast and flake-free in CI. */
+export const skipNetwork = !process.env.RUN_NETWORK;

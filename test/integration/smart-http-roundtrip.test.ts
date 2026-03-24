@@ -4,6 +4,7 @@ import {
 	loadNetworkEnv,
 	type NetworkEnv,
 	skipLog,
+	skipNetwork,
 	uniqueRef,
 } from "./network-helpers.ts";
 
@@ -106,7 +107,7 @@ describe("Smart HTTP round-trip", () => {
 		TIMEOUT,
 	);
 
-	test.skip(
+	test.skipIf(skipNetwork)(
 		"pushed tag is visible from a fresh clone",
 		async () => {
 			const ctx = setup();

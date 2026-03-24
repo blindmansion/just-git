@@ -4,12 +4,13 @@ import {
 	loadNetworkEnv,
 	type NetworkEnv,
 	skipLog,
+	skipNetwork,
 	uniqueRef,
 } from "./network-helpers.ts";
 
 const TIMEOUT = 60000;
 
-describe.skip("Smart HTTP pull", () => {
+describe.skipIf(skipNetwork)("Smart HTTP pull", () => {
 	let net: NetworkEnv | null;
 	let cleanupBranches: string[] = [];
 	let cleanupBash: ReturnType<typeof createAuthBash> | null = null;
