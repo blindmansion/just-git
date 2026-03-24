@@ -1,8 +1,8 @@
 # just-git
 
-[CI](https://github.com/blindmansion/just-git/actions/workflows/ci.yml)
-[npm](https://www.npmjs.com/package/just-git)
-[bundle size](https://bundlejs.com/?q=just-git)
+[![CI](https://github.com/blindmansion/just-git/actions/workflows/ci.yml/badge.svg)](https://github.com/blindmansion/just-git/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/just-git)](https://www.npmjs.com/package/just-git)
+[![bundle size](https://img.shields.io/bundlejs/size/just-git)](https://bundlejs.com/?q=just-git)
 
 Pure TypeScript git implementation. Zero dependencies. 36 commands. Works in Node, Bun, Deno, Cloudflare Workers, and the browser. [Tested against real git](docs/TESTING.md) across more than a million randomized operations.
 
@@ -113,7 +113,7 @@ await server.gc("my-repo");
 Bun.serve({ fetch: server.fetch });
 ```
 
-Uses web-standard `Request`/`Response`. Works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. For Node.js, use `server.nodeHandler` with `http.createServer` and `BetterSqlite3Storage` for `better-sqlite3`. SSH is supported via `server.handleSession`. The `[Storage` interface](docs/SERVER.md#custom-storage) is small enough to plug in any datastore. See [SERVER.md](docs/SERVER.md) for the full API.
+Uses web-standard `Request`/`Response`. Works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. For Node.js, use `server.nodeHandler` with `http.createServer` and `BetterSqlite3Storage` for `better-sqlite3`. SSH is supported via `server.handleSession`. The [`Storage` interface](docs/SERVER.md#custom-storage) is small enough to plug in any datastore. See [SERVER.md](docs/SERVER.md) for the full API.
 
 ## Repo module
 
@@ -168,4 +168,4 @@ When backed by a real filesystem (e.g. just-bash `ReadWriteFs`), interoperable w
 
 ## Examples
 
-Runnable examples in `[examples/](examples/)` — identity, hooks, multi-agent collaboration, Smart HTTP servers, and more. Run any with `bun examples/<file>`.
+Runnable examples in [`examples/`](examples/) — identity, hooks, multi-agent collaboration, Smart HTTP servers, and more. Run any with `bun examples/<file>`.
