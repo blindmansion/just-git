@@ -84,7 +84,7 @@ const server = createServer({
   policy: { protectedBranches: ["main"] },
   hooks: {
     preReceive: ({ session }) => {
-      if (!session?.request?.headers.has("Authorization"))
+      if (!session.request?.headers.has("Authorization"))
         return { reject: true, message: "unauthorized" };
     },
     postReceive: async ({ repo, repoId, updates }) => {

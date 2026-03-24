@@ -92,10 +92,10 @@ import type { GitHooks } from "../../src";
 		storage: new BunSqliteStorage(new Database(":memory:")),
 		policy: { protectedBranches: ["main"] },
 		hooks: {
-			preReceive: ({ session }) => {
-				if (!session?.request?.headers.has("Authorization"))
-					return { reject: true, message: "unauthorized" };
-			},
+		preReceive: ({ session }) => {
+			if (!session.request?.headers.has("Authorization"))
+				return { reject: true, message: "unauthorized" };
+		},
 			postReceive: async ({ repo, updates }) => {
 				for (const u of updates) {
 					const files = await getChangedFiles(repo, u.oldHash, u.newHash);
@@ -787,11 +787,11 @@ import type { GitHooks } from "../../src";
 				userId: info.username ?? "anonymous",
 			}),
 		},
-		hooks: {
-			preReceive: ({ session }) => {
-				if (!session) return { reject: true, message: "unauthorized" };
-			},
+	hooks: {
+		preReceive: ({ session }) => {
+			if (!session.userId) return { reject: true, message: "unauthorized" };
 		},
+	},
 	});
 	await server.createRepo("repo");
 
@@ -831,7 +831,7 @@ import type { GitHooks } from "../../src";
 		policy: { protectedBranches: ["main"] },
 		hooks: {
 			preReceive: ({ session }) => {
-				if (!session?.authorized) return { reject: true, message: "unauthorized" };
+				if (!session.authorized) return { reject: true, message: "unauthorized" };
 			},
 		},
 	});
