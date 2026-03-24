@@ -278,8 +278,8 @@ export async function advertiseRefsWithHooks<S>(
 	repo: GitRepo,
 	repoId: string,
 	service: "git-upload-pack" | "git-receive-pack",
-	hooks?: ServerHooks<S>,
-	session?: S,
+	hooks: ServerHooks<S> | undefined,
+	session: S,
 ): Promise<AdvertiseResult | Rejection> {
 	const { refs: allRefs, headTarget } = await collectRefs(repo);
 	let refs = allRefs;
@@ -650,6 +650,64 @@ async function buildRefUpdates(
 	return updates;
 }
 
+// ── CAS ref application (no hooks) ──────────────────────────────────
+
+/**
+ * Apply ref updates with CAS protection only — no hooks.
+ *
+ * Validates ref format, checks object existence, and performs
+ * `compareAndSwapRef` per ref. Used directly by in-process APIs
+ * (`server.updateRefs`, `server.commit`) and internally by
+ * {@link applyReceivePack} for the transport path.
+ */
+export async function applyCasRefUpdates(
+	repo: GitRepo,
+	updates: readonly RefUpdate[],
+): Promise<RefUpdateResult> {
+	const refResults: RefResult[] = [];
+	const applied: RefUpdate[] = [];
+
+	for (const update of updates) {
+		if (update.ref === "HEAD") {
+			refResults.push({ ref: update.ref, ok: false, error: "HEAD cannot be updated via push" });
+			continue;
+		}
+
+		if (!update.isDelete && !checkRefFormat(update.ref)) {
+			refResults.push({ ref: update.ref, ok: false, error: "invalid refname" });
+			continue;
+		}
+
+		if (!update.isDelete) {
+			const exists = await repo.objectStore.exists(update.newHash);
+			if (!exists) {
+				refResults.push({ ref: update.ref, ok: false, error: "missing objects" });
+				continue;
+			}
+		}
+
+		try {
+			const expectedOld = update.isCreate ? null : update.oldHash;
+			const newRef = update.isDelete ? null : { type: "direct" as const, hash: update.newHash };
+			const ok = await repo.refStore.compareAndSwapRef(update.ref, expectedOld, newRef);
+			if (!ok) {
+				refResults.push({ ref: update.ref, ok: false, error: "failed to lock" });
+				continue;
+			}
+			refResults.push({ ref: update.ref, ok: true });
+			applied.push(update);
+		} catch (err) {
+			refResults.push({
+				ref: update.ref,
+				ok: false,
+				error: err instanceof Error ? err.message : String(err),
+			});
+		}
+	}
+
+	return { refResults, applied };
+}
+
 // ── Receive-pack lifecycle (transport-agnostic) ─────────────────────
 
 export interface ApplyReceivePackOptions<S = unknown> {
@@ -657,14 +715,13 @@ export interface ApplyReceivePackOptions<S = unknown> {
 	repoId: string;
 	ingestResult: ReceivePackResult;
 	hooks?: ServerHooks<S>;
-	/** Session info threaded through to hooks. */
-	session?: S;
+	session: S;
 }
 
 /**
  * Run the full receive-pack lifecycle: preReceive hook, per-ref update
  * hook with ref format validation, CAS ref application, and postReceive
- * hook. Transport-agnostic — works for HTTP, SSH, or in-process pushes.
+ * hook. Transport-only — used by HTTP and SSH push handlers.
  *
  * Returns per-ref results and the list of successfully applied updates.
  * Does NOT handle unpack failures — the caller should check
@@ -688,7 +745,7 @@ export async function applyReceivePack<S = unknown>(
 		}
 	}
 
-	// Per-ref update hook + ref application
+	// Per-ref: run update hook, then CAS
 	const refResults: RefResult[] = [];
 	const applied: RefUpdate[] = [];
 
@@ -830,8 +887,8 @@ export async function handleLsRefs<S>(
 	repo: GitRepo,
 	repoId: string,
 	args: string[],
-	hooks?: ServerHooks<S>,
-	session?: S,
+	hooks: ServerHooks<S> | undefined,
+	session: S,
 ): Promise<Uint8Array | Rejection> {
 	const wantSymrefs = args.includes("symrefs");
 	const wantPeel = args.includes("peel");

@@ -4,6 +4,7 @@ export { createServer, composeHooks } from "./handler.ts";
 // Transport-agnostic operations (advanced — for building custom transports)
 export {
 	advertiseRefsWithHooks,
+	applyCasRefUpdates,
 	applyReceivePack,
 	collectRefs,
 	buildRefAdvertisementBytes,

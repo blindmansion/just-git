@@ -1,5 +1,6 @@
 import type { GitRepo } from "../lib/types.ts";
 import type { NetworkPolicy, Rejection } from "../hooks.ts";
+import type { CommitOptions } from "../repo/writing.ts";
 import type { Storage, CreateRepoOptions } from "./storage.ts";
 import type { GcOptions, GcResult } from "./gc.ts";
 
@@ -231,8 +232,8 @@ export interface GitServerConfig<S = Session> {
 /**
  * A ref update request for {@link GitServer.updateRefs}.
  *
- * In-process equivalent of a push command — updates a ref with CAS
- * protection and hook enforcement, without transport overhead.
+ * In-process ref update with CAS protection. Objects must already
+ * exist in the repo's object store.
  */
 export interface RefUpdateRequest {
 	/** Full ref name (e.g. `"refs/heads/main"`, `"refs/tags/v1.0"`). */
@@ -251,7 +252,7 @@ export interface RefUpdateRequest {
 	oldHash?: string | null;
 }
 
-export interface GitServer<S = Session> {
+export interface GitServer {
 	/** Standard fetch-API handler for HTTP: (Request) => Response */
 	fetch(request: Request): Promise<Response>;
 
@@ -290,14 +291,15 @@ export interface GitServer<S = Session> {
 	handleSession(command: string, channel: SshChannel, session?: SshSessionInfo): Promise<number>;
 
 	/**
-	 * Update refs in-process with hook enforcement and CAS protection.
+	 * Update refs in-process with CAS protection.
 	 *
-	 * Equivalent to a push, but without transport overhead — no pack
-	 * negotiation, no object transfer. Objects must already exist in
-	 * the repo's object store (e.g. via `createCommit` from `just-git/repo`).
+	 * Applies compare-and-swap ref updates without transport overhead.
+	 * Does NOT fire hooks (`preReceive`, `update`, `postReceive`) —
+	 * hooks are a transport boundary concern. For hook enforcement,
+	 * push through {@link asNetwork} instead.
 	 *
-	 * Runs the full hook lifecycle: `preReceive` → per-ref `update` →
-	 * CAS application → `postReceive`. Returns per-ref results.
+	 * Objects must already exist in the repo's object store (e.g. via
+	 * `createCommit` or `buildCommit` from `just-git/repo`).
 	 *
 	 * ```ts
 	 * import { createCommit, writeBlob, writeTree } from "just-git/repo";
@@ -314,7 +316,37 @@ export interface GitServer<S = Session> {
 	 *
 	 * @throws If the repo does not exist or the server is shutting down.
 	 */
-	updateRefs(repoId: string, refs: RefUpdateRequest[], session?: S): Promise<RefUpdateResult>;
+	updateRefs(repoId: string, refs: RefUpdateRequest[]): Promise<RefUpdateResult>;
+
+	/**
+	 * Commit files to a branch with CAS protection.
+	 *
+	 * High-level convenience that combines object creation ({@link buildCommit}
+	 * from `just-git/repo`) with CAS-protected ref advancement
+	 * ({@link updateRefs}). This is the recommended API for trusted
+	 * server-side writes (bots, scripts, platform features).
+	 *
+	 * Does NOT fire hooks — hooks are a transport boundary concern.
+	 * For hook enforcement (auth, policy), push through
+	 * {@link asNetwork} instead.
+	 *
+	 * ```ts
+	 * const hash = await server.commit("my-repo", {
+	 *   files: { "README.md": "# Hello\n" },
+	 *   message: "auto-fix",
+	 *   author: { name: "Bot", email: "bot@example.com" },
+	 *   branch: "main",
+	 * });
+	 * ```
+	 *
+	 * For lower-level control (e.g. constructing trees manually, multi-ref
+	 * updates), use `buildCommit()` + {@link updateRefs} directly.
+	 *
+	 * @returns The new commit's hash.
+	 * @throws If the repo does not exist, the server is shutting down,
+	 *   or a concurrent write moved the branch.
+	 */
+	commit(repoId: string, options: CommitOptions): Promise<string>;
 
 	/**
 	 * Node.js `http.createServer` compatible handler.
@@ -443,8 +475,8 @@ export interface PreReceiveEvent<S = Session> {
 	/** Resolved repo ID (the value returned by `resolve`, or the raw path when `resolve` is not set). */
 	repoId: string;
 	updates: readonly RefUpdate[];
-	/** Session info. Present for HTTP and SSH; absent for in-process pushes. */
-	session?: S;
+	/** Session built by the transport's session builder. Always present — hooks only fire from HTTP/SSH transport. */
+	session: S;
 }
 
 /** Fired per-ref after preReceive passes. */
@@ -453,8 +485,8 @@ export interface UpdateEvent<S = Session> {
 	/** Resolved repo ID (the value returned by `resolve`, or the raw path when `resolve` is not set). */
 	repoId: string;
 	update: RefUpdate;
-	/** Session info. Present for HTTP and SSH; absent for in-process pushes. */
-	session?: S;
+	/** Session built by the transport's session builder. Always present — hooks only fire from HTTP/SSH transport. */
+	session: S;
 }
 
 /** Fired after all ref updates succeed. */
@@ -463,8 +495,8 @@ export interface PostReceiveEvent<S = Session> {
 	/** Resolved repo ID (the value returned by `resolve`, or the raw path when `resolve` is not set). */
 	repoId: string;
 	updates: readonly RefUpdate[];
-	/** Session info. Present for HTTP and SSH; absent for in-process pushes. */
-	session?: S;
+	/** Session built by the transport's session builder. Always present — hooks only fire from HTTP/SSH transport. */
+	session: S;
 }
 
 /** Fired during ref advertisement (info/refs). */
@@ -474,8 +506,8 @@ export interface AdvertiseRefsEvent<S = Session> {
 	repoId: string;
 	refs: RefAdvertisement[];
 	service: "git-upload-pack" | "git-receive-pack";
-	/** Session info. Present for HTTP and SSH; absent for in-process requests. */
-	session?: S;
+	/** Session built by the transport's session builder. Always present — hooks only fire from HTTP/SSH transport. */
+	session: S;
 }
 
 /** A ref name and hash advertised to clients during fetch/push discovery. */
@@ -486,7 +518,7 @@ export interface RefAdvertisement {
 
 // ── Ref update results ──────────────────────────────────────────────
 
-/** Per-ref result from a push or {@link GitServer.updateRefs} call. */
+/** Per-ref result from a push, {@link GitServer.updateRefs}, or {@link GitServer.commit} call. */
 export interface RefResult {
 	ref: string;
 	ok: boolean;

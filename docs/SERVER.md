@@ -113,11 +113,20 @@ const server = createServer({
 });
 ```
 
-## Authorization
+## Authentication and authorization
+
+Authentication (verifying identity) and authorization (checking permissions) live at different layers:
+
+| Layer                | Concern                                                          | Mechanism                                              |
+| -------------------- | ---------------------------------------------------------------- | ------------------------------------------------------ |
+| Session builder      | **Authentication** — parse credentials, verify identity          | Return `Response` to reject, or return a typed session |
+| `advertiseRefs` hook | **Read authorization** — control who can clone/fetch             | Return `Rejection` to deny repo access                 |
+| `preReceive` hook    | **Write authorization** (batch) — control who can push           | Return `Rejection` to deny the entire push             |
+| `update` hook        | **Write authorization** (per-ref) — control specific ref updates | Return `Rejection` to deny one ref                     |
 
 ### Session builder
 
-The optional `session` config builds a typed session object from each request. The session is available in all hooks. For HTTP, returning a `Response` rejects the request (e.g. 401). For SSH, auth is handled at the transport layer before the session builder runs.
+The session builder runs first, before any git protocol handling. It parses credentials and produces a typed session object that hooks can inspect. For HTTP, returning a `Response` short-circuits the request (e.g. 401). For SSH, authentication happens at the transport layer (e.g. ssh2's `authentication` event) before the session builder runs — the SSH builder is for enrichment, not authentication.
 
 ```ts
 const server = createServer({
@@ -135,33 +144,42 @@ const server = createServer({
     },
     ssh: (info) => ({ userId: info.username ?? "anonymous" }),
   },
-  hooks: {
-    preReceive: ({ session }) => {
-      if (!session) return { reject: true, message: "unauthorized" };
-    },
-  },
 });
 ```
 
 When `session` is omitted, the server uses a default `Session` type with `transport`, optional `username`, and optional `request`.
 
-### Public read, private write
+### Fully private repos
 
-Anyone can clone, only authorized users can push:
+When all access requires authentication, reject in the session builder and use hooks for authorization decisions:
 
 ```ts
 const server = createServer({
   storage: new BunSqliteStorage(db),
+  session: {
+    http: (request) => {
+      const header = request.headers.get("Authorization");
+      if (!header) {
+        return new Response("Unauthorized", {
+          status: 401,
+          headers: { "WWW-Authenticate": 'Bearer realm="git"' },
+        });
+      }
+      return { userId: parseToken(header), canWrite: isWriter(header) };
+    },
+    ssh: (info) => ({ userId: info.username!, canWrite: true }),
+  },
   hooks: {
     preReceive: ({ session }) => {
-      if (!session?.request?.headers.has("Authorization"))
-        return { reject: true, message: "unauthorized" };
+      if (!session.canWrite) return { reject: true, message: "read-only access" };
     },
   },
 });
 ```
 
-With a custom session type, auth works uniformly across HTTP and SSH:
+### Public read, private write
+
+Anyone can clone, only authorized users can push. The session builder extracts auth when present but doesn't reject anonymous requests — the `preReceive` hook enforces write authorization:
 
 ```ts
 const server = createServer({
@@ -172,7 +190,7 @@ const server = createServer({
   },
   hooks: {
     preReceive: ({ session }) => {
-      if (!session?.authorized) return { reject: true, message: "unauthorized" };
+      if (!session.authorized) return { reject: true, message: "push requires authentication" };
     },
   },
 });
@@ -264,8 +282,7 @@ const server = createServer({
   storage: new BunSqliteStorage(db),
   hooks: {
     preReceive: async ({ repo, updates, session }) => {
-      if (!session?.request?.headers.has("Authorization"))
-        return { reject: true, message: "unauthorized" };
+      if (!session.canWrite) return { reject: true, message: "write access denied" };
     },
 
     update: async ({ repo, update }) => {
@@ -282,9 +299,6 @@ const server = createServer({
     },
 
     advertiseRefs: async ({ refs, repoId, session }) => {
-      if (isPrivateRepo(repoId) && !session?.token) {
-        return { reject: true, message: "authentication required" };
-      }
       return refs.filter((r) => !r.name.startsWith("refs/internal/"));
     },
   },
@@ -298,7 +312,7 @@ const server = createServer({
 | `postReceive`   | After all ref updates succeed                      | No                         |
 | `advertiseRefs` | Client requests ref listing (clone/fetch/push)     | Yes (denies repo access)   |
 
-All hook payloads include `repo: GitRepo`, `repoId` (the resolved repo ID), and `session`. Pre-hooks return `{ reject: true, message? }` to block the operation, using the same `Rejection` protocol as [client-side hooks](HOOKS.md).
+All hook payloads include `repo: GitRepo`, `repoId`, and `session` (from the session builder). Pre-hooks return `{ reject: true, message? }` to block the operation, using the same `Rejection` protocol as [client-side hooks](HOOKS.md).
 
 ### Composing hooks
 
@@ -462,6 +476,41 @@ Key things to know:
 
 - **`MemoryStorage` is the reference implementation** — it's under 150 lines and covers every method. Start there when building a new backend.
 
+## Programmatic commits
+
+`server.commit()` creates a commit with CAS protection — the recommended API for server-side writes:
+
+```ts
+const hash = await server.commit("my-repo", {
+  files: { "README.md": "# Hello\n", "src/index.ts": "export {};\n" },
+  message: "auto-fix: lint errors",
+  author: { name: "Bot", email: "bot@example.com" },
+  branch: "main",
+});
+```
+
+Under the hood, `server.commit()` calls `buildCommit()` (from `just-git/repo`) to create objects, then `server.updateRefs()` to advance the branch ref. If a concurrent write moved the branch, it throws.
+
+For lower-level control — constructing trees manually, multi-ref atomic updates, or separating object creation from ref advancement — use `buildCommit()` + `server.updateRefs()` directly:
+
+```ts
+import { buildCommit } from "just-git/repo";
+
+const repo = await server.requireRepo("my-repo");
+const { hash, parentHash } = await buildCommit(repo, {
+  files: { "config.json": JSON.stringify(newConfig) },
+  message: "update config",
+  author: { name: "Bot", email: "bot@example.com" },
+  branch: "main",
+});
+
+await server.updateRefs("my-repo", [
+  { ref: "refs/heads/main", newHash: hash, oldHash: parentHash },
+]);
+```
+
+The `commit()` helper from `just-git/repo` also creates commits, but it advances refs via raw `writeRef` without CAS. Use it for VFS-backed repos (client-side sandboxes) or test setup where CAS protection isn't needed.
+
 ## Working with pushed code
 
 Use the [repo module](REPO.md) (`just-git/repo`) inside hooks to inspect pushed commits, read files, diff trees, and more:
@@ -515,23 +564,20 @@ const server = createServer({
 });
 ```
 
-## In-process client
+## In-process access
 
-Connect a [`createGit`](CLIENT.md) client directly to the server without starting an HTTP listener. The server's `asNetwork()` method returns a `NetworkPolicy` that routes all transport calls through the server's request handler in-process — no TCP, no serialization overhead, full hook/session/policy support.
+There are two ways to interact with a server programmatically — without starting an HTTP listener:
+
+**Direct API** — `server.commit()` and `server.updateRefs()` write to repos with CAS protection. Best for bots, scripts, and platform features that create commits server-side. See [Programmatic commits](#programmatic-commits).
+
+**In-process transport** — `server.asNetwork()` returns a `NetworkPolicy` that routes a [`createGit`](CLIENT.md) client through the server's request handler. The full git protocol runs in-process — clone, fetch, push all work with hooks, sessions, and policy. Best for sandboxed agents that need a full git workflow:
 
 ```ts
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "just-git";
 import { createServer } from "just-git/server";
 
-const server = createServer({
-  autoCreate: true,
-  hooks: {
-    preReceive: ({ session }) => {
-      // hooks fire normally — session comes from the session builder
-    },
-  },
-});
+const server = createServer({ autoCreate: true });
 
 const git = createGit({
   network: server.asNetwork(), // default base URL: http://git

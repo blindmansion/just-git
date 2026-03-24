@@ -139,8 +139,8 @@ export async function createAnnotatedTag(
 
 // ── High-level commit ───────────────────────────────────────────────
 
-/** Options for {@link commit}. */
-export interface CommitOptions {
+/** Options for {@link buildCommit}. */
+export interface BuildCommitOptions {
 	/**
 	 * Files to add, update, or delete.
 	 * - `string` values are written as UTF-8 blobs.
@@ -153,31 +153,50 @@ export interface CommitOptions {
 	author: CommitIdentity;
 	/** Committer identity. Defaults to `author` when omitted. */
 	committer?: CommitIdentity;
-	/** Branch to commit to. Parent is auto-resolved from the current branch tip. */
-	branch: string;
+	/**
+	 * Branch to read the parent commit from. The new commit builds on
+	 * top of this branch's tree. When omitted, creates a root commit
+	 * with only the specified files.
+	 */
+	branch?: string;
+}
+
+/** Result of {@link buildCommit}. */
+export interface CommitResult {
+	/** The new commit's hash. */
+	hash: string;
+	/** The parent commit hash, or `null` for root commits. Useful as `oldHash` for CAS-protected ref updates. */
+	parentHash: string | null;
 }
 
 /**
- * Commit files to a branch in one call.
+ * Create a commit from files without advancing any refs.
  *
- * Handles blob creation, tree construction, parent resolution, and
- * ref advancement. When the branch already exists, the specified
+ * Handles blob creation, tree construction, and parent resolution.
+ * When `branch` is provided and the branch exists, the specified
  * files are applied on top of the existing tree (unmentioned files
- * are preserved). When the branch doesn't exist, a root commit is
- * created with only the specified files.
+ * are preserved). When the branch doesn't exist or is omitted, a
+ * root commit is created with only the specified files.
+ *
+ * Returns both the commit hash and the parent hash. The parent hash
+ * is useful as `oldHash` for CAS-protected ref updates via
+ * `server.updateRefs()` or `server.commit()`.
  *
  * ```ts
- * await commit(repo, {
- *   files: { "README.md": "# Hello\n", "src/index.ts": "export {};\n" },
+ * const { hash, parentHash } = await buildCommit(repo, {
+ *   files: { "README.md": "# Hello\n" },
  *   message: "initial commit",
  *   author: { name: "Alice", email: "alice@example.com" },
  *   branch: "main",
  * });
  * ```
  */
-export async function commit(repo: GitRepo, options: CommitOptions): Promise<string> {
-	const branchRef = `refs/heads/${options.branch}`;
-	const parentHash = await _resolveRef(repo, branchRef);
+export async function buildCommit(
+	repo: GitRepo,
+	options: BuildCommitOptions,
+): Promise<CommitResult> {
+	const branchRef = options.branch ? `refs/heads/${options.branch}` : null;
+	const parentHash = branchRef ? await _resolveRef(repo, branchRef) : null;
 
 	let existingTreeHash: string | null = null;
 	if (parentHash) {
@@ -217,8 +236,52 @@ export async function commit(repo: GitRepo, options: CommitOptions): Promise<str
 	});
 	const hash = await writeObject(repo, "commit", content);
 
-	await advanceBranch(repo, options.branch, hash);
+	return { hash, parentHash };
+}
 
+/** Options for {@link commit}. */
+export interface CommitOptions {
+	/**
+	 * Files to add, update, or delete.
+	 * - `string` values are written as UTF-8 blobs.
+	 * - `Uint8Array` values are written as raw blobs.
+	 * - `null` deletes the file from the tree.
+	 */
+	files: Record<string, string | Uint8Array | null>;
+	message: string;
+	/** Author identity. Accepts `{ name, email, date? }` or full `Identity`. Timestamp defaults to now. */
+	author: CommitIdentity;
+	/** Committer identity. Defaults to `author` when omitted. */
+	committer?: CommitIdentity;
+	/** Branch to commit to. Parent is auto-resolved from the current branch tip. */
+	branch: string;
+}
+
+/**
+ * Commit files to a branch in one call.
+ *
+ * Handles blob creation, tree construction, parent resolution, and
+ * ref advancement. When the branch already exists, the specified
+ * files are applied on top of the existing tree (unmentioned files
+ * are preserved). When the branch doesn't exist, a root commit is
+ * created with only the specified files.
+ *
+ * For server-backed repos where hook enforcement and CAS protection
+ * are needed, use `server.commit()` instead — it uses
+ * {@link buildCommit} + `server.updateRefs()` internally.
+ *
+ * ```ts
+ * await commit(repo, {
+ *   files: { "README.md": "# Hello\n", "src/index.ts": "export {};\n" },
+ *   message: "initial commit",
+ *   author: { name: "Alice", email: "alice@example.com" },
+ *   branch: "main",
+ * });
+ * ```
+ */
+export async function commit(repo: GitRepo, options: CommitOptions): Promise<string> {
+	const { hash } = await buildCommit(repo, options);
+	await advanceBranch(repo, options.branch, hash);
 	return hash;
 }
 

@@ -535,7 +535,7 @@ describe("handleLsRefs", () => {
 	});
 
 	test("returns all refs with symrefs", async () => {
-		const result = await handleLsRefs(repo, "test", ["symrefs"]);
+		const result = await handleLsRefs(repo, "test", ["symrefs"], undefined, null);
 		expect(result).toBeInstanceOf(Uint8Array);
 
 		const lines = parsePktLineStream(result as Uint8Array);
@@ -548,7 +548,7 @@ describe("handleLsRefs", () => {
 	});
 
 	test("filters by ref-prefix", async () => {
-		const result = await handleLsRefs(repo, "test", ["ref-prefix refs/tags/"]);
+		const result = await handleLsRefs(repo, "test", ["ref-prefix refs/tags/"], undefined, null);
 		const lines = parsePktLineStream(result as Uint8Array);
 		const texts = lines.filter((l) => l.type === "data").map((l) => pktLineText(l));
 
@@ -557,9 +557,15 @@ describe("handleLsRefs", () => {
 	});
 
 	test("respects advertiseRefs hook rejection", async () => {
-		const result = await handleLsRefs(repo, "test", [], {
-			advertiseRefs: async () => ({ reject: true, message: "denied" }),
-		});
+		const result = await handleLsRefs(
+			repo,
+			"test",
+			[],
+			{
+				advertiseRefs: async () => ({ reject: true, message: "denied" }),
+			},
+			null,
+		);
 		expect(result).toHaveProperty("reject", true);
 	});
 });

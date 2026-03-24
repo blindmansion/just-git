@@ -16,10 +16,12 @@
  */
 
 import { isRejection } from "../hooks.ts";
+import { buildCommit } from "../repo/writing.ts";
 import type { GitRepo } from "../lib/types.ts";
 import {
 	PackCache,
 	advertiseRefsWithHooks,
+	applyCasRefUpdates,
 	applyReceivePack,
 	buildRefAdvertisementBytes,
 	buildV2CapabilityAdvertisementBytes,
@@ -93,7 +95,7 @@ export function isValidRepoId(id: string): boolean {
  */
 export function createServer<S = Session>(
 	config: GitServerConfig<S> = {} as GitServerConfig<S>,
-): GitServer<S> {
+): GitServer {
 	const rawStorage = config.storage ?? new MemoryStorage();
 	const storage = createStorageAdapter(rawStorage);
 	const resolve = config.resolve ?? ((path: string) => path);
@@ -144,7 +146,7 @@ export function createServer<S = Session>(
 		if (closed && inflight === 0) drainResolve?.();
 	}
 
-	const server: GitServer<S> = {
+	const server: GitServer = {
 		async fetch(req: Request): Promise<Response> {
 			if (!enter()) return new Response("Service Unavailable", { status: 503 });
 			let session: S | undefined;
@@ -372,19 +374,34 @@ export function createServer<S = Session>(
 			}
 		},
 
-		async updateRefs(repoId, refs, session?) {
+		async updateRefs(repoId, refs) {
 			if (!enter()) throw new Error("Server is shutting down");
 			try {
 				const repo = await server.requireRepo(repoId);
-
 				const updates = await resolveRefUpdates(repo, refs);
-				return applyReceivePack({
-					repo,
-					repoId,
-					ingestResult: { updates, unpackOk: true, capabilities: [], sawFlush: true },
-					hooks,
-					session,
-				});
+				return applyCasRefUpdates(repo, updates);
+			} finally {
+				leave();
+			}
+		},
+
+		async commit(repoId, options) {
+			if (!enter()) throw new Error("Server is shutting down");
+			try {
+				const repo = await server.requireRepo(repoId);
+				const { hash, parentHash } = await buildCommit(repo, options);
+
+				const branchRef = `refs/heads/${options.branch}`;
+				const updates = await resolveRefUpdates(repo, [
+					{ ref: branchRef, newHash: hash, oldHash: parentHash },
+				]);
+				const result = await applyCasRefUpdates(repo, updates);
+
+				const refResult = result.refResults[0];
+				if (!refResult?.ok) {
+					throw new Error(refResult?.error ?? "ref update failed");
+				}
+				return hash;
 			} finally {
 				leave();
 			}

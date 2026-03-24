@@ -135,7 +135,6 @@ describe("server.updateRefs", () => {
 			committer: idAt(1000000100),
 		});
 
-		// No oldHash specified — server should read current ref
 		const result = await server.updateRefs("test", [
 			{ ref: "refs/heads/main", newHash: secondHash },
 		]);
@@ -158,11 +157,15 @@ describe("server.updateRefs", () => {
 		expect(result.applied).toHaveLength(3);
 	});
 
-	test("hooks fire: preReceive can reject", async () => {
+	test("does not fire hooks", async () => {
+		let hookCalled = false;
 		const server = createServer({
 			storage: new MemoryStorage(),
 			hooks: {
-				preReceive: () => ({ reject: true, message: "blocked by hook" }),
+				preReceive: () => {
+					hookCalled = true;
+					return { reject: true, message: "should not reach here" };
+				},
 			},
 		});
 		const repo = await server.createRepo("test");
@@ -174,31 +177,27 @@ describe("server.updateRefs", () => {
 			message: "init",
 			author: ID,
 			committer: ID,
-			branch: "main",
 		});
 
 		const result = await server.updateRefs("test", [{ ref: "refs/heads/feature", newHash: hash }]);
 
-		expect(result.refResults[0]!.ok).toBe(false);
-		expect(result.refResults[0]!.error).toBe("blocked by hook");
-		expect(result.applied).toHaveLength(0);
+		expect(result.refResults[0]!.ok).toBe(true);
+		expect(hookCalled).toBe(false);
 	});
 
-	test("hooks fire: update hook rejects one ref but allows others", async () => {
+	test("does not apply policy", async () => {
 		const server = createServer({
 			storage: new MemoryStorage(),
-			hooks: {
-				update: ({ update }) => {
-					if (update.ref === "refs/heads/protected") {
-						return { reject: true, message: "protected branch" };
-					}
-				},
+			policy: {
+				protectedBranches: ["main"],
+				denyNonFastForward: true,
 			},
 		});
 		const repo = await server.createRepo("test");
-		const blob = await writeBlob(repo, "x");
-		const tree = await writeTree(repo, [{ name: "f", hash: blob }]);
-		const hash = await createCommit(repo, {
+
+		const blob = await writeBlob(repo, "hello");
+		const tree = await writeTree(repo, [{ name: "README.md", hash: blob }]);
+		await createCommit(repo, {
 			tree,
 			parents: [],
 			message: "init",
@@ -207,99 +206,21 @@ describe("server.updateRefs", () => {
 			branch: "main",
 		});
 
-		const result = await server.updateRefs("test", [
-			{ ref: "refs/heads/feature", newHash: hash },
-			{ ref: "refs/heads/protected", newHash: hash },
-		]);
+		// Divergent commit (non-FF) to a protected branch — should succeed
+		// because in-process updateRefs bypasses policy
+		const blob2 = await writeBlob(repo, "divergent");
+		const tree2 = await writeTree(repo, [{ name: "README.md", hash: blob2 }]);
+		const hash2 = await createCommit(repo, {
+			tree: tree2,
+			parents: [],
+			message: "divergent",
+			author: idAt(1000000100),
+			committer: idAt(1000000100),
+		});
+
+		const result = await server.updateRefs("test", [{ ref: "refs/heads/main", newHash: hash2 }]);
 
 		expect(result.refResults[0]!.ok).toBe(true);
-		expect(result.refResults[1]!.ok).toBe(false);
-		expect(result.refResults[1]!.error).toBe("protected branch");
-		expect(result.applied).toHaveLength(1);
-	});
-
-	test("postReceive hook fires with applied updates", async () => {
-		let capturedUpdates: unknown[] = [];
-		const server = createServer({
-			storage: new MemoryStorage(),
-			hooks: {
-				postReceive: ({ updates }) => {
-					capturedUpdates = [...updates];
-				},
-			},
-		});
-		const repo = await server.createRepo("test");
-		const blob = await writeBlob(repo, "x");
-		const tree = await writeTree(repo, [{ name: "f", hash: blob }]);
-		const hash = await createCommit(repo, {
-			tree,
-			parents: [],
-			message: "init",
-			author: ID,
-			committer: ID,
-			branch: "main",
-		});
-
-		await server.updateRefs("test", [{ ref: "refs/heads/feature", newHash: hash }]);
-		expect(capturedUpdates).toHaveLength(1);
-	});
-
-	test("session flows through to hooks", async () => {
-		let capturedSession: unknown;
-		const server = createServer({
-			storage: new MemoryStorage(),
-			session: {
-				http: () => ({ role: "admin" }),
-			},
-			hooks: {
-				preReceive: ({ session }) => {
-					capturedSession = session;
-				},
-			},
-		});
-		const repo = await server.createRepo("test");
-		const blob = await writeBlob(repo, "x");
-		const tree = await writeTree(repo, [{ name: "f", hash: blob }]);
-		const hash = await createCommit(repo, {
-			tree,
-			parents: [],
-			message: "init",
-			author: ID,
-			committer: ID,
-			branch: "main",
-		});
-
-		await server.updateRefs("test", [{ ref: "refs/heads/feature", newHash: hash }], {
-			role: "system",
-		});
-
-		expect(capturedSession).toEqual({ role: "system" });
-	});
-
-	test("session is undefined when omitted", async () => {
-		let capturedSession: unknown = "sentinel";
-		const server = createServer({
-			storage: new MemoryStorage(),
-			hooks: {
-				preReceive: ({ session }) => {
-					capturedSession = session;
-				},
-			},
-		});
-		const repo = await server.createRepo("test");
-		const blob = await writeBlob(repo, "x");
-		const tree = await writeTree(repo, [{ name: "f", hash: blob }]);
-		const hash = await createCommit(repo, {
-			tree,
-			parents: [],
-			message: "init",
-			author: ID,
-			committer: ID,
-			branch: "main",
-		});
-
-		await server.updateRefs("test", [{ ref: "refs/heads/feature", newHash: hash }]);
-		expect(capturedSession).toBeUndefined();
 	});
 
 	test("throws for non-existent repo", async () => {
@@ -318,82 +239,5 @@ describe("server.updateRefs", () => {
 		await expect(
 			server.updateRefs("test", [{ ref: "refs/heads/main", newHash: "abc" }]),
 		).rejects.toThrow("Server is shutting down");
-	});
-
-	test("policy hooks apply to updateRefs", async () => {
-		const { server } = await setupServer();
-
-		await server.close();
-
-		const server2 = createServer({
-			storage: new MemoryStorage(),
-			policy: { protectedBranches: ["main"] },
-		});
-		const repo2 = await server2.createRepo("test");
-		const blob = await writeBlob(repo2, "hello");
-		const tree = await writeTree(repo2, [{ name: "README.md", hash: blob }]);
-		await createCommit(repo2, {
-			tree,
-			parents: [],
-			message: "init",
-			author: ID,
-			committer: ID,
-			branch: "main",
-		});
-
-		// Divergent commit (not a descendant of hash1)
-		const blob2 = await writeBlob(repo2, "divergent");
-		const tree2 = await writeTree(repo2, [{ name: "README.md", hash: blob2 }]);
-		const hash2 = await createCommit(repo2, {
-			tree: tree2,
-			parents: [],
-			message: "divergent",
-			author: idAt(1000000100),
-			committer: idAt(1000000100),
-		});
-
-		const result = await server2.updateRefs("test", [{ ref: "refs/heads/main", newHash: hash2 }]);
-
-		expect(result.refResults[0]!.ok).toBe(false);
-		expect(result.refResults[0]!.error).toContain("non-fast-forward");
-	});
-
-	test("computes isFF correctly", async () => {
-		let capturedUpdate: unknown;
-		const server = createServer({
-			storage: new MemoryStorage(),
-			hooks: {
-				update: ({ update }) => {
-					capturedUpdate = update;
-				},
-			},
-		});
-		const repo = await server.createRepo("test");
-		const blob = await writeBlob(repo, "x");
-		const tree = await writeTree(repo, [{ name: "f", hash: blob }]);
-		const hash1 = await createCommit(repo, {
-			tree,
-			parents: [],
-			message: "first",
-			author: ID,
-			committer: ID,
-			branch: "main",
-		});
-
-		const blob2 = await writeBlob(repo, "y");
-		const tree2 = await writeTree(repo, [{ name: "f", hash: blob2 }]);
-		const hash2 = await createCommit(repo, {
-			tree: tree2,
-			parents: [hash1],
-			message: "second",
-			author: idAt(1000000100),
-			committer: idAt(1000000100),
-		});
-
-		await server.updateRefs("test", [{ ref: "refs/heads/main", newHash: hash2 }]);
-
-		expect((capturedUpdate as any).isFF).toBe(true);
-		expect((capturedUpdate as any).isCreate).toBe(false);
-		expect((capturedUpdate as any).isDelete).toBe(false);
 	});
 });

@@ -59,7 +59,7 @@ interface HandleSessionOptions<S = Session> {
 	hooks?: ServerHooks<S>;
 	packCache?: PackCache;
 	packOptions?: { noDelta?: boolean; deltaWindow?: number };
-	session?: S;
+	session: S;
 	onError?: (err: unknown) => void;
 }
 
@@ -175,7 +175,7 @@ interface ServeReceivePackOptions<S> {
 	capabilities: string[];
 	packStream: AsyncIterable<Uint8Array>;
 	hooks?: ServerHooks<S>;
-	session?: S;
+	session: S;
 }
 
 async function serveReceivePackStreaming<S>(options: ServeReceivePackOptions<S>): Promise<void> {
@@ -382,7 +382,7 @@ interface V2SshCommandLoopOptions<S> {
 	hooks?: ServerHooks<S>;
 	packCache?: PackCache;
 	packOptions?: { noDelta?: boolean; deltaWindow?: number };
-	session?: S;
+	session: S;
 }
 
 /**

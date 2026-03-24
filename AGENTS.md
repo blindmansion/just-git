@@ -205,6 +205,7 @@ Key behaviors:
 - `server.repo(id)` — get a repo by ID, or `null` if it doesn't exist.
 - `server.requireRepo(id)` — get a repo by ID, or throw if it doesn't exist.
 - `server.deleteRepo(id)` — delete a repo and all its data.
+- `server.commit(repoId, options)` — commit files to a branch with CAS protection. Uses `buildCommit()` from `just-git/repo` for object creation, then `updateRefs()` for ref advancement. Throws if CAS fails (concurrent branch update) or the repo doesn't exist.
 - `server.asNetwork(baseUrl?)` — returns a `NetworkPolicy` that routes HTTP transport calls to the server in-process, bypassing the network stack. Pass the result as `network` to `createGit`. Default base URL is `"http://git"`. All server hooks, session building, and policy enforcement work identically to real HTTP.
 - `server.close(options?)` — graceful shutdown. New HTTP requests get 503, new SSH sessions get exit 128. Resolves when all in-flight operations complete and pack cache is released. Accepts `{ signal?: AbortSignal }` for timeout. Idempotent.
 - `server.closed` — `true` after `close()` is called.
@@ -263,7 +264,8 @@ Standalone helpers for working with `GitRepo` directly — no filesystem, index,
 - `resolveRef`, `listBranches`, `listTags`, `isAncestor`, `findMergeBases`, `countAheadBehind` — ref operations.
 - `blame(repo, commitHash, path, opts?)` — line-by-line blame.
 - `grep(repo, commitHash, patterns, opts?)` — search file contents at a commit.
-- `commit(repo, options)` — high-level: commit files to a branch in one call. Takes `files` (string/Uint8Array/null values keyed by path), `message`, `author` (`{ name, email, date? }`), optional `committer`, `branch`. Handles blob creation, tree construction (updates existing tree when branch exists, creates fresh tree otherwise), parent resolution, and ref advancement. The main entry point for programmatic writes.
+- `buildCommit(repo, options)` — create a commit from files without advancing any refs. Takes `files`, `message`, `author`, optional `committer`, optional `branch` (for parent resolution). Returns `CommitResult` with `hash` and `parentHash`. The composable primitive used by both `commit()` and `server.commit()`.
+- `commit(repo, options)` — high-level: commit files to a branch in one call. Takes `files` (string/Uint8Array/null values keyed by path), `message`, `author` (`{ name, email, date? }`), optional `committer`, `branch`. Uses `buildCommit()` internally, then advances the branch ref via raw `writeRef`. For server-backed repos, use `server.commit()` for CAS-protected ref advancement.
 - `createCommit`, `writeBlob`, `writeTree` — low-level object creation. `createCommit` accepts `CommitIdentity` (either `{ name, email, date? }` or full `Identity`); `committer` defaults to `author` when omitted.
 - `createAnnotatedTag(repo, options)` — create an annotated tag object and ref. Takes `target` (hash), `name`, `tagger` (`CommitIdentity`), `message`, optional `targetType` (default `"commit"`). Returns tag object hash.
 - `updateTree(repo, treeHash, updates)` — apply path-based additions/deletions to a tree, handling nested subtree construction. Each `TreeUpdate` has `path` (full repo-relative), `hash` (blob hash, or `null` to delete), optional `mode`. Empty subtrees are pruned automatically.
@@ -271,7 +273,7 @@ Standalone helpers for working with `GitRepo` directly — no filesystem, index,
 - `extractTree`, `createWorktree`, `createSandboxWorktree` — materialize worktrees on a VFS.
 - `readonlyRepo`, `overlayRepo` — repo wrappers (read-only enforcement, copy-on-write).
 
-**Types:** `FileDiff`, `DiffHunk`, `CommitInfo`, `BlameEntry`, `GrepFileMatch`, `GrepMatch`, `GrepOptions`, `MergeConflict`, `MergeTreesResult`, `CommitAuthor`, `CommitIdentity`, `CommitOptions`, `TreeEntryInput`, `TreeUpdate`, `CreateCommitOptions`, `CreateWorktreeOptions`, `ExtractTreeResult`, `WorktreeResult`.
+**Types:** `FileDiff`, `DiffHunk`, `CommitInfo`, `BlameEntry`, `GrepFileMatch`, `GrepMatch`, `GrepOptions`, `MergeConflict`, `MergeTreesResult`, `BuildCommitOptions`, `CommitResult`, `CommitAuthor`, `CommitIdentity`, `CommitOptions`, `TreeEntryInput`, `TreeUpdate`, `CreateCommitOptions`, `CreateWorktreeOptions`, `ExtractTreeResult`, `WorktreeResult`.
 
 All helpers accept revision strings via `resolveRevisionRepo` (from `lib/rev-parse.ts`), which supports branch names, tag names, `HEAD`, short hashes, `~N`/`^N` suffixes, and chained expressions — everything except reflog syntax (`@{N}`).
 
