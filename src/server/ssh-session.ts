@@ -56,6 +56,11 @@ export function parseGitSshCommand(
 
 const encoder = new TextEncoder();
 
+interface FetchLimitOptions {
+	maxRequestBytes?: number;
+	maxInflatedBytes?: number;
+}
+
 interface HandleSessionOptions<A = Auth> {
 	resolveRepo: (
 		path: string,
@@ -64,6 +69,7 @@ interface HandleSessionOptions<A = Auth> {
 	packCache?: PackCache;
 	packOptions?: { noDelta?: boolean; deltaWindow?: number };
 	receiveLimits?: ReceivePackLimitOptions;
+	fetchLimits?: FetchLimitOptions;
 	auth: A;
 	onError?: (err: unknown) => void;
 }
@@ -77,7 +83,7 @@ export async function handleSshSession<A = Auth>(
 	channel: SshChannel,
 	options: HandleSessionOptions<A>,
 ): Promise<number> {
-	const { resolveRepo, hooks, packCache, packOptions, receiveLimits, auth } = options;
+	const { resolveRepo, hooks, packCache, packOptions, receiveLimits, fetchLimits, auth } = options;
 	const writer = channel.writable.getWriter();
 	try {
 		const parsed = parseGitSshCommand(command);
@@ -108,6 +114,7 @@ export async function handleSshSession<A = Auth>(
 					packCache,
 					packOptions,
 					receiveLimits,
+					fetchLimits,
 					auth,
 				});
 			} finally {
@@ -125,7 +132,7 @@ export async function handleSshSession<A = Auth>(
 		try {
 			if (service === "git-upload-pack") {
 				const authorizedFetchSet = hooks?.advertiseRefs ? buildAuthorizedFetchSet(adv) : undefined;
-				const requestBody = await readUploadPackRequest(streamReader);
+				const requestBody = await readUploadPackRequest(streamReader, fetchLimits?.maxRequestBytes);
 				const result = await handleUploadPack(repo, requestBody, {
 					cache: packCache,
 					cacheKey: repoId,
@@ -340,11 +347,19 @@ class StreamPktLineReader {
  * sends wants/haves/done and waits for the pack response without
  * sending EOF. We must stop reading at the protocol boundary.
  */
-async function readUploadPackRequest(reader: StreamPktLineReader): Promise<Uint8Array> {
+async function readUploadPackRequest(
+	reader: StreamPktLineReader,
+	maxBytes?: number,
+): Promise<Uint8Array> {
 	const parts: Uint8Array[] = [];
+	let totalBytes = 0;
 	while (true) {
 		const line = await reader.readPktLine();
 		if (!line) break;
+		totalBytes += line.raw.byteLength;
+		if (maxBytes !== undefined && totalBytes > maxBytes) {
+			throw new RequestLimitError("Request body too large");
+		}
 		parts.push(line.raw);
 		if (line.type === "data" && line.text.trimEnd() === "done") break;
 	}
@@ -404,6 +419,7 @@ interface V2SshCommandLoopOptions<A> {
 	packCache?: PackCache;
 	packOptions?: { noDelta?: boolean; deltaWindow?: number };
 	receiveLimits?: ReceivePackLimitOptions;
+	fetchLimits?: FetchLimitOptions;
 	auth: A;
 }
 
@@ -420,10 +436,10 @@ async function handleV2SshCommandLoop<A>(
 	channel: SshChannel,
 	options: V2SshCommandLoopOptions<A>,
 ): Promise<number> {
-	const { hooks, packCache, packOptions, auth } = options;
+	const { hooks, packCache, packOptions, fetchLimits: fl, auth } = options;
 
 	while (true) {
-		const cmd = await readV2CommandFromStream(reader);
+		const cmd = await readV2CommandFromStream(reader, fl?.maxRequestBytes);
 		if (!cmd) break;
 
 		if (cmd.command === "ls-refs") {
@@ -467,23 +483,30 @@ interface V2StreamCommand {
  */
 async function readV2CommandFromStream(
 	reader: StreamPktLineReader,
+	maxBytes?: number,
 ): Promise<V2StreamCommand | null> {
 	let command = "";
 	const capabilities: string[] = [];
 	const args: string[] = [];
 	let inArgs = false;
 	let gotAny = false;
+	let totalBytes = 0;
 
 	while (true) {
 		const line = await reader.readPktLine();
 		if (!line) return gotAny ? { command, capabilities, args } : null;
 
 		if (line.type === "flush") {
-			// Flush before any data = empty request (client done)
 			if (!gotAny) return null;
 			break;
 		}
 		if (line.type === "response-end") break;
+
+		totalBytes += line.raw.byteLength;
+		if (maxBytes !== undefined && totalBytes > maxBytes) {
+			throw new RequestLimitError("Request body too large");
+		}
+
 		if (line.type === "delim") {
 			inArgs = true;
 			continue;

@@ -228,12 +228,38 @@ export interface GitServerConfig<A = Auth> {
 	receiveLimits?: {
 		/** Maximum compressed/raw HTTP request body size in bytes. */
 		maxRequestBytes?: number;
-		/** Maximum decompressed HTTP request body size in bytes. */
+		/**
+		 * Maximum decompressed HTTP request body size in bytes.
+		 *
+		 * Guards against gzip decompression bombs (`Content-Encoding: gzip`).
+		 * Only applies to HTTP — SSH has no application-layer compression,
+		 * so `maxRequestBytes` alone is sufficient there.
+		 */
 		maxInflatedBytes?: number;
 		/** Maximum pack payload size in bytes. */
 		maxPackBytes?: number;
 		/** Maximum number of objects declared by a received pack. */
 		maxPackObjects?: number;
+	};
+
+	/**
+	 * Safety limits for incoming upload-pack (fetch/clone) requests.
+	 *
+	 * Upload-pack request bodies contain only pkt-line want/have lists,
+	 * so they are much smaller than receive-pack bodies. Defaults are
+	 * tighter than receiveLimits (10 MB raw, 20 MB inflated).
+	 */
+	fetchLimits?: {
+		/** Maximum compressed/raw HTTP request body size in bytes. */
+		maxRequestBytes?: number;
+		/**
+		 * Maximum decompressed HTTP request body size in bytes.
+		 *
+		 * Guards against gzip decompression bombs (`Content-Encoding: gzip`).
+		 * Only applies to HTTP — SSH has no application-layer compression,
+		 * so `maxRequestBytes` alone is sufficient there.
+		 */
+		maxInflatedBytes?: number;
 	};
 
 	/**

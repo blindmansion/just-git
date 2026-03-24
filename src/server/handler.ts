@@ -113,6 +113,11 @@ export function createServer<A = Auth>(
 		maxPackObjects: 250_000,
 		...config.receiveLimits,
 	};
+	const fetchLimits = {
+		maxRequestBytes: 10 * 1024 * 1024,
+		maxInflatedBytes: 20 * 1024 * 1024,
+		...config.fetchLimits,
+	};
 
 	async function resolveRepo(path: string): Promise<{ repo: GitRepo; repoId: string } | null> {
 		if (!isValidRepoId(path)) return null;
@@ -258,7 +263,7 @@ export function createServer<A = Auth>(
 						authorizedFetchSet = buildAuthorizedFetchSet(adv);
 					}
 
-					const body = await readRequestBody(req, receiveLimits);
+					const body = await readRequestBody(req, fetchLimits);
 
 					// Protocol v2: command-based dispatch
 					if (isProtocolV2(req)) {
@@ -398,6 +403,7 @@ export function createServer<A = Auth>(
 					packCache,
 					packOptions: config.packOptions,
 					receiveLimits,
+					fetchLimits,
 					auth,
 					onError: onError ? (err) => onError(err, auth) : undefined,
 				});
@@ -443,14 +449,17 @@ export function createServer<A = Auth>(
 			const chunks: Uint8Array[] = [];
 			let totalBytes = 0;
 			let tooLarge = false;
+			const parsedPathname = new URL(req.url ?? "/", "http://localhost").pathname;
+			const isUploadPack = parsedPathname.endsWith("/git-upload-pack");
+			const bodyLimit = isUploadPack ? fetchLimits.maxRequestBytes : receiveLimits.maxRequestBytes;
 			req.on("data", (chunk: Uint8Array) => {
 				if (tooLarge) return;
 				totalBytes += chunk.byteLength;
 				if (
 					req.method !== "GET" &&
 					req.method !== "HEAD" &&
-					receiveLimits.maxRequestBytes !== undefined &&
-					totalBytes > receiveLimits.maxRequestBytes
+					bodyLimit !== undefined &&
+					totalBytes > bodyLimit
 				) {
 					tooLarge = true;
 					chunks.length = 0;

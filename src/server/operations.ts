@@ -53,6 +53,11 @@ import type {
 	ServerHooks,
 } from "./types.ts";
 import { RequestLimitError } from "./errors.ts";
+import {
+	isDeferrableObjectStore,
+	type DeferrableObjectStore,
+	type PendingObjectBatch,
+} from "./storage.ts";
 
 // ── Pack cache ──────────────────────────────────────────────────────
 
@@ -576,18 +581,38 @@ function asyncIterableToStream(iterable: AsyncIterable<Uint8Array>): ReadableStr
 
 // ── Receive-pack (push handling) ────────────────────────────────────
 
+async function ingestWithTracking(
+	store: DeferrableObjectStore,
+	batch: PendingObjectBatch,
+): Promise<string[]> {
+	await store.commitPack(batch);
+	return batch.map((o) => o.hash);
+}
+
+async function rollbackIngestedObjects(repo: GitRepo, hashes: string[]): Promise<void> {
+	if (isDeferrableObjectStore(repo.objectStore)) {
+		await repo.objectStore.deleteObjects(hashes);
+	}
+}
+
 export interface ReceivePackResult {
 	updates: RefUpdate[];
 	unpackOk: boolean;
 	capabilities: string[];
 	/** Whether the request body contained a valid pkt-line flush packet. */
 	sawFlush: boolean;
+	/** Hashes of objects ingested from the pack (for rollback on hook rejection). Only populated when the object store supports deferred ingestion (server-backed stores). Undefined for VFS-backed stores. */
+	ingestedHashes?: string[];
 }
 
 /**
  * Ingest a receive-pack request: parse commands, ingest the packfile,
  * and compute enriched RefUpdate objects. Does NOT apply ref updates —
  * call `applyReceivePack` to run hooks and apply refs.
+ *
+ * Objects are persisted immediately (needed by `buildRefUpdates` for
+ * ancestry checks). If hooks later reject the push, `applyReceivePack`
+ * rolls back the ingested objects.
  */
 export async function ingestReceivePack(
 	repo: GitRepo,
@@ -597,10 +622,16 @@ export async function ingestReceivePack(
 	const { commands, packData, capabilities, sawFlush } = parseReceivePackRequest(requestBody);
 
 	let unpackOk = true;
+	let ingestedHashes: string[] | undefined;
 	if (packData.byteLength > 0) {
 		try {
 			enforcePackLimits(packData, limits);
-			await repo.objectStore.ingestPack(packData);
+			if (isDeferrableObjectStore(repo.objectStore)) {
+				const batch = await repo.objectStore.preparePack(packData);
+				ingestedHashes = await ingestWithTracking(repo.objectStore, batch);
+			} else {
+				await repo.objectStore.ingestPack(packData);
+			}
 		} catch (err) {
 			if (err instanceof RequestLimitError) throw err;
 			unpackOk = false;
@@ -608,14 +639,13 @@ export async function ingestReceivePack(
 	}
 
 	const updates = await buildRefUpdates(repo, commands, unpackOk);
-	return { updates, unpackOk, capabilities, sawFlush };
+	return { updates, unpackOk, capabilities, sawFlush, ingestedHashes };
 }
 
 /**
  * Streaming variant of `ingestReceivePack`. Accepts pre-parsed push
- * commands and a raw pack byte stream. Uses `readPackStreaming` →
- * `ingestPackStream` so pack bytes are consumed incrementally without
- * buffering the entire pack in memory.
+ * commands and a raw pack byte stream. Uses `readPackStreaming` for
+ * incremental consumption.
  *
  * The HTTP handler continues using `ingestReceivePack` (runtime buffers
  * POST bodies anyway). The SSH handler calls this directly after parsing
@@ -630,6 +660,7 @@ export async function ingestReceivePackFromStream(
 	limits?: ReceivePackLimitOptions,
 ): Promise<ReceivePackResult> {
 	let unpackOk = true;
+	let ingestedHashes: string[] | undefined;
 	const needsPack = commands.some((c) => c.newHash !== ZERO_HASH);
 	if (needsPack) {
 		try {
@@ -641,7 +672,12 @@ export async function ingestReceivePackFromStream(
 				}
 			};
 			const entries = readPackStreaming(limitPackStream(packStream, limits), externalBase);
-			await repo.objectStore.ingestPackStream(entries);
+			if (isDeferrableObjectStore(repo.objectStore)) {
+				const batch = await repo.objectStore.preparePackStream(entries);
+				ingestedHashes = await ingestWithTracking(repo.objectStore, batch);
+			} else {
+				await repo.objectStore.ingestPackStream(entries);
+			}
 		} catch (err) {
 			if (err instanceof RequestLimitError) throw err;
 			unpackOk = false;
@@ -649,7 +685,7 @@ export async function ingestReceivePackFromStream(
 	}
 
 	const updates = await buildRefUpdates(repo, commands, unpackOk);
-	return { updates, unpackOk, capabilities, sawFlush };
+	return { updates, unpackOk, capabilities, sawFlush, ingestedHashes };
 }
 
 async function buildRefUpdates(
@@ -770,6 +806,10 @@ export async function applyReceivePack<A = unknown>(
 	if (hooks?.preReceive) {
 		const result = await hooks.preReceive({ repo, repoId, updates, auth });
 		if (isRejection(result)) {
+			// Roll back ingested objects so rejected pushes leave no side effects
+			if (ingestResult.ingestedHashes?.length) {
+				await rollbackIngestedObjects(repo, ingestResult.ingestedHashes);
+			}
 			const msg = result.message ?? "pre-receive hook declined";
 			return {
 				refResults: updates.map((u) => ({ ref: u.ref, ok: false, error: msg })),

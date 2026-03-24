@@ -319,7 +319,7 @@ describe("server roundtrip", () => {
 		}
 	});
 
-	test("reproduces security-review finding: rejected pushes still ingest objects", async () => {
+	test("rejected pushes do not leave ingested objects", async () => {
 		const authServer = createServer({
 			storage: driver,
 			hooks: {
@@ -356,7 +356,7 @@ describe("server roundtrip", () => {
 			const pushResult = await client.exec("git push origin main", { cwd: "/local" });
 			expect(pushResult.exitCode).not.toBe(0);
 
-			expect(await repo.objectStore.exists(rejectedCommitHash)).toBe(true);
+			expect(await repo.objectStore.exists(rejectedCommitHash)).toBe(false);
 		} finally {
 			authSrv.stop();
 		}

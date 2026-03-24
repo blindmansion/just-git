@@ -307,9 +307,41 @@ export function createStorageAdapter(driver: Storage): StorageAdapter {
 	};
 }
 
+// ── Deferred ingestion interface ────────────────────────────────────
+
+/** Batch of parsed objects awaiting storage commit. */
+export type PendingObjectBatch = Array<{ hash: string; type: string; content: Uint8Array }>;
+
+/**
+ * Extended object store that supports two-phase pack ingestion
+ * (prepare → commit) and rollback via `deleteObjects`.
+ *
+ * The server push path uses this to ingest objects before hook
+ * evaluation, then roll back if a hook rejects the push.
+ */
+export interface DeferrableObjectStore {
+	preparePack(packData: Uint8Array): Promise<PendingObjectBatch>;
+	preparePackStream(entries: AsyncIterable<PackObject>): Promise<PendingObjectBatch>;
+	commitPack(
+		batch: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
+	): Promise<number>;
+	deleteObjects(hashes: ReadonlyArray<string>): Promise<number>;
+}
+
+/** Type guard for object stores that support two-phase ingestion + rollback. */
+export function isDeferrableObjectStore(store: unknown): store is DeferrableObjectStore {
+	return (
+		typeof store === "object" &&
+		store !== null &&
+		typeof (store as any).preparePack === "function" &&
+		typeof (store as any).commitPack === "function" &&
+		typeof (store as any).deleteObjects === "function"
+	);
+}
+
 // ── AdaptedObjectStore (private) ────────────────────────────────────
 
-class AdaptedObjectStore implements ObjectStore {
+class AdaptedObjectStore implements ObjectStore, DeferrableObjectStore {
 	private cache = new ObjectCache();
 
 	constructor(
@@ -344,8 +376,10 @@ class AdaptedObjectStore implements ObjectStore {
 		return false;
 	}
 
-	async ingestPack(packData: Uint8Array): Promise<number> {
-		if (packData.byteLength < 32) return 0;
+	async preparePack(
+		packData: Uint8Array,
+	): Promise<Array<{ hash: string; type: string; content: Uint8Array }>> {
+		if (packData.byteLength < 32) return [];
 		const view = new DataView(packData.buffer, packData.byteOffset, packData.byteLength);
 
 		const sig = view.getUint32(0);
@@ -358,7 +392,7 @@ class AdaptedObjectStore implements ObjectStore {
 		}
 
 		const numObjects = view.getUint32(8);
-		if (numObjects === 0) return 0;
+		if (numObjects === 0) return [];
 
 		const driver = this.driver;
 		const repoId = this.repoId;
@@ -371,21 +405,40 @@ class AdaptedObjectStore implements ObjectStore {
 			return { type: obj.type, content: new Uint8Array(obj.content) };
 		});
 
-		await driver.putObjects(
-			repoId,
-			entries.map((e) => ({ hash: e.hash, type: e.type, content: e.content })),
-		);
-		return entries.length;
+		return entries.map((e) => ({ hash: e.hash, type: e.type, content: e.content }));
 	}
 
-	async ingestPackStream(entries: AsyncIterable<PackObject>): Promise<number> {
+	async preparePackStream(
+		entries: AsyncIterable<PackObject>,
+	): Promise<Array<{ hash: string; type: string; content: Uint8Array }>> {
 		const batch: Array<{ hash: string; type: string; content: Uint8Array }> = [];
 		for await (const entry of entries) {
 			batch.push({ hash: entry.hash, type: entry.type, content: entry.content });
 		}
+		return batch;
+	}
+
+	async commitPack(
+		batch: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
+	): Promise<number> {
 		if (batch.length === 0) return 0;
 		await this.driver.putObjects(this.repoId, batch);
 		return batch.length;
+	}
+
+	async ingestPack(packData: Uint8Array): Promise<number> {
+		const batch = await this.preparePack(packData);
+		return this.commitPack(batch);
+	}
+
+	async ingestPackStream(entries: AsyncIterable<PackObject>): Promise<number> {
+		const batch = await this.preparePackStream(entries);
+		return this.commitPack(batch);
+	}
+
+	async deleteObjects(hashes: ReadonlyArray<string>): Promise<number> {
+		if (hashes.length === 0) return 0;
+		return this.driver.deleteObjects(this.repoId, hashes);
 	}
 
 	async findByPrefix(prefix: string): Promise<ObjectId[]> {
