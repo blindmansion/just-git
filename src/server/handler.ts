@@ -25,11 +25,14 @@ import {
 	advertiseRefsWithHooks,
 	applyReceivePack,
 	buildRefAdvertisementBytes,
+	buildV2CapabilityAdvertisementBytes,
+	handleLsRefs,
 	handleUploadPack,
+	handleV2Fetch,
 	ingestReceivePack,
 	resolveRefUpdates,
 } from "./operations.ts";
-import { buildReportStatus } from "./protocol.ts";
+import { buildReportStatus, parseV2CommandRequest } from "./protocol.ts";
 import { handleSshSession } from "./ssh-session.ts";
 import { gcRepo } from "./gc.ts";
 import { createStorageAdapter, type CreateRepoOptions } from "./storage.ts";
@@ -186,6 +189,28 @@ export function createServer<S = Session>(config: GitServerConfig<S>): GitServer
 					const resolved = await resolveRepo(requestPath);
 					if (!resolved) return new Response("Not Found", { status: 404 });
 
+					// Protocol v2: return capability advertisement for upload-pack
+					const isV2 = isProtocolV2(req);
+					if (isV2 && service === "git-upload-pack") {
+						const adv = await advertiseRefsWithHooks(
+							resolved.repo,
+							resolved.repoId,
+							service,
+							hooks,
+							session,
+						);
+						if (isRejection(adv)) {
+							return new Response(adv.message ?? "Forbidden", { status: 403 });
+						}
+						const body = buildV2CapabilityAdvertisementBytes();
+						return new Response(body, {
+							headers: {
+								"Content-Type": `application/x-${service}-advertisement`,
+								"Cache-Control": "no-cache",
+							},
+						});
+					}
+
 					const adv = await advertiseRefsWithHooks(
 						resolved.repo,
 						resolved.repoId,
@@ -213,6 +238,41 @@ export function createServer<S = Session>(config: GitServerConfig<S>): GitServer
 					if (!resolved) return new Response("Not Found", { status: 404 });
 
 					const body = await readRequestBody(req);
+
+					// Protocol v2: command-based dispatch
+					if (isProtocolV2(req)) {
+						const cmd = parseV2CommandRequest(body);
+						const contentType = "application/x-git-upload-pack-result";
+
+						if (cmd.command === "ls-refs") {
+							const result = await handleLsRefs(
+								resolved.repo,
+								resolved.repoId,
+								cmd.args,
+								hooks,
+								session,
+							);
+							if (isRejection(result)) {
+								return new Response(result.message ?? "Forbidden", { status: 403 });
+							}
+							return new Response(result, { headers: { "Content-Type": contentType } });
+						}
+
+						if (cmd.command === "fetch") {
+							const responseBody = await handleV2Fetch(resolved.repo, cmd.args, {
+								cache: packCache,
+								cacheKey: resolved.repoId,
+								noDelta: config.packOptions?.noDelta,
+								deltaWindow: config.packOptions?.deltaWindow,
+							});
+							return new Response(responseBody, {
+								headers: { "Content-Type": contentType },
+							});
+						}
+
+						return new Response(`unknown command: ${cmd.command}`, { status: 400 });
+					}
+
 					const responseBody = await handleUploadPack(resolved.repo, body, {
 						cache: packCache,
 						cacheKey: resolved.repoId,
@@ -412,6 +472,11 @@ export function createServer<S = Session>(config: GitServerConfig<S>): GitServer
 }
 
 // ── Internal helpers ────────────────────────────────────────────────
+
+function isProtocolV2(req: Request): boolean {
+	const proto = req.headers.get("git-protocol");
+	return proto !== null && proto.includes("version=2");
+}
 
 function extractRepoPath(pathname: string, suffix: string): string {
 	let repoPath = pathname.slice(0, -suffix.length);

@@ -106,9 +106,17 @@ describe("parsePktLineStream", () => {
 		expect(() => parsePktLineStream(enc.encode("ZZZZ"))).toThrow("Invalid pkt-line length");
 	});
 
-	test("throws on length 1, 2, 3 (below minimum)", () => {
-		expect(() => parsePktLineStream(enc.encode("0001"))).toThrow("Invalid pkt-line length");
-		expect(() => parsePktLineStream(enc.encode("0002"))).toThrow("Invalid pkt-line length");
+	test("parses delim-pkt (0001) and response-end-pkt (0002)", () => {
+		const delim = parsePktLineStream(enc.encode("0001"));
+		expect(delim).toHaveLength(1);
+		expect(delim[0].type).toBe("delim");
+
+		const respEnd = parsePktLineStream(enc.encode("0002"));
+		expect(respEnd).toHaveLength(1);
+		expect(respEnd[0].type).toBe("response-end");
+	});
+
+	test("throws on length 3 (below minimum)", () => {
 		expect(() => parsePktLineStream(enc.encode("0003"))).toThrow("Invalid pkt-line length");
 	});
 

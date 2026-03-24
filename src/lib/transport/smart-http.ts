@@ -97,6 +97,7 @@ function parseRefAdvertisement(pktLines: PktLine[], service: string): DiscoverRe
 	for (; idx < pktLines.length; idx++) {
 		const line = pktLines[idx];
 		if (!line || line.type === "flush") break;
+		if (line.type !== "data") continue;
 
 		const raw = line.data;
 		const nulIdx = raw.indexOf(0);

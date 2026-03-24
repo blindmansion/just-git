@@ -162,7 +162,7 @@ Binary format codecs for Git's packfile and index formats, plus compression prim
 Object transfer between repositories:
 
 1. **Transport** (`lib/transport/transport.ts`) — abstracts inter-repo communication. `LocalTransport` handles same-filesystem transfers; `SmartHttpTransport` handles real Git servers via HTTP(S).
-2. **Smart HTTP protocol** (`lib/transport/smart-http.ts` + `lib/transport/pkt-line.ts`) — Git Smart HTTP Protocol v1 client. pkt-line framing, side-band-64k demuxing, capability negotiation, ref discovery, fetch-pack, and push-pack.
+2. **Smart HTTP protocol** (`lib/transport/smart-http.ts` + `lib/transport/pkt-line.ts`) — Git Smart HTTP Protocol client (v1). pkt-line framing, side-band-64k demuxing, capability negotiation, ref discovery, fetch-pack, and push-pack.
 3. **Object walk** (`lib/transport/object-walk.ts`) — reachability-based enumeration for pack negotiation (want/have).
 4. **Refspecs** (`lib/transport/refspec.ts`) — maps remote refs to local refs during fetch/push.
 
@@ -206,7 +206,7 @@ Key behaviors:
 - `resolve?: (path: string) => string | null` — maps request path to repo ID. Default: identity (URL path = repo ID).
 - `autoCreate?: boolean | { defaultBranch?: string }` — automatically create repos on first access.
 - `server.fetch(request)` — web-standard HTTP handler (Bun.serve, Hono, CF Workers, etc.).
-- `server.handleSession(command, channel, session?)` — SSH session handler. Accepts `SshChannel` (web-standard streams) and optional `SshSessionInfo` (username + optional `metadata`). Returns exit code. Only protocol v1 is supported over SSH; clients using `GIT_PROTOCOL_VERSION=2` receive a clear error message.
+- `server.handleSession(command, channel, session?)` — SSH session handler. Accepts `SshChannel` (web-standard streams) and optional `SshSessionInfo` (username + optional `metadata`). Returns exit code. Supports protocol v1 and v2 (upload-pack only; receive-pack uses v1).
 - `server.createRepo(id, options?)` — create a new repo. Throws if it already exists.
 - `server.repo(id)` — get a repo by ID, or `null` if it doesn't exist.
 - `server.requireRepo(id)` — get a repo by ID, or throw if it doesn't exist.
@@ -329,7 +329,7 @@ All helpers accept revision strings via `resolveRevisionRepo` (from `lib/rev-par
 | `lib/pack/crc32.ts`            | CRC32 (ISO 3309) for pack index construction                                                                                                                          |
 | `lib/pack/zlib.ts`             | Zlib deflate/inflate abstraction                                                                                                                                      |
 | `lib/transport/transport.ts`   | Transport layer: `LocalTransport` and `SmartHttpTransport`                                                                                                            |
-| `lib/transport/smart-http.ts`  | Git Smart HTTP Protocol v1 client                                                                                                                                     |
+| `lib/transport/smart-http.ts`  | Git Smart HTTP Protocol client (v1)                                                                                                                                   |
 | `lib/transport/pkt-line.ts`    | pkt-line wire framing and side-band-64k demuxing                                                                                                                      |
 | `lib/transport/object-walk.ts` | Object reachability enumeration for pack negotiation                                                                                                                  |
 | `lib/transport/refspec.ts`     | Refspec parsing and ref mapping                                                                                                                                       |

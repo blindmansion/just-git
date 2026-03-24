@@ -8,7 +8,10 @@ export {
 	collectRefs,
 	buildRefAdvertisementBytes,
 	buildRefListBytes,
+	buildV2CapabilityAdvertisementBytes,
+	handleLsRefs,
 	handleUploadPack,
+	handleV2Fetch,
 	ingestReceivePack,
 	ingestReceivePackFromStream,
 	resolveRefUpdates,
@@ -16,8 +19,21 @@ export {
 export type { AdvertiseResult, ApplyReceivePackOptions, ReceivePackResult } from "./operations.ts";
 
 // Transport-agnostic protocol primitives (advanced)
-export { buildRefListPktLines } from "./protocol.ts";
-export type { PushCommand } from "./protocol.ts";
+export {
+	buildRefListPktLines,
+	buildV2CapabilityAdvertisement,
+	buildV2FetchResponse,
+	buildV2LsRefsResponse,
+	parseV2CommandRequest,
+	parseV2FetchArgs,
+} from "./protocol.ts";
+export type {
+	PushCommand,
+	V2CommandRequest,
+	V2FetchRequest,
+	V2FetchResponseOptions,
+	V2LsRefsRef,
+} from "./protocol.ts";
 
 // GC
 export type { GcOptions, GcResult } from "./gc.ts";

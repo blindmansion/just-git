@@ -7,10 +7,16 @@ const decoder = new TextDecoder();
 
 const MAX_PKT_LEN = 65520; // 4 header + 65516 payload
 const FLUSH = new Uint8Array([0x30, 0x30, 0x30, 0x30]); // "0000"
+const DELIM = new Uint8Array([0x30, 0x30, 0x30, 0x31]); // "0001"
+const RESPONSE_END = new Uint8Array([0x30, 0x30, 0x30, 0x32]); // "0002"
 
 // ── Types ────────────────────────────────────────────────────────────
 
-export type PktLine = { type: "data"; data: Uint8Array } | { type: "flush" };
+export type PktLine =
+	| { type: "data"; data: Uint8Array }
+	| { type: "flush" }
+	| { type: "delim" }
+	| { type: "response-end" };
 
 interface SidebandResult {
 	packData: Uint8Array;
@@ -38,6 +44,14 @@ export function encodePktLine(data: string | Uint8Array): Uint8Array {
 
 export function flushPkt(): Uint8Array {
 	return FLUSH.slice();
+}
+
+export function delimPkt(): Uint8Array {
+	return DELIM.slice();
+}
+
+export function responseEndPkt(): Uint8Array {
+	return RESPONSE_END.slice();
 }
 
 export function concatPktLines(...lines: Uint8Array[]): Uint8Array {
@@ -71,6 +85,16 @@ export function parsePktLineStream(buf: Uint8Array): PktLine[] {
 			offset += 4;
 			continue;
 		}
+		if (len === 1) {
+			lines.push({ type: "delim" });
+			offset += 4;
+			continue;
+		}
+		if (len === 2) {
+			lines.push({ type: "response-end" });
+			offset += 4;
+			continue;
+		}
 		if (len < 4) {
 			throw new Error(`Invalid pkt-line length: ${len}`);
 		}
@@ -89,7 +113,7 @@ export function parsePktLineStream(buf: Uint8Array): PktLine[] {
  * Read pkt-line text, stripping optional trailing LF.
  */
 export function pktLineText(line: PktLine): string {
-	if (line.type === "flush") return "";
+	if (line.type !== "data") return "";
 	const text = decoder.decode(line.data);
 	return text.endsWith("\n") ? text.slice(0, -1) : text;
 }
@@ -107,7 +131,7 @@ export function demuxSideband(pktLines: PktLine[]): SidebandResult {
 	let totalPackBytes = 0;
 
 	for (const line of pktLines) {
-		if (line.type === "flush") continue;
+		if (line.type !== "data") continue;
 		if (line.data.byteLength === 0) continue;
 
 		const band = line.data[0];

@@ -12,7 +12,10 @@ import {
 	PackCache,
 	advertiseRefsWithHooks,
 	buildRefListBytes,
+	buildV2CapabilityAdvertisementBytes,
+	handleLsRefs,
 	handleUploadPack,
+	handleV2Fetch,
 	ingestReceivePackFromStream,
 	applyReceivePack,
 } from "./operations.ts";
@@ -78,14 +81,6 @@ export async function handleSshSession<S = Session>(
 			return 128;
 		}
 
-		if (parsed.protocolV2) {
-			sendStderr(
-				channel,
-				"fatal: protocol version 2 is not supported over SSH; set GIT_PROTOCOL_VERSION=1\n",
-			);
-			return 128;
-		}
-
 		const { service, repoPath: requestPath } = parsed;
 		const resolved = await resolveRepo(requestPath);
 		if (!resolved) {
@@ -94,6 +89,31 @@ export async function handleSshSession<S = Session>(
 		}
 		const { repo, repoId } = resolved;
 
+		// Protocol v2 over SSH: send capability advertisement, then command loop
+		if (parsed.protocolV2 && service === "git-upload-pack") {
+			const adv = await advertiseRefsWithHooks(repo, repoId, service, hooks, session);
+			if (isRejection(adv)) {
+				sendStderr(channel, `fatal: ${adv.message ?? "access denied"}\n`);
+				return 128;
+			}
+
+			await writer.write(buildV2CapabilityAdvertisementBytes());
+
+			const streamReader = new StreamPktLineReader(channel.readable);
+			try {
+				await handleV2SshCommandLoop(streamReader, writer, repo, repoId, {
+					hooks,
+					packCache,
+					packOptions,
+					session,
+				});
+			} finally {
+				streamReader.release();
+			}
+			return 0;
+		}
+
+		// V2 not applicable for receive-pack — fall through to v1
 		const adv = await advertiseRefsWithHooks(repo, repoId, service, hooks, session);
 		if (isRejection(adv)) {
 			sendStderr(channel, `fatal: ${adv.message ?? "access denied"}\n`);
@@ -250,12 +270,18 @@ class StreamPktLineReader {
 
 	/** Read a single pkt-line. Returns null on EOF before a complete line. */
 	async readPktLine(): Promise<
-		{ type: "flush"; raw: Uint8Array } | { type: "data"; raw: Uint8Array; text: string } | null
+		| { type: "flush"; raw: Uint8Array }
+		| { type: "delim"; raw: Uint8Array }
+		| { type: "response-end"; raw: Uint8Array }
+		| { type: "data"; raw: Uint8Array; text: string }
+		| null
 	> {
 		if (!(await this.fill(4))) return null;
 		const lenHex = decoder.decode(this.buf.subarray(0, 4));
 		const len = parseInt(lenHex, 16);
 		if (len === 0) return { type: "flush", raw: this.consume(4) };
+		if (len === 1) return { type: "delim", raw: this.consume(4) };
+		if (len === 2) return { type: "response-end", raw: this.consume(4) };
 		if (len < 4) return null;
 		if (!(await this.fill(len))) return null;
 		const raw = new Uint8Array(this.consume(len));
@@ -320,6 +346,7 @@ async function readReceivePackCommands(
 		const line = await reader.readPktLine();
 		if (!line) break;
 		if (line.type === "flush") break;
+		if (line.type !== "data") continue;
 
 		let text = line.text;
 		if (text.endsWith("\n")) text = text.slice(0, -1);
@@ -347,6 +374,102 @@ async function readReceivePackCommands(
 	}
 
 	return { commands, capabilities };
+}
+
+// ── V2 SSH command loop ─────────────────────────────────────────────
+
+interface V2SshCommandLoopOptions<S> {
+	hooks?: ServerHooks<S>;
+	packCache?: PackCache;
+	packOptions?: { noDelta?: boolean; deltaWindow?: number };
+	session?: S;
+}
+
+/**
+ * Read v2 command requests from the SSH channel and dispatch them.
+ * Continues until the client sends a flush-pkt (empty request) or EOF.
+ * Responses end with flush-pkt (stateful connection).
+ */
+async function handleV2SshCommandLoop<S>(
+	reader: StreamPktLineReader,
+	writer: WritableStreamDefaultWriter<Uint8Array>,
+	repo: GitRepo,
+	repoId: string,
+	options: V2SshCommandLoopOptions<S>,
+): Promise<void> {
+	const { hooks, packCache, packOptions, session } = options;
+
+	while (true) {
+		const cmd = await readV2CommandFromStream(reader);
+		if (!cmd) break;
+
+		if (cmd.command === "ls-refs") {
+			const result = await handleLsRefs(repo, repoId, cmd.args, hooks, session);
+			if (isRejection(result)) break;
+			await writer.write(result);
+		} else if (cmd.command === "fetch") {
+			const result = await handleV2Fetch(repo, cmd.args, {
+				cache: packCache,
+				cacheKey: repoId,
+				noDelta: packOptions?.noDelta,
+				deltaWindow: packOptions?.deltaWindow,
+			});
+			await writeResponse(writer, result);
+		} else {
+			// Unknown command — silently ignore per v2 spec
+			break;
+		}
+	}
+}
+
+interface V2StreamCommand {
+	command: string;
+	capabilities: string[];
+	args: string[];
+}
+
+/**
+ * Read a single v2 command request from the SSH stream.
+ * Returns null on flush-pkt (empty request) or EOF.
+ */
+async function readV2CommandFromStream(
+	reader: StreamPktLineReader,
+): Promise<V2StreamCommand | null> {
+	let command = "";
+	const capabilities: string[] = [];
+	const args: string[] = [];
+	let inArgs = false;
+	let gotAny = false;
+
+	while (true) {
+		const line = await reader.readPktLine();
+		if (!line) return gotAny ? { command, capabilities, args } : null;
+
+		if (line.type === "flush") {
+			// Flush before any data = empty request (client done)
+			if (!gotAny) return null;
+			break;
+		}
+		if (line.type === "response-end") break;
+		if (line.type === "delim") {
+			inArgs = true;
+			continue;
+		}
+
+		gotAny = true;
+		let text = line.text;
+		if (text.endsWith("\n")) text = text.slice(0, -1);
+
+		if (inArgs) {
+			args.push(text);
+		} else if (text.startsWith("command=")) {
+			command = text.slice(8);
+		} else {
+			capabilities.push(text);
+		}
+	}
+
+	return command ? { command, capabilities, args } : null;
 }
 
 function concatBytes(arrays: Uint8Array[]): Uint8Array {

@@ -78,11 +78,6 @@ Incremental fetches prune the object walk but don't use client-side
 objects as delta bases. Real git's "thin packs" would reduce transfer
 size for frequent fetches.
 
-### Protocol v1 only
-
-v2 would add ref filtering (`ls-refs`), partial clones, and better
-HTTP/2 streaming. Not a necessity at current repo sizes.
-
 ---
 
 ## Implemented optimizations
@@ -172,9 +167,4 @@ data points to a specific bottleneck.
 | --------------------- | ------ | ------ | ----------------------------------------------------- |
 | E. Batch object reads | ★★★    | Medium | Repos with 50k+ objects; enumeration is 74-97ms today |
 | F. Thin packs         | ★★★    | Medium | Frequent incremental fetches of large repos           |
-| G. Protocol v2        | ★★     | Medium | Repos with 1000s of refs, or partial clone support    |
-| H. Compressed storage | ★      | Low    | Disk-backed SQLite with large object stores           |
-
-Protocol v1 remains fully supported by all Git clients and servers.
-No deprecation timeline exists. v2 is a feature for scale and partial
-clone, not a compatibility requirement.
+| G. Compressed storage | ★      | Low    | Disk-backed SQLite with large object stores           |

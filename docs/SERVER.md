@@ -216,7 +216,7 @@ new Server({ hostKeys: [hostKey] }, (client) => {
 
 `handleSession` takes an optional `SshSessionInfo` with `username` and a `metadata` bag for passing along SSH-layer details (key fingerprint, client IP, etc.) — the session builder can extract and type these.
 
-> **Protocol version:** Only Git protocol v1 is supported over SSH. Clients that set `GIT_PROTOCOL_VERSION=2` will receive a clear error: `fatal: protocol version 2 is not supported over SSH; set GIT_PROTOCOL_VERSION=1`. Configure clients with `GIT_PROTOCOL_VERSION=1` in their environment.
+> **Protocol version:** Both protocol v1 and v2 are supported over HTTP and SSH. Protocol v2 is used for upload-pack (`fetch`/`clone`) when the client requests it via `GIT_PROTOCOL_VERSION=2` or the `git-protocol` header. Receive-pack (`push`) always uses v1.
 
 ## Policy
 

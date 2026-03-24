@@ -49,15 +49,14 @@ The just-git server lets push handlers read commits, diff trees, inspect files, 
 
 ### Interop
 
-The Smart HTTP protocol surface is small and well-specified. The three endpoints (`info/refs`, `git-upload-pack`, `git-receive-pack`) with protocol v1 are sufficient for any standard git client to clone, fetch, and push.
+The Smart HTTP protocol surface is small and well-specified. Protocol v1 uses three endpoints (`info/refs`, `git-upload-pack`, `git-receive-pack`). Protocol v2 is also supported for upload-pack (`ls-refs` + `fetch` commands) over both HTTP and SSH; receive-pack uses v1.
 
 Features not implemented that generally don't matter for the target use case:
 
-| Feature                     | Matters for agents?              |
-| --------------------------- | -------------------------------- |
-| Protocol v2                 | No — v1 works, clients fall back |
-| Partial clones (`--filter`) | No                               |
-| LFS                         | Unlikely for now                 |
+| Feature                     | Matters for agents? |
+| --------------------------- | ------------------- |
+| Partial clones (`--filter`) | No                  |
+| LFS                         | Unlikely for now    |
 
 Shallow clones (`--depth`) and SSH transport are both implemented. Shallow clone support includes `computeShallowBoundary`, depth/shallow/unshallow negotiation, and the `shallow` capability in upload-pack. SSH transport is handled via `server.handleSession`.
 

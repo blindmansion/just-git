@@ -8,6 +8,7 @@
 
 import {
 	concatPktLines,
+	delimPkt,
 	encodePktLine,
 	flushPkt,
 	parsePktLineStream,
@@ -433,4 +434,313 @@ function encodeSidebandPacket(band: number, data: Uint8Array): Uint8Array {
 	payload[0] = band;
 	payload.set(data, 1);
 	return encodePktLine(payload);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Protocol v2
+// ══════════════════════════════════════════════════════════════════════
+
+// ── V2 capability advertisement ─────────────────────────────────────
+
+/**
+ * Build the v2 capability advertisement response body.
+ *
+ * Format:
+ *   PKT-LINE("version 2\n")
+ *   PKT-LINE(capability LF)
+ *   ...
+ *   flush-pkt
+ */
+export function buildV2CapabilityAdvertisement(capabilities: string[]): Uint8Array {
+	const lines: Uint8Array[] = [];
+	lines.push(encodePktLine("version 2\n"));
+	for (const cap of capabilities) {
+		lines.push(encodePktLine(`${cap}\n`));
+	}
+	lines.push(flushPkt());
+	return concatPktLines(...lines);
+}
+
+// ── V2 command request parsing ──────────────────────────────────────
+
+export interface V2CommandRequest {
+	command: string;
+	capabilities: string[];
+	args: string[];
+}
+
+/**
+ * Parse a v2 command request body.
+ *
+ * Format:
+ *   PKT-LINE("command=" key LF)
+ *   *(PKT-LINE(capability LF))
+ *   delim-pkt
+ *   *(PKT-LINE(command-arg LF))
+ *   flush-pkt
+ */
+export function parseV2CommandRequest(body: Uint8Array): V2CommandRequest {
+	const pktLines = parsePktLineStream(body);
+	let command = "";
+	const capabilities: string[] = [];
+	const args: string[] = [];
+	let inArgs = false;
+
+	for (const line of pktLines) {
+		if (line.type === "flush") break;
+		if (line.type === "response-end") break;
+		if (line.type === "delim") {
+			inArgs = true;
+			continue;
+		}
+		const text = pktLineText(line);
+		if (!text) continue;
+
+		if (inArgs) {
+			args.push(text);
+		} else if (text.startsWith("command=")) {
+			command = text.slice(8);
+		} else {
+			capabilities.push(text);
+		}
+	}
+
+	return { command, capabilities, args };
+}
+
+// ── V2 ls-refs response ─────────────────────────────────────────────
+
+export interface V2LsRefsRef {
+	hash: string;
+	name: string;
+	symrefTarget?: string;
+	peeledHash?: string;
+}
+
+/**
+ * Build the v2 ls-refs response.
+ *
+ * Format:
+ *   PKT-LINE(obj-id SP refname *(SP ref-attribute) LF)
+ *   ...
+ *   flush-pkt
+ */
+export function buildV2LsRefsResponse(refs: V2LsRefsRef[]): Uint8Array {
+	const lines: Uint8Array[] = [];
+	for (const ref of refs) {
+		let line = `${ref.hash} ${ref.name}`;
+		if (ref.symrefTarget) {
+			line += ` symref-target:${ref.symrefTarget}`;
+		}
+		if (ref.peeledHash) {
+			line += ` peeled:${ref.peeledHash}`;
+		}
+		lines.push(encodePktLine(`${line}\n`));
+	}
+	lines.push(flushPkt());
+	return concatPktLines(...lines);
+}
+
+// ── V2 fetch request parsing ────────────────────────────────────────
+
+export interface V2FetchRequest {
+	wants: string[];
+	haves: string[];
+	done: boolean;
+	clientShallows: string[];
+	depth?: number;
+	includeTag: boolean;
+	ofsDeltas: boolean;
+	wantRefs: string[];
+}
+
+/**
+ * Parse v2 fetch command args into structured request.
+ */
+export function parseV2FetchArgs(args: string[]): V2FetchRequest {
+	const wants: string[] = [];
+	const haves: string[] = [];
+	const clientShallows: string[] = [];
+	const wantRefs: string[] = [];
+	let done = false;
+	let depth: number | undefined;
+	let includeTag = false;
+	let ofsDeltas = false;
+
+	for (const arg of args) {
+		if (arg.startsWith("want ")) {
+			wants.push(arg.slice(5));
+		} else if (arg.startsWith("have ")) {
+			haves.push(arg.slice(5));
+		} else if (arg.startsWith("shallow ")) {
+			clientShallows.push(arg.slice(8));
+		} else if (arg.startsWith("deepen ")) {
+			depth = parseInt(arg.slice(7), 10);
+			if (Number.isNaN(depth)) depth = undefined;
+		} else if (arg.startsWith("want-ref ")) {
+			wantRefs.push(arg.slice(9));
+		} else if (arg === "done") {
+			done = true;
+		} else if (arg === "include-tag") {
+			includeTag = true;
+		} else if (arg === "ofs-delta") {
+			ofsDeltas = true;
+		}
+	}
+
+	return { wants, haves, done, clientShallows, depth, includeTag, ofsDeltas, wantRefs };
+}
+
+// ── V2 fetch response building ──────────────────────────────────────
+
+export interface V2FetchResponseOptions {
+	commonHashes?: string[];
+	shallowInfo?: ShallowUpdate;
+	wantedRefs?: Array<{ hash: string; name: string }>;
+}
+
+/**
+ * Build a v2 fetch response with section-based format.
+ *
+ * Per the spec, when commonHashes are provided the acknowledgments
+ * section is included (with "ready") followed by the packfile.
+ * When omitted (e.g. fresh clone with no haves), acks are skipped.
+ *
+ * Sections (separated by delim-pkt):
+ *   [acknowledgments section]
+ *   [shallow-info section]
+ *   [wanted-refs section]
+ *   packfile section
+ *
+ * The packfile section always uses sideband-64k.
+ * Terminated by flush-pkt.
+ */
+export function buildV2FetchResponse(
+	packData: Uint8Array,
+	options?: V2FetchResponseOptions,
+): Uint8Array {
+	const parts: Uint8Array[] = [];
+	const { commonHashes, shallowInfo, wantedRefs } = options ?? {};
+
+	if (commonHashes && commonHashes.length > 0) {
+		parts.push(encodePktLine("acknowledgments\n"));
+		for (const hash of commonHashes) {
+			parts.push(encodePktLine(`ACK ${hash}\n`));
+		}
+		parts.push(encodePktLine("ready\n"));
+		parts.push(delimPkt());
+	}
+
+	// Shallow-info section
+	if (shallowInfo && (shallowInfo.shallow.length > 0 || shallowInfo.unshallow.length > 0)) {
+		parts.push(encodePktLine("shallow-info\n"));
+		for (const hash of shallowInfo.shallow) {
+			parts.push(encodePktLine(`shallow ${hash}\n`));
+		}
+		for (const hash of shallowInfo.unshallow) {
+			parts.push(encodePktLine(`unshallow ${hash}\n`));
+		}
+		parts.push(delimPkt());
+	}
+
+	// Wanted-refs section
+	if (wantedRefs && wantedRefs.length > 0) {
+		parts.push(encodePktLine("wanted-refs\n"));
+		for (const ref of wantedRefs) {
+			parts.push(encodePktLine(`${ref.hash} ${ref.name}\n`));
+		}
+		parts.push(delimPkt());
+	}
+
+	// Packfile section (always sideband-64k)
+	parts.push(encodePktLine("packfile\n"));
+	let offset = 0;
+	while (offset < packData.byteLength) {
+		const chunkSize = Math.min(SIDEBAND_MAX_PAYLOAD, packData.byteLength - offset);
+		parts.push(encodeSidebandPacket(1, packData.subarray(offset, offset + chunkSize)));
+		offset += chunkSize;
+	}
+	parts.push(flushPkt());
+
+	return concatPktLines(...parts);
+}
+
+/**
+ * Build a v2 fetch acknowledgments-only response (no packfile).
+ * Sent when the server needs more negotiation rounds.
+ *
+ * When `ready` is true, includes the `ready` line to tell the client
+ * the server has enough common objects and expects `done` next.
+ */
+export function buildV2FetchAcknowledgments(commonHashes: string[], ready?: boolean): Uint8Array {
+	const parts: Uint8Array[] = [];
+	parts.push(encodePktLine("acknowledgments\n"));
+	if (commonHashes.length > 0) {
+		for (const hash of commonHashes) {
+			parts.push(encodePktLine(`ACK ${hash}\n`));
+		}
+	} else {
+		parts.push(encodePktLine("NAK\n"));
+	}
+	if (ready) {
+		parts.push(encodePktLine("ready\n"));
+	}
+	parts.push(flushPkt());
+	return concatPktLines(...parts);
+}
+
+/**
+ * Streaming variant of v2 fetch response. Yields section headers and
+ * pack data incrementally.
+ */
+export async function* buildV2FetchResponseStreaming(
+	packChunks: AsyncIterable<Uint8Array>,
+	options?: V2FetchResponseOptions,
+): AsyncGenerator<Uint8Array> {
+	const { commonHashes, shallowInfo, wantedRefs } = options ?? {};
+
+	if (commonHashes && commonHashes.length > 0) {
+		const ackParts: Uint8Array[] = [];
+		ackParts.push(encodePktLine("acknowledgments\n"));
+		for (const hash of commonHashes) {
+			ackParts.push(encodePktLine(`ACK ${hash}\n`));
+		}
+		ackParts.push(encodePktLine("ready\n"));
+		ackParts.push(delimPkt());
+		yield concatPktLines(...ackParts);
+	}
+
+	if (shallowInfo && (shallowInfo.shallow.length > 0 || shallowInfo.unshallow.length > 0)) {
+		const shallowParts: Uint8Array[] = [];
+		shallowParts.push(encodePktLine("shallow-info\n"));
+		for (const hash of shallowInfo.shallow) {
+			shallowParts.push(encodePktLine(`shallow ${hash}\n`));
+		}
+		for (const hash of shallowInfo.unshallow) {
+			shallowParts.push(encodePktLine(`unshallow ${hash}\n`));
+		}
+		shallowParts.push(delimPkt());
+		yield concatPktLines(...shallowParts);
+	}
+
+	if (wantedRefs && wantedRefs.length > 0) {
+		const refParts: Uint8Array[] = [];
+		refParts.push(encodePktLine("wanted-refs\n"));
+		for (const ref of wantedRefs) {
+			refParts.push(encodePktLine(`${ref.hash} ${ref.name}\n`));
+		}
+		refParts.push(delimPkt());
+		yield concatPktLines(...refParts);
+	}
+
+	yield encodePktLine("packfile\n");
+	for await (const chunk of packChunks) {
+		let offset = 0;
+		while (offset < chunk.byteLength) {
+			const chunkSize = Math.min(SIDEBAND_MAX_PAYLOAD, chunk.byteLength - offset);
+			yield encodeSidebandPacket(1, chunk.subarray(offset, offset + chunkSize));
+			offset += chunkSize;
+		}
+	}
+	yield flushPkt();
 }
