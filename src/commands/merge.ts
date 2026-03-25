@@ -490,7 +490,10 @@ async function handleSquashMerge(
 	const diffstat = await formatDiffStat(gitCtx, headCommit.tree, treeHash);
 	const mergeMessages = result.messages.length > 0 ? `${result.messages.join("\n")}\n` : "";
 
-	const ffSuccessPrefix = isFF ? `${ffPrefix}Fast-forward\n` : "";
+	const ffLabel = customMessage
+		? "Fast-forward (no commit created; -m option ignored)"
+		: "Fast-forward";
+	const ffSuccessPrefix = isFF ? `${ffPrefix}${ffLabel}\n` : "";
 
 	return {
 		stdout: `${ffSuccessPrefix}${mergeMessages}Squash commit -- not updating HEAD\n${isFF ? diffstat : ""}`,

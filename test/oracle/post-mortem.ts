@@ -641,18 +641,11 @@ async function analyzeMergeDivergence(
 		}
 	}
 
-	// Output-only divergence with no state errors.
+	// Worktree or output divergences with no index-level state errors.
 	if (divergences) {
 		const sErrors = divergences.filter(
 			(d) => d.severity === "error" && !OUTPUT_FIELDS.has(d.field),
 		);
-		if (sErrors.length === 0) {
-			return {
-				pattern: "rename-detection-ambiguity",
-				explanation:
-					"merge output differs but state matches — diffstat rename detection produces different file pairings",
-			};
-		}
 
 		// Worktree-only divergence with matching index: conflict marker
 		// rendering difference. Git's merge-ort (ll_merge) uses
