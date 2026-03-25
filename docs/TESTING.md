@@ -63,7 +63,7 @@ Some behaviors are intentionally different or have inherent non-determinism:
 - **Rebase planner subset**: Our planner computes exact set differences via full BFS. Git's timestamp-ordered walker can include false positives when commit timestamps are non-monotonic. Our result is mathematically more correct but occasionally smaller.
 - **Conflict marker alignment**: The exact placement of conflict marker boundaries can differ between git's `xdl_merge` zealous mode and our diff3 implementation. Both produce correct, resolvable markers.
 
-These are documented in detail in the [oracle README](test/oracle/README.md).
+These are documented in detail in the [oracle README](../test/oracle/README.md).
 
 ## Unit and integration tests
 

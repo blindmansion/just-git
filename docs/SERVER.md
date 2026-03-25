@@ -629,7 +629,7 @@ const git = createGit({
 **Auth passthrough** — when both client and server are wired by the same operator, pass the auth context directly to `asNetwork` to bypass `auth.http` entirely. Server hooks receive the provided value as their `auth` parameter:
 
 ```ts
-const server = createServer<{ userId: string; roles: string[] }>({
+const server = createServer({
   auth: { http: (req) => parseToken(req) }, // used for real HTTP clients
   hooks: {
     preReceive: ({ auth }) => {
@@ -695,4 +695,4 @@ await server.close({ signal: AbortSignal.timeout(5000) });
 
 ---
 
-For protocol details, CAS semantics, interoperability notes, and design rationale, see [`src/server/DESIGN.md`](src/server/DESIGN.md).
+For protocol details, CAS semantics, interoperability notes, and design rationale, see [`src/server/DESIGN.md`](../src/server/DESIGN.md).

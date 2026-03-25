@@ -1090,4 +1090,58 @@ import type { GitHooks } from "../../src";
 	console.log("SERVER in-process client: hooks fire through asNetwork OK");
 }
 
+// ── SERVER: Auth passthrough via asNetwork ───────────────────────────
+
+{
+	let receivedAuth: { userId: string; roles: string[] } | undefined;
+
+	const server = createServer({
+		auth: { http: (_req) => ({ userId: "http-user", roles: ["read"] }) },
+		hooks: {
+			preReceive: ({ auth }) => {
+				receivedAuth = auth;
+				if (!auth.roles.includes("push")) return { reject: true };
+			},
+		},
+	});
+	await server.createRepo("auth-test");
+
+	const network = server.asNetwork("http://git", {
+		userId: "agent-1",
+		roles: ["push", "read"],
+	});
+	const git = createGit({ network });
+
+	const bash = new Bash({ fs: new InMemoryFs(), cwd: "/", customCommands: [git] });
+	await bash.exec("git clone http://git/auth-test /work", {
+		env: {
+			GIT_AUTHOR_NAME: "Alice",
+			GIT_AUTHOR_EMAIL: "alice@example.com",
+			GIT_COMMITTER_NAME: "Alice",
+			GIT_COMMITTER_EMAIL: "alice@example.com",
+		},
+	});
+	await bash.exec("echo 'hello' > /work/file.txt");
+	await bash.exec("git add .", { cwd: "/work" });
+	await bash.exec('git commit -m "init"', {
+		cwd: "/work",
+		env: {
+			GIT_AUTHOR_NAME: "Alice",
+			GIT_AUTHOR_EMAIL: "alice@example.com",
+			GIT_COMMITTER_NAME: "Alice",
+			GIT_COMMITTER_EMAIL: "alice@example.com",
+		},
+	});
+	const push = await bash.exec("git push origin main", { cwd: "/work" });
+	console.assert(push.exitCode === 0, "auth passthrough push should succeed");
+	console.assert(receivedAuth !== undefined, "preReceive should have fired");
+	console.assert(
+		receivedAuth!.userId === "agent-1",
+		"hook should receive passthrough auth, not http auth",
+	);
+	console.assert(receivedAuth!.roles.includes("push"), "hook should see passthrough roles");
+
+	console.log("SERVER in-process client: auth passthrough OK");
+}
+
 console.log("\nAll doc examples verified.");
