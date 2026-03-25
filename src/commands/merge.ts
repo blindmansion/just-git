@@ -444,6 +444,11 @@ async function handleSquashMerge(
 			await logRef(gitCtx, env, "HEAD", headHash, headHash, `merge ${branchName}: updating HEAD`);
 		}
 		const failure = applyResult as ApplyMergeFailure;
+		if (isFF) {
+			// FF squash merges use checkout_fast_forward() in real git (unpack-trees),
+			// which doesn't produce the merge-ort strategy trailer.
+			failure.stderr = failure.stderr.replace(/Merge with strategy ort failed\.\n$/, "");
+		}
 		if (ffPrefix) {
 			failure.stdout = ffPrefix + failure.stdout;
 		}

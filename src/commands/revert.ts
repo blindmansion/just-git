@@ -16,6 +16,7 @@ import {
 	requireGitContext,
 	requireHead,
 	requireNoConflicts,
+	stripCommentLines,
 	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
 import { formatCommitSummary } from "../lib/commit-summary.ts";
@@ -30,6 +31,7 @@ import { readCommit } from "../lib/object-db.ts";
 import {
 	clearCherryPickState,
 	clearRevertState,
+	deleteStateFile,
 	readStateFile,
 	writeStateFile,
 } from "../lib/operation-state.ts";
@@ -416,10 +418,19 @@ async function handleContinue(
 	const conflictErr = requireNoConflicts(index, "Committing");
 	if (conflictErr) return conflictErr;
 
-	const messageText = await readStateFile(gitCtx, "MERGE_MSG");
+	let messageText = await readStateFile(gitCtx, "MERGE_MSG");
 	if (!messageText) {
 		return err("Aborting commit due to empty commit message.\n", 1);
 	}
+
+	// Real git's revert --continue runs `git commit` internally.
+	// prepare_to_commit() reads both SQUASH_MSG and MERGE_MSG when
+	// present — SQUASH_MSG is prepended to the message buffer.
+	const squashMsg = await readStateFile(gitCtx, "SQUASH_MSG");
+	if (squashMsg) {
+		messageText = squashMsg + messageText;
+	}
+	messageText = stripCommentLines(messageText);
 
 	const stage0Entries = getStage0Entries(index);
 	const treeHash = await buildTreeFromIndex(gitCtx, stage0Entries);
@@ -455,6 +466,7 @@ async function handleContinue(
 
 	await clearRevertState(gitCtx);
 	await clearCherryPickState(gitCtx);
+	await deleteStateFile(gitCtx, "SQUASH_MSG");
 
 	const head = await readHead(gitCtx);
 	const revertSubject = firstLine(message);
