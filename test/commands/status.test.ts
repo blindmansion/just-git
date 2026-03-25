@@ -485,6 +485,38 @@ describe("git status", () => {
 			expect(lines[0]).toBe("## main");
 			expect(lines[1]).toContain("M README.md");
 		});
+
+		test("shows upstream and behind count in short branch header", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("mkdir remote && cd remote && git init --bare");
+			await bash.exec("git clone /repo/remote local");
+			await bash.exec(
+				"cd local && echo one > f && git add f && git commit -m one && git push -u origin main",
+			);
+			await bash.exec("git clone /repo/remote other");
+			await bash.exec("cd other && echo two >> f && git commit -am two && git push");
+			await bash.exec("cd local && git fetch");
+
+			const status = await bash.exec("cd local && git status -sb");
+			const lines = status.stdout.trim().split("\n");
+			expect(lines[0]).toBe("## main...origin/main [behind 1]");
+		});
+
+		test("shows upstream and behind count in porcelain branch header", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("mkdir remote && cd remote && git init --bare");
+			await bash.exec("git clone /repo/remote local");
+			await bash.exec(
+				"cd local && echo one > f && git add f && git commit -m one && git push -u origin main",
+			);
+			await bash.exec("git clone /repo/remote other");
+			await bash.exec("cd other && echo two >> f && git commit -am two && git push");
+			await bash.exec("cd local && git fetch");
+
+			const status = await bash.exec("cd local && git status --porcelain -b");
+			const lines = status.stdout.trim().split("\n");
+			expect(lines[0]).toBe("## main...origin/main [behind 1]");
+		});
 	});
 
 	describe("unmerged paths (merge conflicts)", () => {

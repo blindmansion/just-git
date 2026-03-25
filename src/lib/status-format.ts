@@ -565,7 +565,7 @@ function formatMergeStatusEntry(status: string, path: string): string {
 
 // ── Tracking info ───────────────────────────────────────────────────
 
-interface TrackingInfo {
+export interface TrackingInfo {
 	upstream: string;
 	ahead: number;
 	behind: number;

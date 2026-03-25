@@ -1,13 +1,17 @@
 import type { GitExtensions } from "../git.ts";
 import { comparePaths, isCommandError, requireGitContext } from "../lib/command-utils.ts";
+import { readConfig } from "../lib/config.ts";
 import { readIndex } from "../lib/index.ts";
 import { branchNameFromRef, readHead, resolveHead } from "../lib/refs.ts";
 import {
 	collapseUntrackedDirs,
+	formatBranchTrackingInfo,
 	generateLongFormStatus,
+	getTrackingInfo,
 	getStagedChanges,
 	getUnmergedPaths,
 	type StatusEntry,
+	type TrackingInfo,
 } from "../lib/status-format.ts";
 import { diffIndexToWorkTree } from "../lib/worktree.ts";
 import { type Command, f } from "../parse/index.ts";
@@ -34,10 +38,19 @@ export function registerStatusCommand(parent: Command, ext?: GitExtensions) {
 			const head = await readHead(gitCtx);
 			const headHash = await resolveHead(gitCtx);
 			let branchName: string;
+			let branchHeader: string | null = null;
 			if (head && head.type === "symbolic") {
 				branchName = branchNameFromRef(head.target);
+				if (args.branch) {
+					const config = await readConfig(gitCtx);
+					const tracking = await getTrackingInfo(gitCtx, config, branchName);
+					branchHeader = formatShortBranchHeader(branchName, tracking);
+				}
 			} else {
 				branchName = "HEAD detached";
+				if (args.branch) {
+					branchHeader = "## HEAD (no branch)";
+				}
 			}
 			const index = await readIndex(gitCtx);
 			const unmerged = getUnmergedPaths(index);
@@ -59,12 +72,11 @@ export function registerStatusCommand(parent: Command, ext?: GitExtensions) {
 			const collapsedUntracked = collapseUntrackedDirs(untracked, trackedPaths);
 
 			const stdout = formatShortStatus(
-				branchName,
+				branchHeader,
 				staged,
 				unstaged,
 				unmerged,
 				collapsedUntracked,
-				args.branch,
 			);
 			return { stdout, stderr: "", exitCode: 0 };
 		},
@@ -115,21 +127,16 @@ function unstagedCode(status: string): string {
  * Format: "XY path" or "XY old -> new" for renames, one per line.
  */
 function formatShortStatus(
-	branchName: string,
+	branchHeader: string | null,
 	staged: StatusEntry[],
 	unstaged: StatusEntry[],
 	unmerged: StatusEntry[],
 	collapsedUntracked: string[],
-	showBranch: boolean,
 ): string {
 	const lines: string[] = [];
 
-	if (showBranch) {
-		if (branchName === "HEAD detached") {
-			lines.push("## HEAD (no branch)");
-		} else {
-			lines.push(`## ${branchName}`);
-		}
+	if (branchHeader) {
+		lines.push(branchHeader);
 	}
 
 	// Build lookup maps for merging XY codes
@@ -177,6 +184,13 @@ function formatShortStatus(
 
 	if (lines.length === 0) return "";
 	return `${lines.join("\n")}\n`;
+}
+
+function formatShortBranchHeader(branchName: string, tracking: TrackingInfo | null): string {
+	if (!tracking) return `## ${branchName}`;
+	const base = `## ${branchName}...${tracking.upstream}`;
+	const suffix = formatBranchTrackingInfo(tracking, false);
+	return suffix ? `${base} ${suffix}` : base;
 }
 
 /**
