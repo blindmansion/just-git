@@ -25,6 +25,7 @@ export {
 	blame,
 	countAheadBehind,
 	diffCommits,
+	formatDiff,
 	diffTrees,
 	findMergeBases,
 	flattenTree,
@@ -35,6 +36,7 @@ export {
 	type BlameEntry,
 	type CommitInfo,
 	type DiffHunk,
+	type DiffOptions,
 	type FileDiff,
 } from "./diffing.ts";
 

@@ -6,6 +6,7 @@ import {
 } from "../lib/commit-walk.ts";
 import {
 	buildHunks,
+	formatUnifiedDiff,
 	myersDiff,
 	splitLines,
 	type Hunk,
@@ -13,7 +14,7 @@ import {
 } from "../lib/diff-algorithm.ts";
 import { findAllMergeBases as _findMergeBases, isAncestor as _isAncestor } from "../lib/merge.ts";
 import { readBlobContent, readCommit as _readCommit } from "../lib/object-db.ts";
-import { detectRenames } from "../lib/rename-detection.ts";
+import { detectRenames, type RenamePair } from "../lib/rename-detection.ts";
 import { resolveRevisionRepo } from "../lib/rev-parse.ts";
 import { diffTrees as _diffTrees, flattenTree as _flattenTree } from "../lib/tree-ops.ts";
 import type { FlatTreeEntry } from "../lib/tree-ops.ts";
@@ -187,6 +188,96 @@ async function resolveToCommitHash(repo: GitRepo, refOrHash: string): Promise<st
 	throw new Error(`ref or commit '${refOrHash}' not found`);
 }
 
+/** Shared options for {@link diffCommits} and {@link formatDiff}. */
+export interface DiffOptions {
+	/** Only include files matching these paths (exact prefix match). */
+	paths?: string[];
+	/** Number of context lines around each change (default 3). */
+	contextLines?: number;
+	/** Enable rename detection (default true). */
+	renames?: boolean;
+}
+
+interface ResolvedEntry {
+	path: string;
+	oldPath?: string;
+	status: "added" | "modified" | "deleted" | "renamed";
+	oldContent: string;
+	newContent: string;
+	oldHash?: string;
+	newHash?: string;
+	oldMode?: string;
+	newMode?: string;
+	similarity?: number;
+}
+
+async function resolveDiffs(
+	repo: GitRepo,
+	base: string,
+	head: string,
+	options?: DiffOptions,
+): Promise<ResolvedEntry[]> {
+	const baseHash = await resolveToCommitHash(repo, base);
+	const headHash = await resolveToCommitHash(repo, head);
+
+	const baseCommit = await _readCommit(repo, baseHash);
+	const headCommit = await _readCommit(repo, headHash);
+
+	let diffs = await _diffTrees(repo, baseCommit.tree, headCommit.tree);
+
+	const enableRenames = options?.renames !== false;
+	const pathFilter = options?.paths;
+
+	let renames: RenamePair[] = [];
+
+	if (enableRenames) {
+		const result = await detectRenames(repo, diffs);
+		diffs = result.remaining;
+		renames = result.renames;
+	}
+
+	const entries: ResolvedEntry[] = [];
+
+	for (const entry of diffs) {
+		if (pathFilter && !pathFilter.some((p) => entry.path.startsWith(p))) continue;
+
+		entries.push({
+			path: entry.path,
+			status: entry.status as "added" | "modified" | "deleted",
+			oldContent: entry.oldHash ? await readBlobContent(repo, entry.oldHash) : "",
+			newContent: entry.newHash ? await readBlobContent(repo, entry.newHash) : "",
+			oldHash: entry.oldHash ?? undefined,
+			newHash: entry.newHash ?? undefined,
+			oldMode: entry.oldMode,
+			newMode: entry.newMode,
+		});
+	}
+
+	for (const rename of renames) {
+		if (
+			pathFilter &&
+			!pathFilter.some((p) => rename.newPath.startsWith(p) || rename.oldPath.startsWith(p))
+		)
+			continue;
+
+		entries.push({
+			path: rename.newPath,
+			oldPath: rename.oldPath,
+			status: "renamed",
+			oldContent: await readBlobContent(repo, rename.oldHash),
+			newContent: await readBlobContent(repo, rename.newHash),
+			oldHash: rename.oldHash,
+			newHash: rename.newHash,
+			oldMode: rename.oldMode,
+			newMode: rename.newMode,
+			similarity: rename.similarity,
+		});
+	}
+
+	entries.sort((a, b) => a.path.localeCompare(b.path));
+	return entries;
+}
+
 /**
  * Produce structured, line-level diffs between two commits.
  *
@@ -208,73 +299,59 @@ export async function diffCommits(
 	repo: GitRepo,
 	base: string,
 	head: string,
-	options?: {
-		/** Only include files matching these paths (exact prefix match). */
-		paths?: string[];
-		/** Number of context lines around each change (default 3). */
-		contextLines?: number;
-		/** Enable rename detection (default true). */
-		renames?: boolean;
-	},
+	options?: DiffOptions,
 ): Promise<FileDiff[]> {
-	const baseHash = await resolveToCommitHash(repo, base);
-	const headHash = await resolveToCommitHash(repo, head);
-
-	const baseCommit = await _readCommit(repo, baseHash);
-	const headCommit = await _readCommit(repo, headHash);
-
-	let diffs = await _diffTrees(repo, baseCommit.tree, headCommit.tree);
-
-	const enableRenames = options?.renames !== false;
+	const entries = await resolveDiffs(repo, base, head, options);
 	const ctx = options?.contextLines;
-	const pathFilter = options?.paths;
 
-	let renames: import("../lib/rename-detection.ts").RenamePair[] = [];
+	return entries.map((e) => ({
+		path: e.path,
+		status: e.status,
+		oldPath: e.oldPath,
+		similarity: e.similarity,
+		hunks: computeHunks(e.oldContent, e.newContent, ctx),
+	}));
+}
 
-	if (enableRenames) {
-		const result = await detectRenames(repo, diffs);
-		diffs = result.remaining;
-		renames = result.renames;
-	}
+/**
+ * Produce a unified diff (patch) string between two commits.
+ *
+ * Uses `formatUnifiedDiff` directly — the same formatter behind
+ * `git diff` — so the output is byte-identical to CLI output
+ * and natively consumable by any unified-diff parser.
+ *
+ * ```ts
+ * const diff = await formatDiff(repo, "main~1", "main");
+ * ```
+ */
+export async function formatDiff(
+	repo: GitRepo,
+	base: string,
+	head: string,
+	options?: DiffOptions,
+): Promise<string> {
+	const entries = await resolveDiffs(repo, base, head, options);
+	const ctx = options?.contextLines;
+	let output = "";
 
-	const fileDiffs: FileDiff[] = [];
-
-	for (const entry of diffs) {
-		if (pathFilter && !pathFilter.some((p) => entry.path.startsWith(p))) continue;
-
-		const oldContent = entry.oldHash ? await readBlobContent(repo, entry.oldHash) : "";
-		const newContent = entry.newHash ? await readBlobContent(repo, entry.newHash) : "";
-		const hunks = computeHunks(oldContent, newContent, ctx);
-
-		fileDiffs.push({
-			path: entry.path,
-			status: entry.status as "added" | "modified" | "deleted",
-			hunks,
+	for (const e of entries) {
+		output += formatUnifiedDiff({
+			path: e.oldPath ?? e.path,
+			oldContent: e.oldContent,
+			newContent: e.newContent,
+			oldHash: e.oldHash,
+			newHash: e.newHash,
+			oldMode: e.oldMode,
+			newMode: e.newMode,
+			isNew: e.status === "added",
+			isDeleted: e.status === "deleted",
+			renameTo: e.status === "renamed" ? e.path : undefined,
+			similarity: e.similarity,
+			contextLines: ctx,
 		});
 	}
 
-	for (const rename of renames) {
-		if (
-			pathFilter &&
-			!pathFilter.some((p) => rename.newPath.startsWith(p) || rename.oldPath.startsWith(p))
-		)
-			continue;
-
-		const oldContent = await readBlobContent(repo, rename.oldHash);
-		const newContent = await readBlobContent(repo, rename.newHash);
-		const hunks = computeHunks(oldContent, newContent, ctx);
-
-		fileDiffs.push({
-			path: rename.newPath,
-			status: "renamed",
-			oldPath: rename.oldPath,
-			similarity: rename.similarity,
-			hunks,
-		});
-	}
-
-	fileDiffs.sort((a, b) => a.path.localeCompare(b.path));
-	return fileDiffs;
+	return output;
 }
 
 // ── Commit history walk ─────────────────────────────────────────────
