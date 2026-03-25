@@ -235,4 +235,17 @@ describe("walkCommitHistory with paths filter", () => {
 		const all = await collectHashes(walkCommitHistory(repo, c2));
 		expect(all).toEqual([c2, c1]);
 	});
+
+	test("limit restricts results with paths filter", async () => {
+		const repo = await freshRepo();
+		const c1 = await commitFiles(repo, { "a.txt": "v1\n" }, [], 1);
+		const c2 = await commitFiles(repo, { "a.txt": "v2\n" }, [c1], 2);
+		const c3 = await commitFiles(repo, { "a.txt": "v3\n" }, [c2], 3);
+		const c4 = await commitFiles(repo, { "a.txt": "v4\n" }, [c3], 4);
+
+		const limited = await collectHashes(
+			walkCommitHistory(repo, c4, { paths: ["a.txt"], limit: 2 }),
+		);
+		expect(limited).toEqual([c4, c3]);
+	});
 });

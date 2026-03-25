@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Identity, GitRepo } from "../../src/lib/types.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import { createStorageAdapter } from "../../src/server/storage.ts";
-import { resolveRef } from "../../src/repo/reading.ts";
+import { branchNameFromRef, readHead, resolveRef, tagNameFromRef } from "../../src/repo/reading.ts";
 import { blame, countAheadBehind, flattenTree, walkCommitHistory } from "../../src/repo/diffing.ts";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 
@@ -474,5 +474,156 @@ describe("walkCommitHistory", () => {
 		expect(info!.message).toBe("the message\n");
 		expect(info!.author.name).toBe("Test");
 		expect(info!.committer.email).toBe("test@test.com");
+	});
+
+	test("limit restricts number of commits yielded", async () => {
+		const repo = await freshRepo();
+		const c1 = await commitFile(repo, "f.txt", "v1\n", [], 1);
+		const c2 = await commitFile(repo, "f.txt", "v2\n", [c1], 2);
+		const c3 = await commitFile(repo, "f.txt", "v3\n", [c2], 3);
+		const c4 = await commitFile(repo, "f.txt", "v4\n", [c3], 4);
+		const c5 = await commitFile(repo, "f.txt", "v5\n", [c4], 5);
+
+		const hashes: string[] = [];
+		for await (const info of walkCommitHistory(repo, c5, { limit: 3 })) {
+			hashes.push(info.hash);
+		}
+		expect(hashes).toEqual([c5, c4, c3]);
+	});
+
+	test("limit: 1 yields only the start commit", async () => {
+		const repo = await freshRepo();
+		const c1 = await commitFile(repo, "f.txt", "v1\n", [], 1);
+		const c2 = await commitFile(repo, "f.txt", "v2\n", [c1], 2);
+
+		const hashes: string[] = [];
+		for await (const info of walkCommitHistory(repo, c2, { limit: 1 })) {
+			hashes.push(info.hash);
+		}
+		expect(hashes).toEqual([c2]);
+	});
+
+	test("limit larger than history yields all commits", async () => {
+		const repo = await freshRepo();
+		const c1 = await commitFile(repo, "f.txt", "v1\n", [], 1);
+		const c2 = await commitFile(repo, "f.txt", "v2\n", [c1], 2);
+
+		const hashes: string[] = [];
+		for await (const info of walkCommitHistory(repo, c2, { limit: 100 })) {
+			hashes.push(info.hash);
+		}
+		expect(hashes).toEqual([c2, c1]);
+	});
+
+	test("limit works with firstParent", async () => {
+		const repo = await freshRepo();
+		const c1 = await commitFile(repo, "f.txt", "v1\n", [], 1);
+		const c2 = await commitFile(repo, "f.txt", "brA\n", [c1], 2);
+		const c3 = await commitFile(repo, "f.txt", "brB\n", [c1], 3);
+
+		const mergeBlob = await writeBlob(repo, "merged\n");
+		const mergeTree = await writeTree(repo, [{ name: "f.txt", hash: mergeBlob }]);
+		const merge = await createCommit(repo, {
+			tree: mergeTree,
+			parents: [c2, c3],
+			author: idAt(4),
+			committer: idAt(4),
+			message: "merge\n",
+		});
+
+		const hashes: string[] = [];
+		for await (const info of walkCommitHistory(repo, merge, { firstParent: true, limit: 2 })) {
+			hashes.push(info.hash);
+		}
+		expect(hashes).toEqual([merge, c2]);
+	});
+});
+
+// ── branchNameFromRef / tagNameFromRef ───────────────────────────────
+
+describe("branchNameFromRef", () => {
+	test("strips refs/heads/ prefix", () => {
+		expect(branchNameFromRef("refs/heads/main")).toBe("main");
+	});
+
+	test("handles nested branch names", () => {
+		expect(branchNameFromRef("refs/heads/feature/auth")).toBe("feature/auth");
+	});
+
+	test("passes through strings without the prefix", () => {
+		expect(branchNameFromRef("main")).toBe("main");
+	});
+});
+
+describe("tagNameFromRef", () => {
+	test("strips refs/tags/ prefix", () => {
+		expect(tagNameFromRef("refs/tags/v1.0")).toBe("v1.0");
+	});
+
+	test("passes through strings without the prefix", () => {
+		expect(tagNameFromRef("v1.0")).toBe("v1.0");
+	});
+});
+
+// ── readHead ────────────────────────────────────────────────────────
+
+describe("readHead", () => {
+	test("returns branch, ref, and hash for a normal repo", async () => {
+		const repo = await freshRepo();
+		const blob = await writeBlob(repo, "hello\n");
+		const tree = await writeTree(repo, [{ name: "README.md", hash: blob }]);
+		const hash = await createCommit(repo, {
+			tree,
+			parents: [],
+			author: ID,
+			committer: ID,
+			message: "initial\n",
+			branch: "main",
+		});
+
+		const head = await readHead(repo);
+		expect(head.branch).toBe("main");
+		expect(head.ref).toBe("refs/heads/main");
+		expect(head.hash).toBe(hash);
+	});
+
+	test("empty storage-backed repo is an unborn branch", async () => {
+		const repo = await freshRepo();
+
+		const head = await readHead(repo);
+		expect(head.branch).toBe("main");
+		expect(head.ref).toBe("refs/heads/main");
+		expect(head.hash).toBeNull();
+	});
+
+	test("detached HEAD returns hash but null branch/ref", async () => {
+		const repo = await freshRepo();
+		const blob = await writeBlob(repo, "hello\n");
+		const tree = await writeTree(repo, [{ name: "README.md", hash: blob }]);
+		const hash = await createCommit(repo, {
+			tree,
+			parents: [],
+			author: ID,
+			committer: ID,
+			message: "initial\n",
+		});
+
+		await repo.refStore.writeRef("HEAD", hash);
+
+		const head = await readHead(repo);
+		expect(head.branch).toBeNull();
+		expect(head.ref).toBeNull();
+		expect(head.hash).toBe(hash);
+	});
+
+	test("unborn branch returns branch/ref but null hash", async () => {
+		const repo = await freshRepo();
+
+		await repo.refStore.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
+
+		const head = await readHead(repo);
+		expect(head.branch).toBe("main");
+		expect(head.ref).toBe("refs/heads/main");
+		expect(head.hash).toBeNull();
 	});
 });

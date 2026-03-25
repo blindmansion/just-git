@@ -5,7 +5,12 @@ import {
 	readObject,
 } from "../lib/object-db.ts";
 import { parseTree } from "../lib/objects/tree.ts";
-import { resolveRef as _resolveRef, listRefs } from "../lib/refs.ts";
+import {
+	resolveRef as _resolveRef,
+	listRefs,
+	branchNameFromRef,
+	tagNameFromRef,
+} from "../lib/refs.ts";
 import { flattenTree as _flattenTree } from "../lib/tree-ops.ts";
 import { compilePattern, grepContent, type GrepMatch } from "../lib/grep.ts";
 import type { Commit, GitRepo, RefEntry, TreeEntry } from "../lib/types.ts";
@@ -25,6 +30,46 @@ export async function listBranches(repo: GitRepo): Promise<RefEntry[]> {
 /** List all tags (`refs/tags/*`). */
 export async function listTags(repo: GitRepo): Promise<RefEntry[]> {
 	return listRefs(repo, "refs/tags");
+}
+
+export { branchNameFromRef, tagNameFromRef };
+
+// ── HEAD reading ────────────────────────────────────────────────────
+
+/** Result of {@link readHead}. */
+export interface HeadInfo {
+	/** Short branch name (e.g. "main"), or null when HEAD is detached or unborn. */
+	branch: string | null;
+	/** Full ref path (e.g. "refs/heads/main"), or null when HEAD is detached or unborn. */
+	ref: string | null;
+	/** Commit hash HEAD resolves to, or null for an unborn branch. */
+	hash: string | null;
+}
+
+/**
+ * Read the current HEAD state of a repo.
+ *
+ * Returns the branch name, full ref path, and resolved commit hash.
+ * For detached HEAD, `branch` and `ref` are null but `hash` is set.
+ * For an unborn branch (empty repo), `hash` is null but `branch` and `ref` are set.
+ * When HEAD doesn't exist at all (bare server repos with no pushes), all fields are null.
+ */
+export async function readHead(repo: GitRepo): Promise<HeadInfo> {
+	const head = await repo.refStore.readRef("HEAD");
+	if (!head) return { branch: null, ref: null, hash: null };
+
+	if (head.type === "symbolic") {
+		const target = await repo.refStore.readRef(head.target);
+		const hash = target?.type === "direct" ? target.hash : null;
+		const isBranch = head.target.startsWith("refs/heads/");
+		return {
+			branch: isBranch ? branchNameFromRef(head.target) : null,
+			ref: head.target,
+			hash,
+		};
+	}
+
+	return { branch: null, ref: null, hash: head.hash };
 }
 
 // ── Object reading ──────────────────────────────────────────────────

@@ -282,8 +282,9 @@ export async function diffCommits(
 /**
  * Walk the commit graph starting from one or more hashes, yielding
  * commits in reverse chronological order. Supports excluding commits
- * reachable from specified hashes, following only first parents, and
- * filtering to commits that touch specific paths.
+ * reachable from specified hashes, following only first parents,
+ * limiting the number of commits yielded, and filtering to commits
+ * that touch specific paths.
  *
  * When `paths` is provided, history simplification is applied: at
  * merge points, only TREESAME parents are followed (matching git's
@@ -292,10 +293,15 @@ export async function diffCommits(
 export async function* walkCommitHistory(
 	repo: GitRepo,
 	startHash: string | string[],
-	opts?: { exclude?: string[]; firstParent?: boolean; paths?: string[] },
+	opts?: { exclude?: string[]; firstParent?: boolean; paths?: string[]; limit?: number },
 ): AsyncGenerator<CommitInfo> {
 	if (opts?.paths && opts.paths.length > 0) {
-		yield* walkCommitHistoryFiltered(repo, startHash, opts.paths, opts);
+		const limit = opts?.limit;
+		let count = 0;
+		for await (const info of walkCommitHistoryFiltered(repo, startHash, opts.paths, opts)) {
+			yield info;
+			if (limit !== undefined && ++count >= limit) return;
+		}
 		return;
 	}
 	for await (const entry of walkCommits(repo, startHash, opts)) {

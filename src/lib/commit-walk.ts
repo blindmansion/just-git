@@ -98,6 +98,7 @@ export async function* walkCommits(
 		topoOrder?: boolean;
 		shallowBoundary?: Set<ObjectId>;
 		firstParent?: boolean;
+		limit?: number;
 	},
 ): AsyncGenerator<CommitEntry> {
 	if (opts?.topoOrder) {
@@ -109,6 +110,8 @@ export async function* walkCommits(
 	const visited = new Set<ObjectId>(excluded);
 	const queue = new CommitHeap();
 	const shallow = opts?.shallowBoundary;
+	const limit = opts?.limit;
+	let count = 0;
 
 	const starts = Array.isArray(startHash) ? startHash : [startHash];
 	for (const h of starts) {
@@ -123,6 +126,8 @@ export async function* walkCommits(
 		visited.add(entry.hash);
 
 		yield entry;
+
+		if (limit !== undefined && ++count >= limit) return;
 
 		if (shallow?.has(entry.hash)) continue;
 

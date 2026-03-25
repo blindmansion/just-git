@@ -441,6 +441,11 @@ export function branchNameFromRef(ref: string): string {
 	return ref.replace("refs/heads/", "");
 }
 
+/** Extract the short tag name from a full ref path like "refs/tags/v1.0" → "v1.0". */
+export function tagNameFromRef(ref: string): string {
+	return ref.replace("refs/tags/", "");
+}
+
 /** Advance the current branch (or detached HEAD) to point at `hash`. */
 export async function advanceBranchRef(ctx: GitRepo, hash: ObjectId): Promise<void> {
 	const head = await readHead(ctx);

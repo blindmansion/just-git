@@ -2,6 +2,7 @@
 
 // Reading
 export {
+	branchNameFromRef,
 	grep,
 	listBranches,
 	listTags,
@@ -9,11 +10,14 @@ export {
 	readBlobText,
 	readCommit,
 	readFileAtCommit,
+	readHead,
 	readTree,
 	resolveRef,
+	tagNameFromRef,
 	type GrepFileMatch,
 	type GrepMatch,
 	type GrepOptions,
+	type HeadInfo,
 } from "./reading.ts";
 
 // Diffing and history
