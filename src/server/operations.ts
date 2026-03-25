@@ -697,24 +697,43 @@ async function buildRefUpdates(
 	for (const cmd of commands) {
 		const isCreate = cmd.oldHash === ZERO_HASH;
 		const isDelete = cmd.newHash === ZERO_HASH;
-		let isFF = false;
 
-		if (!isCreate && !isDelete && unpackOk) {
-			try {
-				isFF = await isAncestor(repo, cmd.oldHash, cmd.newHash);
-			} catch {
-				// Ancestry check failed; leave isFF false
+		if (isCreate) {
+			updates.push({
+				ref: cmd.refName,
+				oldHash: null,
+				newHash: cmd.newHash,
+				isFF: false,
+				isCreate: true,
+				isDelete: false,
+			});
+		} else if (isDelete) {
+			updates.push({
+				ref: cmd.refName,
+				oldHash: cmd.oldHash,
+				newHash: cmd.newHash,
+				isFF: false,
+				isCreate: false,
+				isDelete: true,
+			});
+		} else {
+			let isFF = false;
+			if (unpackOk) {
+				try {
+					isFF = await isAncestor(repo, cmd.oldHash, cmd.newHash);
+				} catch {
+					// Ancestry check failed; leave isFF false
+				}
 			}
+			updates.push({
+				ref: cmd.refName,
+				oldHash: cmd.oldHash,
+				newHash: cmd.newHash,
+				isFF,
+				isCreate: false,
+				isDelete: false,
+			});
 		}
-
-		updates.push({
-			ref: cmd.refName,
-			oldHash: isCreate ? null : cmd.oldHash,
-			newHash: cmd.newHash,
-			isFF,
-			isCreate,
-			isDelete,
-		});
 	}
 	return updates;
 }
@@ -899,35 +918,42 @@ export async function resolveRefUpdates(
 	const updates: RefUpdate[] = [];
 
 	for (const req of requests) {
-		let oldHash: string | null;
+		const oldHash = req.oldHash !== undefined ? req.oldHash : await resolveRef(repo, req.ref);
 
-		if (req.oldHash !== undefined) {
-			oldHash = req.oldHash;
+		if (oldHash === null) {
+			updates.push({
+				ref: req.ref,
+				oldHash: null,
+				newHash: req.newHash ?? ZERO_HASH,
+				isFF: false,
+				isCreate: true,
+				isDelete: false,
+			});
+		} else if (req.newHash === null) {
+			updates.push({
+				ref: req.ref,
+				oldHash,
+				newHash: ZERO_HASH,
+				isFF: false,
+				isCreate: false,
+				isDelete: true,
+			});
 		} else {
-			oldHash = await resolveRef(repo, req.ref);
-		}
-
-		const isCreate = oldHash === null;
-		const isDelete = req.newHash === null;
-		const newHash = req.newHash ?? ZERO_HASH;
-
-		let isFF = false;
-		if (!isCreate && !isDelete) {
+			let isFF = false;
 			try {
-				isFF = await isAncestor(repo, oldHash!, newHash);
+				isFF = await isAncestor(repo, oldHash, req.newHash);
 			} catch {
 				// Ancestry check failed; leave isFF false
 			}
+			updates.push({
+				ref: req.ref,
+				oldHash,
+				newHash: req.newHash,
+				isFF,
+				isCreate: false,
+				isDelete: false,
+			});
 		}
-
-		updates.push({
-			ref: req.ref,
-			oldHash,
-			newHash,
-			isFF,
-			isCreate,
-			isDelete,
-		});
 	}
 
 	return updates;

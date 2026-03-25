@@ -530,20 +530,46 @@ export interface ServerHooks<A = Auth> {
 
 // ── Hook events ─────────────────────────────────────────────────────
 
-/** A single ref update within a push. */
-export interface RefUpdate {
+/** A single ref update within a push. Discriminated union on `isCreate`/`isDelete`. */
+export type RefUpdate = RefUpdateCreate | RefUpdateDelete | RefUpdateModify;
+
+interface RefUpdateBase {
 	/** Full ref name, e.g. "refs/heads/main". */
 	ref: string;
-	/** Previous hash, or null if creating a new ref. */
-	oldHash: string | null;
+}
+
+/** A new ref being created. */
+export interface RefUpdateCreate extends RefUpdateBase {
+	/** Always `null` for creates — the ref didn't exist before. */
+	oldHash: null;
+	/** Hash of the new ref target. */
+	newHash: string;
+	isFF: false;
+	isCreate: true;
+	isDelete: false;
+}
+
+/** An existing ref being deleted. */
+export interface RefUpdateDelete extends RefUpdateBase {
+	/** Hash the ref pointed to before deletion. */
+	oldHash: string;
+	/** Wire-protocol zero hash (`ZERO_HASH`). Not meaningful — use `isDelete` to detect deletions. */
+	newHash: string;
+	isFF: false;
+	isCreate: false;
+	isDelete: true;
+}
+
+/** A regular ref update (fast-forward or forced). */
+export interface RefUpdateModify extends RefUpdateBase {
+	/** Previous hash the ref pointed to. */
+	oldHash: string;
 	/** New hash being pushed. */
 	newHash: string;
-	/** Whether the update is a fast-forward. */
+	/** Whether the update is a fast-forward (new hash is a descendant of old). */
 	isFF: boolean;
-	/** Whether this creates a new ref. */
-	isCreate: boolean;
-	/** Whether this deletes an existing ref. */
-	isDelete: boolean;
+	isCreate: false;
+	isDelete: false;
 }
 
 /** Fired after objects are unpacked but before refs are updated. */
