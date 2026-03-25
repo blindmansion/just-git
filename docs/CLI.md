@@ -709,10 +709,12 @@ Arguments:
   upstream  Upstream branch to rebase onto
 
 Options:
-  --onto <string>  Starting point at which to create new commits
-  --abort          Abort the current rebase operation
-  --continue       Continue the rebase after conflict resolution
-  --skip           Skip the current patch and continue
+  --onto <string>            Starting point at which to create new commits
+  --abort                    Abort the current rebase operation
+  --continue                 Continue the rebase after conflict resolution
+  --skip                     Skip the current patch and continue
+  --reapply-cherry-picks     Do not skip commits that are cherry-pick equivalents
+  --no-reapply-cherry-picks  Skip commits that are cherry-pick equivalents (default)
 ```
 
 ## git reflog
