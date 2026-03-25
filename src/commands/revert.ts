@@ -20,7 +20,7 @@ import {
 } from "../lib/command-utils.ts";
 import { formatCommitSummary } from "../lib/commit-summary.ts";
 import { getConfigValue } from "../lib/config.ts";
-import { getStage0Entries, readIndex } from "../lib/index.ts";
+import { getStage0Entries, readIndex, writeIndex } from "../lib/index.ts";
 import {
 	type ApplyMergeFailure,
 	applyMergeResult,
@@ -38,6 +38,7 @@ import { branchNameFromRef, readHead, resolveHead, resolveRef, updateRef } from 
 import { generateLongFormStatus } from "../lib/status-format.ts";
 import { buildTreeFromIndex, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext } from "../lib/types.ts";
+import { applyWorktreeOps, mergeAbort } from "../lib/unpack-trees.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 
 export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
@@ -47,6 +48,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 		options: {
 			abort: f().describe("Abort the current revert operation"),
 			continue: f().describe("Continue the revert after conflict resolution"),
+			skip: f().describe("Skip the current commit and continue"),
 			"no-commit": f().alias("n").describe("Apply changes without creating a commit"),
 			"no-edit": f().describe("Do not edit the commit message"),
 			mainline: o.number().alias("m").describe("Select the parent number for reverting merges"),
@@ -99,6 +101,11 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 					});
 				}
 				return result;
+			}
+
+			// ── --skip path ──────────────────────────────────────────────
+			if (args.skip) {
+				return handleSkip(gitCtx, ctx.env);
 			}
 
 			const commitRef: string | undefined = args.commit;
@@ -350,6 +357,47 @@ async function handleAbort(
 		});
 	}
 	return err("error: no cherry-pick or revert in progress\nfatal: revert failed\n", 128);
+}
+
+// ── --skip ──────────────────────────────────────────────────────────
+
+async function handleSkip(
+	gitCtx: GitContext,
+	env: Map<string, string>,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+	const revertHead = await resolveRef(gitCtx, "REVERT_HEAD");
+	if (!revertHead) {
+		return err("error: no revert in progress\nfatal: revert failed\n", 128);
+	}
+
+	const headHash = await resolveHead(gitCtx);
+	if (!headHash) {
+		return fatal("unable to resolve HEAD");
+	}
+
+	const headCommit = await readCommit(gitCtx, headHash);
+	const currentIndex = await readIndex(gitCtx);
+	const result = await mergeAbort(gitCtx, headCommit.tree, currentIndex, headHash);
+	if (!result.success) {
+		const out = result.errorOutput as {
+			stdout: string;
+			stderr: string;
+			exitCode: number;
+		};
+		return {
+			...out,
+			stderr: out.stderr + "error: failed to skip the commit\nfatal: revert failed\n",
+		};
+	}
+
+	await writeIndex(gitCtx, { version: 2, entries: result.newEntries });
+	await applyWorktreeOps(gitCtx, result.worktreeOps);
+
+	await logRef(gitCtx, env, "HEAD", headHash, headHash, `reset: moving to ${headHash}`);
+
+	await clearRevertState(gitCtx);
+
+	return { stdout: "", stderr: "", exitCode: 0 };
 }
 
 // ── --continue ──────────────────────────────────────────────────────

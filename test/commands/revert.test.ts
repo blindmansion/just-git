@@ -699,4 +699,93 @@ describe("git revert", () => {
 			expect(result.stderr).toContain("unmerged files");
 		});
 	});
+
+	describe("--skip", () => {
+		test("no revert in progress", async () => {
+			const bash = createTestBash({
+				files: EMPTY_REPO,
+				env: envAt("100"),
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+
+			const result = await bash.exec("git revert --skip");
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("no revert in progress");
+		});
+
+		test("skip during conflict restores worktree and clears state", async () => {
+			const bash = createTestBash({
+				files: EMPTY_REPO,
+				env: envAt("100"),
+			});
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/file.txt", "line1\n");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+
+			await bash.fs.writeFile("/repo/file.txt", "line2\n");
+			await bash.exec("git add file.txt");
+			await bash.exec('git commit -m "second"');
+
+			await bash.fs.writeFile("/repo/file.txt", "line3\n");
+			await bash.exec("git add file.txt");
+			await bash.exec('git commit -m "third"');
+
+			const gitCtx = await findRepo(bash.fs, "/repo");
+			const headBefore = await resolveHead(gitCtx!);
+
+			const revertResult = await bash.exec("git revert HEAD~1 --no-edit");
+			expect(revertResult.exitCode).toBe(1);
+
+			expect(await resolveRef(gitCtx!, "REVERT_HEAD")).not.toBeNull();
+
+			const skipResult = await bash.exec("git revert --skip");
+			expect(skipResult.exitCode).toBe(0);
+			expect(skipResult.stdout).toBe("");
+			expect(skipResult.stderr).toBe("");
+
+			const headAfter = await resolveHead(gitCtx!);
+			expect(headAfter).toBe(headBefore);
+
+			expect(await resolveRef(gitCtx!, "REVERT_HEAD")).toBeNull();
+
+			const fileContent = await bash.fs.readFile("/repo/file.txt");
+			expect(fileContent).toBe("line3\n");
+
+			const status = await bash.exec("git status");
+			expect(status.stdout).toContain("nothing to commit");
+		});
+
+		test("skip after --no-commit restores worktree", async () => {
+			const bash = createTestBash({
+				files: EMPTY_REPO,
+				env: envAt("100"),
+			});
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/file.txt", "content\n");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+
+			const gitCtx = await findRepo(bash.fs, "/repo");
+			const headBefore = await resolveHead(gitCtx!);
+
+			const revertResult = await bash.exec("git revert -n HEAD");
+			expect(revertResult.exitCode).toBe(0);
+
+			expect(await resolveRef(gitCtx!, "REVERT_HEAD")).not.toBeNull();
+
+			const skipResult = await bash.exec("git revert --skip");
+			expect(skipResult.exitCode).toBe(0);
+
+			const headAfter = await resolveHead(gitCtx!);
+			expect(headAfter).toBe(headBefore);
+
+			expect(await resolveRef(gitCtx!, "REVERT_HEAD")).toBeNull();
+
+			const fileContent = await bash.fs.readFile("/repo/file.txt");
+			expect(fileContent).toBe("content\n");
+		});
+	});
 });

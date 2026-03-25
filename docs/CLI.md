@@ -912,6 +912,7 @@ Arguments:
 Options:
   --abort                  Abort the current revert operation
   --continue               Continue the revert after conflict resolution
+  --skip                   Skip the current commit and continue
   -n, --no-commit          Apply changes without creating a commit
   --no-edit                Do not edit the commit message
   -m, --mainline <number>  Select the parent number for reverting merges

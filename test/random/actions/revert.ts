@@ -56,4 +56,16 @@ const revertContinue: Action = {
 	},
 };
 
-export const REVERT_ACTIONS: readonly Action[] = [revert, revertAbort, revertContinue];
+const revertSkip: Action = {
+	name: "revertSkip",
+	category: "revert",
+	canRun: () => true,
+	precondition: (state) => state.inRevertConflict,
+	weight: () => 4,
+	async execute(harness) {
+		const result = await harness.git("revert --skip");
+		return { description: "git revert --skip", result };
+	},
+};
+
+export const REVERT_ACTIONS: readonly Action[] = [revert, revertAbort, revertContinue, revertSkip];

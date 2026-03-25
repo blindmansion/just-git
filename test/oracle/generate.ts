@@ -439,10 +439,12 @@ const CORE_ACTIONS = includeNames(
 	"cherryPick",
 	"cherryPickAbort",
 	"cherryPickContinue",
+	"cherryPickSkip",
 	// revert
 	"revert",
 	"revertAbort",
 	"revertContinue",
+	"revertSkip",
 	// conflict resolution
 	"resolveAndCommit",
 	"resolvePartial",
