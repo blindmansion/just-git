@@ -312,6 +312,7 @@ export async function performRebase(
 	ontoHash: ObjectId,
 	upstreamLabel: string,
 	ext?: GitExtensions,
+	options?: { reapplyCherryPicks?: boolean },
 ): Promise<CommandResult> {
 	const branchName = headName.startsWith("refs/heads/") ? branchNameFromRef(headName) : "HEAD";
 
@@ -390,27 +391,32 @@ export async function performRebase(
 
 	// ── Cherry-pick skip detection ──────────────────────────
 	const skippedWarnings: string[] = [];
-	const leftSideCommits = plan.left;
-	const leftPatchIds = new Set<string>();
-	for (const c of leftSideCommits) {
-		const pid = await computePatchId(gitCtx, c.hash);
-		if (pid) leftPatchIds.add(pid);
-	}
-
 	const filteredCommits: typeof commits = [];
-	if (leftPatchIds.size > 0) {
-		for (const c of commits) {
-			const pid = await computePatchId(gitCtx, c.hash);
-			if (pid && leftPatchIds.has(pid)) {
-				skippedWarnings.push(
-					`warning: skipped previously applied commit ${abbreviateHash(c.hash)}`,
-				);
-			} else {
-				filteredCommits.push(c);
-			}
-		}
-	} else {
+
+	if (options?.reapplyCherryPicks) {
 		filteredCommits.push(...commits);
+	} else {
+		const leftSideCommits = plan.left;
+		const leftPatchIds = new Set<string>();
+		for (const c of leftSideCommits) {
+			const pid = await computePatchId(gitCtx, c.hash);
+			if (pid) leftPatchIds.add(pid);
+		}
+
+		if (leftPatchIds.size > 0) {
+			for (const c of commits) {
+				const pid = await computePatchId(gitCtx, c.hash);
+				if (pid && leftPatchIds.has(pid)) {
+					skippedWarnings.push(
+						`warning: skipped previously applied commit ${abbreviateHash(c.hash)}`,
+					);
+				} else {
+					filteredCommits.push(c);
+				}
+			}
+		} else {
+			filteredCommits.push(...commits);
+		}
 	}
 
 	let skipStderr = "";
@@ -528,6 +534,10 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 			abort: f().describe("Abort the current rebase operation"),
 			continue: f().describe("Continue the rebase after conflict resolution"),
 			skip: f().describe("Skip the current patch and continue"),
+			"reapply-cherry-picks": f().describe("Do not skip commits that are cherry-pick equivalents"),
+			"no-reapply-cherry-picks": f().describe(
+				"Skip commits that are cherry-pick equivalents (default)",
+			),
 		},
 		handler: async (args, ctx) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
@@ -590,6 +600,8 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 				ontoHash = upstreamHash;
 			}
 
+			const reapplyCherryPicks = !!args["reapply-cherry-picks"];
+
 			return performRebase(
 				gitCtx,
 				ctx.env,
@@ -599,6 +611,7 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 				ontoHash,
 				upstreamArg,
 				ext,
+				reapplyCherryPicks ? { reapplyCherryPicks: true } : undefined,
 			);
 		},
 	});

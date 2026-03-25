@@ -606,6 +606,61 @@ describe("git rebase", () => {
 
 	// ── Multi-commit conflict scenarios ──────────────────────────────
 
+	describe("--reapply-cherry-picks", () => {
+		/**
+		 * Setup: trunk has a cherry-picked version of feature's commit,
+		 * plus an extra commit so the branches actually diverge.
+		 * Different committer timestamps force different commit hashes.
+		 */
+		async function setupCherryPickScenario() {
+			const env = envAt("100");
+			const bash = createTestBash({ files: EMPTY_REPO, env });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec("git checkout -b feature");
+			await bash.fs.writeFile("/repo/feat.txt", "feature work");
+			await bash.exec("git add feat.txt");
+			await bash.exec('git commit -m "feature work"', { env: envAt("200") });
+			await bash.exec("git checkout main");
+			// Cherry-pick with a different committer date → different hash
+			await bash.exec("git cherry-pick feature", { env: envAt("300") });
+			// Add an extra commit so the branches diverge
+			await bash.fs.writeFile("/repo/extra.txt", "extra");
+			await bash.exec("git add extra.txt");
+			await bash.exec('git commit -m "extra on main"');
+			await bash.exec("git checkout feature");
+			return bash;
+		}
+
+		test("default skips cherry-picked commits with warning", async () => {
+			const bash = await setupCherryPickScenario();
+			const result = await bash.exec("git rebase main");
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("skipped previously applied commit");
+			expect(result.stderr).toContain("--reapply-cherry-picks");
+		});
+
+		test("--reapply-cherry-picks does not skip", async () => {
+			const bash = await setupCherryPickScenario();
+			const result = await bash.exec("git rebase --reapply-cherry-picks main");
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).not.toContain("skipped previously applied commit");
+			expect(result.stderr).not.toContain("--reapply-cherry-picks");
+			// Commit enters pick loop — dropped because tree matches upstream
+			expect(result.stderr).toContain("dropping");
+			expect(result.stderr).toContain("patch contents already upstream");
+		});
+
+		test("--no-reapply-cherry-picks behaves like default", async () => {
+			const bash = await setupCherryPickScenario();
+			const result = await bash.exec("git rebase --no-reapply-cherry-picks main");
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("skipped previously applied commit");
+			expect(result.stderr).toContain("--reapply-cherry-picks");
+		});
+	});
+
 	describe("multi-commit conflicts", () => {
 		test("conflict in second commit during rebase", async () => {
 			const bash = createTestBash({
