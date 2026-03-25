@@ -13,7 +13,7 @@ import {
 import type { CredentialCache } from "./lib/transport/remote.ts";
 import type { ObjectStore, RefStore, RemoteResolver } from "./lib/types.ts";
 
-export const VERSION = "1.5.4";
+export const VERSION = "1.5.5";
 
 /** Options for subcommand execution (mirrors just-bash's CommandExecOptions). */
 export interface CommandExecOptions {
@@ -256,9 +256,9 @@ export class Git {
 			...(options?.refStore ? { refStore: options.refStore } : {}),
 			...(options?.gitDir
 				? {
-						gitDir: options.gitDir,
-						workTree: this.defaultCwd,
-					}
+					gitDir: options.gitDir,
+					workTree: this.defaultCwd,
+				}
 				: {}),
 			...(configOverrides ? { configOverrides } : {}),
 		};
