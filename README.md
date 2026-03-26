@@ -6,7 +6,9 @@
 
 Pure TypeScript git implementation. Zero dependencies. 36 commands. Works in Node, Bun, Deno, Cloudflare Workers, and the browser. [Tested against real git](docs/TESTING.md) across more than a million randomized operations.
 
-Two entry points: a **virtual filesystem client** for sandboxed environments (pairs with [just-bash](https://github.com/vercel-labs/just-bash), or use standalone), and an **[embeddable git server](docs/SERVER.md)** that any standard `git` client can clone, fetch, and push to.
+- **Virtual filesystem client** for sandboxed environments. Pairs with [just-bash](https://github.com/vercel-labs/just-bash), or use standalone.
+- **[Embeddable git server](docs/SERVER.md)** with pluggable storage, auth, and hooks. Supports HTTP, SSH, and in-process transport.
+- **[Repo module](docs/REPO.md)** with typed functions for commits, diffs, merges, blame, and bisect that work identically against a virtual filesystem or a database.
 
 ## Install
 
@@ -122,7 +124,7 @@ Uses web-standard `Request`/`Response`. Works with Bun, Hono, Cloudflare Workers
 Everything operates on `GitRepo`, a minimal `{ objectStore, refStore }` interface shared by the client and server. A `GitRepo` can be backed by a virtual filesystem, SQLite, Postgres, or any custom storage. The same helpers work inside both client-side hooks and server-side hooks, and `createWorktree` lets you spin up a full git client against a database-backed repo.
 
 ```ts
-import { commit, readFileAtCommit, getChangedFiles, mergeTrees } from "just-git/repo";
+import { commit, readFileAtCommit, getChangedFiles, mergeTrees, bisect } from "just-git/repo";
 
 // Commit files to a branch — handles blobs, trees, parents, and refs
 await commit(repo, {
@@ -134,7 +136,17 @@ await commit(repo, {
 
 const content = await readFileAtCommit(repo, commitHash, "src/index.ts");
 const changes = await getChangedFiles(repo, parentHash, commitHash);
-const result = await mergeTrees(repo, oursCommit, theirsCommit);
+const merge = await mergeTrees(repo, oursCommit, theirsCommit);
+
+// Programmatic bisect — binary-search the commit graph with a test callback
+const result = await bisect(repo, {
+  bad: "main",
+  good: "v1.0.0",
+  test: async (hash, tree) => {
+    const config = await tree.readFile("src/config.ts");
+    return config !== null && !config.includes("broken_call");
+  },
+});
 ```
 
 See [REPO.md](docs/REPO.md) for the full API, the `GitRepo` interface, and the hybrid worktree pattern.
