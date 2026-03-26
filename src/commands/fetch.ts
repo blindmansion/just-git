@@ -1,11 +1,19 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
-import { abbreviateHash, fatal, isCommandError, requireGitContext } from "../lib/command-utils.ts";
+import {
+	abbreviateHash,
+	buildRefUpdateLines,
+	fatal,
+	formatTransferRefLines,
+	isCommandError,
+	requireGitContext,
+	type TransferRefLine,
+} from "../lib/command-utils.ts";
 import { readConfig } from "../lib/config.ts";
 import { getReflogIdentity } from "../lib/identity.ts";
 import { join } from "../lib/path.ts";
 import { appendReflog, ZERO_HASH } from "../lib/reflog.ts";
-import { deleteRef, listRefs, resolveRef, updateRef } from "../lib/refs.ts";
+import { deleteRef, listRefs, resolveRef, shortenRef, updateRef } from "../lib/refs.ts";
 import {
 	applyShallowUpdates,
 	INFINITE_DEPTH,
@@ -231,11 +239,12 @@ async function fetchOneRemote(
 	}
 
 	const ident = await getReflogIdentity(gitCtx, env);
-	const stderr: string[] = [];
-	stderr.push(`From ${config.url}\n`);
+	const refLines: TransferRefLine[] = [];
 
+	const resolvedOldHashes: Array<string | null> = [];
 	for (const update of refUpdates) {
 		const oldHash = await resolveRef(gitCtx, update.localRef);
+		resolvedOldHashes.push(oldHash);
 		await updateRef(gitCtx, update.localRef, update.remote.hash);
 		await appendReflog(gitCtx, update.localRef, {
 			oldHash: oldHash ?? ZERO_HASH,
@@ -246,20 +255,15 @@ async function fetchOneRemote(
 			tz: ident.tz,
 			message: oldHash ? "fetch" : "fetch: storing head",
 		});
-
-		const shortRemote = shortenRef(update.remote.name);
-		const shortLocal = shortenRef(update.localRef);
-
-		if (!oldHash) {
-			const isTag = update.remote.name.startsWith("refs/tags/");
-			const prefix = isTag ? " * [new tag]" : " * [new branch]";
-			stderr.push(`${prefix}      ${shortRemote} -> ${shortLocal}\n`);
-		} else if (oldHash !== update.remote.hash) {
-			const shortOld = abbreviateHash(oldHash);
-			const shortNew = abbreviateHash(update.remote.hash);
-			stderr.push(`   ${shortOld}..${shortNew}  ${shortRemote} -> ${shortLocal}\n`);
-		}
 	}
+
+	refLines.push(
+		...buildRefUpdateLines(
+			refUpdates.map((u, i) => ({ ...u, oldHash: resolvedOldHashes[i]! })),
+			shortenRef,
+			abbreviateHash,
+		),
+	);
 
 	if (!tags) {
 		for (const ref of remoteRefs) {
@@ -279,7 +283,11 @@ async function fetchOneRemote(
 					tz: ident.tz,
 					message: "fetch: storing head",
 				});
-				stderr.push(` * [new tag]         ${shortenRef(ref.name)} -> ${shortenRef(ref.name)}\n`);
+				refLines.push({
+					prefix: " * [new tag]",
+					from: shortenRef(ref.name),
+					to: shortenRef(ref.name),
+				});
 			}
 		}
 	}
@@ -294,10 +302,16 @@ async function fetchOneRemote(
 		);
 
 		for (const ref of trackingRefs) {
+			const rawRef = await gitCtx.refStore.readRef(ref.name);
+			if (rawRef?.type === "symbolic") continue;
 			const branchName = ref.name.slice(prunePrefix.length + 1);
 			if (!remoteHeads.has(branchName)) {
 				await deleteRef(gitCtx, ref.name);
-				stderr.push(` - [deleted]         (none) -> ${remoteName}/${branchName}\n`);
+				refLines.push({
+					prefix: " - [deleted]",
+					from: "(none)",
+					to: `${remoteName}/${branchName}`,
+				});
 			}
 		}
 	}
@@ -314,9 +328,11 @@ async function fetchOneRemote(
 		await gitCtx.fs.writeFile(fetchHeadPath, `${headRef.hash}\t\t${branchDesc} ${config.url}\n`);
 	}
 
+	const stderr =
+		refLines.length > 0 ? `From ${config.url}\n${formatTransferRefLines(refLines, 10)}` : "";
 	const response = {
 		stdout: "",
-		stderr: stderr.join(""),
+		stderr,
 		exitCode: 0,
 	};
 	await ext?.hooks?.postFetch?.({
@@ -326,11 +342,4 @@ async function fetchOneRemote(
 		updatedRefCount: refUpdates.length,
 	});
 	return response;
-}
-
-function shortenRef(name: string): string {
-	if (name.startsWith("refs/heads/")) return name.slice("refs/heads/".length);
-	if (name.startsWith("refs/tags/")) return name.slice("refs/tags/".length);
-	if (name.startsWith("refs/remotes/")) return name.slice("refs/remotes/".length);
-	return name;
 }

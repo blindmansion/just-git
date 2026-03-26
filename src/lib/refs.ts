@@ -446,6 +446,14 @@ export function tagNameFromRef(ref: string): string {
 	return ref.replace("refs/tags/", "");
 }
 
+/** Strip the longest matching standard ref prefix (heads, tags, remotes). */
+export function shortenRef(ref: string): string {
+	if (ref.startsWith("refs/heads/")) return ref.slice("refs/heads/".length);
+	if (ref.startsWith("refs/tags/")) return ref.slice("refs/tags/".length);
+	if (ref.startsWith("refs/remotes/")) return ref.slice("refs/remotes/".length);
+	return ref;
+}
+
 /** Advance the current branch (or detached HEAD) to point at `hash`. */
 export async function advanceBranchRef(ctx: GitRepo, hash: ObjectId): Promise<void> {
 	const head = await readHead(ctx);

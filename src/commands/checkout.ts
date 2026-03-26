@@ -391,10 +391,12 @@ async function createAndSwitchFromRemote(
 
 	await logRef(gitCtx, env, refName, null, targetHash, `branch: Created from ${trackingRef}`);
 
-	const result = await switchBranchCore(gitCtx, branchName, refName, targetHash, env, ext);
+	const result = await switchBranchCore(gitCtx, branchName, refName, targetHash, env, ext, {
+		isNew: true,
+	});
 
 	const trackBranch = trackingParts.slice(1).join("/");
-	result.stderr = `branch '${branchName}' set up to track '${remote}/${trackBranch}'.\n${result.stderr}`;
+	result.stdout = `branch '${branchName}' set up to track '${remote}/${trackBranch}'.\n`;
 
 	return result;
 }

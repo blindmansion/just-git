@@ -343,17 +343,18 @@ async function switchCreateBranch(
 			? `Switched to and reset branch '${branchName}'\n`
 			: `Switched to a new branch '${branchName}'\n`;
 
-	let stderr = detachPreamble + label + opWarning + trackingMsg;
+	const stderr = detachPreamble + label + opWarning;
 
 	let stdout = "";
-	if (startPoint) {
+	if (trackingMsg) {
+		stdout = trackingMsg;
+	} else if (startPoint) {
 		stdout = await formatCheckoutSummary(gitCtx, targetCommit.tree, currentIndex);
-	}
-
-	const config = await readConfig(gitCtx);
-	const trackingInfo = await getTrackingInfo(gitCtx, config, branchName);
-	if (trackingInfo) {
-		stdout += formatLongTrackingInfo(trackingInfo);
+		const config = await readConfig(gitCtx);
+		const trackingInfo = await getTrackingInfo(gitCtx, config, branchName);
+		if (trackingInfo) {
+			stdout += formatLongTrackingInfo(trackingInfo);
+		}
 	}
 
 	return { stdout, stderr, exitCode: 0 };

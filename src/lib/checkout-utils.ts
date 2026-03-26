@@ -398,6 +398,7 @@ export async function switchBranchCore(
 	targetHash: ObjectId,
 	env: Map<string, string>,
 	ext?: GitExtensions,
+	opts?: { isNew?: boolean },
 ): Promise<CommandResult> {
 	const head = await readHead(gitCtx);
 	if (head?.type === "symbolic" && head.target === refName) {
@@ -471,7 +472,7 @@ export async function switchBranchCore(
 
 	return {
 		stdout,
-		stderr: `${detachPreamble}Switched to branch '${branchName}'\n${opWarning}`,
+		stderr: `${detachPreamble}Switched to ${opts?.isNew ? "a new " : ""}branch '${branchName}'\n${opWarning}`,
 		exitCode: 0,
 	};
 }

@@ -360,3 +360,62 @@ export function stripCommentLines(text: string): string {
 export function ensureTrailingNewline(msg: string): string {
 	return msg.endsWith("\n") ? msg : `${msg}\n`;
 }
+
+// ── Transfer output formatting (fetch / push / pull) ────────────────
+
+export interface TransferRefLine {
+	prefix: string;
+	from: string;
+	to: string;
+	suffix?: string;
+}
+
+/**
+ * Format aligned ref-update lines for fetch/push/pull output.
+ * Matches real git's columnar alignment: fixed-width summary column,
+ * right-padded "from" ref, ` -> to` with optional suffix.
+ */
+export function formatTransferRefLines(lines: TransferRefLine[], minRefCol = 0): string {
+	const SUMMARY_WIDTH = 21;
+	const maxFromLen = Math.max(minRefCol, ...lines.map((l) => l.from.length));
+	return lines
+		.map((l) => {
+			const summary = l.prefix.padEnd(SUMMARY_WIDTH);
+			if (!l.to) return `${summary}${l.from}\n`;
+			const from = l.from.padEnd(maxFromLen);
+			const suffix = l.suffix ? ` ${l.suffix}` : "";
+			return `${summary}${from} -> ${l.to}${suffix}\n`;
+		})
+		.join("");
+}
+
+/**
+ * Build TransferRefLines from a set of ref updates (shared by fetch and pull).
+ * Each update carries the remote ref, the local tracking ref, and the
+ * old hash (null when the tracking ref didn't exist before).
+ */
+export function buildRefUpdateLines(
+	updates: Array<{
+		remote: { name: string; hash: string };
+		localRef: string;
+		oldHash: string | null;
+	}>,
+	shortenRef: (name: string) => string,
+	abbreviateHashFn: (hash: string) => string,
+): TransferRefLine[] {
+	const lines: TransferRefLine[] = [];
+	for (const u of updates) {
+		const shortRemote = shortenRef(u.remote.name);
+		const shortLocal = shortenRef(u.localRef);
+		if (!u.oldHash) {
+			const isTag = u.remote.name.startsWith("refs/tags/");
+			const prefix = isTag ? " * [new tag]" : " * [new branch]";
+			lines.push({ prefix, from: shortRemote, to: shortLocal });
+		} else if (u.oldHash !== u.remote.hash) {
+			const shortOld = abbreviateHashFn(u.oldHash);
+			const shortNew = abbreviateHashFn(u.remote.hash);
+			lines.push({ prefix: `   ${shortOld}..${shortNew}`, from: shortRemote, to: shortLocal });
+		}
+	}
+	return lines;
+}

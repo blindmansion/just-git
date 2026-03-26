@@ -1,8 +1,11 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
+	abbreviateHash,
+	buildRefUpdateLines,
 	err,
 	fatal,
+	formatTransferRefLines,
 	isCommandError,
 	requireAuthor,
 	requireCommitter,
@@ -27,6 +30,7 @@ import {
 	readHead,
 	resolveHead,
 	resolveRef,
+	shortenRef,
 	updateRef,
 } from "../lib/refs.ts";
 import {
@@ -205,10 +209,12 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				}
 			}
 
-			// Update remote tracking refs (with reflog)
+			// Update remote tracking refs (with reflog) and build fetch-phase output
 			const ident = await getReflogIdentity(gitCtx, ctx.env);
+			const resolvedOldHashes: Array<string | null> = [];
 			for (const update of refUpdates) {
 				const oldRefHash = await resolveRef(gitCtx, update.localRef);
+				resolvedOldHashes.push(oldRefHash);
 				await updateRef(gitCtx, update.localRef, update.remote.hash);
 				await appendReflog(gitCtx, update.localRef, {
 					oldHash: oldRefHash ?? ZERO_HASH,
@@ -220,6 +226,15 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					message: oldRefHash ? "pull" : "pull: storing head",
 				});
 			}
+			const fetchRefLines = buildRefUpdateLines(
+				refUpdates.map((u, i) => ({ ...u, oldHash: resolvedOldHashes[i]! })),
+				shortenRef,
+				abbreviateHash,
+			);
+			const fetchOutput =
+				fetchRefLines.length > 0
+					? `From ${config.url}\n${formatTransferRefLines(fetchRefLines, 10)}`
+					: "";
 
 			// Write FETCH_HEAD
 			let fetchHeadHash: ObjectId | null = null;
@@ -262,7 +277,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				});
 				return {
 					stdout: "Already up to date.\n",
-					stderr: "",
+					stderr: fetchOutput,
 					exitCode: 0,
 				};
 			}
@@ -295,7 +310,10 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					});
 				}
 
-				return result;
+				return {
+					...result,
+					stderr: fetchOutput + result.stderr,
+				};
 			}
 
 			// ── Merge path ──────────────────────────────────────────
@@ -316,7 +334,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				});
 				return {
 					stdout: "Already up to date.\n",
-					stderr: "",
+					stderr: fetchOutput,
 					exitCode: 0,
 				};
 			}
@@ -333,7 +351,11 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			const isFastForward = baseCommit === headHash;
 
 			if (ffOnly && !isFastForward) {
-				return fatal("Not possible to fast-forward, aborting.");
+				return {
+					stdout: "",
+					stderr: fetchOutput + "fatal: Not possible to fast-forward, aborting.\n",
+					exitCode: 128,
+				};
 			}
 
 			if (isFastForward && !noFf) {
@@ -377,7 +399,10 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 						commitHash: theirsHash,
 					});
 				}
-				return ffResult;
+				return {
+					...ffResult,
+					stderr: fetchOutput + ffResult.stderr,
+				};
 			}
 
 			// Three-way merge
@@ -421,7 +446,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 
 				return {
 					stdout: `${[...mergeResult.messages, "Automatic merge failed; fix conflicts and then commit the result."].join("\n")}\n`,
-					stderr: "",
+					stderr: fetchOutput,
 					exitCode: 1,
 				};
 			}
@@ -509,7 +534,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				mergeResult.messages.length > 0 ? `${mergeResult.messages.join("\n")}\n` : "";
 			return {
 				stdout: `${mergeMessages}Merge made by the 'ort' strategy.\n${diffstat}`,
-				stderr: "",
+				stderr: fetchOutput,
 				exitCode: 0,
 			};
 		},

@@ -472,8 +472,8 @@ describe("git checkout", () => {
 
 			const result = await bash.exec("git checkout feature", { cwd: "/local" });
 			expect(result.exitCode).toBe(0);
-			expect(result.stderr).toContain("set up to track");
-			expect(result.stderr).toContain("origin/feature");
+			expect(result.stdout).toContain("set up to track");
+			expect(result.stdout).toContain("origin/feature");
 
 			// Verify we're on the branch
 			const head = await bash.exec("git branch", { cwd: "/local" });
@@ -498,7 +498,7 @@ describe("git checkout", () => {
 
 			const result = await bash.exec("git checkout feature", { cwd: "/local" });
 			expect(result.exitCode).toBe(0);
-			expect(result.stderr).toContain("set up to track");
+			expect(result.stdout).toContain("set up to track");
 		});
 	});
 });

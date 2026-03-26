@@ -128,7 +128,7 @@ describe("git push", () => {
 		expect(await pathExists(bash.fs, "/remote/.git/refs/tags/v2.0")).toBe(true);
 
 		// Output mentions both
-		expect(result.stderr).toContain("main -> main");
+		expect(result.stderr).toMatch(/main\s+-> main/);
 		expect(result.stderr).toContain("[new tag]");
 	});
 

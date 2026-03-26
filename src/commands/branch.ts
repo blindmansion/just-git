@@ -394,8 +394,20 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 				const remoteRefs = await listRefs(gitCtx, "refs/remotes");
 				for (const ref of remoteRefs) {
 					const name = ref.name.replace("refs/remotes/", "");
+					let symrefTarget: string | null = null;
+					const rawRef = await gitCtx.refStore.readRef(ref.name);
+					if (rawRef?.type === "symbolic") {
+						symrefTarget = rawRef.target.replace("refs/remotes/", "");
+					}
+					const display = symrefTarget
+						? args.all
+							? `remotes/${name} -> ${symrefTarget}`
+							: `${name} -> ${symrefTarget}`
+						: args.all
+							? `remotes/${name}`
+							: name;
 					entries.push({
-						displayName: args.all ? `remotes/${name}` : name,
+						displayName: display,
 						hash: ref.hash,
 						isCurrent: false,
 						branchName: null,

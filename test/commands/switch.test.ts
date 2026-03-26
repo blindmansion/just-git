@@ -266,7 +266,7 @@ describe("git switch", () => {
 				cwd: "/local",
 			});
 			expect(result.exitCode).toBe(0);
-			expect(result.stderr).toContain("set up to track");
+			expect(result.stdout).toContain("set up to track");
 
 			const config = await readFile(bash.fs, "/local/.git/config");
 			expect(config).toContain('branch "my-feature"');
@@ -287,7 +287,7 @@ describe("git switch", () => {
 				cwd: "/local",
 			});
 			expect(result.exitCode).toBe(0);
-			expect(result.stderr).not.toContain("set up to track");
+			expect(result.stdout).not.toContain("set up to track");
 		});
 	});
 
@@ -316,8 +316,8 @@ describe("git switch", () => {
 
 			const result = await bash.exec("git switch feature", { cwd: "/local" });
 			expect(result.exitCode).toBe(0);
-			expect(result.stderr).toContain("set up to track");
-			expect(result.stderr).toContain("origin/feature");
+			expect(result.stdout).toContain("set up to track");
+			expect(result.stdout).toContain("origin/feature");
 		});
 	});
 });

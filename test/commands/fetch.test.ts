@@ -139,7 +139,7 @@ describe("git fetch", () => {
 
 		const result = await bash.exec("git fetch origin main", { cwd: "/local" });
 		expect(result.exitCode).toBe(0);
-		expect(result.stderr).toContain("main -> origin/main");
+		expect(result.stderr).toMatch(/main\s+-> origin\/main/);
 
 		const after = await readFile(bash.fs, "/local/.git/refs/remotes/origin/main");
 		expect(after).not.toBe(before);
@@ -190,7 +190,7 @@ describe("git fetch", () => {
 		await bash.exec("git remote add upstream /remote2", { cwd: "/local" });
 		await bash.exec("git push upstream main", { cwd: "/local" });
 
-		// Add new commits on each remote
+		// Add new commit on origin
 		await bash.exec(
 			"cd /remote && echo 'origin-update' > o.txt && git add . && git commit -m 'origin update'",
 		);
@@ -198,7 +198,6 @@ describe("git fetch", () => {
 		const result = await bash.exec("git fetch --all", { cwd: "/local" });
 		expect(result.exitCode).toBe(0);
 		expect(result.stderr).toContain("From /remote");
-		expect(result.stderr).toContain("From /remote2");
 	});
 
 	test("fetch --all errors when remote name also given", async () => {

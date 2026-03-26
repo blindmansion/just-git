@@ -4,12 +4,22 @@ import {
 	abbreviateHash,
 	err,
 	fatal,
+	formatTransferRefLines,
 	isCommandError,
 	requireGitContext,
+	type TransferRefLine,
 } from "../lib/command-utils.ts";
 import { getConfigValue, readConfig, writeConfig } from "../lib/config.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
-import { listRefs, readHead, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
+import {
+	deleteRef,
+	listRefs,
+	readHead,
+	resolveHead,
+	resolveRef,
+	shortenRef,
+	updateRef,
+} from "../lib/refs.ts";
 import { parseRefspec } from "../lib/transport/refspec.ts";
 import { resolveRemoteTransport } from "../lib/transport/remote.ts";
 import type { PushRefUpdate } from "../lib/transport/transport.ts";
@@ -164,10 +174,13 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				}
 			}
 
-			if (updates.length === 0) {
+			// Filter out no-op updates where local and remote are already in sync
+			const effectiveUpdates = updates.filter((u) => u.oldHash !== u.newHash);
+
+			if (effectiveUpdates.length === 0) {
 				return {
-					stdout: "Everything up-to-date\n",
-					stderr: "",
+					stdout: "",
+					stderr: "Everything up-to-date\n",
 					exitCode: 0,
 				};
 			}
@@ -177,7 +190,7 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				repo: gitCtx,
 				remote: remoteName,
 				url: config.url,
-				refs: updates.map((u) => ({
+				refs: effectiveUpdates.map((u) => ({
 					srcRef: u.newHash === ZERO_HASH ? null : u.name,
 					srcHash: u.newHash === ZERO_HASH ? null : u.newHash,
 					dstRef: u.name,
@@ -188,36 +201,67 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 			});
 			if (isRejection(prePushRej)) return err(prePushRej.message ?? "");
 
+			// Track which refs were force-requested (ok=true in input means force)
+			const forceRequested = new Set(effectiveUpdates.filter((u) => u.ok).map((u) => u.name));
+
 			// Execute the push
-			const result = await transport.push(updates);
+			const result = await transport.push(effectiveUpdates);
 
 			// Build output
-			const stderr: string[] = [];
-			stderr.push(`To ${config.url}\n`);
+			const pushLines: TransferRefLine[] = [];
 			let hasError = false;
 
 			for (const update of result.updates) {
 				const isTag = update.name.startsWith("refs/tags/");
-				const shortRef = update.name.startsWith("refs/heads/")
-					? update.name.slice("refs/heads/".length)
-					: update.name.startsWith("refs/tags/")
-						? update.name.slice("refs/tags/".length)
-						: update.name;
+				const shortRef = shortenRef(update.name);
 
 				if (!update.ok) {
-					stderr.push(
-						` ! [rejected]        ${shortRef} -> ${shortRef} (${update.error ?? "failed"})\n`,
-					);
+					const reason = update.error?.includes("non-fast-forward")
+						? "fetch first"
+						: (update.error ?? "failed");
+					pushLines.push({
+						prefix: " ! [rejected]",
+						from: shortRef,
+						to: shortRef,
+						suffix: `(${reason})`,
+					});
 					hasError = true;
 				} else if (!update.oldHash) {
 					const label = isTag ? "[new tag]" : "[new branch]";
-					stderr.push(` * ${label}      ${shortRef} -> ${shortRef}\n`);
+					pushLines.push({ prefix: ` * ${label}`, from: shortRef, to: shortRef });
 				} else if (update.newHash === ZERO_HASH) {
-					stderr.push(` - [deleted]         ${shortRef}\n`);
+					pushLines.push({ prefix: " - [deleted]", from: shortRef, to: "" });
+				} else if (forceRequested.has(update.name)) {
+					const shortOld = abbreviateHash(update.oldHash);
+					const shortNew = abbreviateHash(update.newHash);
+					pushLines.push({
+						prefix: ` + ${shortOld}...${shortNew}`,
+						from: shortRef,
+						to: shortRef,
+						suffix: "(forced update)",
+					});
 				} else {
 					const shortOld = abbreviateHash(update.oldHash);
 					const shortNew = abbreviateHash(update.newHash);
-					stderr.push(`   ${shortOld}..${shortNew}  ${shortRef} -> ${shortRef}\n`);
+					pushLines.push({ prefix: `   ${shortOld}..${shortNew}`, from: shortRef, to: shortRef });
+				}
+			}
+
+			const stderr: string[] = [];
+			stderr.push(`To ${config.url}\n`);
+			stderr.push(formatTransferRefLines(pushLines));
+
+			if (hasError) {
+				stderr.push(`error: failed to push some refs to '${config.url}'\n`);
+				const hasNonFF = result.updates.some((u) => !u.ok && u.error?.includes("non-fast-forward"));
+				if (hasNonFF) {
+					stderr.push(
+						"hint: Updates were rejected because the remote contains work that you do not\n" +
+							"hint: have locally. This is usually caused by another repository pushing to\n" +
+							"hint: the same ref. If you want to integrate the remote changes, use\n" +
+							"hint: 'git pull' before pushing again.\n" +
+							"hint: See the 'Note about fast-forwards' in 'git push --help' for details.\n",
+					);
 				}
 			}
 
@@ -226,10 +270,13 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 			if (!hasError) {
 				for (const update of result.updates) {
 					if (!update.ok) continue;
-					if (update.newHash === ZERO_HASH) continue;
 					if (!update.name.startsWith("refs/heads/")) continue;
 					const trackingRef = `refs/remotes/${remoteName}/${update.name.slice("refs/heads/".length)}`;
-					await updateRef(gitCtx, trackingRef, update.newHash);
+					if (update.newHash === ZERO_HASH) {
+						await deleteRef(gitCtx, trackingRef);
+					} else {
+						await updateRef(gitCtx, trackingRef, update.newHash);
+					}
 				}
 			}
 
@@ -260,7 +307,7 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 					repo: gitCtx,
 					remote: remoteName,
 					url: config.url,
-					refs: updates.map((u) => ({
+					refs: effectiveUpdates.map((u) => ({
 						srcRef: u.newHash === ZERO_HASH ? null : u.name,
 						srcHash: u.newHash === ZERO_HASH ? null : u.newHash,
 						dstRef: u.name,
