@@ -231,15 +231,16 @@ describe("git push", () => {
 			expect(result.stderr).toContain("the name of your current branch");
 		});
 
-		test("simple falls back to current when no upstream configured", async () => {
+		test("simple refuses push when no upstream configured", async () => {
 			const bash = await setupClonePair();
 
 			await bash.exec("cd /local && git checkout -b new-branch");
 			await bash.exec("cd /local && echo new > new.txt && git add . && git commit -m new");
 
 			const result = await bash.exec("git push", { cwd: "/local" });
-			expect(result.exitCode).toBe(0);
-			expect(result.stderr).toContain("[new branch]");
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("has no upstream branch");
+			expect(result.stderr).toContain("--set-upstream");
 		});
 
 		test("simple falls back to current when pushing to a different remote", async () => {

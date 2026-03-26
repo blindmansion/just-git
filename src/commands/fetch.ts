@@ -326,6 +326,16 @@ async function fetchOneRemote(
 			? `branch '${headBranch.name.slice("refs/heads/".length)}' of`
 			: "of";
 		await gitCtx.fs.writeFile(fetchHeadPath, `${headRef.hash}\t\t${branchDesc} ${config.url}\n`);
+
+		// Create refs/remotes/<remote>/HEAD on first fetch (mirrors clone behavior)
+		if (headBranch) {
+			const remoteHeadRef = `refs/remotes/${remoteName}/HEAD`;
+			const existing = await gitCtx.refStore.readRef(remoteHeadRef);
+			if (!existing) {
+				const trackingRef = `refs/remotes/${remoteName}/${headBranch.name.slice("refs/heads/".length)}`;
+				await gitCtx.refStore.writeRef(remoteHeadRef, { type: "symbolic", target: trackingRef });
+			}
+		}
 	}
 
 	const stderr =

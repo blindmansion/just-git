@@ -106,6 +106,18 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 								? branchCfg.merge.slice("refs/heads/".length)
 								: branchCfg.merge;
 						}
+					} else if (!remoteBranch) {
+						return {
+							stdout: "",
+							stderr:
+								`There is no tracking information for the current branch.\n` +
+								`Please specify which branch you want to merge with.\n` +
+								`See git-pull(1) for details.\n\n` +
+								`    git pull <remote> <branch>\n\n` +
+								`If you wish to set tracking information for this branch you can do so with:\n\n` +
+								`    git branch --set-upstream-to=origin/<branch> ${branchName}\n\n`,
+							exitCode: 1,
+						};
 					}
 				}
 			}
@@ -113,6 +125,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 
 			// Resolve rebase mode: CLI flags override config
 			let useRebase = false;
+			let hasReconciliationStrategy = !!args.rebase || !!args.noRebase;
 			if (args.rebase) {
 				useRebase = true;
 			} else if (!args.noRebase) {
@@ -122,14 +135,24 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 						? head.target.slice("refs/heads/".length)
 						: head.target;
 					const branchRebase = await getConfigValue(gitCtx, `branch.${bn}.rebase`);
-					if (branchRebase === "true") useRebase = true;
-					else if (branchRebase !== "false") {
+					if (branchRebase === "true") {
+						useRebase = true;
+						hasReconciliationStrategy = true;
+					} else if (branchRebase !== "false") {
 						const pullRebase = await getConfigValue(gitCtx, "pull.rebase");
-						if (pullRebase === "true") useRebase = true;
+						if (pullRebase === "true") {
+							useRebase = true;
+							hasReconciliationStrategy = true;
+						}
+					} else {
+						hasReconciliationStrategy = true;
 					}
 				} else {
 					const pullRebase = await getConfigValue(gitCtx, "pull.rebase");
-					if (pullRebase === "true") useRebase = true;
+					if (pullRebase === "true") {
+						useRebase = true;
+						hasReconciliationStrategy = true;
+					}
 				}
 			}
 
@@ -235,6 +258,25 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				fetchRefLines.length > 0
 					? `From ${config.url}\n${formatTransferRefLines(fetchRefLines, 10)}`
 					: "";
+
+			// Create refs/remotes/<remote>/HEAD on first fetch (mirrors clone behavior)
+			const headRef = remoteRefs.find((r) => r.name === "HEAD");
+			if (headRef) {
+				const headBranch = remoteRefs.find(
+					(r) => r.name.startsWith("refs/heads/") && r.hash === headRef.hash,
+				);
+				if (headBranch) {
+					const remoteHeadRef = `refs/remotes/${remoteName}/HEAD`;
+					const existing = await gitCtx.refStore.readRef(remoteHeadRef);
+					if (!existing) {
+						const trackingRef = `refs/remotes/${remoteName}/${headBranch.name.slice("refs/heads/".length)}`;
+						await gitCtx.refStore.writeRef(remoteHeadRef, {
+							type: "symbolic",
+							target: trackingRef,
+						});
+					}
+				}
+			}
 
 			// Write FETCH_HEAD
 			let fetchHeadHash: ObjectId | null = null;
@@ -344,11 +386,40 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			let ffOnly = !!args.ffOnly;
 			if (!args.noFf && !args.ffOnly) {
 				const pullFFConfig = await getConfigValue(gitCtx, "pull.ff");
-				if (pullFFConfig === "false") noFf = true;
-				else if (pullFFConfig === "only") ffOnly = true;
+				if (pullFFConfig === "false") {
+					noFf = true;
+					hasReconciliationStrategy = true;
+				} else if (pullFFConfig === "only") {
+					ffOnly = true;
+					hasReconciliationStrategy = true;
+				}
+			} else {
+				hasReconciliationStrategy = true;
 			}
 
 			const isFastForward = baseCommit === headHash;
+
+			if (!isFastForward && !hasReconciliationStrategy) {
+				return {
+					stdout: "",
+					stderr:
+						fetchOutput +
+						"hint: You have divergent branches and need to specify how to reconcile them.\n" +
+						"hint: You can do so by running one of the following commands sometime before\n" +
+						"hint: your next pull:\n" +
+						"hint:\n" +
+						"hint:   git config pull.rebase false  # merge\n" +
+						"hint:   git config pull.rebase true   # rebase\n" +
+						"hint:   git config pull.ff only       # fast-forward only\n" +
+						"hint:\n" +
+						'hint: You can replace "git config" with "git config --global" to set a default\n' +
+						"hint: preference for all repositories. You can also pass --rebase, --no-rebase,\n" +
+						"hint: or --ff-only on the command line to override the configured default per\n" +
+						"hint: invocation.\n" +
+						"fatal: Need to specify how to reconcile divergent branches.\n",
+					exitCode: 128,
+				};
+			}
 
 			if (ffOnly && !isFastForward) {
 				return {

@@ -49,7 +49,7 @@ describe("git pull", () => {
 			"cd /local && echo 'local change' > local.txt && git add . && git commit -m 'local commit'",
 		);
 
-		const result = await bash.exec("git pull", { cwd: "/local" });
+		const result = await bash.exec("git pull --no-rebase", { cwd: "/local" });
 		expect(result.exitCode).toBe(0);
 		expect(result.stdout).toContain("Merge made by");
 
@@ -69,7 +69,7 @@ describe("git pull", () => {
 			"cd /local && echo 'local version' > README.md && git add . && git commit -m 'local change'",
 		);
 
-		const result = await bash.exec("git pull", { cwd: "/local" });
+		const result = await bash.exec("git pull --no-rebase", { cwd: "/local" });
 		expect(result.exitCode).toBe(1);
 		expect(result.stdout).toContain("CONFLICT");
 		expect(result.stdout).toContain("Automatic merge failed");

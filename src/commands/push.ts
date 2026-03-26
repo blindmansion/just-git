@@ -128,10 +128,15 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				}
 			} else if (!args.tags) {
 				// No explicit refspec and no --tags — use push.default
-				const head = await readHead(gitCtx);
-				if (!head || head.type !== "symbolic") {
-					return fatal("You are not currently on a branch.");
-				}
+			const head = await readHead(gitCtx);
+			if (!head || head.type !== "symbolic") {
+				return fatal(
+					"You are not currently on a branch.\n" +
+						"To push the history leading to the current (detached HEAD)\n" +
+						"state now, use\n\n" +
+						"    git push origin HEAD:<name-of-remote-branch>\n",
+				);
+			}
 				const branchRef = head.target;
 				const branchName = branchRef.startsWith("refs/heads/")
 					? branchRef.slice("refs/heads/".length)
@@ -217,7 +222,7 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 
 				if (!update.ok) {
 					const reason = update.error?.includes("non-fast-forward")
-						? "fetch first"
+						? "non-fast-forward"
 						: (update.error ?? "failed");
 					pushLines.push({
 						prefix: " ! [rejected]",
@@ -255,13 +260,12 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				stderr.push(`error: failed to push some refs to '${config.url}'\n`);
 				const hasNonFF = result.updates.some((u) => !u.ok && u.error?.includes("non-fast-forward"));
 				if (hasNonFF) {
-					stderr.push(
-						"hint: Updates were rejected because the remote contains work that you do not\n" +
-							"hint: have locally. This is usually caused by another repository pushing to\n" +
-							"hint: the same ref. If you want to integrate the remote changes, use\n" +
-							"hint: 'git pull' before pushing again.\n" +
-							"hint: See the 'Note about fast-forwards' in 'git push --help' for details.\n",
-					);
+				stderr.push(
+					"hint: Updates were rejected because the tip of your current branch is behind\n" +
+						"hint: its remote counterpart. If you want to integrate the remote changes,\n" +
+						"hint: use 'git pull' before pushing again.\n" +
+						"hint: See the 'Note about fast-forwards' in 'git push --help' for details.\n",
+				);
 				}
 			}
 
@@ -393,14 +397,22 @@ async function resolvePushDefault(
 				ok: force,
 			};
 		}
+		// Tracked on a different remote (triangular workflow) — push like "current"
+		return {
+			name: branchRef,
+			oldHash: remoteRefMap.get(branchRef) ?? null,
+			newHash: localHash,
+			ok: force,
+		};
 	}
-	// No tracking or pushing to different remote — fall back to current
-	return {
-		name: branchRef,
-		oldHash: remoteRefMap.get(branchRef) ?? null,
-		newHash: localHash,
-		ok: force,
-	};
+	// No upstream configured — refuse
+	return fatal(
+		`The current branch ${branchName} has no upstream branch.\n` +
+			"To push the current branch and set the remote as upstream, use\n\n" +
+			`    git push --set-upstream ${remoteName} ${branchName}\n` +
+			"\nTo have this happen automatically for branches without a tracking\n" +
+			"upstream, see 'push.autoSetupRemote' in 'git help config'.\n",
+	);
 }
 
 async function resolveRefForPush(ctx: GitRepo, src: string): Promise<ObjectId | null> {
