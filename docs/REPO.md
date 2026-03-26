@@ -216,6 +216,73 @@ Both return `{ treeHash, clean, conflicts, messages }`. Operates purely on the o
 | `createWorktree`        | `(repo, fs, options?) → WorktreeResult`                 | Create a full `GitContext` backed by the repo's stores. Populates worktree, index, and `.git` on the VFS. See [GitRepo > Bridging the two](#how-you-get-a-gitrepo) |
 | `createSandboxWorktree` | `(repo, options?) → WorktreeResult`                     | Create an isolated worktree with copy-on-write overlay stores and lazy reads. Source repo is never mutated. Designed for server hooks                              |
 
+### Operations
+
+| Function | Signature                          | Description                                                                                                                                              |
+| -------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bisect` | `(repo, options) → BisectSearchResult` | Binary-search the commit graph to find the first bad commit. Operates purely on the object store — the caller provides a `test` callback per candidate |
+
+`bisect` uses the same weighted-midpoint algorithm as `git bisect`: each step picks the commit that maximizes information gain. The `test` callback receives the candidate hash and a `TreeAccessor` for lazy file access:
+
+```ts
+import { bisect } from "just-git/repo";
+
+const result = await bisect(repo, {
+  bad: "main",
+  good: "v1.0.0",
+  test: async (hash, tree) => {
+    const content = await tree.readFile("src/config.ts");
+    return content !== null && !content.includes("broken_call");
+  },
+});
+
+if (result.found) {
+  console.log(`First bad commit: ${result.hash} (${result.stepsTaken} steps)`);
+}
+```
+
+**`BisectOptions`:**
+
+- `bad` — known bad commit (hash, branch, tag, or any rev-parse expression)
+- `good` — one or more known good commits (`string | string[]`)
+- `test` — `(hash, tree) => boolean | "skip" | Promise<...>`. Return `true` (good), `false` (bad), or `"skip"` (untestable)
+- `firstParent?` — follow only first parent at merge commits (default `false`)
+- `onStep?` — `(info: BisectStepInfo) => void` for progress reporting
+
+**`BisectSearchResult`** (discriminated union):
+
+- `{ found: true, hash, stepsTaken }` — first bad commit identified
+- `{ found: false, reason: "all-skipped", candidates }` — only skipped commits remain
+- `{ found: false, reason: "no-testable-commits" }` — no commits between good and bad
+
+### Tree accessor
+
+`TreeAccessor` provides progressively richer access to a git tree's contents without requiring upfront materialization:
+
+| Method          | Signature                                         | Description                                                                    |
+| --------------- | ------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `readFile`      | `(path) → string \| null`                         | Read a single file (O(tree depth), no flatten)                                 |
+| `readFileBytes` | `(path) → Uint8Array \| null`                     | Read a file's raw bytes                                                        |
+| `files`         | `() → string[]`                                   | List all tracked file paths (walks tree objects, no blob reads)                |
+| `fs`            | `(root?) → FileSystem`                            | Get a full `FileSystem` view (lazy reads, in-memory writes). Cached per root  |
+| `materialize`   | `(target, targetDir?) → number`                   | Write all tracked files onto a `MaterializeTarget`. Returns files written     |
+| `treeHash`      | `string`                                          | The underlying git tree object hash                                            |
+
+```ts
+import { createTreeAccessor } from "just-git/repo";
+
+const accessor = createTreeAccessor(repo, commit.tree);
+
+// Single file read — no flatten needed
+const content = await accessor.readFile("src/index.ts");
+
+// Full filesystem for build/test scenarios
+const fs = accessor.fs();
+await fs.readFile("package.json");
+```
+
+`MaterializeTarget` is the minimal filesystem interface needed by `materialize`: just `writeFile`, `mkdir`, and optionally `symlink`.
+
 ### Safety
 
 | Function       | Signature          | Description                                                                                                      |
