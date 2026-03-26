@@ -68,7 +68,7 @@ describe("git push", () => {
 			cwd: "/local",
 		});
 		expect(result.exitCode).toBe(0);
-		expect(result.stderr).toContain("set up to track");
+		expect(result.stdout).toContain("set up to track");
 
 		// Verify config was written
 		const config = await readFile(bash.fs, "/local/.git/config");

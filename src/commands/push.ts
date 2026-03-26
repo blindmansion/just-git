@@ -9,7 +9,7 @@ import {
 } from "../lib/command-utils.ts";
 import { getConfigValue, readConfig, writeConfig } from "../lib/config.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
-import { listRefs, readHead, resolveHead, resolveRef } from "../lib/refs.ts";
+import { listRefs, readHead, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
 import { parseRefspec } from "../lib/transport/refspec.ts";
 import { resolveRemoteTransport } from "../lib/transport/remote.ts";
 import type { PushRefUpdate } from "../lib/transport/transport.ts";
@@ -221,6 +221,18 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				}
 			}
 
+			// Update remote tracking refs for successful pushes
+			let stdout = "";
+			if (!hasError) {
+				for (const update of result.updates) {
+					if (!update.ok) continue;
+					if (update.newHash === ZERO_HASH) continue;
+					if (!update.name.startsWith("refs/heads/")) continue;
+					const trackingRef = `refs/remotes/${remoteName}/${update.name.slice("refs/heads/".length)}`;
+					await updateRef(gitCtx, trackingRef, update.newHash);
+				}
+			}
+
 			// Set upstream if -u was passed
 			if (args["set-upstream"] && !hasError) {
 				const head = await readHead(gitCtx);
@@ -234,12 +246,12 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 						merge: `refs/heads/${branchName}`,
 					};
 					await writeConfig(gitCtx, cfg);
-					stderr.push(`branch '${branchName}' set up to track '${remoteName}/${branchName}'.\n`);
+					stdout = `branch '${branchName}' set up to track '${remoteName}/${branchName}'.\n`;
 				}
 			}
 
 			const response = {
-				stdout: "",
+				stdout,
 				stderr: stderr.join(""),
 				exitCode: hasError ? 1 : 0,
 			};
