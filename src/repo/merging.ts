@@ -1,8 +1,10 @@
 import { type MergeConflict } from "../lib/merge.ts";
 import { mergeOrtRecursive, mergeOrtNonRecursive } from "../lib/merge-ort.ts";
+import type { MergeDriver, MergeDriverResult } from "../lib/merge-ort.ts";
 import type { GitRepo } from "../lib/types.ts";
 
 export type { MergeConflict } from "../lib/merge.ts";
+export type { MergeDriver, MergeDriverResult } from "../lib/merge-ort.ts";
 
 /** Result of a tree-level merge via {@link mergeTrees} or {@link mergeTreesFromTreeHashes}. */
 export interface MergeTreesResult {
@@ -31,13 +33,15 @@ export async function mergeTrees(
 	repo: GitRepo,
 	oursCommit: string,
 	theirsCommit: string,
-	labels?: { ours?: string; theirs?: string },
+	options?: { ours?: string; theirs?: string; mergeDriver?: MergeDriver },
 ): Promise<MergeTreesResult> {
-	const mergeLabels = labels
-		? { a: labels.ours ?? "ours", b: labels.theirs ?? "theirs" }
+	const mergeLabels = options
+		? { a: options.ours ?? "ours", b: options.theirs ?? "theirs" }
 		: undefined;
 
-	const result = await mergeOrtRecursive(repo, oursCommit, theirsCommit, mergeLabels);
+	const result = await mergeOrtRecursive(
+		repo, oursCommit, theirsCommit, mergeLabels, options?.mergeDriver,
+	);
 
 	return {
 		treeHash: result.resultTree,
@@ -57,13 +61,15 @@ export async function mergeTreesFromTreeHashes(
 	baseTree: string | null,
 	oursTree: string,
 	theirsTree: string,
-	labels?: { ours?: string; theirs?: string },
+	options?: { ours?: string; theirs?: string; mergeDriver?: MergeDriver },
 ): Promise<MergeTreesResult> {
-	const mergeLabels = labels
-		? { a: labels.ours ?? "ours", b: labels.theirs ?? "theirs" }
+	const mergeLabels = options
+		? { a: options.ours ?? "ours", b: options.theirs ?? "theirs" }
 		: undefined;
 
-	const result = await mergeOrtNonRecursive(repo, baseTree, oursTree, theirsTree, mergeLabels);
+	const result = await mergeOrtNonRecursive(
+		repo, baseTree, oursTree, theirsTree, mergeLabels, options?.mergeDriver,
+	);
 
 	return {
 		treeHash: result.resultTree,

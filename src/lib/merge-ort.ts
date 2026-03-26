@@ -105,6 +105,30 @@ interface MergeOrtResult extends MergeTreeResult {
 	resultTree: ObjectId;
 }
 
+/**
+ * Custom content merge callback. Called during three-way merge before the
+ * default line-based diff3 algorithm. Analogous to git's `.gitattributes`
+ * `merge=` drivers, but as an async callback rather than a shell command.
+ *
+ * Return a result to override the default merge, or `null` to fall back
+ * to diff3. When `conflict` is `false`, the content is written as a clean
+ * stage-0 entry. When `conflict` is `true`, the original base/ours/theirs
+ * blobs are preserved as index stages 1/2/3 (so `--ours`/`--theirs`
+ * checkout still works) and the returned content becomes the worktree blob.
+ */
+export type MergeDriver = (ctx: {
+	path: string;
+	base: string | null;
+	ours: string;
+	theirs: string;
+}) => MergeDriverResult | null | Promise<MergeDriverResult | null>;
+
+/** Result from a {@link MergeDriver} callback. */
+export interface MergeDriverResult {
+	content: string;
+	conflict: boolean;
+}
+
 /** Sortable message buffer entry. */
 interface SortableMsg {
 	sortKey: string;
@@ -131,6 +155,7 @@ export async function mergeOrtNonRecursive(
 	oursTree: ObjectId,
 	theirsTree: ObjectId,
 	labels?: MergeLabels,
+	mergeDriver?: MergeDriver,
 ): Promise<MergeOrtResult> {
 	// Phase 1: Collect
 	const { paths, baseMap, oursMap, theirsMap } = await collectMergeInfo(
@@ -148,10 +173,11 @@ export async function mergeOrtNonRecursive(
 		oursMap,
 		theirsMap,
 		labels,
+		mergeDriver,
 	);
 
 	// Phase 3: Process remaining entries + merge rename output
-	return processEntries(ctx, paths, labels, renameOutput);
+	return processEntries(ctx, paths, labels, renameOutput, mergeDriver);
 }
 
 /**
@@ -165,6 +191,7 @@ export async function mergeOrtRecursive(
 	oursHash: ObjectId,
 	theirsHash: ObjectId,
 	labels?: MergeLabels,
+	mergeDriver?: MergeDriver,
 ): Promise<MergeOrtResult & { baseTree: ObjectId | null }> {
 	const bases = await findAllMergeBases(ctx, oursHash, theirsHash);
 	const oursCommit = await readCommit(ctx, oursHash);
@@ -178,6 +205,7 @@ export async function mergeOrtRecursive(
 			oursCommit.tree,
 			theirsCommit.tree,
 			labels,
+			mergeDriver,
 		);
 		return { ...result, baseTree: null };
 	}
@@ -190,12 +218,15 @@ export async function mergeOrtRecursive(
 			oursCommit.tree,
 			theirsCommit.tree,
 			labels,
+			mergeDriver,
 		);
 		return { ...result, baseTree: baseCommit.tree };
 	}
 
 	// Multiple LCAs — recursively merge pairwise to produce virtual base.
-	const baseTree = await computeRecursiveMergeBase(ctx, oursHash, theirsHash, bases, 1);
+	const baseTree = await computeRecursiveMergeBase(
+		ctx, oursHash, theirsHash, bases, 1, mergeDriver,
+	);
 
 	const result = await mergeOrtNonRecursive(
 		ctx,
@@ -203,6 +234,7 @@ export async function mergeOrtRecursive(
 		oursCommit.tree,
 		theirsCommit.tree,
 		labels,
+		mergeDriver,
 	);
 	return { ...result, baseTree };
 }
@@ -352,6 +384,7 @@ async function detectAndProcessRenames(
 	oursMap: Map<string, FlatTreeEntry>,
 	theirsMap: Map<string, FlatTreeEntry>,
 	labels?: MergeLabels,
+	mergeDriver?: MergeDriver,
 ): Promise<RenameOutput> {
 	const output: RenameOutput = {
 		entries: [],
@@ -471,7 +504,9 @@ async function detectAndProcessRenames(
 
 				// Content merge of the renamed file (base + ours' version + theirs' version).
 				// Real git uses the merged content for both stage-2 and stage-3 entries.
-				const merged = await mergeRenameContent(ctx, base, oursEntry, theirsEntry, labels);
+				const merged = await mergeRenameContent(
+					ctx, base, oursEntry, theirsEntry, labels, undefined, undefined, mergeDriver,
+				);
 
 				if (merged.conflict) {
 					pushMsg(basePath, `Auto-merging ${basePath}`, -1);
@@ -573,6 +608,7 @@ async function detectAndProcessRenames(
 					theirsMap,
 					false,
 					labels,
+					mergeDriver,
 				);
 			} else {
 				// Normal rename — content merge at new path
@@ -675,6 +711,7 @@ async function detectAndProcessRenames(
 					theirsMap,
 					true,
 					labels,
+					mergeDriver,
 				);
 			} else {
 				// Normal rename — content merge at new path
@@ -1168,6 +1205,7 @@ async function handleRenameAddAdd(
 	theirsMap: Map<string, FlatTreeEntry>,
 	isTheirsRename = false,
 	labels?: MergeLabels,
+	mergeDriver?: MergeDriver,
 ): Promise<void> {
 	const targetEntry = isTheirsRename ? oursMap.get(targetPath)! : theirsMap.get(targetPath)!;
 
@@ -1190,7 +1228,7 @@ async function handleRenameAddAdd(
 		? { oursPath: basePath, theirsPath: targetPath }
 		: { oursPath: targetPath, theirsPath: basePath };
 
-	const merged = await mergeRenameContent(ctx, base, oursEntry, theirsEntry, labels, pathLabels, 8);
+	const merged = await mergeRenameContent(ctx, base, oursEntry, theirsEntry, labels, pathLabels, 8, mergeDriver);
 
 	if (targetEntry.hash === merged.hash) {
 		output.entries.push(makeEntryFromHash(targetPath, targetEntry.mode, merged.hash));
@@ -1259,6 +1297,7 @@ async function mergeRenameContent(
 	labels?: MergeLabels,
 	pathLabels?: { oursPath?: string; theirsPath?: string },
 	markerSize?: number,
+	mergeDriver?: MergeDriver,
 ): Promise<{ hash: ObjectId; conflict: boolean }> {
 	if (ours.hash === base.hash) return { hash: theirs.hash, conflict: false };
 	if (theirs.hash === base.hash) return { hash: ours.hash, conflict: false };
@@ -1276,6 +1315,17 @@ async function mergeRenameContent(
 	// Binary files can't be textually merged
 	if (isBinaryStr(oursText) || isBinaryStr(theirsText) || isBinaryStr(baseText)) {
 		return { hash: ours.hash, conflict: true };
+	}
+
+	if (mergeDriver) {
+		const driverResult = await mergeDriver({
+			path: base.path ?? ours.path ?? theirs.path ?? "",
+			base: baseText, ours: oursText, theirs: theirsText,
+		});
+		if (driverResult !== null) {
+			const hash = await writeObject(ctx, "blob", encoder.encode(driverResult.content));
+			return { hash, conflict: driverResult.conflict };
+		}
 	}
 
 	const baseLines = splitLinesWithSentinel(baseText);
@@ -1344,6 +1394,7 @@ async function processEntries(
 	paths: Map<string, ConflictInfo>,
 	labels: MergeLabels | undefined,
 	renameOutput: RenameOutput,
+	mergeDriver?: MergeDriver,
 ): Promise<MergeOrtResult> {
 	// Start with rename-produced entries/conflicts/messages
 	const entries: IndexEntry[] = [...renameOutput.entries];
@@ -1369,7 +1420,7 @@ async function processEntries(
 		}
 
 		// Needs conflict resolution
-		await processEntry(ctx, ci, labels, entries, conflicts, pushMsg, worktreeBlobs);
+		await processEntry(ctx, ci, labels, entries, conflicts, pushMsg, worktreeBlobs, mergeDriver);
 	}
 
 	// Sort messages by path (byte-level, matching git's strcmp) then sub-order
@@ -1407,6 +1458,7 @@ async function processEntry(
 	conflicts: MergeConflict[],
 	pushMsg: (sortKey: string, text: string, subOrder?: number) => void,
 	worktreeBlobs: Map<string, { hash: ObjectId; mode: string }>,
+	mergeDriver?: MergeDriver,
 ): Promise<void> {
 	const path = ci.path;
 	const [base, ours, theirs] = ci.stages;
@@ -1470,6 +1522,25 @@ async function processEntry(
 			entries.push(makeEntry(path, th!, theirs!.mode, 3));
 			worktreeBlobs.set(path, { hash: oh!, mode: ours!.mode });
 			return;
+		}
+
+		if (mergeDriver) {
+			const driverResult = await mergeDriver({
+				path, base: null, ours: oursText, theirs: theirsText,
+			});
+			if (driverResult !== null) {
+				const driverHash = await writeObject(ctx, "blob", encoder.encode(driverResult.content));
+				if (!driverResult.conflict) {
+					entries.push(makeEntry(path, driverHash, ours!.mode));
+					return;
+				}
+				conflicts.push({ path, reason: "add-add" });
+				pushMsg(path, `CONFLICT (add/add): Merge conflict in ${path}`, 1);
+				entries.push(makeEntry(path, oh!, ours!.mode, 2));
+				entries.push(makeEntry(path, th!, theirs!.mode, 3));
+				worktreeBlobs.set(path, { hash: driverHash, mode: ours!.mode });
+				return;
+			}
 		}
 
 		const baseLines = splitLinesWithSentinel("");
@@ -1558,6 +1629,34 @@ async function processEntry(
 			return;
 		}
 
+		if (mergeDriver) {
+			const driverResult = await mergeDriver({
+				path, base: baseText, ours: oursText, theirs: theirsText,
+			});
+			if (driverResult !== null) {
+				const driverHash = await writeObject(ctx, "blob", encoder.encode(driverResult.content));
+				if (!driverResult.conflict) {
+					entries.push(makeEntry(path, driverHash, ours!.mode));
+					return;
+				}
+				const oursOrigPath = ci.pathnames[1];
+				const theirsOrigPath = ci.pathnames[2];
+				const hasRenameLabels = oursOrigPath !== path || theirsOrigPath !== path;
+				const conflict: MergeConflict = { path, reason: "content" };
+				if (hasRenameLabels) {
+					if (oursOrigPath !== path) conflict.oursOrigPath = oursOrigPath;
+					if (theirsOrigPath !== path) conflict.theirsOrigPath = theirsOrigPath;
+				}
+				conflicts.push(conflict);
+				pushMsg(path, `CONFLICT (content): Merge conflict in ${path}`, 1);
+				entries.push(makeEntry(path, bh, base!.mode, 1));
+				entries.push(makeEntry(path, oh, ours!.mode, 2));
+				entries.push(makeEntry(path, th, theirs!.mode, 3));
+				worktreeBlobs.set(path, { hash: driverHash, mode: ours!.mode });
+				return;
+			}
+		}
+
 		// Use diff3Merge for clean/conflict detection (matches old mergeTrees behavior)
 		const baseLines = splitLinesWithSentinel(baseText);
 		const oursLines = splitLinesWithSentinel(oursText);
@@ -1618,6 +1717,7 @@ async function computeRecursiveMergeBase(
 	_theirsHash: ObjectId,
 	bases: ObjectId[],
 	callDepth: number,
+	mergeDriver?: MergeDriver,
 ): Promise<ObjectId> {
 	// Sort merge bases oldest-first (ascending by commit timestamp)
 	const basesWithTimestamp = await Promise.all(
@@ -1655,12 +1755,15 @@ async function computeRecursiveMergeBase(
 					nextBase,
 					innerBases,
 					callDepth + 1,
+					mergeDriver,
 				);
 			}
 		}
 
 		// Merge the two base trees (inner merge at callDepth > 0)
-		const result = await mergeOrtNonRecursive(ctx, innerBaseTree, virtualTree, nextTree);
+		const result = await mergeOrtNonRecursive(
+			ctx, innerBaseTree, virtualTree, nextTree, undefined, mergeDriver,
+		);
 
 		// Build virtual tree from merge result, resolving conflicts
 		virtualTree = await resolveVirtualBaseConflicts(ctx, result, callDepth);
