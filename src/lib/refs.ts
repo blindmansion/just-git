@@ -516,7 +516,14 @@ export async function writePackedRefs(ctx: GitContext): Promise<void> {
 	if (refs.length === 0) return;
 
 	const lines: string[] = ["# pack-refs with: peeled fully-peeled sorted"];
+	const packed: string[] = [];
 	for (const ref of refs) {
+		const loosePath = join(ctx.gitDir, ref.name);
+		if (await ctx.fs.exists(loosePath)) {
+			const raw = (await ctx.fs.readFile(loosePath)).trim();
+			if (raw.startsWith("ref: ")) continue;
+		}
+		packed.push(ref.name);
 		lines.push(`${ref.hash} ${ref.name}`);
 		if (ref.name.startsWith("refs/tags/")) {
 			try {
@@ -538,8 +545,8 @@ export async function writePackedRefs(ctx: GitContext): Promise<void> {
 
 	await ctx.fs.writeFile(join(ctx.gitDir, "packed-refs"), `${lines.join("\n")}\n`);
 
-	for (const ref of refs) {
-		const loosePath = join(ctx.gitDir, ref.name);
+	for (const name of packed) {
+		const loosePath = join(ctx.gitDir, name);
 		if (await ctx.fs.exists(loosePath)) {
 			await ctx.fs.rm(loosePath);
 		}
