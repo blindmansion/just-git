@@ -267,17 +267,22 @@ async function orderMergeBasesByPaintOrder(
  * Real git omits "into <branch>" when merging into the repository's default
  * branch (typically "main" or "master"). We replicate this by checking the
  * `init.defaultBranch` config value, falling back to "main".
+ *
+ * When `remoteUrl` is provided (pull path), the message includes
+ * `of <url>` after the branch name, matching real git's pull format.
  */
 export async function buildMergeMessage(
 	gitCtx: GitContext,
 	branchName: string,
 	currentBranch: string,
+	remoteUrl?: string,
 ): Promise<string> {
 	const defaultBranch = (await getConfigValue(gitCtx, "init.defaultBranch")) ?? "main";
+	const ofRemote = remoteUrl ? ` of ${remoteUrl}` : "";
 	if (currentBranch === defaultBranch) {
-		return `Merge branch '${branchName}'\n`;
+		return `Merge branch '${branchName}'${ofRemote}\n`;
 	}
-	return `Merge branch '${branchName}' into ${currentBranch}\n`;
+	return `Merge branch '${branchName}'${ofRemote} into ${currentBranch}\n`;
 }
 
 // ── Fast-forward merge (high-level) ─────────────────────────────────

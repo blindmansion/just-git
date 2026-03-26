@@ -336,8 +336,9 @@ export class SmartHttpTransport implements Transport {
 
 	async push(updates: PushRefUpdate[]): Promise<PushResult> {
 		// Client-side fast-forward check (mirrors LocalTransport behaviour).
-		// GitHub/GitLab don't reject non-FF pushes on unprotected branches,
-		// so the client must enforce this like real git does.
+		// Each ref is checked independently — real git is non-atomic by default.
+		const rejected = new Set<PushRefUpdate>();
+		const rejectedResults: PushRefUpdate[] = [];
 		for (const update of updates) {
 			if (
 				update.oldHash &&
@@ -347,24 +348,21 @@ export class SmartHttpTransport implements Transport {
 			) {
 				const ff = await isAncestor(this.local, update.oldHash, update.newHash);
 				if (!ff) {
-					return {
-						updates: updates.map((u) =>
-							u === update
-								? {
-										...u,
-										ok: false,
-										error: "non-fast-forward",
-									}
-								: { ...u, ok: false, error: "atomic push failed" },
-						),
-					};
+					rejected.add(update);
+					rejectedResults.push({ ...update, ok: false, error: "non-fast-forward" });
 				}
 			}
 		}
 
+		const accepted = updates.filter((u) => !rejected.has(u));
+
+		if (accepted.length === 0) {
+			return { updates: rejectedResults };
+		}
+
 		const pushCaps = await this.ensurePushDiscovery();
 
-		const commands: PushCommand[] = updates.map((u) => ({
+		const commands: PushCommand[] = accepted.map((u) => ({
 			oldHash: u.oldHash ?? ZERO_HASH,
 			newHash: u.newHash,
 			refName: u.name,
@@ -374,7 +372,7 @@ export class SmartHttpTransport implements Transport {
 		const allHaves: ObjectId[] = [];
 		let hasNonDelete = false;
 
-		for (const update of updates) {
+		for (const update of accepted) {
 			if (update.newHash !== ZERO_HASH) {
 				allWants.push(update.newHash);
 				hasNonDelete = true;
@@ -391,7 +389,7 @@ export class SmartHttpTransport implements Transport {
 
 		const result = await pushPack(this.url, commands, packData, pushCaps, this.auth, this.fetchFn);
 
-		const resultUpdates: PushRefUpdate[] = updates.map((u) => {
+		const serverResults: PushRefUpdate[] = accepted.map((u) => {
 			const refResult = result.refResults.find((r) => r.name === u.name);
 			const ok = refResult?.ok ?? result.unpackOk;
 			const error =
@@ -400,7 +398,7 @@ export class SmartHttpTransport implements Transport {
 			return { ...u, ok, error };
 		});
 
-		return { updates: resultUpdates };
+		return { updates: [...serverResults, ...rejectedResults] };
 	}
 }
 

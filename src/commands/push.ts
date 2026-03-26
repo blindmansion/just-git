@@ -10,6 +10,7 @@ import {
 	type TransferRefLine,
 } from "../lib/command-utils.ts";
 import { getConfigValue, readConfig, writeConfig } from "../lib/config.ts";
+import { isAncestor } from "../lib/merge.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 import {
 	deleteRef,
@@ -85,11 +86,13 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				if (refs.length === 0) {
 					return fatal("--delete requires a ref argument");
 				}
+				const deleteErrors: string[] = [];
 				for (const ref of refs) {
 					const fullRef = ref.startsWith("refs/") ? ref : `refs/heads/${ref}`;
 					const oldHash = remoteRefMap.get(fullRef) ?? null;
 					if (!oldHash) {
-						return err(`error: unable to delete '${ref}': remote ref does not exist\n`);
+						deleteErrors.push(`error: unable to delete '${ref}': remote ref does not exist\n`);
+						continue;
 					}
 					updates.push({
 						name: fullRef,
@@ -97,6 +100,11 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 						newHash: ZERO_HASH,
 						ok: force,
 					});
+				}
+				if (deleteErrors.length > 0 && updates.length === 0) {
+					return err(
+						deleteErrors.join("") + `error: failed to push some refs to '${config.url}'\n`,
+					);
 				}
 			} else if (args.all) {
 				const localRefs = await listRefs(gitCtx, "refs/heads");
@@ -113,11 +121,47 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 			} else if (rawRefspecs && rawRefspecs.length > 0) {
 				for (const raw of rawRefspecs) {
 					const spec = parseRefspec(raw);
+					const hasExplicitDst = raw.replace(/^\+/, "").includes(":");
+
+					let effectiveDst = spec.dst;
+					if (!hasExplicitDst && spec.src === "HEAD") {
+						const head = await readHead(gitCtx);
+						if (head?.type === "symbolic") {
+							effectiveDst = head.target.startsWith("refs/heads/")
+								? head.target.slice("refs/heads/".length)
+								: head.target;
+						} else {
+							return {
+								stdout: "",
+								stderr:
+									"error: The destination you provided is not a full refname (i.e.,\n" +
+									'starting with "refs/"). We tried to guess what you meant by:\n' +
+									"\n" +
+									"- Looking for a ref that matches 'HEAD' on the remote side.\n" +
+									"- Checking if the <src> being pushed ('HEAD')\n" +
+									'  is a ref in "refs/{heads,tags}/". If so we add a corresponding\n' +
+									"  refs/{heads,tags}/ prefix on the remote side.\n" +
+									"\n" +
+									"Neither worked, so we gave up. You must fully qualify the ref.\n" +
+									"hint: The <src> part of the refspec is a commit object.\n" +
+									"hint: Did you mean to create a new branch by pushing to\n" +
+									"hint: 'HEAD:refs/heads/HEAD'?\n" +
+									`error: failed to push some refs to '${config.url}'\n`,
+								exitCode: 1,
+							};
+						}
+					}
+
 					const srcHash = await resolveRefForPush(gitCtx, spec.src);
 					if (!srcHash) {
-						return err(`error: src refspec '${spec.src}' does not match any\n`);
+						return err(
+							`error: src refspec ${spec.src} does not match any\n` +
+								`error: failed to push some refs to '${config.url}'\n`,
+						);
 					}
-					const dstRef = spec.dst.startsWith("refs/") ? spec.dst : `refs/heads/${spec.dst}`;
+					const dstRef = effectiveDst.startsWith("refs/")
+						? effectiveDst
+						: `refs/heads/${effectiveDst}`;
 					const oldHash = remoteRefMap.get(dstRef) ?? null;
 					updates.push({
 						name: dstRef,
@@ -128,15 +172,15 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				}
 			} else if (!args.tags) {
 				// No explicit refspec and no --tags — use push.default
-			const head = await readHead(gitCtx);
-			if (!head || head.type !== "symbolic") {
-				return fatal(
-					"You are not currently on a branch.\n" +
-						"To push the history leading to the current (detached HEAD)\n" +
-						"state now, use\n\n" +
-						"    git push origin HEAD:<name-of-remote-branch>\n",
-				);
-			}
+				const head = await readHead(gitCtx);
+				if (!head || head.type !== "symbolic") {
+					return fatal(
+						"You are not currently on a branch.\n" +
+							"To push the history leading to the current (detached HEAD)\n" +
+							"state now, use\n\n" +
+							"    git push origin HEAD:<name-of-remote-branch>\n",
+					);
+				}
 				const branchRef = head.target;
 				const branchName = branchRef.startsWith("refs/heads/")
 					? branchRef.slice("refs/heads/".length)
@@ -183,8 +227,24 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 			const effectiveUpdates = updates.filter((u) => u.oldHash !== u.newHash);
 
 			if (effectiveUpdates.length === 0) {
+				let stdout = "";
+				if (args["set-upstream"]) {
+					const head = await readHead(gitCtx);
+					if (head?.type === "symbolic") {
+						const branchName = head.target.startsWith("refs/heads/")
+							? head.target.slice("refs/heads/".length)
+							: head.target;
+						const cfg = await readConfig(gitCtx);
+						cfg[`branch "${branchName}"`] = {
+							remote: remoteName,
+							merge: `refs/heads/${branchName}`,
+						};
+						await writeConfig(gitCtx, cfg);
+						stdout = `branch '${branchName}' set up to track '${remoteName}/${branchName}'.\n`;
+					}
+				}
 				return {
-					stdout: "",
+					stdout,
 					stderr: "Everything up-to-date\n",
 					exitCode: 0,
 				};
@@ -236,21 +296,30 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 					pushLines.push({ prefix: ` * ${label}`, from: shortRef, to: shortRef });
 				} else if (update.newHash === ZERO_HASH) {
 					pushLines.push({ prefix: " - [deleted]", from: shortRef, to: "" });
-				} else if (forceRequested.has(update.name)) {
-					const shortOld = abbreviateHash(update.oldHash);
-					const shortNew = abbreviateHash(update.newHash);
-					pushLines.push({
-						prefix: ` + ${shortOld}...${shortNew}`,
-						from: shortRef,
-						to: shortRef,
-						suffix: "(forced update)",
-					});
 				} else {
 					const shortOld = abbreviateHash(update.oldHash);
 					const shortNew = abbreviateHash(update.newHash);
-					pushLines.push({ prefix: `   ${shortOld}..${shortNew}`, from: shortRef, to: shortRef });
+					const wasForced =
+						forceRequested.has(update.name) &&
+						!(await isAncestor(gitCtx, update.oldHash, update.newHash));
+					if (wasForced) {
+						pushLines.push({
+							prefix: ` + ${shortOld}...${shortNew}`,
+							from: shortRef,
+							to: shortRef,
+							suffix: "(forced update)",
+						});
+					} else {
+						pushLines.push({
+							prefix: `   ${shortOld}..${shortNew}`,
+							from: shortRef,
+							to: shortRef,
+						});
+					}
 				}
 			}
+
+			pushLines.sort((a, b) => pushLineSortKey(a) - pushLineSortKey(b));
 
 			const stderr: string[] = [];
 			stderr.push(`To ${config.url}\n`);
@@ -260,27 +329,25 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				stderr.push(`error: failed to push some refs to '${config.url}'\n`);
 				const hasNonFF = result.updates.some((u) => !u.ok && u.error?.includes("non-fast-forward"));
 				if (hasNonFF) {
-				stderr.push(
-					"hint: Updates were rejected because the tip of your current branch is behind\n" +
-						"hint: its remote counterpart. If you want to integrate the remote changes,\n" +
-						"hint: use 'git pull' before pushing again.\n" +
-						"hint: See the 'Note about fast-forwards' in 'git push --help' for details.\n",
-				);
+					stderr.push(
+						"hint: Updates were rejected because the tip of your current branch is behind\n" +
+							"hint: its remote counterpart. If you want to integrate the remote changes,\n" +
+							"hint: use 'git pull' before pushing again.\n" +
+							"hint: See the 'Note about fast-forwards' in 'git push --help' for details.\n",
+					);
 				}
 			}
 
-			// Update remote tracking refs for successful pushes
+			// Update remote tracking refs for successful pushes (even if others failed)
 			let stdout = "";
-			if (!hasError) {
-				for (const update of result.updates) {
-					if (!update.ok) continue;
-					if (!update.name.startsWith("refs/heads/")) continue;
-					const trackingRef = `refs/remotes/${remoteName}/${update.name.slice("refs/heads/".length)}`;
-					if (update.newHash === ZERO_HASH) {
-						await deleteRef(gitCtx, trackingRef);
-					} else {
-						await updateRef(gitCtx, trackingRef, update.newHash);
-					}
+			for (const update of result.updates) {
+				if (!update.ok) continue;
+				if (!update.name.startsWith("refs/heads/")) continue;
+				const trackingRef = `refs/remotes/${remoteName}/${update.name.slice("refs/heads/".length)}`;
+				if (update.newHash === ZERO_HASH) {
+					await deleteRef(gitCtx, trackingRef);
+				} else {
+					await updateRef(gitCtx, trackingRef, update.newHash);
 				}
 			}
 
@@ -385,9 +452,13 @@ async function resolvePushDefault(
 					"The upstream branch of your current branch does not match\n" +
 						"the name of your current branch.  To push to the upstream branch\n" +
 						"on the remote, use\n\n" +
-						`    git push ${remoteName} HEAD:${upstreamRef}\n\n` +
+						`    git push ${remoteName} HEAD:${upstreamBranch}\n\n` +
 						"To push to the branch of the same name on the remote, use\n\n" +
-						`    git push ${remoteName} HEAD\n`,
+						`    git push ${remoteName} HEAD\n\n` +
+						"To choose either option permanently, see push.default in 'git help config'.\n\n" +
+						"To avoid automatically configuring an upstream branch when its name\n" +
+						"won't match the local branch, see option 'simple' of branch.autoSetupMerge\n" +
+						"in 'git help config'.\n",
 				);
 			}
 			return {
@@ -413,6 +484,14 @@ async function resolvePushDefault(
 			"\nTo have this happen automatically for branches without a tracking\n" +
 			"upstream, see 'push.autoSetupRemote' in 'git help config'.\n",
 	);
+}
+
+function pushLineSortKey(line: TransferRefLine): number {
+	if (line.prefix.startsWith("   ") || line.prefix.startsWith(" + ")) return 0;
+	if (line.prefix.includes("[new ")) return 1;
+	if (line.prefix.includes("[deleted]")) return 2;
+	if (line.prefix.includes("[rejected]")) return 3;
+	return 4;
 }
 
 async function resolveRefForPush(ctx: GitRepo, src: string): Promise<ObjectId | null> {

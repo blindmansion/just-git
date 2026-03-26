@@ -3,7 +3,6 @@ import { isRejection } from "../hooks.ts";
 import {
 	abbreviateHash,
 	buildRefUpdateLines,
-	err,
 	fatal,
 	formatTransferRefLines,
 	isCommandError,
@@ -84,12 +83,21 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			// Check for unmerged index entries
 			const currentIndex = await readIndex(gitCtx);
 			if (hasConflicts(currentIndex)) {
-				return err("error: Pulling is not possible because you have unmerged files.\n", 128);
+				return {
+					stdout: "",
+					stderr:
+						"error: Pulling is not possible because you have unmerged files.\n" +
+						"hint: Fix them up in the work tree, and then use 'git add/rm <file>'\n" +
+						"hint: as appropriate to mark resolution and make a commit.\n" +
+						"fatal: Exiting because of an unresolved conflict.\n",
+					exitCode: 128,
+				};
 			}
 
 			// Determine remote and branch from args or tracking config
 			let remoteName = args.remote;
 			let remoteBranch = args.branch;
+			let noTrackingBranch: string | null = null;
 
 			if (!remoteName) {
 				const head = await readHead(gitCtx);
@@ -107,18 +115,18 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 								: branchCfg.merge;
 						}
 					} else if (!remoteBranch) {
-						return {
-							stdout: "",
-							stderr:
-								`There is no tracking information for the current branch.\n` +
-								`Please specify which branch you want to merge with.\n` +
-								`See git-pull(1) for details.\n\n` +
-								`    git pull <remote> <branch>\n\n` +
-								`If you wish to set tracking information for this branch you can do so with:\n\n` +
-								`    git branch --set-upstream-to=origin/<branch> ${branchName}\n\n`,
-							exitCode: 1,
-						};
+						noTrackingBranch = branchName;
 					}
+				} else if (!remoteBranch) {
+					return {
+						stdout: "",
+						stderr:
+							"You are not currently on a branch.\n" +
+							"Please specify which branch you want to merge with.\n" +
+							"See git-pull(1) for details.\n\n" +
+							"    git pull <remote> <branch>\n\n",
+						exitCode: 1,
+					};
 				}
 			}
 			remoteName = remoteName || "origin";
@@ -278,6 +286,21 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				}
 			}
 
+			// After fetch: check if we have tracking info for the merge target
+			if (noTrackingBranch) {
+				return {
+					stdout: "",
+					stderr:
+						`There is no tracking information for the current branch.\n` +
+						`Please specify which branch you want to merge with.\n` +
+						`See git-pull(1) for details.\n\n` +
+						`    git pull <remote> <branch>\n\n` +
+						`If you wish to set tracking information for this branch you can do so with:\n\n` +
+						`    git branch --set-upstream-to=origin/<branch> ${noTrackingBranch}\n\n`,
+					exitCode: 1,
+				};
+			}
+
 			// Write FETCH_HEAD
 			let fetchHeadHash: ObjectId | null = null;
 
@@ -362,10 +385,6 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			const bases = await findAllMergeBases(gitCtx, headHash, theirsHash);
 			const baseCommit = bases[0] ?? null;
 
-			if (bases.length === 0) {
-				return fatal("refusing to merge unrelated histories");
-			}
-
 			if (baseCommit === theirsHash) {
 				await ext?.hooks?.postPull?.({
 					repo: gitCtx,
@@ -399,6 +418,25 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 
 			const isFastForward = baseCommit === headHash;
 
+			if (ffOnly && !isFastForward) {
+				return {
+					stdout: "",
+					stderr:
+						fetchOutput +
+						"hint: Diverging branches can't be fast-forwarded, you need to either:\n" +
+						"hint:\n" +
+						"hint: \tgit merge --no-ff\n" +
+						"hint:\n" +
+						"hint: or:\n" +
+						"hint:\n" +
+						"hint: \tgit rebase\n" +
+						"hint:\n" +
+						'hint: Disable this message with "git config set advice.diverging false"\n' +
+						"fatal: Not possible to fast-forward, aborting.\n",
+					exitCode: 128,
+				};
+			}
+
 			if (!isFastForward && !hasReconciliationStrategy) {
 				return {
 					stdout: "",
@@ -421,12 +459,8 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				};
 			}
 
-			if (ffOnly && !isFastForward) {
-				return {
-					stdout: "",
-					stderr: fetchOutput + "fatal: Not possible to fast-forward, aborting.\n",
-					exitCode: 128,
-				};
+			if (bases.length === 0) {
+				return fatal("refusing to merge unrelated histories");
 			}
 
 			if (isFastForward && !noFf) {
@@ -480,7 +514,8 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			const head = await readHead(gitCtx);
 			const currentBranch = head?.type === "symbolic" ? branchNameFromRef(head.target) : "HEAD";
 
-			const branchLabel = remoteBranch || remoteName || "FETCH_HEAD";
+			const branchLabel = theirsHash;
+			const mergeMsgBranch = remoteBranch || "HEAD";
 			const conflictStyle = ((await getConfigValue(gitCtx, "merge.conflictstyle")) ?? "merge") as
 				| "merge"
 				| "diff3";
@@ -507,13 +542,14 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				await updateRef(gitCtx, "MERGE_HEAD", theirsHash);
 				await updateRef(gitCtx, "ORIG_HEAD", headHash);
 
-				let mergeMsg = await buildMergeMessage(gitCtx, branchLabel, currentBranch);
+				let mergeMsg = await buildMergeMessage(gitCtx, mergeMsgBranch, currentBranch, config.url);
 				const conflictPaths = getConflictedPaths({
 					version: 2,
 					entries: mergeResult.entries,
 				}).sort();
 				mergeMsg += `\n# Conflicts:\n${conflictPaths.map((p) => `#\t${p}`).join("\n")}\n`;
 				await writeStateFile(gitCtx, "MERGE_MSG", mergeMsg);
+				await writeStateFile(gitCtx, "MERGE_MODE", noFf ? "no-ff" : "");
 
 				return {
 					stdout: `${[...mergeResult.messages, "Automatic merge failed; fix conflicts and then commit the result."].join("\n")}\n`,
@@ -529,7 +565,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			const committer = await requireCommitter(gitCtx, ctx.env);
 			if (isCommandError(committer)) return committer;
 
-			let mergeMsg = await buildMergeMessage(gitCtx, branchLabel, currentBranch);
+			let mergeMsg = await buildMergeMessage(gitCtx, mergeMsgBranch, currentBranch, config.url);
 			const msgEvent = {
 				repo: gitCtx,
 				message: mergeMsg,
