@@ -244,6 +244,8 @@ export class Git {
 
 		const configOverrides = mergeIdentityIntoConfig(options?.identity, options?.config);
 
+		const gitDirExt = options?.gitDir ? { gitDir: options.gitDir, workTree: this.defaultCwd } : {};
+
 		const extensions: GitExtensions = {
 			hooks: options?.hooks,
 			credentialProvider: options?.credentials,
@@ -254,12 +256,7 @@ export class Git {
 			credentialCache: new Map(),
 			...(options?.objectStore ? { objectStore: options.objectStore } : {}),
 			...(options?.refStore ? { refStore: options.refStore } : {}),
-			...(options?.gitDir
-				? {
-					gitDir: options.gitDir,
-					workTree: this.defaultCwd,
-				}
-				: {}),
+			...gitDirExt,
 			...(configOverrides ? { configOverrides } : {}),
 		};
 		this.inner = createGitCommand(extensions).toCommand();
