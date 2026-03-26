@@ -78,6 +78,18 @@ export {
 	type WorktreeResult,
 } from "./worktree.ts";
 
+// Operations
+export {
+	bisect,
+	type BisectOptions,
+	type BisectSearchResult,
+	type BisectStepInfo,
+} from "./operations.ts";
+
+export { createTreeAccessor, type TreeAccessor } from "./tree-accessor.ts";
+
+export type { MaterializeTarget } from "./materialize.ts";
+
 // Safety
 export { overlayRepo, readonlyRepo } from "./safety.ts";
 

@@ -26,5 +26,5 @@
 		"noUnusedParameters": false,
 		"noPropertyAccessFromIndexSignature": false
 	},
-	"exclude": ["test"]
+	"exclude": ["test", "local-docs"]
 }

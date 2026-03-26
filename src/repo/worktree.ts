@@ -1,13 +1,12 @@
 import { buildIndex, defaultStat, writeIndex } from "../lib/index.ts";
-import { readBlobBytes, readBlobContent, readCommit as _readCommit } from "../lib/object-db.ts";
-import { dirname, join } from "../lib/path.ts";
-import { isInsideWorkTree, verifyPath, verifySymlinkTarget } from "../lib/path-safety.ts";
+import { readCommit as _readCommit } from "../lib/object-db.ts";
+import { join } from "../lib/path.ts";
 import { resolveRevisionRepo } from "../lib/rev-parse.ts";
-import { isSymlinkMode } from "../lib/symlink.ts";
 import { flattenTree as _flattenTree, type FlatTreeEntry } from "../lib/tree-ops.ts";
 import type { GitContext, GitRepo } from "../lib/types.ts";
 import type { FileSystem } from "../fs.ts";
 import { TreeBackedFs } from "../tree-backed-fs.ts";
+import { materializeEntries } from "./materialize.ts";
 import { overlayRepo } from "./safety.ts";
 
 // ── Internal helpers ────────────────────────────────────────────────
@@ -16,50 +15,6 @@ async function resolveToCommitHash(repo: GitRepo, refOrHash: string): Promise<st
 	const resolved = await resolveRevisionRepo(repo, refOrHash);
 	if (resolved) return resolved;
 	throw new Error(`ref or commit '${refOrHash}' not found`);
-}
-
-async function materializeEntries(
-	repo: GitRepo,
-	entries: FlatTreeEntry[],
-	fs: FileSystem,
-	rootDir: string,
-): Promise<number> {
-	const createdDirs = new Set<string>();
-	let filesWritten = 0;
-
-	for (const entry of entries) {
-		if (!verifyPath(entry.path)) {
-			throw new Error(`refusing to check out unsafe path '${entry.path}'`);
-		}
-		const fullPath = join(rootDir, entry.path);
-		if (!isInsideWorkTree(rootDir, fullPath)) {
-			throw new Error(`refusing to check out path outside target directory: '${entry.path}'`);
-		}
-		const dir = dirname(fullPath);
-
-		if (dir !== rootDir && !createdDirs.has(dir)) {
-			await fs.mkdir(dir, { recursive: true });
-			createdDirs.add(dir);
-		}
-
-		if (isSymlinkMode(entry.mode)) {
-			const target = await readBlobContent(repo, entry.hash);
-			if (!verifySymlinkTarget(target)) {
-				throw new Error(`refusing to create symlink with unsafe target '${target}'`);
-			}
-			if (fs.symlink) {
-				await fs.symlink(target, fullPath);
-			} else {
-				await fs.writeFile(fullPath, target);
-			}
-		} else {
-			const content = await readBlobBytes(repo, entry.hash);
-			await fs.writeFile(fullPath, content);
-		}
-		filesWritten++;
-	}
-
-	return filesWritten;
 }
 
 function indexFromEntries(entries: FlatTreeEntry[]) {

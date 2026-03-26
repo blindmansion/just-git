@@ -14,6 +14,7 @@ import {
 import { flattenTree as _flattenTree } from "../lib/tree-ops.ts";
 import { compilePattern, grepContent, type GrepMatch } from "../lib/grep.ts";
 import type { Commit, GitRepo, RefEntry, TreeEntry } from "../lib/types.ts";
+import { createTreeAccessor } from "./tree-accessor.ts";
 
 // ── Ref resolution ──────────────────────────────────────────────────
 
@@ -121,10 +122,8 @@ export async function readFileAtCommit(
 	filePath: string,
 ): Promise<string | null> {
 	const commit = await _readCommit(repo, commitHash);
-	const entries = await _flattenTree(repo, commit.tree);
-	const entry = entries.find((e) => e.path === filePath);
-	if (!entry) return null;
-	return readBlobContent(repo, entry.hash);
+	const accessor = createTreeAccessor(repo, commit.tree);
+	return accessor.readFile(filePath);
 }
 
 // ── Grep ────────────────────────────────────────────────────────────
