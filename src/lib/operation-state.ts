@@ -47,21 +47,23 @@ export async function clearMergeState(gitCtx: GitContext): Promise<void> {
 }
 
 /**
- * Clear cherry-pick operation state (CHERRY_PICK_HEAD, ORIG_HEAD, MERGE_MSG).
+ * Clear cherry-pick operation state (CHERRY_PICK_HEAD, ORIG_HEAD, MERGE_MSG, SQUASH_MSG).
  */
 export async function clearCherryPickState(gitCtx: GitContext): Promise<void> {
 	await deleteRef(gitCtx, "CHERRY_PICK_HEAD");
 	await deleteRef(gitCtx, "ORIG_HEAD");
 	await deleteStateFile(gitCtx, "MERGE_MSG");
+	await deleteStateFile(gitCtx, "SQUASH_MSG");
 }
 
 /**
- * Clear revert operation state (REVERT_HEAD, ORIG_HEAD, MERGE_MSG).
+ * Clear revert operation state (REVERT_HEAD, ORIG_HEAD, MERGE_MSG, SQUASH_MSG).
  */
 export async function clearRevertState(gitCtx: GitContext): Promise<void> {
 	await deleteRef(gitCtx, "REVERT_HEAD");
 	await deleteRef(gitCtx, "ORIG_HEAD");
 	await deleteStateFile(gitCtx, "MERGE_MSG");
+	await deleteStateFile(gitCtx, "SQUASH_MSG");
 }
 
 /**

@@ -30,7 +30,6 @@ import { readCommit } from "../lib/object-db.ts";
 import {
 	clearCherryPickState,
 	clearRevertState,
-	deleteStateFile,
 	readStateFile,
 	writeStateFile,
 } from "../lib/operation-state.ts";
@@ -524,7 +523,6 @@ async function handleContinue(
 
 	await clearCherryPickState(gitCtx);
 	await clearRevertState(gitCtx);
-	await deleteStateFile(gitCtx, "SQUASH_MSG");
 
 	const head = await readHead(gitCtx);
 	const cpSubject = firstLine(message);

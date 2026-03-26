@@ -424,7 +424,11 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			if (bases.length === 0) {
-				return fatal("refusing to merge unrelated histories");
+				return {
+					stdout: "",
+					stderr: fetchOutput + "fatal: refusing to merge unrelated histories\n",
+					exitCode: 128,
+				};
 			}
 
 			if (isFastForward && !noFf) {
