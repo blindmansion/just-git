@@ -307,9 +307,13 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				const shortRef = shortenRef(update.name);
 
 				if (!update.ok) {
-					const reason = update.error?.includes("non-fast-forward")
-						? "non-fast-forward"
-						: (update.error ?? "failed");
+					const isFetchFirst = update.error?.includes("fetch first");
+					const isNonFF = update.error?.includes("non-fast-forward");
+					const reason = isFetchFirst
+						? "fetch first"
+						: isNonFF
+							? "non-fast-forward"
+							: (update.error ?? "failed");
 					pushLines.push({
 						prefix: " ! [rejected]",
 						from: shortRef,
@@ -346,12 +350,21 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 
 			const stderr: string[] = [];
 			stderr.push(`To ${config.url}\n`);
-			stderr.push(formatTransferRefLines(pushLines));
+			stderr.push(formatTransferRefLines(pushLines, 0, false));
 
 			if (hasError) {
 				stderr.push(`error: failed to push some refs to '${config.url}'\n`);
+				const hasFetchFirst = result.updates.some((u) => !u.ok && u.error?.includes("fetch first"));
 				const hasNonFF = result.updates.some((u) => !u.ok && u.error?.includes("non-fast-forward"));
-				if (hasNonFF) {
+				if (hasFetchFirst) {
+					stderr.push(
+						"hint: Updates were rejected because the remote contains work that you do not\n" +
+							"hint: have locally. This is usually caused by another repository pushing to\n" +
+							"hint: the same ref. If you want to integrate the remote changes, use\n" +
+							"hint: 'git pull' before pushing again.\n" +
+							"hint: See the 'Note about fast-forwards' in 'git push --help' for details.\n",
+					);
+				} else if (hasNonFF) {
 					stderr.push(
 						"hint: Updates were rejected because the tip of your current branch is behind\n" +
 							"hint: its remote counterpart. If you want to integrate the remote changes,\n" +

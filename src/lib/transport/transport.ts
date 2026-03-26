@@ -1,7 +1,7 @@
 import type { FetchFunction } from "../../hooks.ts";
 import { ZERO_HASH } from "../hex.ts";
 import { isAncestor } from "../merge.ts";
-import { ingestPackData } from "../object-db.ts";
+import { ingestPackData, objectExists } from "../object-db.ts";
 import { findBestDeltas } from "../pack/delta.ts";
 import type { DeltaPackInput } from "../pack/packfile.ts";
 import { writePackDeltified } from "../pack/packfile.ts";
@@ -348,8 +348,10 @@ export class SmartHttpTransport implements Transport {
 			) {
 				const ff = await isAncestor(this.local, update.oldHash, update.newHash);
 				if (!ff) {
+					const hasRemoteObj = await objectExists(this.local, update.oldHash);
+					const error = hasRemoteObj ? "non-fast-forward" : "fetch first";
 					rejectedNames.add(update.name);
-					rejectedResults.push({ ...update, ok: false, error: "non-fast-forward" });
+					rejectedResults.push({ ...update, ok: false, error });
 				}
 			}
 		}

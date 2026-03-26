@@ -716,6 +716,52 @@ export class BatchChecker {
 	}
 
 	/**
+	 * Reflog output differs because real git wrote an extra entry from an
+	 * aborted pull/merge (e.g. "pull --no-ff: updating HEAD" when the merge
+	 * precondition failed but git still wrote the reflog). The extra entry
+	 * is a no-op — its hash equals the hash of the adjacent entry. Filter
+	 * out such no-op pull/merge entries and compare.
+	 */
+	private static reflogNoopPullMergeEntryDiffers(expected: string, actual: string): boolean {
+		const splitNonEmpty = (s: string) => s.split("\n").filter(Boolean);
+		const parseEntry = (line: string) => {
+			const m = line.match(/^([0-9a-f]+)\s+HEAD@\{\d+\}:\s+(.*)/);
+			return m ? { hash: m[1]!, message: m[2]! } : null;
+		};
+		const pullMergeRe = /^pull\b|^merge\b/;
+
+		const eLines = splitNonEmpty(expected);
+		const aLines = splitNonEmpty(actual);
+
+		const filterNoopPullMerge = (lines: string[]) => {
+			const entries = lines.map(parseEntry);
+			return lines.filter((_, i) => {
+				const entry = entries[i];
+				if (!entry || !pullMergeRe.test(entry.message)) return true;
+				const next = entries[i + 1];
+				return !next || entry.hash !== next.hash;
+			});
+		};
+
+		const eFiltered = filterNoopPullMerge(eLines);
+		const aFiltered = filterNoopPullMerge(aLines);
+		if (eFiltered.length === eLines.length && aFiltered.length === aLines.length) return false;
+
+		const norm = (lines: string[]) => lines.map((l) => l.replace(/HEAD@\{\d+\}/, "HEAD@{N}"));
+		const en = norm(eFiltered);
+		const an = norm(aFiltered);
+
+		if (en.length === an.length) {
+			return en.every((l, i) => l === an[i]);
+		}
+		// Prefix match: the shorter list should match the start of the
+		// longer one (extra entries pushed out by -n truncation).
+		const shorter = en.length < an.length ? en : an;
+		const longer = en.length < an.length ? an : en;
+		return shorter.every((l, i) => l === longer[i]);
+	}
+
+	/**
 	 * `git log A..B` returns empty in our impl but oracle returns commits.
 	 * Caused by non-monotonic committer timestamps: git's priority-queue
 	 * walker terminates early (using "still_interesting" heuristic),
@@ -1105,6 +1151,11 @@ export class BatchChecker {
 			) {
 				// Reflog differs only by cherry-pick --skip "reset: moving to"
 				// entries affected by gc reflog expiry with synthetic timestamps.
+			} else if (
+				baseCommand === "git reflog" &&
+				BatchChecker.reflogNoopPullMergeEntryDiffers(step.stdout, output.stdout)
+			) {
+				// Reflog differs by extra no-op pull/merge entry from aborted merge.
 			} else if (
 				baseCommand === "git log" &&
 				BatchChecker.logRangeTimestampWalkerDiffers(step.command, step.stdout, output.stdout)

@@ -374,15 +374,21 @@ export interface TransferRefLine {
  * Format aligned ref-update lines for fetch/push/pull output.
  * Matches real git's columnar alignment: fixed-width summary column,
  * right-padded "from" ref, ` -> to` with optional suffix.
+ *
+ * Fetch/pull pads the "from" column to align arrows; push does not.
  */
-export function formatTransferRefLines(lines: TransferRefLine[], minRefCol = 0): string {
+export function formatTransferRefLines(
+	lines: TransferRefLine[],
+	minRefCol = 0,
+	padFrom = true,
+): string {
 	const SUMMARY_WIDTH = 21;
-	const maxFromLen = Math.max(minRefCol, ...lines.map((l) => l.from.length));
+	const maxFromLen = padFrom ? Math.max(minRefCol, ...lines.map((l) => l.from.length)) : 0;
 	return lines
 		.map((l) => {
 			const summary = l.prefix.padEnd(SUMMARY_WIDTH);
 			if (!l.to) return `${summary}${l.from}\n`;
-			const from = l.from.padEnd(maxFromLen);
+			const from = maxFromLen > 0 ? l.from.padEnd(maxFromLen) : l.from;
 			const suffix = l.suffix ? ` ${l.suffix}` : "";
 			return `${summary}${from} -> ${l.to}${suffix}\n`;
 		})

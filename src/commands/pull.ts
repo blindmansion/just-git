@@ -238,6 +238,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				return {
 					stdout: "",
 					stderr:
+						fetchOutput +
 						"You are not currently on a branch.\n" +
 						"Please specify which branch you want to merge with.\n" +
 						"See git-pull(1) for details.\n\n" +
@@ -257,6 +258,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				return {
 					stdout: "",
 					stderr:
+						fetchOutput +
 						`There is no tracking information for the current branch.\n` +
 						`Please specify which branch you want to merge with.\n` +
 						`See git-pull(1) for details.\n\n` +
@@ -278,6 +280,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					return {
 						stdout: "",
 						stderr:
+							fetchOutput +
 							`Your configuration specifies to merge with the ref 'refs/heads/${remoteBranch}'\n` +
 							`from the remote, but no such ref was fetched.\n`,
 						exitCode: 1,
