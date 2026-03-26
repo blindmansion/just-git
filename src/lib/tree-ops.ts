@@ -138,53 +138,121 @@ export async function flattenTreeToMap(
  * Diff two trees and return a list of changes.
  * Either tree hash can be null to represent an empty tree
  * (useful for the initial commit or comparing against nothing).
+ *
+ * Walks both trees recursively in parallel, pruning entire subtrees
+ * whose hashes match — O(changed files + tree depth) instead of
+ * O(total files).
  */
 export async function diffTrees(
 	ctx: GitRepo,
 	treeA: ObjectId | null,
 	treeB: ObjectId | null,
 ): Promise<TreeDiffEntry[]> {
-	const mapA = await flattenTreeToMap(ctx, treeA);
-	const mapB = await flattenTreeToMap(ctx, treeB);
-
+	if (treeA === treeB) return [];
 	const results: TreeDiffEntry[] = [];
-
-	// Files in A but not in B → deleted
-	// Files in both → check for modifications
-	for (const [path, entryA] of mapA) {
-		const entryB = mapB.get(path);
-		if (!entryB) {
-			results.push({
-				path,
-				status: "deleted",
-				oldHash: entryA.hash,
-				oldMode: entryA.mode,
-			});
-		} else if (entryA.hash !== entryB.hash || entryA.mode !== entryB.mode) {
-			results.push({
-				path,
-				status: "modified",
-				oldHash: entryA.hash,
-				newHash: entryB.hash,
-				oldMode: entryA.mode,
-				newMode: entryB.mode,
-			});
-		}
-	}
-
-	// Files in B but not in A → added
-	for (const [path, entryB] of mapB) {
-		if (!mapA.has(path)) {
-			results.push({
-				path,
-				status: "added",
-				newHash: entryB.hash,
-				newMode: entryB.mode,
-			});
-		}
-	}
-
+	await diffTreesRecursive(ctx, treeA, treeB, "", results);
 	return results.sort((a, b) => comparePaths(a.path, b.path));
+}
+
+async function readTreeEntries(ctx: GitRepo, treeHash: ObjectId): Promise<TreeEntry[]> {
+	const raw = await readObject(ctx, treeHash);
+	if (raw.type !== "tree") throw new Error(`Expected tree object, got ${raw.type}`);
+	return parseTree(raw.content).entries;
+}
+
+async function diffTreesRecursive(
+	ctx: GitRepo,
+	hashA: ObjectId | null,
+	hashB: ObjectId | null,
+	prefix: string,
+	results: TreeDiffEntry[],
+): Promise<void> {
+	if (hashA === hashB) return;
+
+	const entriesA = hashA ? await readTreeEntries(ctx, hashA) : [];
+	const entriesB = hashB ? await readTreeEntries(ctx, hashB) : [];
+
+	const mapA = new Map<string, TreeEntry>();
+	for (const e of entriesA) mapA.set(e.name, e);
+	const mapB = new Map<string, TreeEntry>();
+	for (const e of entriesB) mapB.set(e.name, e);
+
+	const allNames = new Set<string>();
+	for (const e of entriesA) allNames.add(e.name);
+	for (const e of entriesB) allNames.add(e.name);
+
+	for (const name of allNames) {
+		const a = mapA.get(name);
+		const b = mapB.get(name);
+		const fullPath = prefix ? `${prefix}/${name}` : name;
+
+		if (a && b) {
+			if (a.hash === b.hash && a.mode === b.mode) continue;
+
+			const aIsDir = a.mode === FM.DIRECTORY;
+			const bIsDir = b.mode === FM.DIRECTORY;
+
+			if (aIsDir && bIsDir) {
+				await diffTreesRecursive(ctx, a.hash, b.hash, fullPath, results);
+			} else if (aIsDir) {
+				await collectSubtree(ctx, a.hash, fullPath, "deleted", results);
+				results.push({ path: fullPath, status: "added", newHash: b.hash, newMode: b.mode });
+			} else if (bIsDir) {
+				results.push({ path: fullPath, status: "deleted", oldHash: a.hash, oldMode: a.mode });
+				await collectSubtree(ctx, b.hash, fullPath, "added", results);
+			} else {
+				results.push({
+					path: fullPath,
+					status: "modified",
+					oldHash: a.hash,
+					newHash: b.hash,
+					oldMode: a.mode,
+					newMode: b.mode,
+				});
+			}
+		} else if (a) {
+			if (a.mode === FM.DIRECTORY) {
+				await collectSubtree(ctx, a.hash, fullPath, "deleted", results);
+			} else {
+				results.push({ path: fullPath, status: "deleted", oldHash: a.hash, oldMode: a.mode });
+			}
+		} else {
+			const bEntry = b!;
+			if (bEntry.mode === FM.DIRECTORY) {
+				await collectSubtree(ctx, bEntry.hash, fullPath, "added", results);
+			} else {
+				results.push({
+					path: fullPath,
+					status: "added",
+					newHash: bEntry.hash,
+					newMode: bEntry.mode,
+				});
+			}
+		}
+	}
+}
+
+/** Flatten a subtree and emit all leaf entries as added or deleted. */
+async function collectSubtree(
+	ctx: GitRepo,
+	treeHash: ObjectId,
+	prefix: string,
+	status: "added" | "deleted",
+	results: TreeDiffEntry[],
+): Promise<void> {
+	const flat = await flattenTree(ctx, treeHash, prefix);
+	for (const entry of flat) {
+		if (status === "added") {
+			results.push({ path: entry.path, status: "added", newHash: entry.hash, newMode: entry.mode });
+		} else {
+			results.push({
+				path: entry.path,
+				status: "deleted",
+				oldHash: entry.hash,
+				oldMode: entry.mode,
+			});
+		}
+	}
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
