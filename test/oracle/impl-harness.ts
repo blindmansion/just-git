@@ -6,7 +6,9 @@
  */
 
 import { Bash, type IFileSystem } from "just-bash";
+import { createGit } from "../../src/git";
 import { createGitCommand } from "../../src/commands/git";
+import { createServer, MemoryStorage } from "../../src/server/index";
 import { readIndex } from "../../src/lib/index";
 import { readReflog } from "../../src/lib/reflog";
 import { listRefs, readHead, resolveRef } from "../../src/lib/refs";
@@ -797,9 +799,23 @@ function createReplayEnvironment(dbPath: string, traceId: number): ReplayEnviron
 	const checker = new BatchChecker(dbPath, traceId);
 	const traceConfig = checker.getTraceConfig();
 	const fileGenConfig = traceConfig?.fileGen ?? DEFAULT_FILE_GEN_CONFIG;
+
+	let command: import("just-bash").Command;
+	if (traceConfig?.remoteBaseUrl) {
+		const server = createServer({
+			storage: new MemoryStorage(),
+			autoCreate: true,
+		});
+		command = createGit({
+			network: server.asNetwork(traceConfig.remoteBaseUrl),
+		});
+	} else {
+		command = createGitCommand().toCommand();
+	}
+
 	const bash = new Bash({
 		cwd: VFS_ROOT,
-		customCommands: [createGitCommand().toCommand()],
+		customCommands: [command],
 		env: { ...DEFAULT_TEST_ENV },
 	});
 	return { checker, bash, fileGenConfig };

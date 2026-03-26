@@ -14,6 +14,7 @@ import {
 } from "../random/file-gen";
 import { DEFAULT_TEST_ENV, type ExecResult, type WalkHarness } from "../random/harness";
 import { isCommitCommand } from "./fileops";
+import { createServer, MemoryStorage, type GitServer } from "../../src/server/index";
 
 // ── Environment ──────────────────────────────────────────────────
 
@@ -47,23 +48,50 @@ export function buildRealGitEnv(
 export class RealGitHarness implements WalkHarness {
 	commitCounter = 0;
 	readonly fileGenConfig: FileGenConfig;
+	/** HTTP base URL when a remote server is active (e.g. "http://localhost:34567"). */
+	readonly remoteBaseUrl: string | null;
+
+	private server: GitServer | null = null;
+	private httpServer: ReturnType<typeof Bun.serve> | null = null;
 
 	private constructor(
 		readonly repoDir: string,
 		private readonly homeDir: string,
 		private readonly env: Record<string, string>,
 		fileGenConfig: FileGenConfig,
+		remoteBaseUrl: string | null,
 	) {
 		this.fileGenConfig = fileGenConfig;
+		this.remoteBaseUrl = remoteBaseUrl;
 	}
 
 	static async create(
 		fileGenConfig: FileGenConfig = DEFAULT_FILE_GEN_CONFIG,
+		options?: { withRemote?: boolean },
 	): Promise<RealGitHarness> {
 		const homeDir = await mkdtemp(join(tmpdir(), "oracle-home-"));
 		const repoDir = await mkdtemp(join(tmpdir(), "oracle-git-"));
 		const env = buildRealGitEnv(homeDir);
-		return new RealGitHarness(repoDir, homeDir, env, fileGenConfig);
+
+		let remoteBaseUrl: string | null = null;
+		const harness = new RealGitHarness(repoDir, homeDir, env, fileGenConfig, null);
+
+		if (options?.withRemote) {
+			const server = createServer({
+				storage: new MemoryStorage(),
+				autoCreate: true,
+			});
+			const httpServer = Bun.serve({
+				fetch: server.fetch,
+				port: 0,
+			});
+			remoteBaseUrl = `http://localhost:${httpServer.port}`;
+			harness.server = server;
+			harness.httpServer = httpServer;
+			(harness as { remoteBaseUrl: string | null }).remoteBaseUrl = remoteBaseUrl;
+		}
+
+		return harness;
 	}
 
 	// ── WalkHarness: commands ────────────────────────────────────
@@ -228,9 +256,23 @@ export class RealGitHarness implements WalkHarness {
 		return result.stdout.trim().split("\n").length;
 	}
 
+	async listRemotes(): Promise<string[]> {
+		const result = await this.git("remote");
+		if (result.exitCode !== 0 || !result.stdout.trim()) return [];
+		return result.stdout.trim().split("\n").filter(Boolean);
+	}
+
 	// ── Cleanup ──────────────────────────────────────────────────
 
 	async cleanup(): Promise<void> {
+		if (this.httpServer) {
+			this.httpServer.stop(true);
+			this.httpServer = null;
+		}
+		if (this.server) {
+			await this.server.close();
+			this.server = null;
+		}
 		await rm(this.repoDir, { recursive: true, force: true });
 		await rm(this.homeDir, { recursive: true, force: true });
 	}

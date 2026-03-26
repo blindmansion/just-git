@@ -8,6 +8,7 @@ import { DIAGNOSTIC_ACTIONS } from "./diagnostic";
 import { FILE_OPS_ACTIONS } from "./file-ops";
 import { MAINTENANCE_ACTIONS } from "./maintenance";
 import { MERGE_ACTIONS } from "./merge";
+import { NETWORK_ACTIONS } from "./network";
 import { REBASE_ACTIONS } from "./rebase";
 import { REMOTE_ACTIONS } from "./remote";
 import { RESET_ACTIONS } from "./reset";
@@ -17,6 +18,8 @@ import { STAGING_ACTIONS } from "./staging";
 import { STASH_ACTIONS } from "./stash";
 import { SWITCH_ACTIONS } from "./switch";
 import { TAG_ACTIONS } from "./tag";
+
+export { NETWORK_ACTIONS } from "./network";
 
 export const ALL_ACTIONS: readonly Action[] = [
 	...FILE_OPS_ACTIONS,
@@ -31,6 +34,7 @@ export const ALL_ACTIONS: readonly Action[] = [
 	...STASH_ACTIONS,
 	...TAG_ACTIONS,
 	...REMOTE_ACTIONS,
+	...NETWORK_ACTIONS,
 	...RESET_ACTIONS,
 	...CLEAN_ACTIONS,
 	...SWITCH_ACTIONS,

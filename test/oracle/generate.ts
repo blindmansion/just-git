@@ -11,7 +11,7 @@
  * Custom configurations can import generateTraces() directly.
  */
 
-import { ALL_ACTIONS } from "../random/actions/index";
+import { ALL_ACTIONS, NETWORK_ACTIONS } from "../random/actions/index";
 import {
 	DEFAULT_FILE_GEN_CONFIG,
 	DEFAULT_GITIGNORE_PATTERNS,
@@ -40,6 +40,8 @@ export interface TraceConfig {
 	fuzz?: FuzzConfig;
 	/** When set, traces start with `git clone <url> .` instead of `git init`. */
 	cloneUrl?: string;
+	/** HTTP base URL for the remote server used during generation (e.g. "http://localhost:34567"). */
+	remoteBaseUrl?: string;
 }
 
 // ── Recording harness ────────────────────────────────────────────
@@ -221,6 +223,9 @@ class RecordingHarness implements WalkHarness {
 	getStashCount() {
 		return this.inner.getStashCount();
 	}
+	listRemotes() {
+		return this.inner.listRemotes();
+	}
 }
 
 // ── Generation engine ────────────────────────────────────────────
@@ -244,6 +249,8 @@ interface GenerateConfig {
 	description?: string;
 	/** When set, traces start with `git clone <url> .` instead of `git init`. */
 	cloneUrl?: string;
+	/** When true, spin up a remote server and wire origin for push/fetch/pull testing. */
+	withRemote?: boolean;
 }
 
 /**
@@ -252,11 +259,10 @@ interface GenerateConfig {
  * and capturing snapshots into the oracle database.
  */
 export async function generateTraces(config: GenerateConfig): Promise<void> {
-	const { dbPath, seeds, steps, description, cloneUrl, fuzz } = config;
+	const { dbPath, seeds, steps, description, cloneUrl, fuzz, withRemote } = config;
 	const actions = config.actions ?? ALL_ACTIONS;
 	const chaosRate = config.chaosRate ?? 0;
 	const fileGen = config.fileGen ?? DEFAULT_FILE_GEN_CONFIG;
-	const traceConfig: TraceConfig = { chaosRate, fileGen, fuzz, cloneUrl };
 
 	const db = initDb(dbPath);
 	const store = new OracleStore(db);
@@ -283,8 +289,16 @@ export async function generateTraces(config: GenerateConfig): Promise<void> {
 	try {
 		for (const seed of seeds) {
 			const t0 = performance.now();
-			const harness = await RealGitHarness.create(fileGen);
+			const harness = await RealGitHarness.create(fileGen, { withRemote });
 			activeHarness = harness;
+
+			const traceConfig: TraceConfig = {
+				chaosRate,
+				fileGen,
+				fuzz,
+				cloneUrl,
+				remoteBaseUrl: harness.remoteBaseUrl ?? undefined,
+			};
 
 			const traceId = store.createTrace(
 				seed,
@@ -294,7 +308,16 @@ export async function generateTraces(config: GenerateConfig): Promise<void> {
 			const recorder = new RecordingHarness(harness, store, traceId);
 
 			try {
-				await runRecordedWalk(recorder, seed, steps, actions, chaosRate, cloneUrl, fuzz);
+				await runRecordedWalk(
+					recorder,
+					seed,
+					steps,
+					actions,
+					chaosRate,
+					cloneUrl,
+					fuzz,
+					harness.remoteBaseUrl ?? undefined,
+				);
 			} finally {
 				await harness.cleanup();
 				activeHarness = null;
@@ -324,6 +347,7 @@ async function runRecordedWalk(
 	chaosRate: number,
 	cloneUrl?: string,
 	fuzz?: FuzzConfig,
+	remoteBaseUrl?: string,
 ): Promise<void> {
 	const rng = new SeededRNG(seed);
 
@@ -334,8 +358,22 @@ async function runRecordedWalk(
 		await recorder.git("init");
 		await recorder.flush();
 
+		if (remoteBaseUrl) {
+			await recorder.git(`remote add origin ${remoteBaseUrl}/repo`);
+			await recorder.flush();
+		}
+
 		await recorder.writeFile("initial.txt", `seed-${seed}\n`);
 		await recorder.flush();
+
+		if (remoteBaseUrl) {
+			await recorder.git("add .");
+			await recorder.flush();
+			await recorder.gitCommit("initial");
+			await recorder.flush();
+			await recorder.git("push -u origin main");
+			await recorder.flush();
+		}
 	}
 
 	for (let step = 1; step <= steps; step++) {
@@ -356,6 +394,7 @@ interface Preset {
 	fuzz?: FuzzConfig;
 	fileGen?: FileGenConfig;
 	cloneUrl?: string;
+	withRemote?: boolean;
 }
 
 /** Multiply weights for all actions in a category. */
@@ -623,6 +662,35 @@ export const PRESETS: Record<string, Preset> = {
 			0.5,
 		),
 		fileGen: STRESS_FILE_GEN_CONFIG,
+	},
+
+	/**
+	 * Remote: all actions with a remote server. Exercises push/fetch/pull
+	 * against a just-git HTTP server. Light chaos for error-path coverage.
+	 */
+	remote: {
+		actions: ALL_ACTIONS,
+		chaosRate: 0.05,
+		withRemote: true,
+	},
+
+	/**
+	 * Remote core: daily-use actions plus network transport actions.
+	 * Spins up a remote server, pushes an initial commit, then exercises
+	 * push/fetch/pull alongside normal branch/merge/rebase workflows.
+	 */
+	"remote-core": {
+		actions: [...CORE_ACTIONS, ...NETWORK_ACTIONS],
+		chaosRate: 0.05,
+		fuzz: FUZZ_LIGHT,
+		withRemote: true,
+	},
+
+	/** Remote heavy: boosted network action weights (3x) for stress-testing transport. */
+	"remote-heavy": {
+		actions: boostCategory(ALL_ACTIONS, "remote", 3),
+		chaosRate: 0.05,
+		withRemote: true,
 	},
 };
 

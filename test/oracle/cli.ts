@@ -239,6 +239,7 @@ Examples:
 		fileGen: preset.fileGen,
 		description,
 		cloneUrl: effectiveCloneUrl,
+		withRemote: preset.withRemote,
 	});
 }
 
@@ -1612,6 +1613,7 @@ Examples:
 			fuzz: preset.fuzz,
 			fileGen: preset.fileGen,
 			description: `validate: ${presetName}`,
+			withRemote: preset.withRemote,
 		});
 
 		console.log("  Testing...\n");

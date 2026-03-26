@@ -35,6 +35,8 @@ export interface QueryState {
 	inRebaseConflict: boolean;
 	/** Number of stash entries. */
 	stashCount: number;
+	/** Configured remote names (e.g. ["origin"]). */
+	remotes: string[];
 }
 
 // ── WalkHarness interface ────────────────────────────────────────────
@@ -70,6 +72,7 @@ export interface WalkHarness {
 	isInRebaseConflict(): Promise<boolean>;
 	hasCommits(): Promise<boolean>;
 	getStashCount(): Promise<number>;
+	listRemotes(): Promise<string[]>;
 }
 
 // ── Default environment ──────────────────────────────────────────────
@@ -135,6 +138,7 @@ export class VirtualHarness implements WalkHarness {
 			lower.startsWith("merge") ||
 			lower.startsWith("cherry-pick") ||
 			lower.startsWith("revert") ||
+			lower.startsWith("pull") ||
 			lower.includes("rebase --continue")
 		);
 	}
@@ -301,5 +305,11 @@ export class VirtualHarness implements WalkHarness {
 		const content = await this.bash.fs.readFile(reflogPath);
 		if (!content.trim()) return 0;
 		return content.trim().split("\n").length;
+	}
+
+	async listRemotes(): Promise<string[]> {
+		const result = await this.bash.exec("git remote");
+		if (result.exitCode !== 0 || !result.stdout.trim()) return [];
+		return result.stdout.trim().split("\n").filter(Boolean);
 	}
 }

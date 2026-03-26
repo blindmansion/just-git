@@ -60,9 +60,9 @@ bun oracle generate [name] --seeds <spec> [options]
 
 If no name is given, defaults to the preset name.
 
-**Presets:** `default`, `basic`, `core`, `rebase-heavy`, `merge-heavy`, `cherry-pick-heavy`, `no-rename-show`, `no-show`, `wide-files`, `chaos`, `chaos-heavy`, `clone-cannoli`, `clone-core`, `fuzz-light`, `fuzz-heavy`, `chaos-fuzz`, `gitignore`, `kitchen`, `stress`
+**Presets:** `default`, `basic`, `core`, `rebase-heavy`, `merge-heavy`, `cherry-pick-heavy`, `no-rename-show`, `no-show`, `wide-files`, `chaos`, `chaos-heavy`, `clone-cannoli`, `clone-core`, `fuzz-light`, `fuzz-heavy`, `chaos-fuzz`, `gitignore`, `kitchen`, `stress`, `remote`, `remote-core`, `remote-heavy`
 
-Each preset adjusts which random actions are enabled and their weight multipliers. The `-heavy` variants boost the weight of their respective operations. `core` focuses on ~45 daily-use actions with light chaos (5%) and fuzz (3%). `no-rename-show` excludes `mvFile` and `showHead` actions. `no-show` excludes only `showHead` (allows renames via `mvFile`). `chaos` / `chaos-heavy` set a `chaosRate` to bypass soft preconditions on a percentage of steps. `fuzz-*` presets inject wrong values (non-existent branches, files, commits) to exercise error handling. `clone-cannoli` / `clone-core` clone from a remote repo instead of `git init` (requires network). `kitchen` combines chaos, light fuzz, and gitignore generation. `stress` builds very large repos for performance profiling (best with `--steps 2000` or more).
+Each preset adjusts which random actions are enabled and their weight multipliers. The `-heavy` variants boost the weight of their respective operations. `core` focuses on ~60 daily-use actions with light chaos (5%) and fuzz (3%). `no-rename-show` excludes `mvFile` and `showHead` actions. `no-show` excludes only `showHead` (allows renames via `mvFile`). `chaos` / `chaos-heavy` set a `chaosRate` to bypass soft preconditions on a percentage of steps. `fuzz-*` presets inject wrong values (non-existent branches, files, commits) to exercise error handling. `clone-cannoli` / `clone-core` clone from a remote repo instead of `git init` (requires network). `kitchen` combines chaos, light fuzz, and gitignore generation. `stress` builds very large repos for performance profiling (best with `--steps 2000` or more). `remote` / `remote-core` / `remote-heavy` spin up a just-git HTTP server as a remote and exercise push/fetch/pull alongside normal operations (see [Remote presets](#remote-presets) below).
 
 ```bash
 # Uses preset name as db name → data/rebase-heavy/traces.sqlite
@@ -70,6 +70,25 @@ bun oracle generate --preset rebase-heavy --seeds 1-20
 
 # Explicit name → data/my-experiment/traces.sqlite
 bun oracle generate my-experiment --preset merge-heavy --seeds 1-5
+```
+
+#### Remote presets
+
+The `remote`, `remote-core`, and `remote-heavy` presets exercise push/fetch/pull by spinning up a just-git HTTP server during generation. Real git communicates with it over HTTP; during replay the same server runs in-process via `asNetwork`. Both sides see the same URL in commands, so output comparison works without normalization.
+
+Each trace starts with `git init` + `git remote add origin <url>/repo` + an initial commit and push, so the remote has content from step 0.
+
+| Preset         | Actions                         | Chaos | Fuzz  | Notes                                   |
+| -------------- | ------------------------------- | ----- | ----- | --------------------------------------- |
+| `remote`       | All actions (including network) | 5%    | —     | General remote coverage                 |
+| `remote-core`  | Core + network actions          | 5%    | light | Daily-use commands with push/fetch/pull |
+| `remote-heavy` | All actions, remote category 3x | 5%    | —     | Stress-tests transport layer            |
+
+The server uses `MemoryStorage` with `autoCreate: true` and is reset between traces (each trace gets a fresh server). Within a trace, the server accumulates state from pushes, which subsequent fetches/pulls read back.
+
+```bash
+bun oracle generate remote-core --seeds 1-10 --steps 200
+bun oracle test remote-core
 ```
 
 ### `test` — replay and compare
@@ -390,6 +409,10 @@ This is **not fixable** without replicating git's exact `xdl_refine_conflicts` a
 | Shell syntax error format            | Shell error format differs between real and virtual shell.                                                                                      |
 | Worktree path stderr                 | Stderr messages embed different worktree paths (real temp dir vs virtual FS root).                                                              |
 | Rebase progress stderr               | `git rebase` progress denominator differs.                                                                                                      |
+| Network ref-line alignment           | `git push`/`fetch`/`pull` ref-update lines match after normalizing column padding and filtering progress lines.                                 |
+| Network ref-line structure           | `git push`/`fetch`/`pull` ref-line structure matches (From/To + ref updates); hint/error trailer lines may differ.                              |
+| Clone stderr path                    | `git clone` "Cloning into" path differs (absolute vs relative); progress output filtered.                                                       |
+| Pull merge output                    | `git pull` merge-phase stdout handled via merge-family matchers (diffstat, diagnostics, rename collisions).                                     |
 
 Matcher policy: never bypass state divergence; only normalize equivalent output.
 
@@ -414,13 +437,14 @@ Conflict resolution uses `FILE_RESOLVE:<seed>` batches, which deterministically 
 ```
 Random walker (test/random/)
   → RealGitHarness (real git in tmp dir)
+      ↳ [remote presets] HTTP server (just-git, MemoryStorage, random port)
   → RecordingHarness (intercepts calls, serializes to command strings)
   → OracleStore (writes to SQLite)
 ```
 
 Each trace is a sequence of **steps**. A step is either:
 
-- A **git command** (`git commit -m "msg"`, `git checkout -b feature`, etc.)
+- A **git command** (`git commit -m "msg"`, `git checkout -b feature`, `git push origin main`, etc.)
 - A **file op batch** (`FILE_BATCH:<seed>`) — regenerated deterministically at replay time
 - A **conflict resolution batch** (`FILE_RESOLVE:<seed>`) — regenerated deterministically, resolves all conflicted files
 - An **individual file op** (`FILE_WRITE:{...}`, `FILE_DELETE:{...}`) — legacy format for individual writes
@@ -431,8 +455,9 @@ After each step, a **snapshot** of the real git repo is captured and stored.
 
 ```
 OracleStore (reads steps from SQLite)
-  → BatchChecker (loads snapshots into memory)
+  → BatchChecker (loads snapshots into memory, reads TraceConfig)
   → Bash + virtual git (executes each command)
+      ↳ [remote traces] in-process server via asNetwork(remoteBaseUrl)
   → captureImplState (reads virtual FS state)
   → compare() (diffs oracle vs impl)
 ```
@@ -449,7 +474,7 @@ At every step, both **state** and **output** are checked:
 | ---------------------- | ------------------------------------------------------------------------------------- |
 | `head_ref`             | Symbolic ref or detached (`ref: refs/heads/main` vs `null`)                           |
 | `head_sha`             | Resolved HEAD commit hash                                                             |
-| `refs`                 | All refs under `refs/` (includes `refs/stash`)                                        |
+| `refs`                 | All refs under `refs/` (includes `refs/stash`, `refs/remotes/*` tracking refs)        |
 | `index`                | All index entries keyed by `path:stage` (mode + sha)                                  |
 | `work_tree`            | SHA-1 hash of worktree contents (sorted path+content)                                 |
 | `active_operation`     | `merge`, `cherry-pick`, `rebase`, or `null`                                           |
@@ -466,7 +491,7 @@ At every step, both **state** and **output** are checked:
 
 ### Deterministic timestamps
 
-Both generation and replay use an incrementing counter for `GIT_AUTHOR_DATE` and `GIT_COMMITTER_DATE` (starting at Unix epoch 1000000000). This ensures commit hashes are identical across runs for the same sequence of operations. The counter increments for all commit-creating commands: `commit`, `merge`, `cherry-pick`, and `rebase --continue`.
+Both generation and replay use an incrementing counter for `GIT_AUTHOR_DATE` and `GIT_COMMITTER_DATE` (starting at Unix epoch 1000000000). This ensures commit hashes are identical across runs for the same sequence of operations. The counter increments for all commit-creating commands: `commit`, `merge`, `cherry-pick`, `pull`, and `rebase --continue`.
 
 ### Placeholder snapshots
 
@@ -476,20 +501,32 @@ When a random walker action produces multiple commands (e.g., resolve conflicts 
 
 Generation creates real git repos in temp directories. These are cleaned up via `try/finally` in the generation loop. Signal handlers (`SIGINT`, `SIGTERM`) ensure cleanup also runs if the process is killed during generation. The `replayTo` function (used by `rebuild`, `inspect`, etc.) also cleans up on error — only on success does it return the repo dir to the caller.
 
+### Remote server architecture
+
+Remote presets (`remote`, `remote-core`, `remote-heavy`) test push/fetch/pull by giving each trace its own just-git HTTP server as the "origin" remote.
+
+**Generation:** `RealGitHarness.create({ withRemote: true })` starts a `createServer({ storage: new MemoryStorage(), autoCreate: true })` and serves it via `Bun.serve` on a random port. Real git communicates over HTTP at `http://localhost:<port>`. The `remoteBaseUrl` is stored in `TraceConfig` so replay knows the URL scheme. The server is stopped in `cleanup()`.
+
+**Replay:** When `TraceConfig.remoteBaseUrl` is set, `createReplayEnvironment` creates a fresh in-process server with `MemoryStorage` and configures `createGit` with `server.asNetwork(remoteBaseUrl)`. This routes all HTTP transport calls to the server without any real network I/O, while keeping the same URLs that were recorded in the trace.
+
+**Initial setup:** For remote traces (when `remoteBaseUrl` is set and `cloneUrl` is not), `runRecordedWalk` performs four setup commands before the random walk begins: `git remote add origin <url>/repo`, add a seed file, commit, and `git push -u origin main`. These are recorded as regular trace steps so replay executes them identically.
+
+**QueryState:** The `remotes` field (populated via `listRemotes()` on the harness) lets network actions check whether a remote is configured before attempting push/fetch/pull.
+
 ## File reference
 
 | File                 | Purpose                                                                                                                         |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `cli.ts`             | Unified CLI entry point                                                                                                         |
 | `generate.ts`        | Trace generation engine, presets, `RecordingHarness`                                                                            |
-| `impl-harness.ts`    | Replay engine, virtual state capture, `replayAndCheck()`                                                                        |
+| `impl-harness.ts`    | Replay engine, virtual state capture. Wires in-process server via `asNetwork` for remote traces                                 |
 | `runner.ts`          | `replayTo()` — rebuild a real git repo at any step                                                                              |
 | `capture.ts`         | Snapshot capture from real git repos                                                                                            |
 | `checker.ts`         | `BatchChecker` — loads oracle data, checks state + output per step. Per-command skip lists and conditional matchers             |
 | `compare.ts`         | State comparison: `compare()`, `matches()`, divergence types                                                                    |
 | `post-mortem.ts`     | Classifies divergences as known patterns vs genuine bugs. Planner comparisons for rebase, rename analysis for merge/cherry-pick |
 | `fileops.ts`         | File operation serialization (`FILE_BATCH`, `FILE_RESOLVE`, `FILE_WRITE`, `FILE_DELETE`)                                        |
-| `real-harness.ts`    | `RealGitHarness` — `WalkHarness` backed by real git                                                                             |
+| `real-harness.ts`    | `RealGitHarness` — `WalkHarness` backed by real git. Starts just-git HTTP server for remote presets                             |
 | `store.ts`           | `OracleStore` — SQLite read/write for traces and steps                                                                          |
 | `schema.ts`          | Database schema initialization                                                                                                  |
 | `snapshot-delta.ts`  | Delta-compressed snapshots: `diffSnapshot()`, `applyDelta()`, `SnapshotDelta`                                                   |
@@ -498,17 +535,17 @@ Generation creates real git repos in temp directories. These are cleaned up via 
 
 ### Shared modules (`test/random/`)
 
-| File          | Purpose                                                                                         |
-| ------------- | ----------------------------------------------------------------------------------------------- |
-| `actions/`    | Action definitions split by category (`index.ts` re-exports `ALL_ACTIONS`, per-category arrays) |
-| `file-gen.ts` | Shared batch generation: `generateAndApplyFileOps()`, `FileGenConfig`, gitignore support        |
-| `harness.ts`  | `WalkHarness` interface, `VirtualHarness`                                                       |
-| `types.ts`    | `Action` interface (with `category` and `fuzz`), `ActionCategory`, `FuzzConfig`                 |
-| `pickers.ts`  | Value-selection helpers (`pickOtherBranch`, `pickFile`, etc.) with optional fuzz injection      |
-| `walker.ts`   | Walk engine: `runWalk()`, `queryState()`, `pickAction()`                                        |
-| `rng.ts`      | `SeededRNG` — deterministic xorshift128+ PRNG                                                   |
-| `stats.ts`    | CLI: gather VFS statistics after a walk                                                         |
-| `bench.ts`    | CLI: benchmark virtual-only walk throughput                                                     |
+| File          | Purpose                                                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `actions/`    | Action definitions split by category (`index.ts` re-exports `ALL_ACTIONS`, per-category arrays). `network.ts` covers push/fetch/pull |
+| `file-gen.ts` | Shared batch generation: `generateAndApplyFileOps()`, `FileGenConfig`, gitignore support                                             |
+| `harness.ts`  | `WalkHarness` interface, `VirtualHarness`                                                                                            |
+| `types.ts`    | `Action` interface (with `category` and `fuzz`), `ActionCategory`, `FuzzConfig`                                                      |
+| `pickers.ts`  | Value-selection helpers (`pickOtherBranch`, `pickFile`, etc.) with optional fuzz injection                                           |
+| `walker.ts`   | Walk engine: `runWalk()`, `queryState()`, `pickAction()`                                                                             |
+| `rng.ts`      | `SeededRNG` — deterministic xorshift128+ PRNG                                                                                        |
+| `stats.ts`    | CLI: gather VFS statistics after a walk                                                                                              |
+| `bench.ts`    | CLI: benchmark virtual-only walk throughput                                                                                          |
 
 ## Database schema
 
@@ -517,7 +554,7 @@ traces (
   trace_id    INTEGER PRIMARY KEY AUTOINCREMENT,
   seed        INTEGER NOT NULL,
   description TEXT,
-  config      TEXT,                   -- JSON TraceConfig (chaosRate, fileGen, fuzz, cloneUrl)
+  config      TEXT,                   -- JSON TraceConfig (chaosRate, fileGen, fuzz, cloneUrl, remoteBaseUrl)
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 )
 

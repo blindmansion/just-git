@@ -440,7 +440,8 @@ export class BatchChecker {
 			trimmed.startsWith("git cherry-pick") ||
 			trimmed.startsWith("git revert") ||
 			trimmed.startsWith("git stash apply") ||
-			trimmed.startsWith("git stash pop")
+			trimmed.startsWith("git stash pop") ||
+			trimmed.startsWith("git pull")
 		);
 	}
 
@@ -790,6 +791,132 @@ export class BatchChecker {
 		return norm(expected) === norm(actual);
 	}
 
+	// ── Network command matchers ─────────────────────────────────
+
+	private static isNetworkCommand(baseCommand: string): boolean {
+		return (
+			baseCommand === "git push" ||
+			baseCommand === "git fetch" ||
+			baseCommand === "git pull" ||
+			baseCommand === "git clone"
+		);
+	}
+
+	/**
+	 * Normalize fetch/push/pull ref-line output for comparison.
+	 * Strips whitespace padding in summary/ref columns so column alignment
+	 * differences don't cause false failures. Also normalizes hash ranges
+	 * to a canonical form.
+	 */
+	private static normalizeRefLines(text: string): string {
+		return text
+			.split("\n")
+			.map((line) => {
+				// Normalize ref-update lines: collapse multiple spaces to single
+				// Matches patterns like: " * [new branch]      main -> origin/main"
+				//                        "   abc1234..def5678  main -> origin/main"
+				if (
+					/^\s+[\s*+-]/.test(line) ||
+					line.startsWith(" * ") ||
+					line.startsWith(" - ") ||
+					line.startsWith(" + ") ||
+					line.startsWith(" ! ") ||
+					line.startsWith("   ")
+				) {
+					return line.replace(/\s{2,}/g, " ").trimEnd();
+				}
+				return line;
+			})
+			.join("\n");
+	}
+
+	/**
+	 * Push/fetch/pull stderr: both sides output ref-update lines under
+	 * "From <url>" or "To <url>". Accept if structural content matches
+	 * after normalizing column alignment and filtering progress lines.
+	 */
+	private static networkStderrMatches(expected: string, actual: string): boolean {
+		const filterProgress = (s: string) =>
+			s
+				.split("\n")
+				.filter(
+					(l) =>
+						!l.startsWith("remote: ") &&
+						!/^(Counting|Compressing|Receiving|Resolving|Unpacking|Enumerating)\s/.test(l.trim()),
+				)
+				.join("\n");
+		const ne = BatchChecker.normalizeRefLines(filterProgress(expected));
+		const na = BatchChecker.normalizeRefLines(filterProgress(actual));
+		return ne === na;
+	}
+
+	/**
+	 * Push/fetch/pull stderr where the structural ref lines match but
+	 * one side has extra hint/error lines that the other doesn't.
+	 * Extract only ref-update lines (starting with *, -, +, !, or
+	 * hash..hash patterns) and the From/To header and compare those.
+	 */
+	private static networkRefLineStructureMatches(expected: string, actual: string): boolean {
+		const extractRefLines = (s: string) =>
+			s
+				.split("\n")
+				.filter((l) => {
+					const t = l.trimStart();
+					return (
+						t.startsWith("From ") ||
+						t.startsWith("To ") ||
+						t.startsWith("* ") ||
+						t.startsWith("- ") ||
+						t.startsWith("+ ") ||
+						t.startsWith("! ") ||
+						/^[0-9a-f]{7,}\.{2,3}[0-9a-f]{7,}/.test(t)
+					);
+				})
+				.map((l) => l.replace(/\s{2,}/g, " ").trimEnd())
+				.join("\n");
+		const er = extractRefLines(expected);
+		const ar = extractRefLines(actual);
+		return er.length > 0 && er === ar;
+	}
+
+	/**
+	 * Clone stdout: progress messages differ between real and virtual.
+	 * Accept if both are empty or both are non-empty (progress is cosmetic).
+	 */
+	private static cloneStdoutMatches(expected: string, actual: string): boolean {
+		return expected.trim() === "" && actual.trim() === "";
+	}
+
+	/**
+	 * Clone stderr: "Cloning into..." path may differ (absolute vs relative),
+	 * and progress output differs. Normalize the path and filter progress.
+	 */
+	private static cloneStderrMatches(expected: string, actual: string): boolean {
+		const normalize = (s: string) =>
+			s
+				.split("\n")
+				.filter(
+					(l) =>
+						!l.startsWith("remote: ") &&
+						!/^(Counting|Compressing|Receiving|Resolving|Unpacking|Enumerating)\s/.test(l.trim()),
+				)
+				.map((l) => l.replace(/Cloning into '([^']+)'/, "Cloning into '<path>'"))
+				.join("\n");
+		return normalize(expected) === normalize(actual);
+	}
+
+	/**
+	 * Pull stdout can include merge output that differs only in diffstat
+	 * (rename detection ambiguity) while the merge structural content matches.
+	 */
+	private static pullStdoutMatches(expected: string, actual: string): boolean {
+		if (BatchChecker.mergeFamilyDiagnosticOutputMatches(expected, actual)) return true;
+		if (BatchChecker.mergeFamilyDiagnosticOutputRelaxedMatches(expected, actual)) return true;
+		if (BatchChecker.mergeDiffstatOutputMatches(expected, actual)) return true;
+		if (BatchChecker.commitStatMatches(expected, actual)) return true;
+		return false;
+	}
+
 	// ── Stderr comparison skip lists ─────────────────────────────
 	//
 	// Below are all the cases where stderr comparison is intentionally
@@ -966,6 +1093,16 @@ export class BatchChecker {
 			) {
 				// Log diff sections differ (rename detection / diff algorithm);
 				// commit headers match.
+			} else if (
+				baseCommand === "git clone" &&
+				BatchChecker.cloneStdoutMatches(step.stdout, output.stdout)
+			) {
+				// Clone progress differs — cosmetic only
+			} else if (
+				baseCommand === "git pull" &&
+				BatchChecker.pullStdoutMatches(step.stdout, output.stdout)
+			) {
+				// Pull merge output differs in diffstat / rename details
 			} else {
 				divergences.push({
 					field: "stdout",
@@ -1002,6 +1139,21 @@ export class BatchChecker {
 				BatchChecker.rebaseProgressStderrMatches(step.stderr, output.stderr)
 			) {
 				// Rebase progress denominator differs, conflict guidance is identical.
+			} else if (
+				BatchChecker.isNetworkCommand(baseCommand) &&
+				BatchChecker.networkStderrMatches(step.stderr, output.stderr)
+			) {
+				// Network command ref lines match after normalizing column alignment
+			} else if (
+				BatchChecker.isNetworkCommand(baseCommand) &&
+				BatchChecker.networkRefLineStructureMatches(step.stderr, output.stderr)
+			) {
+				// Network command ref-line structure matches; hint/error lines differ
+			} else if (
+				baseCommand === "git clone" &&
+				BatchChecker.cloneStderrMatches(step.stderr, output.stderr)
+			) {
+				// Clone path and progress output differ — cosmetic
 			} else {
 				divergences.push({
 					field: "stderr",

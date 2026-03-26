@@ -131,6 +131,7 @@ export function isCommitCommand(command: string): boolean {
 		lower.startsWith("merge") ||
 		lower.startsWith("cherry-pick") ||
 		lower.startsWith("revert") ||
+		lower.startsWith("pull") ||
 		lower.includes("rebase --continue")
 	);
 }
