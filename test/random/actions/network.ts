@@ -145,6 +145,20 @@ const pullNoFf: Action = {
 	},
 };
 
+const serverCommitAction: Action = {
+	name: "serverCommit",
+	category: "remote",
+	canRun: (state) => hasOrigin(state.remotes) && state.hasCommits,
+	precondition: (state) => !inConflict(state),
+	weight: () => 4,
+	async execute(harness, rng) {
+		if (!harness.serverCommit) return { description: "serverCommit: no server", result: null };
+		const seed = rng.int(0, 1_000_000);
+		await harness.serverCommit(seed);
+		return { description: `server-commit seed=${seed}`, result: null };
+	},
+};
+
 export const NETWORK_ACTIONS: readonly Action[] = [
 	pushOrigin,
 	pushAll,
@@ -157,4 +171,5 @@ export const NETWORK_ACTIONS: readonly Action[] = [
 	pullOrigin,
 	pullFfOnly,
 	pullNoFf,
+	serverCommitAction,
 ];

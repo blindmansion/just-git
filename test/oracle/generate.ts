@@ -24,7 +24,14 @@ import { SeededRNG } from "../random/rng";
 import type { Action, ActionCategory, FuzzConfig } from "../random/types";
 import { pickAction, queryState } from "../random/walker";
 import { captureSnapshot, type GitSnapshot } from "./capture";
-import { del, isCommitCommand, serializeFileOpBatch, serializeFileResolve, write } from "./fileops";
+import {
+	del,
+	isCommitCommand,
+	serializeFileOpBatch,
+	serializeFileResolve,
+	serializeServerCommit,
+	write,
+} from "./fileops";
 import { RealGitHarness } from "./real-harness";
 import { initDb } from "./schema";
 import { diffSnapshot, EMPTY_SNAPSHOT } from "./snapshot-delta";
@@ -132,6 +139,16 @@ class RecordingHarness implements WalkHarness {
 		await this.inner.resolveFiles(seed);
 		this.buffer.push({
 			command: serializeFileResolve(seed),
+			result: null,
+		});
+	}
+
+	// ── Server-side commit ────────────────────────────────────────
+
+	async serverCommit(seed: number, branch?: string): Promise<void> {
+		await this.inner.serverCommit(seed, branch);
+		this.buffer.push({
+			command: serializeServerCommit(seed),
 			result: null,
 		});
 	}
@@ -662,6 +679,23 @@ export const PRESETS: Record<string, Preset> = {
 			0.5,
 		),
 		fileGen: STRESS_FILE_GEN_CONFIG,
+	},
+
+	/** Remote kitchen sink: kitchen preset with a remote server.
+	 *  Same chaos/fuzz/gitignore as kitchen, plus push/fetch/pull coverage. */
+	"remote-kitchen": {
+		actions: excludeNames(ALL_ACTIONS, "cherryPickNoCommit"),
+		chaosRate: 0.12,
+		fuzz: FUZZ_LIGHT,
+		fileGen: {
+			...DEFAULT_FILE_GEN_CONFIG,
+			gitignore: {
+				rate: 0.05,
+				subdirRate: 0.3,
+				patterns: DEFAULT_GITIGNORE_PATTERNS,
+			},
+		},
+		withRemote: true,
 	},
 
 	/**

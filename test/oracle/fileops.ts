@@ -1,11 +1,12 @@
 /**
  * File operation serialization for oracle traces.
  *
- * Three categories:
- *   FILE_BATCH:<seed>    — seed-based random file op batch (regenerated at replay time)
- *   FILE_RESOLVE:<seed>  — seed-based resolve-all-files (conflict resolution, regenerated at replay time)
- *   FILE_WRITE:<json>    — individual write (legacy, used by initial seed file)
- *   FILE_DELETE:<json>    — individual delete (legacy)
+ * Four categories:
+ *   FILE_BATCH:<seed>      — seed-based random file op batch (regenerated at replay time)
+ *   FILE_RESOLVE:<seed>    — seed-based resolve-all-files (conflict resolution, regenerated at replay time)
+ *   SERVER_COMMIT:<seed>   — seed-based server-side commit (replayed via server.commit())
+ *   FILE_WRITE:<json>      — individual write (legacy, used by initial seed file)
+ *   FILE_DELETE:<json>     — individual delete (legacy)
  */
 
 // ── Individual op types (for conflict resolution writes) ─────────────
@@ -29,6 +30,7 @@ type FileOp = WriteOp | DeleteOp;
 
 const FILE_BATCH_PREFIX = "FILE_BATCH:";
 const FILE_RESOLVE_PREFIX = "FILE_RESOLVE:";
+const SERVER_COMMIT_PREFIX = "SERVER_COMMIT:";
 const WRITE_PREFIX = "FILE_WRITE:";
 const DELETE_PREFIX = "FILE_DELETE:";
 
@@ -69,6 +71,23 @@ export function serializeFileResolve(seed: number): string {
 /** Extract the seed from a FILE_RESOLVE command. */
 export function parseFileResolveSeed(command: string): number {
 	return parseInt(command.slice(FILE_RESOLVE_PREFIX.length), 10);
+}
+
+// ── Server commit seed ──────────────────────────────────────────────
+
+/** Is this a server-side commit op? */
+export function isServerCommit(command: string): boolean {
+	return command.startsWith(SERVER_COMMIT_PREFIX);
+}
+
+/** Serialize a server-side commit as a command string. */
+export function serializeServerCommit(seed: number): string {
+	return `${SERVER_COMMIT_PREFIX}${seed}`;
+}
+
+/** Extract the seed from a SERVER_COMMIT command. */
+export function parseServerCommitSeed(command: string): number {
+	return parseInt(command.slice(SERVER_COMMIT_PREFIX.length), 10);
 }
 
 // ── Individual op parse/serialize ────────────────────────────────────

@@ -62,6 +62,9 @@ export interface WalkHarness {
 	/** Resolve all worktree files with deterministic random content. */
 	resolveFiles(seed: number): Promise<void>;
 
+	/** Create a commit directly on the remote server. No-op when no server is available. */
+	serverCommit?(seed: number, branch?: string): Promise<void>;
+
 	// State queries
 	listWorkTreeFiles(): Promise<string[]>;
 	listBranches(): Promise<string[]>;

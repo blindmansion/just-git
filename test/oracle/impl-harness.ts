@@ -8,7 +8,7 @@
 import { Bash, type IFileSystem } from "just-bash";
 import { createGit } from "../../src/git";
 import { createGitCommand } from "../../src/commands/git";
-import { createServer, MemoryStorage } from "../../src/server/index";
+import { createServer, MemoryStorage, type GitServer } from "../../src/server/index";
 import { readIndex } from "../../src/lib/index";
 import { readReflog } from "../../src/lib/reflog";
 import { listRefs, readHead, resolveRef } from "../../src/lib/refs";
@@ -19,6 +19,7 @@ import {
 	type FileGenConfig,
 	type FileOpTarget,
 	generateAndApplyFileOps,
+	generateServerCommitFiles,
 	resolveAllFiles,
 } from "../random/file-gen";
 import { DEFAULT_TEST_ENV } from "../random/harness";
@@ -29,9 +30,11 @@ import {
 	isFileOpBatch,
 	isFileResolve,
 	isIndividualFileOp,
+	isServerCommit,
 	parseFileOp,
 	parseFileOpBatchSeed,
 	parseFileResolveSeed,
+	parseServerCommitSeed,
 } from "./fileops";
 
 // ── Constants ────────────────────────────────────────────────────
@@ -42,6 +45,7 @@ interface ReplayEnvironment {
 	bash: Bash;
 	checker: BatchChecker;
 	fileGenConfig: FileGenConfig;
+	server?: GitServer;
 }
 
 // ── VFS adapters ─────────────────────────────────────────────────
@@ -433,7 +437,7 @@ const NO_OUTPUT: CommandOutput = { stdout: "", stderr: "", exitCode: 0 };
 
 /**
  * Execute a single command against a Bash instance + VFS.
- * Handles file op batches, individual file ops, and git commands.
+ * Handles file op batches, individual file ops, server commits, and git commands.
  * Returns the command's stdout/stderr/exitCode.
  */
 async function executeCommand(
@@ -441,6 +445,7 @@ async function executeCommand(
 	command: string,
 	commitCounter: { value: number },
 	fileGenConfig: FileGenConfig = DEFAULT_FILE_GEN_CONFIG,
+	server?: GitServer,
 ): Promise<CommandOutput> {
 	if (isFileOpBatch(command)) {
 		const seed = parseFileOpBatchSeed(command);
@@ -453,6 +458,21 @@ async function executeCommand(
 		const files = await listVirtualWorkTreeFiles(bash.fs, VFS_ROOT);
 		const target = createVfsTarget(bash.fs, VFS_ROOT);
 		await resolveAllFiles(target, seed, files, fileGenConfig);
+		return NO_OUTPUT;
+	} else if (isServerCommit(command)) {
+		if (!server) throw new Error("SERVER_COMMIT command but no server in replay environment");
+		const seed = parseServerCommitSeed(command);
+		const files = generateServerCommitFiles(seed, fileGenConfig);
+		await server.commit("repo", {
+			files,
+			message: `server-commit-${seed}`,
+			author: {
+				name: "Server",
+				email: "server@test.com",
+				date: new Date((3000000000 + seed) * 1000),
+			},
+			branch: "main",
+		});
 		return NO_OUTPUT;
 	} else if (isIndividualFileOp(command)) {
 		await applyIndividualFileOp(bash.fs, command);
@@ -516,7 +536,7 @@ export async function replayAndCheck(
 		verbose?: boolean;
 	},
 ): Promise<ReplayResult> {
-	const { checker, bash, fileGenConfig } = createReplayEnvironment(dbPath, traceId);
+	const { checker, bash, fileGenConfig, server } = createReplayEnvironment(dbPath, traceId);
 	const commands = checker.getCommands();
 
 	const commitCounter = { value: 0 };
@@ -529,7 +549,7 @@ export async function replayAndCheck(
 		if (options?.stopAt != null && seq > options.stopAt) break;
 		totalSteps++;
 
-		const output = await executeCommand(bash, command, commitCounter, fileGenConfig);
+		const output = await executeCommand(bash, command, commitCounter, fileGenConfig, server);
 
 		// Skip comparison for placeholder snapshots
 		if (checker.isPlaceholder(seq)) {
@@ -630,7 +650,7 @@ export async function replayToVirtual(
 
 	for (const { seq, command } of commands) {
 		if (seq > stopAt) break;
-		await executeCommand(replay.bash, command, commitCounter, replay.fileGenConfig);
+		await executeCommand(replay.bash, command, commitCounter, replay.fileGenConfig, replay.server);
 	}
 
 	return replay;
@@ -652,7 +672,13 @@ export async function replayToStateAndOutput(
 
 	for (const { seq, command } of commands) {
 		if (seq > stopAt) break;
-		lastOutput = await executeCommand(replay.bash, command, commitCounter, replay.fileGenConfig);
+		lastOutput = await executeCommand(
+			replay.bash,
+			command,
+			commitCounter,
+			replay.fileGenConfig,
+			replay.server,
+		);
 	}
 
 	const state = await captureImplState(replay.bash.fs);
@@ -672,14 +698,14 @@ export interface CommandTiming {
  * no comparison, no post-mortem.  Returns per-step timing data.
  */
 export async function replayWithTiming(dbPath: string, traceId: number): Promise<CommandTiming[]> {
-	const { checker, bash, fileGenConfig } = createReplayEnvironment(dbPath, traceId);
+	const { checker, bash, fileGenConfig, server } = createReplayEnvironment(dbPath, traceId);
 	const commands = checker.getCommands();
 	const commitCounter = { value: 0 };
 	const timings: CommandTiming[] = [];
 
 	for (const { seq, command } of commands) {
 		const start = performance.now();
-		await executeCommand(bash, command, commitCounter, fileGenConfig);
+		await executeCommand(bash, command, commitCounter, fileGenConfig, server);
 		const elapsed = performance.now() - start;
 		timings.push({ seq, command, elapsedMs: elapsed });
 	}
@@ -710,14 +736,14 @@ export async function replayWithSize(
 	traceId: number,
 	sampleEvery: number,
 ): Promise<SizeSample[]> {
-	const { checker, bash, fileGenConfig } = createReplayEnvironment(dbPath, traceId);
+	const { checker, bash, fileGenConfig, server } = createReplayEnvironment(dbPath, traceId);
 	const commands = checker.getCommands();
 	const commitCounter = { value: 0 };
 	const samples: SizeSample[] = [];
 	const totalSteps = commands.length;
 
 	for (const { seq, command } of commands) {
-		await executeCommand(bash, command, commitCounter, fileGenConfig);
+		await executeCommand(bash, command, commitCounter, fileGenConfig, server);
 
 		if (seq % sampleEvery === 0 || seq === totalSteps - 1) {
 			const sample = await measureRepoSize(bash.fs, seq, command);
@@ -801,8 +827,9 @@ function createReplayEnvironment(dbPath: string, traceId: number): ReplayEnviron
 	const fileGenConfig = traceConfig?.fileGen ?? DEFAULT_FILE_GEN_CONFIG;
 
 	let command: import("just-bash").Command;
+	let server: GitServer | undefined;
 	if (traceConfig?.remoteBaseUrl) {
-		const server = createServer({
+		server = createServer({
 			storage: new MemoryStorage(),
 			autoCreate: true,
 		});
@@ -818,5 +845,5 @@ function createReplayEnvironment(dbPath: string, traceId: number): ReplayEnviron
 		customCommands: [command],
 		env: { ...DEFAULT_TEST_ENV },
 	});
-	return { checker, bash, fileGenConfig };
+	return { checker, bash, fileGenConfig, server };
 }

@@ -127,7 +127,10 @@ function isGitignore(path: string): boolean {
 }
 
 /** Generate a random file path (never generates .gitignore). */
-function randomFilePath(rng: SeededRNG, cfg: FileGenConfig = DEFAULT_FILE_GEN_CONFIG): string {
+export function randomFilePath(
+	rng: SeededRNG,
+	cfg: FileGenConfig = DEFAULT_FILE_GEN_CONFIG,
+): string {
 	const prefix = rng.pick(cfg.dirPrefixes);
 	const name = rng.alphanumeric(rng.int(3, 8));
 	const ext = rng.pick([".txt", ".ts", ".md", ".json"]);
@@ -434,4 +437,24 @@ async function applyDelete(target: FileOpTarget, rng: SeededRNG, files: string[]
 	const idx = files.indexOf(path);
 	if (idx >= 0) files.splice(idx, 1);
 	return `delete ${path}`;
+}
+
+// ── Server-side commit file generation ───────────────────────────────
+
+/**
+ * Generate a deterministic set of files for a server-side commit.
+ * Returns a map of path → content suitable for `server.commit()`.
+ */
+export function generateServerCommitFiles(
+	seed: number,
+	cfg: FileGenConfig = DEFAULT_FILE_GEN_CONFIG,
+): Record<string, string> {
+	const rng = new SeededRNG(seed);
+	const fileCount = rng.int(1, 5);
+	const files: Record<string, string> = {};
+	for (let i = 0; i < fileCount; i++) {
+		const path = randomFilePath(rng, cfg);
+		files[path] = randomContent(rng, cfg);
+	}
+	return files;
 }

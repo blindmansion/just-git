@@ -433,12 +433,13 @@ Reusable random walk engine for generating git operation sequences. Shared by or
   - `stash.ts` — `stashPush`, `stashPushUntracked`, `stashPop`, `stashApply`, `stashDrop`
   - `tag.ts` — `createTag`, `createTagAtCommit`, `deleteTag`, `listTags`
   - `remote.ts` — `remoteAdd`, `remoteRemove`, `remoteRename`, `remoteSetUrl`, `remoteGetUrl`, `remoteList`
+  - `network.ts` — `pushOrigin`, `pushAll`, `pushForce`, `pushUpstream`, `pushDelete`, `fetchOrigin`, `fetchPrune`, `fetchTags`, `pullOrigin`, `pullFfOnly`, `pullNoFf`, `serverCommit`. `serverCommit` creates commits directly on the remote server via `server.commit()` to exercise download paths (fetch/pull with server-originated content).
   - `reset.ts` — `resetMixed`, `resetHard`, `resetSoft`, `resetFile`
   - `clean.ts` — `cleanWorkTree`, `toggleCleanRequireForce`
   - `switch.ts` — `switchBranchViaSwitch`, `switchCreate`, `switchCreateFromRef`, `switchForceCreate`, `switchDetach`, `switchOrphan`
   - `restore.ts` — `restoreWorktree`, `restoreStaged`, `restoreFromSource`, `restoreStagedAndWorktree`, `restoreOursTheirs`
   - `diagnostic.ts` — All read-only actions (log, status, diff, show, rev-parse, ls-files, reflog variants)
-- `file-gen.ts` — File operation generation (`FileGenConfig`, `DEFAULT_FILE_GEN_CONFIG`, `WIDE_FILE_GEN_CONFIG`, `STRESS_FILE_GEN_CONFIG`, `GitignoreConfig`, `DEFAULT_GITIGNORE_PATTERNS`, `generateAndApplyFileOps`, `resolveAllFiles`). Normal file ops never create/edit `.gitignore` files; gitignore generation is controlled by `GitignoreConfig` in `FileGenConfig.gitignore`.
+- `file-gen.ts` — File operation generation (`FileGenConfig`, `DEFAULT_FILE_GEN_CONFIG`, `WIDE_FILE_GEN_CONFIG`, `STRESS_FILE_GEN_CONFIG`, `GitignoreConfig`, `DEFAULT_GITIGNORE_PATTERNS`, `generateAndApplyFileOps`, `resolveAllFiles`, `generateServerCommitFiles`). Normal file ops never create/edit `.gitignore` files; gitignore generation is controlled by `GitignoreConfig` in `FileGenConfig.gitignore`.
 - `walker.ts` — Walk loop (`runWalk`, `pickAction(rng, state, actions?, chaosRate?)`, `queryState`), `StepEvent`, `WalkConfig` (includes `chaosRate` and `fuzz`)
 - `rng.ts` — `SeededRNG` (deterministic PRNG)
 - `stats.ts` — CLI: gather VFS statistics after a walk
@@ -545,7 +546,7 @@ Debug workflow:
 - `compare.ts` — State comparison (`compare`, `matches`, `ImplState`, `OracleState`, `Divergence`)
 - `checker.ts` — `BatchChecker` (loads oracle snapshots, checks impl state and output against them). Contains per-command stdout/stderr skip lists with documented rationale. Conditional matchers tolerate known cosmetic differences: `initOutputMatches` (path), `showDiffOutputMatches` (diff formatting), `diffHunkAlignmentMatches` (hunk boundaries), `mergeFastForwardOutputMatches` (FF summary), `rebaseStatusTodoOutputMatches` (rebase status), `mergeFamilyDiagnosticOutputMatches` (merge/cherry-pick/revert diagnostics), `renameCollisionOutputMatches` (rename collisions), `branchRebasingDetachedMatches` (branch status during rebase), `checkoutOrphanCountMatches` (orphan count), `mergeOverwriteStderrMatches` (rename file list), `worktreePathStderrMatches` (worktree path), `rebaseProgressStderrMatches` (rebase progress), `commitStatMatches` (diffstat counts).
 - `post-mortem.ts` — Classifies divergences as known patterns vs genuine bugs (`PostMortemPattern` type). Runs planner comparisons for rebase, rename detection analysis for merge/cherry-pick. Known patterns: `rename-detection-ambiguity`, `rebase-planner-match`.
-- `fileops.ts` — File operation serialization (`isFileOp`, `parseFileOp`, `write`, `del`, `move`), `isCommitCommand`. Three trace formats: `FILE_BATCH:<seed>` (random ops), `FILE_RESOLVE:<seed>` (conflict resolution), `FILE_WRITE`/`FILE_DELETE` (legacy individual ops)
+- `fileops.ts` — File operation serialization (`isFileOp`, `parseFileOp`, `write`, `del`, `move`), `isCommitCommand`, `isServerCommit`. Four trace formats: `FILE_BATCH:<seed>` (random ops), `FILE_RESOLVE:<seed>` (conflict resolution), `SERVER_COMMIT:<seed>` (server-side commit), `FILE_WRITE`/`FILE_DELETE` (legacy individual ops)
 - `runner.ts` — `replayTo` (rebuild real git repo at a step for debugging)
 - `schema.ts` — SQLite schema (`initDb`)
 - `store.ts` — `OracleStore` (read/write traces and steps)

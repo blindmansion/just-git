@@ -10,6 +10,7 @@ import {
 	DEFAULT_FILE_GEN_CONFIG,
 	type FileGenConfig,
 	generateAndApplyFileOps,
+	generateServerCommitFiles,
 	resolveAllFiles,
 } from "../random/file-gen";
 import { DEFAULT_TEST_ENV, type ExecResult, type WalkHarness } from "../random/harness";
@@ -170,6 +171,23 @@ export class RealGitHarness implements WalkHarness {
 	async resolveFiles(seed: number): Promise<void> {
 		const files = await this.listWorkTreeFiles();
 		await resolveAllFiles(this, seed, files, this.fileGenConfig);
+	}
+
+	// ── WalkHarness: server-side commit ──────────────────────────
+
+	async serverCommit(seed: number, branch: string = "main"): Promise<void> {
+		if (!this.server) return;
+		const files = generateServerCommitFiles(seed, this.fileGenConfig);
+		await this.server.commit("repo", {
+			files,
+			message: `server-commit-${seed}`,
+			author: {
+				name: "Server",
+				email: "server@test.com",
+				date: new Date((3000000000 + seed) * 1000),
+			},
+			branch,
+		});
 	}
 
 	// ── WalkHarness: state queries ───────────────────────────────
