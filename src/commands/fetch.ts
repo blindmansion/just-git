@@ -335,7 +335,7 @@ async function fetchOneRemote(
 			: "of";
 		await gitCtx.fs.writeFile(fetchHeadPath, `${headRef.hash}\t\t${branchDesc} ${config.url}\n`);
 
-		await ensureRemoteHead(gitCtx, remoteName, remoteRefs);
+		await ensureRemoteHead(gitCtx, remoteName, remoteRefs, transport.headTarget);
 	}
 
 	const stderr =

@@ -231,7 +231,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					? `From ${config.url}\n${formatTransferRefLines(fetchRefLines, 10)}`
 					: "";
 
-			await ensureRemoteHead(gitCtx, remoteName, remoteRefs);
+			await ensureRemoteHead(gitCtx, remoteName, remoteRefs, transport.headTarget);
 
 			// After fetch: check if we can determine the merge target
 			if (head?.type !== "symbolic" && !remoteBranch) {

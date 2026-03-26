@@ -417,22 +417,35 @@ export async function createSymbolicRef(ctx: GitRepo, name: string, target: stri
  * Create `refs/remotes/<remote>/HEAD` as a symbolic ref pointing at the
  * remote's default branch — but only on first encounter (skips if already set).
  * Mirrors the behavior of `git clone` for `fetch` and `pull` paths.
+ *
+ * When `headTarget` is provided (e.g. `"refs/heads/main"` from the transport's
+ * symref capability), it is used directly. Otherwise falls back to hash matching,
+ * which is ambiguous when multiple branches share the same commit hash.
  */
 export async function ensureRemoteHead(
 	ctx: GitRepo,
 	remoteName: string,
 	remoteRefs: ReadonlyArray<{ name: string; hash: string }>,
+	headTarget?: string,
 ): Promise<void> {
 	const headRef = remoteRefs.find((r) => r.name === "HEAD");
 	if (!headRef) return;
-	const headBranch = remoteRefs.find(
-		(r) => r.name.startsWith("refs/heads/") && r.hash === headRef.hash,
-	);
-	if (!headBranch) return;
+
+	let branchName: string | undefined;
+	if (headTarget?.startsWith("refs/heads/")) {
+		branchName = headTarget.slice("refs/heads/".length);
+	} else {
+		const headBranch = remoteRefs.find(
+			(r) => r.name.startsWith("refs/heads/") && r.hash === headRef.hash,
+		);
+		if (!headBranch) return;
+		branchName = headBranch.name.slice("refs/heads/".length);
+	}
+
 	const remoteHeadRef = `refs/remotes/${remoteName}/HEAD`;
 	const existing = await ctx.refStore.readRef(remoteHeadRef);
 	if (existing) return;
-	const trackingRef = `refs/remotes/${remoteName}/${headBranch.name.slice("refs/heads/".length)}`;
+	const trackingRef = `refs/remotes/${remoteName}/${branchName}`;
 	await ctx.refStore.writeRef(remoteHeadRef, { type: "symbolic", target: trackingRef });
 }
 
