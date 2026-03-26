@@ -119,15 +119,8 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 						noTrackingBranch = branchName;
 					}
 				} else if (!remoteBranch) {
-					return {
-						stdout: "",
-						stderr:
-							"You are not currently on a branch.\n" +
-							"Please specify which branch you want to merge with.\n" +
-							"See git-pull(1) for details.\n\n" +
-							"    git pull <remote> <branch>\n\n",
-						exitCode: 1,
-					};
+					// Defer — real git fetches first, then checks merge target.
+					// If the fetch fails (bad URL), the fetch error is reported instead.
 				}
 			}
 			remoteName = remoteName || "origin";
@@ -139,11 +132,16 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				resolved = await resolveRemoteTransport(gitCtx, remoteName, ctx.env);
 			} catch (e) {
 				const msg = e instanceof Error ? e.message : "";
-				if (msg.startsWith("network")) return fatal(msg);
+				if (msg.startsWith("network"))
+					return { stdout: "", stderr: `fatal: ${msg}\n`, exitCode: 1 };
 				throw e;
 			}
 			if (!resolved) {
-				return fatal(`'${remoteName}' does not appear to be a git repository`);
+				return {
+					stdout: "",
+					stderr: `fatal: '${remoteName}' does not appear to be a git repository\n`,
+					exitCode: 1,
+				};
 			}
 
 			const { transport, config } = resolved;
@@ -235,8 +233,27 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 
 			await ensureRemoteHead(gitCtx, remoteName, remoteRefs);
 
-			// After fetch: check if we have tracking info for the merge target
+			// After fetch: check if we can determine the merge target
+			if (head?.type !== "symbolic" && !remoteBranch) {
+				return {
+					stdout: "",
+					stderr:
+						"You are not currently on a branch.\n" +
+						"Please specify which branch you want to merge with.\n" +
+						"See git-pull(1) for details.\n\n" +
+						"    git pull <remote> <branch>\n\n",
+					exitCode: 1,
+				};
+			}
+
 			if (noTrackingBranch) {
+				const cfg = await readConfig(gitCtx);
+				const remoteNames: string[] = [];
+				for (const section of Object.keys(cfg)) {
+					const m = section.match(/^remote "(.+)"$/);
+					if (m?.[1]) remoteNames.push(m[1]);
+				}
+				const hintRemote = remoteNames.length === 1 ? remoteNames[0] : "<remote>";
 				return {
 					stdout: "",
 					stderr:
@@ -245,7 +262,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 						`See git-pull(1) for details.\n\n` +
 						`    git pull <remote> <branch>\n\n` +
 						`If you wish to set tracking information for this branch you can do so with:\n\n` +
-						`    git branch --set-upstream-to=origin/<branch> ${noTrackingBranch}\n\n`,
+						`    git branch --set-upstream-to=${hintRemote}/<branch> ${noTrackingBranch}\n\n`,
 					exitCode: 1,
 				};
 			}

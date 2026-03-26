@@ -47,6 +47,21 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 			const gitCtx = gitCtxOrError;
 
 			const remoteName = args.remote || "origin";
+			const rawRefspecs = args.refspec;
+
+			// Real git checks detached HEAD before connecting to the remote
+			if (!args.delete && !args.all && !args.tags && (!rawRefspecs || rawRefspecs.length === 0)) {
+				const head = await readHead(gitCtx);
+				if (!head || head.type !== "symbolic") {
+					return fatal(
+						"You are not currently on a branch.\n" +
+							"To push the history leading to the current (detached HEAD)\n" +
+							"state now, use\n\n" +
+							"    git push origin HEAD:<name-of-remote-branch>\n",
+					);
+				}
+			}
+
 			let resolved;
 			try {
 				resolved = await resolveRemoteTransport(gitCtx, remoteName, ctx.env);
@@ -79,7 +94,6 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 
 			// Build push updates
 			const updates: PushRefUpdate[] = [];
-			const rawRefspecs = args.refspec;
 
 			if (args.delete) {
 				const refs = rawRefspecs && rawRefspecs.length > 0 ? rawRefspecs : [];

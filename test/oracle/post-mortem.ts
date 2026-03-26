@@ -58,6 +58,7 @@ type PostMortemPattern =
 	| "rebase-planner-subset"
 	| "rename-detection-ambiguity"
 	| "merge-conflict-marker-alignment"
+	| "blame-diff-alignment"
 	| "unknown";
 
 interface PostMortemResult {
@@ -196,6 +197,30 @@ export async function runPostMortem(
 				pattern: "unknown",
 				explanation: `post-mortem error: ${err instanceof Error ? err.message : String(err)}`,
 			};
+		}
+	}
+
+	// Blame output: diff alignment ambiguity in line attribution.
+	// When blame traverses commits, the diff algorithm determines which
+	// commit "owns" each line. For lines whose content exists in multiple
+	// commits (e.g., content preserved across conflict-marker commits),
+	// different diff alignments produce different attributions. The line
+	// content is identical — only the commit hash and timestamp differ.
+	if (command.startsWith("git blame") && divergences && divergences.length > 0) {
+		const stateErrors = divergences.filter(
+			(d) => d.severity === "error" && !isOutputField(d.field),
+		);
+		const hasStdoutDiff = divergences.some((d) => d.severity === "error" && d.field === "stdout");
+		if (stateErrors.length === 0 && hasStdoutDiff) {
+			const oracleStdout = String(divergences.find((d) => d.field === "stdout")?.expected ?? "");
+			const implStdout = String(divergences.find((d) => d.field === "stdout")?.actual ?? "");
+			if (isBlameAttributionOnly(oracleStdout, implStdout)) {
+				return {
+					pattern: "blame-diff-alignment",
+					explanation:
+						"blame line content matches but attribution differs — diff alignment ambiguity",
+				};
+			}
 		}
 	}
 
@@ -674,6 +699,29 @@ async function analyzeMergeDivergence(
 		pattern: "unknown",
 		explanation: "merge divergence — not a known pattern",
 	};
+}
+
+/**
+ * Check if two blame outputs differ only in line attribution (commit hash
+ * and timestamp) while all line content is identical. This detects diff
+ * alignment ambiguities where the same text can be attributed to different
+ * commits depending on LCS alignment choices.
+ */
+function isBlameAttributionOnly(oracle: string, impl: string): boolean {
+	const oLines = oracle.split("\n");
+	const iLines = impl.split("\n");
+	if (oLines.length !== iLines.length) return false;
+	// Blame output: "<hash> (<author> <date> <lineno>) <content>"
+	// Extract content after the closing paren + line number.
+	const contentRe = /\)\s*(.*)$/;
+	for (let i = 0; i < oLines.length; i++) {
+		const oMatch = contentRe.exec(oLines[i]!);
+		const iMatch = contentRe.exec(iLines[i]!);
+		if (!oMatch && !iMatch) continue; // both empty/non-blame lines
+		if (!oMatch || !iMatch) return false; // structural mismatch
+		if (oMatch[1] !== iMatch[1]) return false; // content differs
+	}
+	return true;
 }
 
 /** Extract commit hashes from a git-rebase-todo file. */

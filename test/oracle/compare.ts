@@ -79,8 +79,11 @@ function classifySeverity(field: string, expected: unknown, actual: unknown): Di
 	// (operation type mismatch is caught separately by active_operation)
 	if (field === "operation_state_hash") return "warn";
 
-	// Refs: missing/extra is an error, SHA-only difference is a warning
+	// Refs: missing/extra is an error, SHA-only difference is a warning.
+	// Exception: refs/remotes/*/HEAD is cosmetic (created by clone, varies
+	// across git versions for fetch/pull) — always warning.
 	if (field.startsWith("ref:")) {
+		if (/^ref:refs\/remotes\/[^/]+\/HEAD$/.test(field)) return "warn";
 		if (expected === "<missing>" || actual === "<missing>") return "error";
 		return "warn";
 	}

@@ -312,6 +312,7 @@ async function fetchOneRemote(
 			const rawRef = await gitCtx.refStore.readRef(ref.name);
 			if (rawRef?.type === "symbolic") continue;
 			const branchName = ref.name.slice(prunePrefix.length + 1);
+			if (branchName === "HEAD") continue;
 			if (!remoteHeads.has(branchName)) {
 				await deleteRef(gitCtx, ref.name);
 				refLines.push({

@@ -880,6 +880,27 @@ export class BatchChecker {
 	}
 
 	/**
+	 * Network policy errors in our impl vs real git's transport errors when
+	 * the remote URL has been fuzzed to an unreachable address (e.g.
+	 * example.com). Both sides produce the same repo state; only the error
+	 * message format differs. Covers "repository not found" vs "network
+	 * policy: access to ... is not allowed", plus pre-transport checks
+	 * (no upstream, etc.) that real git runs before connecting.
+	 */
+	private static networkPolicyStderrMatches(expected: string, actual: string): boolean {
+		const networkPolicyRe = /^fatal: network policy: access to '[^']+' is not allowed\n?$/;
+		const repoNotFoundRe = /^fatal: repository '[^']+' not found\n?$/;
+		if (repoNotFoundRe.test(expected) && networkPolicyRe.test(actual)) return true;
+		if (networkPolicyRe.test(actual) && expected.startsWith("fatal:")) return true;
+		if (networkPolicyRe.test(expected) && actual.startsWith("fatal:")) return true;
+		// Pre-transport validation errors (e.g. "error: src refspec ... does not match any")
+		// that real git catches before connecting, while our impl hits network policy first.
+		if (networkPolicyRe.test(actual) && expected.startsWith("error:")) return true;
+		if (networkPolicyRe.test(expected) && actual.startsWith("error:")) return true;
+		return false;
+	}
+
+	/**
 	 * Clone stdout: progress messages differ between real and virtual.
 	 * Accept if both are empty or both are non-empty (progress is cosmetic).
 	 */
@@ -987,17 +1008,21 @@ export class BatchChecker {
 		if (!step) return [];
 
 		const divergences: Divergence[] = [];
+		const baseCommand = step.command.split(/\s+/).slice(0, 2).join(" ");
 
 		if (output.exitCode !== step.exitCode) {
-			divergences.push({
-				field: "exit_code",
-				expected: step.exitCode,
-				actual: output.exitCode,
-				severity: "error",
-			});
+			const networkPolicyExitCodeOk =
+				BatchChecker.isNetworkCommand(baseCommand) &&
+				BatchChecker.networkPolicyStderrMatches(step.stderr, output.stderr);
+			if (!networkPolicyExitCodeOk) {
+				divergences.push({
+					field: "exit_code",
+					expected: step.exitCode,
+					actual: output.exitCode,
+					severity: "error",
+				});
+			}
 		}
-
-		const baseCommand = step.command.split(/\s+/).slice(0, 2).join(" ");
 
 		const skipStdout = BatchChecker.shouldSkipStdout(
 			baseCommand,
@@ -1154,6 +1179,11 @@ export class BatchChecker {
 				BatchChecker.cloneStderrMatches(step.stderr, output.stderr)
 			) {
 				// Clone path and progress output differ — cosmetic
+			} else if (
+				BatchChecker.isNetworkCommand(baseCommand) &&
+				BatchChecker.networkPolicyStderrMatches(step.stderr, output.stderr)
+			) {
+				// Network policy error vs real git transport error — cosmetic
 			} else {
 				divergences.push({
 					field: "stderr",

@@ -355,6 +355,12 @@ async function switchCreateBranch(
 		if (trackingInfo) {
 			stdout += formatLongTrackingInfo(trackingInfo);
 		}
+	} else if (force && existing) {
+		const config = await readConfig(gitCtx);
+		const trackingInfo = await getTrackingInfo(gitCtx, config, branchName);
+		if (trackingInfo) {
+			stdout = formatLongTrackingInfo(trackingInfo);
+		}
 	}
 
 	return { stdout, stderr, exitCode: 0 };
