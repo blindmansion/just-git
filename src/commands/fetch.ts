@@ -13,7 +13,14 @@ import { readConfig } from "../lib/config.ts";
 import { getReflogIdentity } from "../lib/identity.ts";
 import { join } from "../lib/path.ts";
 import { appendReflog, ZERO_HASH } from "../lib/reflog.ts";
-import { deleteRef, listRefs, resolveRef, shortenRef, updateRef } from "../lib/refs.ts";
+import {
+	deleteRef,
+	ensureRemoteHead,
+	listRefs,
+	resolveRef,
+	shortenRef,
+	updateRef,
+} from "../lib/refs.ts";
 import {
 	applyShallowUpdates,
 	INFINITE_DEPTH,
@@ -327,15 +334,7 @@ async function fetchOneRemote(
 			: "of";
 		await gitCtx.fs.writeFile(fetchHeadPath, `${headRef.hash}\t\t${branchDesc} ${config.url}\n`);
 
-		// Create refs/remotes/<remote>/HEAD on first fetch (mirrors clone behavior)
-		if (headBranch) {
-			const remoteHeadRef = `refs/remotes/${remoteName}/HEAD`;
-			const existing = await gitCtx.refStore.readRef(remoteHeadRef);
-			if (!existing) {
-				const trackingRef = `refs/remotes/${remoteName}/${headBranch.name.slice("refs/heads/".length)}`;
-				await gitCtx.refStore.writeRef(remoteHeadRef, { type: "symbolic", target: trackingRef });
-			}
-		}
+		await ensureRemoteHead(gitCtx, remoteName, remoteRefs);
 	}
 
 	const stderr =

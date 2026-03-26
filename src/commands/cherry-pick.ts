@@ -495,6 +495,9 @@ async function handleContinue(
 		messageText = squashMsg + messageText;
 	}
 	messageText = stripCommentLines(messageText);
+	if (!messageText) {
+		return err("Aborting commit due to empty commit message.\n", 1);
+	}
 
 	const stage0Entries = getStage0Entries(index);
 	const treeHash = await buildTreeFromIndex(gitCtx, stage0Entries);

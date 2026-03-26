@@ -413,6 +413,29 @@ export async function createSymbolicRef(ctx: GitRepo, name: string, target: stri
 	await ctx.refStore.writeRef(name, { type: "symbolic", target });
 }
 
+/**
+ * Create `refs/remotes/<remote>/HEAD` as a symbolic ref pointing at the
+ * remote's default branch — but only on first encounter (skips if already set).
+ * Mirrors the behavior of `git clone` for `fetch` and `pull` paths.
+ */
+export async function ensureRemoteHead(
+	ctx: GitRepo,
+	remoteName: string,
+	remoteRefs: ReadonlyArray<{ name: string; hash: string }>,
+): Promise<void> {
+	const headRef = remoteRefs.find((r) => r.name === "HEAD");
+	if (!headRef) return;
+	const headBranch = remoteRefs.find(
+		(r) => r.name.startsWith("refs/heads/") && r.hash === headRef.hash,
+	);
+	if (!headBranch) return;
+	const remoteHeadRef = `refs/remotes/${remoteName}/HEAD`;
+	const existing = await ctx.refStore.readRef(remoteHeadRef);
+	if (existing) return;
+	const trackingRef = `refs/remotes/${remoteName}/${headBranch.name.slice("refs/heads/".length)}`;
+	await ctx.refStore.writeRef(remoteHeadRef, { type: "symbolic", target: trackingRef });
+}
+
 /** Delete a ref (removes from storage, deletes reflog, emits hook). */
 export async function deleteRef(ctx: GitContext, name: string): Promise<void> {
 	const oldHash = ctx.hooks ? await resolveRef(ctx, name) : null;

@@ -19,12 +19,13 @@ import { getConflictedPaths, hasConflicts, readIndex } from "../lib/index.ts";
 import { buildMergeMessage, findAllMergeBases, handleFastForward } from "../lib/merge.ts";
 import { applyMergeResult, mergeOrtRecursive } from "../lib/merge-ort.ts";
 import { readCommit } from "../lib/object-db.ts";
-import { writeStateFile } from "../lib/operation-state.ts";
+import { deleteStateFile, writeStateFile } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 import { appendReflog } from "../lib/reflog.ts";
 import {
 	branchNameFromRef,
+	ensureRemoteHead,
 	listRefs,
 	readHead,
 	resolveHead,
@@ -41,7 +42,7 @@ import {
 import { mapRefspec, parseRefspec } from "../lib/transport/refspec.ts";
 import { resolveRemoteTransport } from "../lib/transport/remote.ts";
 import type { RemoteRef, ShallowFetchOptions } from "../lib/transport/transport.ts";
-import type { ObjectId } from "../lib/types.ts";
+import type { GitContext, ObjectId, Ref } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { performRebase } from "./rebase.ts";
 
@@ -79,6 +80,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 
 			const headHash = await requireHead(gitCtx);
 			if (isCommandError(headHash)) return headHash;
+			const head = await readHead(gitCtx);
 
 			// Check for unmerged index entries
 			const currentIndex = await readIndex(gitCtx);
@@ -100,7 +102,6 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			let noTrackingBranch: string | null = null;
 
 			if (!remoteName) {
-				const head = await readHead(gitCtx);
 				if (head?.type === "symbolic") {
 					const branchName = head.target.startsWith("refs/heads/")
 						? head.target.slice("refs/heads/".length)
@@ -131,38 +132,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			}
 			remoteName = remoteName || "origin";
 
-			// Resolve rebase mode: CLI flags override config
-			let useRebase = false;
-			let hasReconciliationStrategy = !!args.rebase || !!args.noRebase;
-			if (args.rebase) {
-				useRebase = true;
-			} else if (!args.noRebase) {
-				const head = await readHead(gitCtx);
-				if (head?.type === "symbolic") {
-					const bn = head.target.startsWith("refs/heads/")
-						? head.target.slice("refs/heads/".length)
-						: head.target;
-					const branchRebase = await getConfigValue(gitCtx, `branch.${bn}.rebase`);
-					if (branchRebase === "true") {
-						useRebase = true;
-						hasReconciliationStrategy = true;
-					} else if (branchRebase !== "false") {
-						const pullRebase = await getConfigValue(gitCtx, "pull.rebase");
-						if (pullRebase === "true") {
-							useRebase = true;
-							hasReconciliationStrategy = true;
-						}
-					} else {
-						hasReconciliationStrategy = true;
-					}
-				} else {
-					const pullRebase = await getConfigValue(gitCtx, "pull.rebase");
-					if (pullRebase === "true") {
-						useRebase = true;
-						hasReconciliationStrategy = true;
-					}
-				}
-			}
+			const pullMode = await resolvePullMode(gitCtx, args, head);
 
 			let resolved;
 			try {
@@ -190,10 +160,6 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			// ── Fetch phase ──────────────────────────────────────────
 			const fetchSpec = parseRefspec(config.fetchRefspec);
 			const remoteRefs = await transport.advertiseRefs();
-
-			if (remoteRefs.length === 0) {
-				return fatal("Couldn't find remote ref HEAD");
-			}
 
 			// Compute wants/haves
 			const localRefs = await listRefs(gitCtx);
@@ -267,24 +233,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					? `From ${config.url}\n${formatTransferRefLines(fetchRefLines, 10)}`
 					: "";
 
-			// Create refs/remotes/<remote>/HEAD on first fetch (mirrors clone behavior)
-			const headRef = remoteRefs.find((r) => r.name === "HEAD");
-			if (headRef) {
-				const headBranch = remoteRefs.find(
-					(r) => r.name.startsWith("refs/heads/") && r.hash === headRef.hash,
-				);
-				if (headBranch) {
-					const remoteHeadRef = `refs/remotes/${remoteName}/HEAD`;
-					const existing = await gitCtx.refStore.readRef(remoteHeadRef);
-					if (!existing) {
-						const trackingRef = `refs/remotes/${remoteName}/${headBranch.name.slice("refs/heads/".length)}`;
-						await gitCtx.refStore.writeRef(remoteHeadRef, {
-							type: "symbolic",
-							target: trackingRef,
-						});
-					}
-				}
-			}
+			await ensureRemoteHead(gitCtx, remoteName, remoteRefs);
 
 			// After fetch: check if we have tracking info for the merge target
 			if (noTrackingBranch) {
@@ -309,7 +258,13 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				if (targetRef) {
 					fetchHeadHash = targetRef.hash;
 				} else {
-					return fatal(`Couldn't find remote ref refs/heads/${remoteBranch}`);
+					return {
+						stdout: "",
+						stderr:
+							`Your configuration specifies to merge with the ref 'refs/heads/${remoteBranch}'\n` +
+							`from the remote, but no such ref was fetched.\n`,
+						exitCode: 1,
+					};
 				}
 			} else {
 				const headRef = remoteRefs.find((r) => r.name === "HEAD");
@@ -332,6 +287,11 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			// ── Integration phase ────────────────────────────────────
 			const theirsHash = fetchHeadHash;
 
+			// Real git's merge deletes MERGE_MSG at the start of cmd_merge(),
+			// before any outcome check. This matters when a revert/cherry-pick
+			// left MERGE_MSG behind — the merge phase always clears it.
+			await deleteStateFile(gitCtx, "MERGE_MSG");
+
 			if (headHash === theirsHash) {
 				await ext?.hooks?.postPull?.({
 					repo: gitCtx,
@@ -348,8 +308,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			// ── Rebase path ─────────────────────────────────────────
-			if (useRebase) {
-				const head = await readHead(gitCtx);
+			if (pullMode.useRebase) {
 				const headName = head?.type === "symbolic" ? head.target : "detached HEAD";
 				const upstreamLabel = remoteBranch ? `${remoteName}/${remoteBranch}` : remoteName;
 
@@ -400,22 +359,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				};
 			}
 
-			// Resolve effective FF mode: CLI flags override pull.ff config
-			let noFf = !!args.noFf;
-			let ffOnly = !!args.ffOnly;
-			if (!args.noFf && !args.ffOnly) {
-				const pullFFConfig = await getConfigValue(gitCtx, "pull.ff");
-				if (pullFFConfig === "false") {
-					noFf = true;
-					hasReconciliationStrategy = true;
-				} else if (pullFFConfig === "only") {
-					ffOnly = true;
-					hasReconciliationStrategy = true;
-				}
-			} else {
-				hasReconciliationStrategy = true;
-			}
-
+			const { noFf, ffOnly, configured: hasReconciliationStrategy } = pullMode;
 			const isFastForward = baseCommit === headHash;
 
 			if (ffOnly && !isFastForward) {
@@ -465,20 +409,9 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 
 			if (isFastForward && !noFf) {
 				const ffResult = await handleFastForward(gitCtx, headHash, theirsHash);
-				// Write reflog for the branch update
-				const head = await readHead(gitCtx);
-				const refName = head?.type === "symbolic" ? head.target : "HEAD";
-				await appendReflog(gitCtx, refName, {
-					oldHash: headHash,
-					newHash: theirsHash,
-					name: ident.name,
-					email: ident.email,
-					timestamp: ident.timestamp,
-					tz: ident.tz,
-					message: "pull: Fast-forward",
-				});
-				if (head?.type === "symbolic") {
-					await appendReflog(gitCtx, "HEAD", {
+				if (ffResult.exitCode === 0) {
+					const refName = head?.type === "symbolic" ? head.target : "HEAD";
+					await appendReflog(gitCtx, refName, {
 						oldHash: headHash,
 						newHash: theirsHash,
 						name: ident.name,
@@ -487,8 +420,17 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 						tz: ident.tz,
 						message: "pull: Fast-forward",
 					});
-				}
-				if (ffResult.exitCode === 0) {
+					if (head?.type === "symbolic") {
+						await appendReflog(gitCtx, "HEAD", {
+							oldHash: headHash,
+							newHash: theirsHash,
+							name: ident.name,
+							email: ident.email,
+							timestamp: ident.timestamp,
+							tz: ident.tz,
+							message: "pull: Fast-forward",
+						});
+					}
 					await ext?.hooks?.postMerge?.({
 						repo: gitCtx,
 						headHash,
@@ -511,7 +453,6 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			// Three-way merge
-			const head = await readHead(gitCtx);
 			const currentBranch = head?.type === "symbolic" ? branchNameFromRef(head.target) : "HEAD";
 
 			const branchLabel = theirsHash;
@@ -614,7 +555,8 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 
 			// Reflog for the merge commit
 			const mergeRefName = head?.type === "symbolic" ? head.target : "HEAD";
-			const pullMergeMsg = "pull: Merge made by the 'ort' strategy.";
+			const pullFlagStr = noFf ? " --no-ff" : "";
+			const pullMergeMsg = `pull${pullFlagStr}: Merge made by the 'ort' strategy.`;
 			await appendReflog(gitCtx, mergeRefName, {
 				oldHash: headHash,
 				newHash: commitHash,
@@ -646,4 +588,71 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			};
 		},
 	});
+}
+
+interface PullMode {
+	useRebase: boolean;
+	noFf: boolean;
+	ffOnly: boolean;
+	configured: boolean;
+}
+
+/**
+ * Resolve the full pull strategy from CLI flags and git config.
+ * Centralises the rebase-vs-merge decision and FF mode so the handler
+ * doesn't have to track `hasReconciliationStrategy` across scattered branches.
+ */
+async function resolvePullMode(
+	gitCtx: GitContext,
+	args: { rebase?: boolean; noRebase?: boolean; noFf?: boolean; ffOnly?: boolean },
+	head: Ref | null,
+): Promise<PullMode> {
+	let noFf = !!args.noFf;
+	let ffOnly = !!args.ffOnly;
+	let configured = !!args.rebase || !!args.noRebase || !!args.noFf || !!args.ffOnly;
+	let useRebase = false;
+
+	// Rebase mode: CLI flags override config
+	if (args.rebase) {
+		useRebase = true;
+	} else if (!args.noRebase) {
+		if (head?.type === "symbolic") {
+			const bn = head.target.startsWith("refs/heads/")
+				? head.target.slice("refs/heads/".length)
+				: head.target;
+			const branchRebase = await getConfigValue(gitCtx, `branch.${bn}.rebase`);
+			if (branchRebase === "true") {
+				useRebase = true;
+				configured = true;
+			} else if (branchRebase === "false") {
+				configured = true;
+			} else {
+				const pullRebase = await getConfigValue(gitCtx, "pull.rebase");
+				if (pullRebase === "true") {
+					useRebase = true;
+					configured = true;
+				}
+			}
+		} else {
+			const pullRebase = await getConfigValue(gitCtx, "pull.rebase");
+			if (pullRebase === "true") {
+				useRebase = true;
+				configured = true;
+			}
+		}
+	}
+
+	// FF mode: CLI flags override pull.ff config
+	if (!args.noFf && !args.ffOnly) {
+		const pullFFConfig = await getConfigValue(gitCtx, "pull.ff");
+		if (pullFFConfig === "false") {
+			noFf = true;
+			configured = true;
+		} else if (pullFFConfig === "only") {
+			ffOnly = true;
+			configured = true;
+		}
+	}
+
+	return { useRebase, noFf, ffOnly, configured };
 }

@@ -272,6 +272,18 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 			// Execute the push
 			const result = await transport.push(effectiveUpdates);
 
+			// Pre-compute ancestry for force-requested refs (parallel)
+			const forceCandidates = result.updates.filter(
+				(u) => u.ok && u.oldHash && u.newHash !== ZERO_HASH && forceRequested.has(u.name),
+			);
+			const ancestryResults = await Promise.all(
+				forceCandidates.map((u) => isAncestor(gitCtx, u.oldHash!, u.newHash)),
+			);
+			const actuallyForced = new Set<string>();
+			forceCandidates.forEach((u, i) => {
+				if (!ancestryResults[i]) actuallyForced.add(u.name);
+			});
+
 			// Build output
 			const pushLines: TransferRefLine[] = [];
 			let hasError = false;
@@ -299,10 +311,7 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				} else {
 					const shortOld = abbreviateHash(update.oldHash);
 					const shortNew = abbreviateHash(update.newHash);
-					const wasForced =
-						forceRequested.has(update.name) &&
-						!(await isAncestor(gitCtx, update.oldHash, update.newHash));
-					if (wasForced) {
+					if (actuallyForced.has(update.name)) {
 						pushLines.push({
 							prefix: ` + ${shortOld}...${shortNew}`,
 							from: shortRef,

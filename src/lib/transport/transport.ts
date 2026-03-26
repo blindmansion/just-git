@@ -337,7 +337,7 @@ export class SmartHttpTransport implements Transport {
 	async push(updates: PushRefUpdate[]): Promise<PushResult> {
 		// Client-side fast-forward check (mirrors LocalTransport behaviour).
 		// Each ref is checked independently — real git is non-atomic by default.
-		const rejected = new Set<PushRefUpdate>();
+		const rejectedNames = new Set<string>();
 		const rejectedResults: PushRefUpdate[] = [];
 		for (const update of updates) {
 			if (
@@ -348,13 +348,13 @@ export class SmartHttpTransport implements Transport {
 			) {
 				const ff = await isAncestor(this.local, update.oldHash, update.newHash);
 				if (!ff) {
-					rejected.add(update);
+					rejectedNames.add(update.name);
 					rejectedResults.push({ ...update, ok: false, error: "non-fast-forward" });
 				}
 			}
 		}
 
-		const accepted = updates.filter((u) => !rejected.has(u));
+		const accepted = updates.filter((u) => !rejectedNames.has(u.name));
 
 		if (accepted.length === 0) {
 			return { updates: rejectedResults };
