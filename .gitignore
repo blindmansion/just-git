@@ -35,6 +35,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Sandbox (bun sandbox)
 .sandbox
+.sandbox-server
 
 # Local only docs
 local-docs/
