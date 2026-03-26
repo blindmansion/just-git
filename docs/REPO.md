@@ -218,8 +218,8 @@ Both return `{ treeHash, clean, conflicts, messages }`. Operates purely on the o
 
 ### Operations
 
-| Function | Signature                          | Description                                                                                                                                              |
-| -------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Function | Signature                              | Description                                                                                                                                            |
+| -------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `bisect` | `(repo, options) → BisectSearchResult` | Binary-search the commit graph to find the first bad commit. Operates purely on the object store — the caller provides a `test` callback per candidate |
 
 `bisect` uses the same weighted-midpoint algorithm as `git bisect`: each step picks the commit that maximizes information gain. The `test` callback receives the candidate hash and a `TreeAccessor` for lazy file access:
@@ -259,14 +259,14 @@ if (result.found) {
 
 `TreeAccessor` provides progressively richer access to a git tree's contents without requiring upfront materialization:
 
-| Method          | Signature                                         | Description                                                                    |
-| --------------- | ------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `readFile`      | `(path) → string \| null`                         | Read a single file (O(tree depth), no flatten)                                 |
-| `readFileBytes` | `(path) → Uint8Array \| null`                     | Read a file's raw bytes                                                        |
-| `files`         | `() → string[]`                                   | List all tracked file paths (walks tree objects, no blob reads)                |
-| `fs`            | `(root?) → FileSystem`                            | Get a full `FileSystem` view (lazy reads, in-memory writes). Cached per root  |
-| `materialize`   | `(target, targetDir?) → number`                   | Write all tracked files onto a `MaterializeTarget`. Returns files written     |
-| `treeHash`      | `string`                                          | The underlying git tree object hash                                            |
+| Method          | Signature                       | Description                                                                  |
+| --------------- | ------------------------------- | ---------------------------------------------------------------------------- |
+| `readFile`      | `(path) → string \| null`       | Read a single file (O(tree depth), no flatten)                               |
+| `readFileBytes` | `(path) → Uint8Array \| null`   | Read a file's raw bytes                                                      |
+| `files`         | `() → string[]`                 | List all tracked file paths (walks tree objects, no blob reads)              |
+| `fs`            | `(root?) → FileSystem`          | Get a full `FileSystem` view (lazy reads, in-memory writes). Cached per root |
+| `materialize`   | `(target, targetDir?) → number` | Write all tracked files onto a `MaterializeTarget`. Returns files written    |
+| `treeHash`      | `string`                        | The underlying git tree object hash                                          |
 
 ```ts
 import { createTreeAccessor } from "just-git/repo";
