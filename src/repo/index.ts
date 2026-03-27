@@ -65,6 +65,8 @@ export {
 	mergeTrees,
 	mergeTreesFromTreeHashes,
 	type MergeConflict,
+	type MergeDriver,
+	type MergeDriverResult,
 	type MergeTreesResult,
 } from "./merging.ts";
 

@@ -270,11 +270,29 @@ Standalone helpers for working with `GitRepo` directly — no filesystem, index,
 - `createCommit`, `writeBlob`, `writeTree` — low-level object creation. `createCommit` accepts `CommitIdentity` (either `{ name, email, date? }` or full `Identity`); `committer` defaults to `author` when omitted.
 - `createAnnotatedTag(repo, options)` — create an annotated tag object and ref. Takes `target` (hash), `name`, `tagger` (`CommitIdentity`), `message`, optional `targetType` (default `"commit"`). Returns tag object hash.
 - `updateTree(repo, treeHash, updates)` — apply path-based additions/deletions to a tree, handling nested subtree construction. Each `TreeUpdate` has `path` (full repo-relative), `hash` (blob hash, or `null` to delete), optional `mode`. Empty subtrees are pruned automatically.
-- `mergeTrees`, `mergeTreesFromTreeHashes` — tree-level three-way merge via merge-ort.
+- `mergeTrees`, `mergeTreesFromTreeHashes` — tree-level three-way merge via merge-ort. Both accept an optional `mergeDriver` callback in their options to override the default line-based diff3 algorithm for content merges.
 - `extractTree`, `createWorktree`, `createSandboxWorktree` — materialize worktrees on a VFS.
 - `readonlyRepo`, `overlayRepo` — repo wrappers (read-only enforcement, copy-on-write).
 
-**Types:** `FileDiff`, `DiffHunk`, `CommitInfo`, `BlameEntry`, `GrepFileMatch`, `GrepMatch`, `GrepOptions`, `MergeConflict`, `MergeTreesResult`, `BuildCommitOptions`, `CommitResult`, `CommitAuthor`, `CommitIdentity`, `CommitOptions`, `TreeEntryInput`, `TreeUpdate`, `CreateCommitOptions`, `CreateWorktreeOptions`, `ExtractTreeResult`, `WorktreeResult`.
+**`MergeDriver`** — optional callback for custom content merge logic. Invoked before the default diff3 algorithm when both sides modify the same file. Analogous to git's `.gitattributes` `merge=` drivers, but as a programmatic async callback.
+
+```ts
+type MergeDriver = (ctx: {
+  path: string;
+  base: string | null;   // null for add/add conflicts
+  ours: string;
+  theirs: string;
+}) => MergeDriverResult | null | Promise<MergeDriverResult | null>;
+
+interface MergeDriverResult {
+  content: string;
+  conflict: boolean;
+}
+```
+
+Return a result to override the merge, or `null` to fall back to diff3. When `conflict: false`, the content is written as a clean stage-0 entry. When `conflict: true`, the original base/ours/theirs blobs are preserved as index stages 1/2/3 (so `--ours`/`--theirs` checkout still works) and the returned content becomes the worktree blob. The driver is called for modify/modify conflicts, add/add conflicts, and rename+content conflicts — not for trivially resolvable one-sided changes. Symlinks and binary files bypass the driver.
+
+**Types:** `FileDiff`, `DiffHunk`, `CommitInfo`, `BlameEntry`, `GrepFileMatch`, `GrepMatch`, `GrepOptions`, `MergeConflict`, `MergeDriver`, `MergeDriverResult`, `MergeTreesResult`, `BuildCommitOptions`, `CommitResult`, `CommitAuthor`, `CommitIdentity`, `CommitOptions`, `TreeEntryInput`, `TreeUpdate`, `CreateCommitOptions`, `CreateWorktreeOptions`, `ExtractTreeResult`, `WorktreeResult`.
 
 All helpers accept revision strings via `resolveRevisionRepo` (from `lib/rev-parse.ts`), which supports branch names, tag names, `HEAD`, short hashes, `~N`/`^N` suffixes, and chained expressions — everything except reflog syntax (`@{N}`).
 
