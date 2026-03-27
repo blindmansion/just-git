@@ -188,7 +188,7 @@ describe.skipIf(skipNetwork)("Smart HTTP pull", () => {
 			await ctx.bash.exec('git commit -m "local change"', { cwd });
 
 			// Pull should do a three-way merge
-			const pullResult = await ctx.bash.exec(`git pull origin ${branch}`, {
+			const pullResult = await ctx.bash.exec(`git pull --no-rebase origin ${branch}`, {
 				cwd,
 			});
 			expect(pullResult.exitCode).toBe(0);
@@ -234,7 +234,7 @@ describe.skipIf(skipNetwork)("Smart HTTP pull", () => {
 			await ctx.bash.exec('git commit -m "local change"', { cwd });
 
 			// Pull should result in a conflict
-			const pullResult = await ctx.bash.exec(`git pull origin ${branch}`, {
+			const pullResult = await ctx.bash.exec(`git pull --no-rebase origin ${branch}`, {
 				cwd,
 			});
 			expect(pullResult.exitCode).not.toBe(0);
