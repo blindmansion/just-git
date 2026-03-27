@@ -386,13 +386,16 @@
 
 				const srvExec = async (cmd, cwdOverride) => {
 					const args = cmd.replace(/^git /, "").split(/\s+/);
-					return srvGit.execute(args, { fs: srvFs, cwd: cwdOverride || "/workspace", env: srvEnv, stdin: "" });
+					return srvGit.execute(args, {
+						fs: srvFs,
+						cwd: cwdOverride || "/workspace",
+						env: srvEnv,
+						stdin: "",
+					});
 				};
 
 				r = await srvExec("git clone http://git/test-repo /workspace", "/");
-				r.exitCode === 0
-					? pass("git clone from in-process server")
-					: fail("git clone", r.stderr);
+				r.exitCode === 0 ? pass("git clone from in-process server") : fail("git clone", r.stderr);
 
 				// ── Verify cloned content ──
 				log("\n── verify clone ──", "info");
@@ -427,7 +430,12 @@
 				const srvFs2 = new MemFS();
 				const srvExec2 = async (cmd, cwdOverride) => {
 					const args = cmd.replace(/^git /, "").split(/\s+/);
-					return srvGit.execute(args, { fs: srvFs2, cwd: cwdOverride || "/ws2", env: srvEnv, stdin: "" });
+					return srvGit.execute(args, {
+						fs: srvFs2,
+						cwd: cwdOverride || "/ws2",
+						env: srvEnv,
+						stdin: "",
+					});
 				};
 
 				r = await srvExec2("git clone http://git/test-repo /ws2", "/");
@@ -448,7 +456,9 @@
 						"server-file.txt": "created on server",
 					},
 				});
-				sc3.hash ? pass(`server commit → ${sc3.hash.slice(0, 8)}`) : fail("server commit", JSON.stringify(sc3));
+				sc3.hash
+					? pass(`server commit → ${sc3.hash.slice(0, 8)}`)
+					: fail("server commit", JSON.stringify(sc3));
 
 				r = await srvExec("git fetch");
 				r.exitCode === 0 ? pass("git fetch") : fail("git fetch", r.stderr);
@@ -469,7 +479,12 @@
 				const srvFs3 = new MemFS();
 				const srvExec3 = async (cmd, cwdOverride) => {
 					const args = cmd.replace(/^git /, "").split(/\s+/);
-					return srvGit.execute(args, { fs: srvFs3, cwd: cwdOverride || "/fork", env: srvEnv, stdin: "" });
+					return srvGit.execute(args, {
+						fs: srvFs3,
+						cwd: cwdOverride || "/fork",
+						env: srvEnv,
+						stdin: "",
+					});
 				};
 				r = await srvExec3("git clone http://git/forked-repo /fork", "/");
 				r.exitCode === 0 ? pass("clone forked repo") : fail("clone forked repo", r.stderr);
@@ -489,7 +504,9 @@
 				await srv.close();
 				srv.closed ? pass("server.closed is true") : fail("server.closed", "false");
 
-				const closedResp = await srv.fetch(new Request("http://git/test-repo/info/refs?service=git-upload-pack"));
+				const closedResp = await srv.fetch(
+					new Request("http://git/test-repo/info/refs?service=git-upload-pack"),
+				);
 				closedResp.status === 503
 					? pass("closed server returns 503")
 					: fail("closed server status", closedResp.status);
