@@ -162,8 +162,10 @@ async function formatLongStatus(
 		lines.push(`On branch ${branchName}`);
 	}
 
-	// Tracking info (only for non-detached, non-rebase states)
-	if (!isDetached && !rebaseState) {
+	const showInitial = opts?.isInitial ?? !headHash;
+
+	// Tracking info (only for non-detached, non-rebase, non-initial states)
+	if (!isDetached && !rebaseState && !showInitial) {
 		const config = await readConfig(gitCtx);
 		const tracking = await getTrackingInfo(gitCtx, config, branchName);
 		if (tracking) {
@@ -266,7 +268,6 @@ async function formatLongStatus(
 		hasIntermediateState = true;
 	}
 
-	const showInitial = opts?.isInitial ?? !headHash;
 	if (showInitial) {
 		lines.push("");
 		lines.push(opts?.fromCommit ? "Initial commit" : "No commits yet");
