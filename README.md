@@ -6,6 +6,8 @@
 
 Pure TypeScript git implementation. Zero dependencies. 36 commands. Works in Node, Bun, Deno, Cloudflare Workers, and the browser. [Tested against real git](docs/TESTING.md) across more than a million randomized operations.
 
+The Git CLI, Git servers, and CI workflows are no longer just things you use to develop apps: they can be part of the apps themselves. The goal of this project is to make that practical.
+
 - **Virtual filesystem client** for sandboxed environments. Pairs with [just-bash](https://github.com/vercel-labs/just-bash), or use standalone.
 - **[Embeddable git server](docs/SERVER.md)** with pluggable storage, auth, and hooks. Supports HTTP, SSH, and in-process transport.
 - **[Repo module](docs/REPO.md)** with typed functions for commits, diffs, merges, blame, and bisect that work identically against a virtual filesystem or a database.
