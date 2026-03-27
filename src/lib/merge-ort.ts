@@ -225,7 +225,12 @@ export async function mergeOrtRecursive(
 
 	// Multiple LCAs — recursively merge pairwise to produce virtual base.
 	const baseTree = await computeRecursiveMergeBase(
-		ctx, oursHash, theirsHash, bases, 1, mergeDriver,
+		ctx,
+		oursHash,
+		theirsHash,
+		bases,
+		1,
+		mergeDriver,
 	);
 
 	const result = await mergeOrtNonRecursive(
@@ -505,7 +510,14 @@ async function detectAndProcessRenames(
 				// Content merge of the renamed file (base + ours' version + theirs' version).
 				// Real git uses the merged content for both stage-2 and stage-3 entries.
 				const merged = await mergeRenameContent(
-					ctx, base, oursEntry, theirsEntry, labels, undefined, undefined, mergeDriver,
+					ctx,
+					base,
+					oursEntry,
+					theirsEntry,
+					labels,
+					undefined,
+					undefined,
+					mergeDriver,
 				);
 
 				if (merged.conflict) {
@@ -1228,7 +1240,16 @@ async function handleRenameAddAdd(
 		? { oursPath: basePath, theirsPath: targetPath }
 		: { oursPath: targetPath, theirsPath: basePath };
 
-	const merged = await mergeRenameContent(ctx, base, oursEntry, theirsEntry, labels, pathLabels, 8, mergeDriver);
+	const merged = await mergeRenameContent(
+		ctx,
+		base,
+		oursEntry,
+		theirsEntry,
+		labels,
+		pathLabels,
+		8,
+		mergeDriver,
+	);
 
 	if (targetEntry.hash === merged.hash) {
 		output.entries.push(makeEntryFromHash(targetPath, targetEntry.mode, merged.hash));
@@ -1320,7 +1341,9 @@ async function mergeRenameContent(
 	if (mergeDriver) {
 		const driverResult = await mergeDriver({
 			path: base.path ?? ours.path ?? theirs.path ?? "",
-			base: baseText, ours: oursText, theirs: theirsText,
+			base: baseText,
+			ours: oursText,
+			theirs: theirsText,
 		});
 		if (driverResult !== null) {
 			const hash = await writeObject(ctx, "blob", encoder.encode(driverResult.content));
@@ -1526,7 +1549,10 @@ async function processEntry(
 
 		if (mergeDriver) {
 			const driverResult = await mergeDriver({
-				path, base: null, ours: oursText, theirs: theirsText,
+				path,
+				base: null,
+				ours: oursText,
+				theirs: theirsText,
 			});
 			if (driverResult !== null) {
 				const driverHash = await writeObject(ctx, "blob", encoder.encode(driverResult.content));
@@ -1631,7 +1657,10 @@ async function processEntry(
 
 		if (mergeDriver) {
 			const driverResult = await mergeDriver({
-				path, base: baseText, ours: oursText, theirs: theirsText,
+				path,
+				base: baseText,
+				ours: oursText,
+				theirs: theirsText,
 			});
 			if (driverResult !== null) {
 				const driverHash = await writeObject(ctx, "blob", encoder.encode(driverResult.content));
@@ -1762,7 +1791,12 @@ async function computeRecursiveMergeBase(
 
 		// Merge the two base trees (inner merge at callDepth > 0)
 		const result = await mergeOrtNonRecursive(
-			ctx, innerBaseTree, virtualTree, nextTree, undefined, mergeDriver,
+			ctx,
+			innerBaseTree,
+			virtualTree,
+			nextTree,
+			undefined,
+			mergeDriver,
 		);
 
 		// Build virtual tree from merge result, resolving conflicts

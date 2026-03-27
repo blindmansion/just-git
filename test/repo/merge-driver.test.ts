@@ -54,7 +54,7 @@ async function setupDivergent(opts?: {
 	await bash.exec("git add .", { env: TEST_ENV });
 	await bash.exec('git commit -m "ours"', { env: envAt(1000000004) });
 
-	const repo = await findRepo(fs, "/repo");
+	const repo = (await findRepo(fs, "/repo"))!;
 	const oursHash = await getRefHash(repo, "refs/heads/main");
 	const theirsHash = await getRefHash(repo, "refs/heads/feature");
 
@@ -129,7 +129,7 @@ describe("mergeDriver", () => {
 		await bash.exec("git add .", { env: TEST_ENV });
 		await bash.exec('git commit -m "ours"', { env: envAt(1000000004) });
 
-		const repo = await findRepo(fs, "/repo");
+		const repo = (await findRepo(fs, "/repo"))!;
 		const oursHash = await getRefHash(repo, "refs/heads/main");
 		const theirsHash = await getRefHash(repo, "refs/heads/feature");
 
@@ -195,7 +195,7 @@ describe("mergeDriver", () => {
 		await bash.exec("git add .", { env: TEST_ENV });
 		await bash.exec('git commit -m "ours"', { env: envAt(1000000004) });
 
-		const repo = await findRepo(fs, "/repo");
+		const repo = (await findRepo(fs, "/repo"))!;
 		const oursHash = await getRefHash(repo, "refs/heads/main");
 		const theirsHash = await getRefHash(repo, "refs/heads/feature");
 
@@ -292,7 +292,7 @@ describe("mergeDriver", () => {
 		await bash.exec("git add .", { env: TEST_ENV });
 		await bash.exec('git commit -m "ours renames+modifies"', { env: envAt(1000000004) });
 
-		const repo = await findRepo(fs, "/repo");
+		const repo = (await findRepo(fs, "/repo"))!;
 		const oursHash = await getRefHash(repo, "refs/heads/main");
 		const theirsHash = await getRefHash(repo, "refs/heads/feature");
 

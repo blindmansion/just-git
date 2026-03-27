@@ -279,7 +279,7 @@ Standalone helpers for working with `GitRepo` directly — no filesystem, index,
 ```ts
 type MergeDriver = (ctx: {
   path: string;
-  base: string | null;   // null for add/add conflicts
+  base: string | null; // null for add/add conflicts
   ours: string;
   theirs: string;
 }) => MergeDriverResult | null | Promise<MergeDriverResult | null>;

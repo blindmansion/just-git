@@ -40,7 +40,11 @@ export async function mergeTrees(
 		: undefined;
 
 	const result = await mergeOrtRecursive(
-		repo, oursCommit, theirsCommit, mergeLabels, options?.mergeDriver,
+		repo,
+		oursCommit,
+		theirsCommit,
+		mergeLabels,
+		options?.mergeDriver,
 	);
 
 	return {
@@ -68,7 +72,12 @@ export async function mergeTreesFromTreeHashes(
 		: undefined;
 
 	const result = await mergeOrtNonRecursive(
-		repo, baseTree, oursTree, theirsTree, mergeLabels, options?.mergeDriver,
+		repo,
+		baseTree,
+		oursTree,
+		theirsTree,
+		mergeLabels,
+		options?.mergeDriver,
 	);
 
 	return {
