@@ -435,6 +435,8 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				const ffResult = await handleFastForward(gitCtx, headHash, theirsHash);
 				if (ffResult.exitCode === 0) {
 					const refName = head?.type === "symbolic" ? head.target : "HEAD";
+					const ffFlagStr = ffOnly ? " --ff-only" : "";
+					const pullFFMsg = `pull${ffFlagStr}: Fast-forward`;
 					await appendReflog(gitCtx, refName, {
 						oldHash: headHash,
 						newHash: theirsHash,
@@ -442,7 +444,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 						email: ident.email,
 						timestamp: ident.timestamp,
 						tz: ident.tz,
-						message: "pull: Fast-forward",
+						message: pullFFMsg,
 					});
 					if (head?.type === "symbolic") {
 						await appendReflog(gitCtx, "HEAD", {
@@ -452,7 +454,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 							email: ident.email,
 							timestamp: ident.timestamp,
 							tz: ident.tz,
-							message: "pull: Fast-forward",
+							message: pullFFMsg,
 						});
 					}
 					await ext?.hooks?.postMerge?.({
