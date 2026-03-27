@@ -195,6 +195,152 @@ describe("git clone", () => {
 		expect(await pathExists(bash.fs, "/clone/.git/refs/tags/v1.0")).toBe(true);
 	});
 
+	// ── Single-branch ────────────────────────────────────────────────
+
+	test("--single-branch only fetches target branch", async () => {
+		const bash = await setupSource();
+		await bash.exec(
+			"cd /src && git checkout -b feature && echo 'feat' > feat.txt && git add . && git commit -m 'feature'",
+		);
+		await bash.exec("cd /src && git tag v1.0");
+		await bash.exec("cd /src && git checkout main");
+
+		await bash.exec("git clone --single-branch /src /clone", { cwd: "/" });
+
+		// Only the default branch tracking ref should exist
+		expect(await pathExists(bash.fs, "/clone/.git/refs/remotes/origin/main")).toBe(true);
+		expect(await pathExists(bash.fs, "/clone/.git/refs/remotes/origin/feature")).toBe(false);
+
+		// Tags are suppressed with single-branch
+		expect(await pathExists(bash.fs, "/clone/.git/refs/tags/v1.0")).toBe(false);
+
+		// Working tree should still be checked out
+		expect(await readFile(bash.fs, "/clone/README.md")).toBe("# Hello");
+	});
+
+	test("--depth implies --single-branch", async () => {
+		const bash = await setupSource();
+		await bash.exec(
+			"cd /src && git checkout -b feature && echo 'feat' > feat.txt && git add . && git commit -m 'feature'",
+		);
+		await bash.exec("cd /src && git tag v1.0");
+		await bash.exec("cd /src && git checkout main");
+
+		await bash.exec("git clone --depth 1 /src /clone", { cwd: "/" });
+
+		expect(await pathExists(bash.fs, "/clone/.git/refs/remotes/origin/main")).toBe(true);
+		expect(await pathExists(bash.fs, "/clone/.git/refs/remotes/origin/feature")).toBe(false);
+		expect(await pathExists(bash.fs, "/clone/.git/refs/tags/v1.0")).toBe(false);
+	});
+
+	test("--depth --no-single-branch fetches all branches", async () => {
+		const bash = await setupSource();
+		await bash.exec(
+			"cd /src && git checkout -b feature && echo 'feat' > feat.txt && git add . && git commit -m 'feature'",
+		);
+		await bash.exec("cd /src && git tag v1.0");
+		await bash.exec("cd /src && git checkout main");
+
+		await bash.exec("git clone --depth 1 --no-single-branch /src /clone", { cwd: "/" });
+
+		expect(await pathExists(bash.fs, "/clone/.git/refs/remotes/origin/main")).toBe(true);
+		expect(await pathExists(bash.fs, "/clone/.git/refs/remotes/origin/feature")).toBe(true);
+		expect(await pathExists(bash.fs, "/clone/.git/refs/tags/v1.0")).toBe(true);
+	});
+
+	test("--single-branch -b fetches only specified branch", async () => {
+		const bash = await setupSource();
+		await bash.exec(
+			"cd /src && git checkout -b feature && echo 'feat' > feat.txt && git add . && git commit -m 'feature'",
+		);
+		await bash.exec("cd /src && git checkout main");
+
+		await bash.exec("git clone --single-branch -b feature /src /clone", { cwd: "/" });
+
+		expect(await pathExists(bash.fs, "/clone/.git/refs/remotes/origin/feature")).toBe(true);
+		expect(await pathExists(bash.fs, "/clone/.git/refs/remotes/origin/main")).toBe(false);
+
+		const head = await readFile(bash.fs, "/clone/.git/HEAD");
+		expect(head?.trim()).toBe("ref: refs/heads/feature");
+		expect(await readFile(bash.fs, "/clone/feat.txt")).toBe("feat\n");
+	});
+
+	test("--single-branch writes narrow refspec in config", async () => {
+		const bash = await setupSource();
+		await bash.exec("git clone --single-branch /src /clone", { cwd: "/" });
+
+		const configResult = await bash.exec("git config --list", { cwd: "/clone" });
+		expect(configResult.stdout).toContain(
+			"remote.origin.fetch=+refs/heads/main:refs/remotes/origin/main",
+		);
+	});
+
+	test("--single-branch writes tagOpt in config", async () => {
+		const bash = await setupSource();
+		await bash.exec("git clone --single-branch /src /clone", { cwd: "/" });
+
+		const configContent = await readFile(bash.fs, "/clone/.git/config");
+		expect(configContent).toContain("tagOpt = --no-tags");
+	});
+
+	// ── No-tags ──────────────────────────────────────────────────────
+
+	test("--no-tags skips tags but fetches all branches", async () => {
+		const bash = await setupSource();
+		await bash.exec(
+			"cd /src && git checkout -b feature && echo 'feat' > feat.txt && git add . && git commit -m 'feature'",
+		);
+		await bash.exec("cd /src && git tag v1.0");
+		await bash.exec("cd /src && git checkout main");
+
+		await bash.exec("git clone --no-tags /src /clone", { cwd: "/" });
+
+		// All branches should be present
+		expect(await pathExists(bash.fs, "/clone/.git/refs/remotes/origin/main")).toBe(true);
+		expect(await pathExists(bash.fs, "/clone/.git/refs/remotes/origin/feature")).toBe(true);
+
+		// Tags should not be present
+		expect(await pathExists(bash.fs, "/clone/.git/refs/tags/v1.0")).toBe(false);
+	});
+
+	test("--no-tags writes tagOpt in config", async () => {
+		const bash = await setupSource();
+		await bash.exec("git clone --no-tags /src /clone", { cwd: "/" });
+
+		const configContent = await readFile(bash.fs, "/clone/.git/config");
+		expect(configContent).toContain("tagOpt = --no-tags");
+	});
+
+	// ── No-checkout ──────────────────────────────────────────────────
+
+	test("--no-checkout skips working tree and index", async () => {
+		const bash = await setupSource();
+		await bash.exec("git clone --no-checkout /src /clone", { cwd: "/" });
+
+		// .git should exist with correct HEAD
+		expect(await isDirectory(bash.fs, "/clone/.git")).toBe(true);
+		const head = await readFile(bash.fs, "/clone/.git/HEAD");
+		expect(head?.trim()).toBe("ref: refs/heads/main");
+
+		// Branch ref should exist
+		expect(await pathExists(bash.fs, "/clone/.git/refs/heads/main")).toBe(true);
+
+		// Working tree file should NOT exist
+		expect(await pathExists(bash.fs, "/clone/README.md")).toBe(false);
+
+		// Status should show deleted files (staged but not in worktree)
+		const status = await bash.exec("git status", { cwd: "/clone" });
+		expect(status.exitCode).toBe(0);
+	});
+
+	test("-n is alias for --no-checkout", async () => {
+		const bash = await setupSource();
+		await bash.exec("git clone -n /src /clone", { cwd: "/" });
+
+		expect(await isDirectory(bash.fs, "/clone/.git")).toBe(true);
+		expect(await pathExists(bash.fs, "/clone/README.md")).toBe(false);
+	});
+
 	// ── Error cases ───────────────────────────────────────────────────
 
 	test("fails if source doesn't exist", async () => {

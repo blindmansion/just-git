@@ -2,12 +2,11 @@ import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import { err, fatal } from "../lib/command-utils.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
-import { getReflogIdentity } from "../lib/identity.ts";
 import { buildIndex, defaultStat, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { basename, resolve } from "../lib/path.ts";
-import { appendReflog, ZERO_HASH } from "../lib/reflog.ts";
-import { createSymbolicRef, updateRef } from "../lib/refs.ts";
+import { logRef } from "../lib/reflog.ts";
+import { createSymbolicRef, ensureRemoteHead, updateRef } from "../lib/refs.ts";
 import { findRepo, initRepository } from "../lib/repo.ts";
 import { applyShallowUpdates } from "../lib/shallow.ts";
 import { createTransportForUrl, stripAndCacheCredentials } from "../lib/transport/remote.ts";
@@ -28,6 +27,10 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			bare: f().describe("Create a bare clone"),
 			branch: o.string().alias("b").describe("Checkout this branch instead of HEAD"),
 			depth: o.number().describe("Create a shallow clone with history truncated to N commits"),
+			singleBranch: f().describe("Clone only the history of the specified or default branch"),
+			noSingleBranch: f().describe("Clone all branches even with --depth"),
+			noTags: f().describe("Don't clone any tags"),
+			noCheckout: f().alias("n").describe("Don't create a checkout"),
 		},
 		handler: async (args, ctx) => {
 			const repository = args.repository;
@@ -104,26 +107,15 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			const { ctx: baseCtx } = await initRepository(ctx.fs, targetPath, {
 				bare: args.bare,
 			});
-			const newCtx: GitContext = ext
-				? {
-						...baseCtx,
-						hooks: ext.hooks,
-						credentialProvider: ext.credentialProvider,
-						identityOverride: ext.identityOverride,
-						fetchFn: ext.fetchFn,
-						networkPolicy: ext.networkPolicy,
-						resolveRemote: ext.resolveRemote,
-						credentialCache: ext.credentialCache,
-					}
-				: baseCtx;
+			const newCtx: GitContext = ext ? { ...baseCtx, ...ext } : baseCtx;
 
-			// Set up the "origin" remote
+			const depthOpt = args.depth;
+			const singleBranch = args.singleBranch || (depthOpt !== undefined && !args.noSingleBranch);
+			const noTags = args.noTags || singleBranch;
+			const noCheckout = args.noCheckout;
+
+			// Build config — written once after branch tracking is known
 			const config = await readConfig(newCtx);
-			config['remote "origin"'] = {
-				url: sourcePath,
-				fetch: "+refs/heads/*:refs/remotes/origin/*",
-			};
-			await writeConfig(newCtx, config);
 
 			// Create transport and fetch all objects
 			let transport: Transport;
@@ -142,6 +134,11 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			const remoteRefs = await transport.advertiseRefs();
 
 			if (remoteRefs.length === 0) {
+				config['remote "origin"'] = {
+					url: sourcePath,
+					fetch: "+refs/heads/*:refs/remotes/origin/*",
+				};
+				await writeConfig(newCtx, config);
 				await ext?.hooks?.postClone?.({
 					repo: newCtx,
 					repository: sourcePath,
@@ -156,22 +153,87 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 				};
 			}
 
-			// Determine which objects to fetch — only branches and tags,
-			// matching real git's default refspec behavior (excludes refs/pull/*, etc.)
+			// Resolve the default branch before building wants so
+			// single-branch mode knows which branch to fetch.
+			// -b flag takes priority (fail fast if invalid), then symref
+			// capability, then HEAD hash matching, then first branch.
+			let defaultBranch: string | null = null;
+			let defaultHash: ObjectId | null = null;
+
+			if (branchOpt) {
+				const match = remoteRefs.find((r) => r.name === `refs/heads/${branchOpt}`);
+				if (!match) {
+					return fatal(`Remote branch '${branchOpt}' not found in upstream origin`);
+				}
+				defaultBranch = branchOpt;
+				defaultHash = match.hash;
+			} else {
+				const headSymref = transport.headTarget;
+				if (
+					headSymref?.startsWith("refs/heads/") &&
+					remoteRefs.some((r) => r.name === headSymref)
+				) {
+					defaultBranch = headSymref.slice("refs/heads/".length);
+					defaultHash = remoteRefs.find((r) => r.name === headSymref)?.hash ?? null;
+				}
+
+				if (!defaultBranch) {
+					const headRef = remoteRefs.find((r) => r.name === "HEAD");
+					if (headRef) {
+						const match = remoteRefs.find(
+							(r) => r.name.startsWith("refs/heads/") && r.hash === headRef.hash,
+						);
+						if (match) {
+							defaultBranch = match.name.slice("refs/heads/".length);
+							defaultHash = match.hash;
+						}
+					}
+				}
+
+				if (!defaultBranch) {
+					const firstBranch = remoteRefs.find((r) => r.name.startsWith("refs/heads/"));
+					if (firstBranch) {
+						defaultBranch = firstBranch.name.slice("refs/heads/".length);
+						defaultHash = firstBranch.hash;
+					}
+				}
+			}
+
+			// Build remote config with refspec narrowed for single-branch
+			const remoteSection: Record<string, string> = {
+				url: sourcePath,
+				fetch:
+					singleBranch && defaultBranch
+						? `+refs/heads/${defaultBranch}:refs/remotes/origin/${defaultBranch}`
+						: "+refs/heads/*:refs/remotes/origin/*",
+			};
+			if (noTags) {
+				remoteSection.tagOpt = "--no-tags";
+			}
+			config['remote "origin"'] = remoteSection;
+
+			// Build wants list — single-branch limits to target branch only
 			const wants: ObjectId[] = [];
 			const seen = new Set<ObjectId>();
 			for (const ref of remoteRefs) {
 				if (ref.name === "HEAD") continue;
-				if (!ref.name.startsWith("refs/heads/") && !ref.name.startsWith("refs/tags/")) {
+
+				if (ref.name.startsWith("refs/heads/")) {
+					if (singleBranch && defaultBranch) {
+						if (ref.name !== `refs/heads/${defaultBranch}`) continue;
+					}
+				} else if (ref.name.startsWith("refs/tags/")) {
+					if (noTags) continue;
+				} else {
 					continue;
 				}
+
 				if (!seen.has(ref.hash)) {
 					seen.add(ref.hash);
 					wants.push(ref.hash);
 				}
 			}
 
-			const depthOpt = args.depth;
 			const shallowOpts: ShallowFetchOptions | undefined =
 				depthOpt !== undefined && depthOpt > 0 ? { depth: depthOpt } : undefined;
 
@@ -183,70 +245,30 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 				}
 			}
 
-			// Create remote tracking refs and find the default branch
-			const headRef = remoteRefs.find((r) => r.name === "HEAD");
-			let defaultBranch: string | null = null;
-			let defaultHash: ObjectId | null = null;
-			const ident = await getReflogIdentity(newCtx, ctx.env);
+			// Create remote tracking refs and tags
 			const cloneMsg = `clone: from ${sourcePath}`;
-
-			// Use symref capability if available (HTTP transport)
-			const headSymref = transport.headTarget;
-			if (headSymref?.startsWith("refs/heads/") && remoteRefs.some((r) => r.name === headSymref)) {
-				defaultBranch = headSymref.slice("refs/heads/".length);
-				defaultHash = remoteRefs.find((r) => r.name === headSymref)?.hash ?? null;
-			}
 
 			for (const ref of remoteRefs) {
 				if (ref.name === "HEAD") continue;
 
 				if (ref.name.startsWith("refs/heads/")) {
-					const branchName = ref.name.slice("refs/heads/".length);
-					const trackingRef = `refs/remotes/origin/${branchName}`;
-					await updateRef(newCtx, trackingRef, ref.hash);
-					await appendReflog(newCtx, trackingRef, {
-						oldHash: ZERO_HASH,
-						newHash: ref.hash,
-						name: ident.name,
-						email: ident.email,
-						timestamp: ident.timestamp,
-						tz: ident.tz,
-						message: cloneMsg,
-					});
-
-					// Fallback: match HEAD hash if symref wasn't available
-					if (!defaultBranch && headRef && ref.hash === headRef.hash) {
-						defaultBranch = branchName;
-						defaultHash = ref.hash;
+					if (singleBranch && defaultBranch) {
+						if (ref.name !== `refs/heads/${defaultBranch}`) continue;
 					}
+					const trackingRef = `refs/remotes/origin/${ref.name.slice("refs/heads/".length)}`;
+					await updateRef(newCtx, trackingRef, ref.hash);
+					await logRef(newCtx, ctx.env, trackingRef, null, ref.hash, cloneMsg);
 				}
 
 				if (ref.name.startsWith("refs/tags/")) {
-					await updateRef(newCtx, ref.name, ref.hash);
-				}
-			}
-
-			// If -b was specified, use that branch
-			if (branchOpt) {
-				const branchHash = remoteRefs.find((r) => r.name === `refs/heads/${branchOpt}`);
-				if (!branchHash) {
-					return fatal(`Remote branch '${branchOpt}' not found in upstream origin`);
-				}
-				defaultBranch = branchOpt;
-				defaultHash = branchHash.hash;
-			}
-
-			// Fall back to first branch if HEAD hash didn't match
-			if (!defaultBranch) {
-				const firstBranch = remoteRefs.find((r) => r.name.startsWith("refs/heads/"));
-				if (firstBranch) {
-					defaultBranch = firstBranch.name.slice("refs/heads/".length);
-					defaultHash = firstBranch.hash;
+					if (!noTags) {
+						await updateRef(newCtx, ref.name, ref.hash);
+					}
 				}
 			}
 
 			if (args.bare) {
-				// Bare repos: set HEAD to the default branch
+				await writeConfig(newCtx, config);
 				if (defaultBranch) {
 					await createSymbolicRef(newCtx, "HEAD", `refs/heads/${defaultBranch}`);
 				}
@@ -264,57 +286,47 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 				};
 			}
 
-			// Set origin/HEAD to point to the default branch
-			if (defaultBranch) {
-				await createSymbolicRef(
-					newCtx,
-					"refs/remotes/origin/HEAD",
-					`refs/remotes/origin/${defaultBranch}`,
-				);
-			}
+			await ensureRemoteHead(newCtx, "origin", remoteRefs, transport.headTarget);
 
 			// Non-bare: create local branch and checkout
 			if (defaultBranch && defaultHash) {
 				await updateRef(newCtx, `refs/heads/${defaultBranch}`, defaultHash);
 				await createSymbolicRef(newCtx, "HEAD", `refs/heads/${defaultBranch}`);
 
-				const branchReflog = {
-					oldHash: ZERO_HASH,
-					newHash: defaultHash,
-					name: ident.name,
-					email: ident.email,
-					timestamp: ident.timestamp,
-					tz: ident.tz,
-					message: cloneMsg,
-				};
-				await appendReflog(newCtx, `refs/heads/${defaultBranch}`, branchReflog);
-				await appendReflog(newCtx, "HEAD", branchReflog);
+				await logRef(
+					newCtx,
+					ctx.env,
+					`refs/heads/${defaultBranch}`,
+					null,
+					defaultHash,
+					cloneMsg,
+					true,
+				);
 
-				// Set up tracking config
-				const updatedConfig = await readConfig(newCtx);
-				updatedConfig[`branch "${defaultBranch}"`] = {
+				config[`branch "${defaultBranch}"`] = {
 					remote: "origin",
 					merge: `refs/heads/${defaultBranch}`,
 				};
-				await writeConfig(newCtx, updatedConfig);
 
-				// Checkout the working tree
-				const commit = await readCommit(newCtx, defaultHash);
-				await checkoutTree(newCtx, commit.tree);
+				if (!noCheckout) {
+					const commit = await readCommit(newCtx, defaultHash);
+					await checkoutTree(newCtx, commit.tree);
 
-				// Build the index from the tree
-				const treeEntries = await flattenTree(newCtx, commit.tree);
-				const index = buildIndex(
-					treeEntries.map((entry) => ({
-						path: entry.path,
-						mode: parseInt(entry.mode, 8),
-						hash: entry.hash,
-						stage: 0,
-						stat: defaultStat(),
-					})),
-				);
-				await writeIndex(newCtx, index);
+					const treeEntries = await flattenTree(newCtx, commit.tree);
+					const index = buildIndex(
+						treeEntries.map((entry) => ({
+							path: entry.path,
+							mode: parseInt(entry.mode, 8),
+							hash: entry.hash,
+							stage: 0,
+							stat: defaultStat(),
+						})),
+					);
+					await writeIndex(newCtx, index);
+				}
 			}
+
+			await writeConfig(newCtx, config);
 
 			const response = {
 				stdout: "",

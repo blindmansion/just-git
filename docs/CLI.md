@@ -371,6 +371,10 @@ Options:
   --bare                 Create a bare clone
   -b, --branch <string>  Checkout this branch instead of HEAD
   --depth <number>       Create a shallow clone with history truncated to N commits
+  --single-branch        Clone only the history of the specified or default branch
+  --no-single-branch     Clone all branches even with --depth
+  --no-tags              Don't clone any tags
+  -n, --no-checkout      Don't create a checkout
 ```
 
 ## git commit
