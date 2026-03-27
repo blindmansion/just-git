@@ -173,7 +173,7 @@ if (args[0] === "server") {
 	mkdirSync(SANDBOX_DIR, { recursive: true });
 
 	const cwd = readCwd();
-	const rwfs = new ReadWriteFs({ root: SANDBOX_DIR });
+	const rwfs = new ReadWriteFs({ root: SANDBOX_DIR, maxFileReadSize: 100 * 1024 * 1024 });
 	const git = createGit({
 		identity: { name: "Sandbox User", email: "sandbox@just-git.dev" },
 	});
