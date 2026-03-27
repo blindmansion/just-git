@@ -496,10 +496,10 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			});
 
 			if (!applyResult.ok) {
-				return applyResult as {
-					stdout: string;
-					stderr: string;
-					exitCode: number;
+				return {
+					stdout: applyResult.stdout,
+					stderr: fetchOutput + applyResult.stderr,
+					exitCode: applyResult.exitCode,
 				};
 			}
 
