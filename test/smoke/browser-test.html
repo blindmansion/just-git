@@ -2,7 +2,7 @@
 <html>
 	<head>
 		<meta charset="utf-8" />
-		<title>just-git browser smoke test</title>
+		<title>just-git browser smoke test (client + server)</title>
 		<style>
 			body {
 				font-family: monospace;
@@ -30,8 +30,8 @@
 		</style>
 	</head>
 	<body>
-		<h1>just-git browser smoke test</h1>
-		<div id="log">Loading module...</div>
+		<h1>just-git browser smoke test (client + server)</h1>
+		<div id="log">Loading modules...</div>
 		<script type="module">
 			const el = document.getElementById("log");
 			const lines = [];
@@ -166,7 +166,9 @@
 
 			try {
 				const { createGit } = await import("/dist/index.js");
-				log("Module loaded", "info");
+				log("Client module loaded", "info");
+				const { createServer } = await import("/dist/server/index.js");
+				log("Server module loaded", "info");
 
 				const git = createGit();
 				const fs = new MemFS();
@@ -325,9 +327,176 @@
 					? pass("fetched file content matches")
 					: fail("fetched file content", fetchedFile);
 
+				// ═══════════════════════════════════════
+				// Server smoke tests
+				// ═══════════════════════════════════════
+				log("\n══════════════════════════════", "info");
+				log("Server tests", "info");
+
+				// ── Create server ──
+				log("\n── createServer ──", "info");
+				const srv = createServer({ autoCreate: true });
+				pass("createServer()");
+
+				// ── Create repo ──
+				log("\n── createRepo ──", "info");
+				await srv.createRepo("test-repo");
+				pass("createRepo('test-repo')");
+
+				// ── server.commit() ──
+				log("\n── server.commit() ──", "info");
+				const sc1 = await srv.commit("test-repo", {
+					branch: "main",
+					message: "initial commit",
+					author: { name: "Browser", email: "browser@test.com" },
+					files: {
+						"README.md": "# Server Browser Test\n\nHello from the browser server.",
+						"src/index.ts": 'export const hello = "world";',
+					},
+				});
+				sc1.hash && sc1.hash.length === 40
+					? pass(`server.commit() → ${sc1.hash.slice(0, 8)}`)
+					: fail("server.commit()", JSON.stringify(sc1));
+
+				const sc2 = await srv.commit("test-repo", {
+					branch: "main",
+					message: "add feature file",
+					author: { name: "Browser", email: "browser@test.com" },
+					files: {
+						"feature.txt": "feature content",
+					},
+				});
+				sc2.hash && sc2.parentHash === sc1.hash
+					? pass(`second commit → ${sc2.hash.slice(0, 8)} (parent: ${sc2.parentHash.slice(0, 8)})`)
+					: fail("second commit", JSON.stringify(sc2));
+
+				// ── Clone via in-process network ──
+				log("\n── clone via asNetwork() ──", "info");
+				const network = srv.asNetwork("http://git");
+				const srvGit = createGit({ network });
+				const srvFs = new MemFS();
+				const srvEnv = new Map([
+					["GIT_AUTHOR_NAME", "Browser"],
+					["GIT_AUTHOR_EMAIL", "browser@test.com"],
+					["GIT_COMMITTER_NAME", "Browser"],
+					["GIT_COMMITTER_EMAIL", "browser@test.com"],
+					["GIT_AUTHOR_DATE", "1000000000"],
+					["GIT_COMMITTER_DATE", "1000000000"],
+				]);
+
+				const srvExec = async (cmd, cwdOverride) => {
+					const args = cmd.replace(/^git /, "").split(/\s+/);
+					return srvGit.execute(args, { fs: srvFs, cwd: cwdOverride || "/workspace", env: srvEnv, stdin: "" });
+				};
+
+				r = await srvExec("git clone http://git/test-repo /workspace", "/");
+				r.exitCode === 0
+					? pass("git clone from in-process server")
+					: fail("git clone", r.stderr);
+
+				// ── Verify cloned content ──
+				log("\n── verify clone ──", "info");
+				const srvReadme = await srvFs.readFile("/workspace/README.md");
+				srvReadme.includes("Server Browser Test")
+					? pass("README.md content matches")
+					: fail("README.md content", srvReadme);
+
+				const srvFeature = await srvFs.readFile("/workspace/feature.txt");
+				srvFeature === "feature content"
+					? pass("feature.txt content matches")
+					: fail("feature.txt content", srvFeature);
+
+				r = await srvExec("git log --oneline");
+				const srvLogLines = r.stdout.trim().split("\n").filter(Boolean);
+				srvLogLines.length === 2
+					? pass(`git log shows ${srvLogLines.length} commits`)
+					: fail("git log count", r.stdout);
+
+				// ── Push back to server ──
+				log("\n── push to server ──", "info");
+				await srvFs.writeFile("/workspace/from-clone.txt", "pushed from browser clone");
+				await srvExec("git add .");
+				r = await srvExec("git commit -m from-browser");
+				r.exitCode === 0 ? pass("commit in clone") : fail("commit in clone", r.stderr);
+
+				r = await srvExec("git push");
+				r.exitCode === 0 ? pass("git push to server") : fail("git push", r.stderr);
+
+				// ── Verify push via second clone ──
+				log("\n── verify push via second clone ──", "info");
+				const srvFs2 = new MemFS();
+				const srvExec2 = async (cmd, cwdOverride) => {
+					const args = cmd.replace(/^git /, "").split(/\s+/);
+					return srvGit.execute(args, { fs: srvFs2, cwd: cwdOverride || "/ws2", env: srvEnv, stdin: "" });
+				};
+
+				r = await srvExec2("git clone http://git/test-repo /ws2", "/");
+				r.exitCode === 0 ? pass("second clone") : fail("second clone", r.stderr);
+
+				const pushed = await srvFs2.readFile("/ws2/from-clone.txt");
+				pushed === "pushed from browser clone"
+					? pass("pushed content visible in second clone")
+					: fail("pushed content", pushed);
+
+				// ── Fetch after server-side commit ──
+				log("\n── fetch after server commit ──", "info");
+				const sc3 = await srv.commit("test-repo", {
+					branch: "main",
+					message: "server-side update",
+					author: { name: "Server", email: "server@test.com" },
+					files: {
+						"server-file.txt": "created on server",
+					},
+				});
+				sc3.hash ? pass(`server commit → ${sc3.hash.slice(0, 8)}`) : fail("server commit", JSON.stringify(sc3));
+
+				r = await srvExec("git fetch");
+				r.exitCode === 0 ? pass("git fetch") : fail("git fetch", r.stderr);
+
+				r = await srvExec("git pull");
+				r.exitCode === 0 ? pass("git pull") : fail("git pull", r.stderr);
+
+				const serverFile = await srvFs.readFile("/workspace/server-file.txt");
+				serverFile === "created on server"
+					? pass("server-created file fetched successfully")
+					: fail("server-created file", serverFile);
+
+				// ── Fork repo ──
+				log("\n── fork repo ──", "info");
+				await srv.forkRepo("test-repo", "forked-repo");
+				pass("forkRepo()");
+
+				const srvFs3 = new MemFS();
+				const srvExec3 = async (cmd, cwdOverride) => {
+					const args = cmd.replace(/^git /, "").split(/\s+/);
+					return srvGit.execute(args, { fs: srvFs3, cwd: cwdOverride || "/fork", env: srvEnv, stdin: "" });
+				};
+				r = await srvExec3("git clone http://git/forked-repo /fork", "/");
+				r.exitCode === 0 ? pass("clone forked repo") : fail("clone forked repo", r.stderr);
+
+				const forkReadme = await srvFs3.readFile("/fork/README.md");
+				forkReadme.includes("Server Browser Test")
+					? pass("fork has parent content")
+					: fail("fork content", forkReadme);
+
+				// ── Repo management ──
+				log("\n── repo management ──", "info");
+				const repoExists = await srv.repo("test-repo");
+				repoExists ? pass("repo() returns repo") : fail("repo()", "null");
+
+				// ── Server close ──
+				log("\n── server close ──", "info");
+				await srv.close();
+				srv.closed ? pass("server.closed is true") : fail("server.closed", "false");
+
+				const closedResp = await srv.fetch(new Request("http://git/test-repo/info/refs?service=git-upload-pack"));
+				closedResp.status === 503
+					? pass("closed server returns 503")
+					: fail("closed server status", closedResp.status);
+
 				// final summary
-				log("\n══════════════════════════", "info");
-				log("Browser smoke test complete", "info");
+				log("\n══════════════════════════════", "info");
+				log("Browser smoke test complete (client + server)", "info");
 			} catch (e) {
 				log(`\nFATAL: ${e.message}\n${e.stack}`, "fail");
 			}
