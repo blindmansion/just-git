@@ -15,16 +15,20 @@ import {
 	type FileGenConfig,
 	type FileOpTarget,
 	generateAndApplyFileOps,
+	generateServerCommitFiles,
 	resolveAllFiles,
 } from "../random/file-gen";
+import { createServer, MemoryStorage, type GitServer } from "../../src/server/index";
 import {
 	isCommitCommand,
 	isFileOpBatch,
 	isFileResolve,
 	isIndividualFileOp,
+	isServerCommit,
 	parseFileOp,
 	parseFileOpBatchSeed,
 	parseFileResolveSeed,
+	parseServerCommitSeed,
 } from "./fileops";
 import { buildRealGitEnv } from "./real-harness";
 import { initDb } from "./schema";
@@ -114,6 +118,17 @@ export async function replayTo(
 
 	const fileGenConfig: FileGenConfig = traceConfig?.fileGen ?? DEFAULT_FILE_GEN_CONFIG;
 
+	const storedBaseUrl = traceConfig?.remoteBaseUrl ?? null;
+	let server: GitServer | null = null;
+	let httpServer: ReturnType<typeof Bun.serve> | null = null;
+	let newBaseUrl: string | null = null;
+
+	if (storedBaseUrl) {
+		server = createServer({ storage: new MemoryStorage(), autoCreate: true });
+		httpServer = Bun.serve({ fetch: server.fetch, port: 0 });
+		newBaseUrl = `http://localhost:${httpServer.port}`;
+	}
+
 	const homeDir = await mkdtemp(join(tmpdir(), "replay-home-"));
 	const repoDir = await mkdtemp(join(tmpdir(), "replay-git-"));
 	const env = buildRealGitEnv(homeDir);
@@ -135,6 +150,19 @@ export async function replayTo(
 				await resolveAllFiles(target, seed, files, fileGenConfig);
 			} else if (isIndividualFileOp(step.command)) {
 				await execIndividualFileOp(repoDir, step.command);
+			} else if (isServerCommit(step.command)) {
+				const seed = parseServerCommitSeed(step.command);
+				const files = generateServerCommitFiles(seed, fileGenConfig);
+				await server!.commit("repo", {
+					files,
+					message: `server-commit-${seed}`,
+					author: {
+						name: "Server",
+						email: "server@test.com",
+						date: new Date((3000000000 + seed) * 1000),
+					},
+					branch: "main",
+				});
 			} else {
 				let stepEnv = env;
 				if (isCommitCommand(step.command)) {
@@ -146,16 +174,23 @@ export async function replayTo(
 						GIT_COMMITTER_DATE: ts,
 					};
 				}
-				await execShell(repoDir, step.command, stepEnv);
+				let cmd = step.command;
+				if (storedBaseUrl && newBaseUrl) {
+					cmd = cmd.replaceAll(storedBaseUrl, newBaseUrl);
+				}
+				await execShell(repoDir, cmd, stepEnv);
 			}
 		}
 	} catch (err) {
-		// Clean up both dirs on failure so we don't leak temp repos
 		await rm(repoDir, { recursive: true, force: true });
 		await rm(homeDir, { recursive: true, force: true });
+		if (httpServer) httpServer.stop(true);
+		if (server) await server.close();
 		throw err;
 	}
 
+	if (httpServer) httpServer.stop(true);
+	if (server) await server.close();
 	await rm(homeDir, { recursive: true, force: true });
 	return repoDir;
 }
