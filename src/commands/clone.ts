@@ -156,11 +156,15 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 				};
 			}
 
-			// Determine which objects to fetch (all branch/tag refs)
+			// Determine which objects to fetch — only branches and tags,
+			// matching real git's default refspec behavior (excludes refs/pull/*, etc.)
 			const wants: ObjectId[] = [];
 			const seen = new Set<ObjectId>();
 			for (const ref of remoteRefs) {
 				if (ref.name === "HEAD") continue;
+				if (!ref.name.startsWith("refs/heads/") && !ref.name.startsWith("refs/tags/")) {
+					continue;
+				}
 				if (!seen.has(ref.hash)) {
 					seen.add(ref.hash);
 					wants.push(ref.hash);

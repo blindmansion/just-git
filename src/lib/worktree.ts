@@ -4,7 +4,7 @@ import { addEntry, defaultStat } from "./index.ts";
 import { readObject, writeObject } from "./object-db.ts";
 import { isInsideWorkTree, verifyPath, verifySymlinkTarget } from "./path-safety.ts";
 import { dirname, join } from "./path.ts";
-import { hashWorktreeEntry, isSymlinkMode, lstatSafe } from "./symlink.ts";
+import { hashWorktreeEntry, isSubmoduleMode, isSymlinkMode, lstatSafe } from "./symlink.ts";
 import { flattenTree } from "./tree-ops.ts";
 import type { GitContext, Index, IndexEntry, ObjectId, WorkTreeDiff } from "./types.ts";
 
@@ -27,6 +27,7 @@ export async function diffIndexToWorkTree(ctx: GitContext, index: Index): Promis
 	// Check each index entry against the working tree
 	for (const entry of index.entries) {
 		if (entry.stage !== 0) continue; // skip conflict entries
+		if (isSubmoduleMode(entry.mode)) continue; // skip submodule (gitlink) entries
 
 		const fullPath = join(ctx.workTree, entry.path);
 
@@ -99,6 +100,12 @@ export async function checkoutEntry(
 
 	if (!verifyPath(entry.path)) {
 		throw new Error(`refusing to check out unsafe path '${entry.path}'`);
+	}
+
+	if (entry.mode != null && isSubmoduleMode(entry.mode)) {
+		const fullPath = join(ctx.workTree, entry.path);
+		await ctx.fs.mkdir(fullPath, { recursive: true });
+		return;
 	}
 
 	const raw = await readObject(ctx, entry.hash);

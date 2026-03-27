@@ -1,7 +1,7 @@
 import { readBlobBytes, readBlobContent } from "../lib/object-db.ts";
 import { dirname, join } from "../lib/path.ts";
 import { isInsideWorkTree, verifyPath, verifySymlinkTarget } from "../lib/path-safety.ts";
-import { isSymlinkMode } from "../lib/symlink.ts";
+import { isSubmoduleMode, isSymlinkMode } from "../lib/symlink.ts";
 import type { FlatTreeEntry } from "../lib/tree-ops.ts";
 import type { GitRepo } from "../lib/types.ts";
 
@@ -42,7 +42,9 @@ export async function materializeEntries(
 			createdDirs.add(dir);
 		}
 
-		if (isSymlinkMode(entry.mode)) {
+		if (isSubmoduleMode(entry.mode)) {
+			await target.mkdir(fullPath, { recursive: true });
+		} else if (isSymlinkMode(entry.mode)) {
 			const linkTarget = await readBlobContent(repo, entry.hash);
 			if (!verifySymlinkTarget(linkTarget)) {
 				throw new Error(`refusing to create symlink with unsafe target '${linkTarget}'`);

@@ -17,6 +17,7 @@ import {
 	updateRef,
 } from "./refs.ts";
 import { formatLongTrackingInfo, getTrackingInfo } from "./status-format.ts";
+import { isSubmoduleMode } from "./symlink.ts";
 import { flattenTree, flattenTreeToMap } from "./tree-ops.ts";
 import type { GitContext, GitRepo, ObjectId } from "./types.ts";
 import { applyWorktreeOps, checkoutTrees } from "./unpack-trees.ts";
@@ -264,6 +265,7 @@ export async function formatCheckoutSummary(
 	const treeEntries = await flattenTree(ctx, targetTreeHash);
 	const treeMap = new Map<string, string>();
 	for (const e of treeEntries) {
+		if (isSubmoduleMode(e.mode)) continue;
 		treeMap.set(e.path, e.hash);
 	}
 

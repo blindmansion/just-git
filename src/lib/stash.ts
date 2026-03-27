@@ -20,6 +20,7 @@ import {
 	ZERO_HASH,
 } from "./reflog.ts";
 import { branchNameFromRef, deleteRef, readHead, resolveHead, updateRef } from "./refs.ts";
+import { isSubmoduleMode } from "./symlink.ts";
 import { buildTreeFromIndex, diffTrees, flattenTree, flattenTreeToMap } from "./tree-ops.ts";
 import type { GitContext, IndexEntry, ObjectId } from "./types.ts";
 import { applyWorktreeOps, resetHard, type WorktreeOp } from "./unpack-trees.ts";
@@ -220,8 +221,20 @@ export async function saveStash(
 	// wouldn't touch, so they keep their index value in the stash tree.
 	// Files NOT on disk but IN HEAD are "deleted from worktree" and get
 	// removed by diff-index, so they're excluded from the stash tree.
+	// Submodule (gitlink) entries are always preserved — they have no
+	// worktree file representation, only an empty directory placeholder.
 	for (const [path, entry] of indexMap) {
 		if (seenPaths.has(path)) continue;
+		if (isSubmoduleMode(entry.mode)) {
+			wtEntries.push({
+				path,
+				mode: entry.mode,
+				hash: entry.hash,
+				stage: 0,
+				stat: defaultStat(),
+			});
+			continue;
+		}
 		if (headTreeMap.has(path)) continue;
 		wtEntries.push({
 			path,
@@ -523,6 +536,7 @@ export async function applyStash(
 		const fullPath = join(ctx.workTree, op.path);
 
 		if (ie) {
+			if (isSubmoduleMode(ie.mode)) continue;
 			if (!(await ctx.fs.exists(fullPath))) continue;
 			const content = await ctx.fs.readFileBuffer(fullPath);
 			const blobHash = await hashObject("blob", content);
