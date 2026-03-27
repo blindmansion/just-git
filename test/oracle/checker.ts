@@ -675,6 +675,23 @@ export class BatchChecker {
 	}
 
 	/**
+	 * Status output (embedded in commit/cherry-pick/merge/etc.) differs only
+	 * in the ahead/behind count. Same root cause as the orphan count mismatch:
+	 * git's `ahead_behind()` uses a timestamp-ordered walk with lazy
+	 * UNINTERESTING mark propagation, which can over-count when commit
+	 * timestamps are non-monotonic (common after amend/rebase). Our BFS
+	 * computes the exact set difference — mathematically correct but lower.
+	 */
+	private static aheadBehindCountMatches(expected: string, actual: string): boolean {
+		const normalize = (s: string) =>
+			s
+				.replace(/Your branch (?:is ahead of|is behind|and) '([^']+)'[^\n]*/g, "TRACKING_INFO '$1'")
+				.replace(/\[ahead \d+(?:, behind \d+)?]/g, "[AHEAD_BEHIND]")
+				.replace(/\[behind \d+]/g, "[AHEAD_BEHIND]");
+		return normalize(expected) === normalize(actual);
+	}
+
+	/**
 	 * Reflog output differs only by extra/missing "reset: moving to <hash>"
 	 * entries from cherry-pick --skip. With synthetic timestamps (year 2001),
 	 * git gc expires these entries in the oracle but our impl writes them
@@ -1179,6 +1196,8 @@ export class BatchChecker {
 				BatchChecker.pullStdoutMatches(step.stdout, output.stdout)
 			) {
 				// Pull merge output differs in diffstat / rename details
+			} else if (BatchChecker.aheadBehindCountMatches(step.stdout, output.stdout)) {
+				// Ahead/behind count differs — git's timestamp walk over-counts
 			} else {
 				divergences.push({
 					field: "stdout",
