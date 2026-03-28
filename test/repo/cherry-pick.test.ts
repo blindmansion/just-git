@@ -318,6 +318,63 @@ describe("cherryPick", () => {
 			"not found",
 		);
 	});
+
+	test("noCommit returns tree without creating a commit", async () => {
+		const { repo, c2, c3 } = await setupDivergent();
+
+		const mainBefore = await repo.refStore.readRef("refs/heads/main");
+
+		const result = await cherryPick(repo, {
+			commit: c3,
+			onto: c2,
+			branch: "main",
+			noCommit: true,
+		});
+
+		expect(result.clean).toBe(true);
+		if (!result.clean) return;
+
+		expect("hash" in result).toBe(false);
+		expect(await readFileFromTree(repo, result.treeHash, "c.txt")).toBe("c\n");
+
+		// branch should not have been advanced
+		const mainAfter = await repo.refStore.readRef("refs/heads/main");
+		expect(mainAfter).toEqual(mainBefore);
+	});
+
+	test("message overrides the original commit message", async () => {
+		const { repo, c2, c3 } = await setupDivergent();
+
+		const result = await cherryPick(repo, {
+			commit: c3,
+			onto: c2,
+			message: "custom message\n",
+		});
+
+		expect(result.clean).toBe(true);
+		if (!result.clean) return;
+
+		const commit = await readCommit(repo, result.hash);
+		expect(commit.message).toBe("custom message\n");
+	});
+
+	test("message with recordOrigin appends trailer to custom message", async () => {
+		const { repo, c2, c3 } = await setupDivergent();
+
+		const result = await cherryPick(repo, {
+			commit: c3,
+			onto: c2,
+			message: "custom\n",
+			recordOrigin: true,
+		});
+
+		expect(result.clean).toBe(true);
+		if (!result.clean) return;
+
+		const commit = await readCommit(repo, result.hash);
+		expect(commit.message).toContain("custom");
+		expect(commit.message).toContain(`(cherry picked from commit ${c3})`);
+	});
 });
 
 // ── Revert tests ────────────────────────────────────────────────────
@@ -496,6 +553,63 @@ describe("revert", () => {
 		const { repo, c2, c3 } = await setupDivergent();
 
 		await expect(revert(repo, { commit: c3, onto: c2 })).rejects.toThrow("at least one of");
+	});
+
+	test("noCommit returns tree without creating a commit", async () => {
+		const { repo, c2 } = await setupDivergent();
+
+		const mainBefore = await repo.refStore.readRef("refs/heads/main");
+
+		const result = await revert(repo, {
+			commit: c2,
+			onto: c2,
+			branch: "main",
+			noCommit: true,
+		});
+
+		expect(result.clean).toBe(true);
+		if (!result.clean) return;
+
+		expect("hash" in result).toBe(false);
+		// b.txt should be removed by the revert
+		expect(await readFileFromTree(repo, result.treeHash, "b.txt")).toBeNull();
+		expect(await readFileFromTree(repo, result.treeHash, "a.txt")).toBe("a\n");
+
+		// branch should not have been advanced
+		const mainAfter = await repo.refStore.readRef("refs/heads/main");
+		expect(mainAfter).toEqual(mainBefore);
+	});
+
+	test("noCommit does not require author or committer", async () => {
+		const { repo, c2, c3 } = await setupDivergent();
+
+		const result = await revert(repo, {
+			commit: c3,
+			onto: c2,
+			noCommit: true,
+		});
+
+		expect(result.clean).toBe(true);
+	});
+
+	test("message overrides auto-generated revert message", async () => {
+		const repo = await freshRepo();
+
+		const t1 = await treeWithFiles(repo, { "a.txt": "a\n" });
+		const c1 = await commitTree(repo, t1, [], 1, "original subject\n");
+
+		const result = await revert(repo, {
+			commit: c1,
+			onto: c1,
+			committer: ID,
+			message: "custom revert message\n",
+		});
+
+		expect(result.clean).toBe(true);
+		if (!result.clean) return;
+
+		const commit = await readCommit(repo, result.hash);
+		expect(commit.message).toBe("custom revert message\n");
 	});
 
 	test("reverts a root commit", async () => {

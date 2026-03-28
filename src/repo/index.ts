@@ -91,6 +91,11 @@ export {
 	type BisectStepInfo,
 	type CherryPickOptions,
 	type CherryPickResult,
+	type CleanPickCommitted,
+	type CleanPickNoCommit,
+	type NoCommitPickResult,
+	type NoCommitRevertResult,
+	type PickConflict,
 	type RevertOptions,
 	type RevertResult,
 } from "./operations.ts";

@@ -157,29 +157,55 @@ export interface CherryPickOptions {
 	commit: string;
 	/** The commit to apply on top of (hash, branch, tag, or any rev-parse expression). */
 	onto: string;
-	/** Branch to advance on clean result. No ref update when omitted. */
+	/** Branch to advance on clean result. No ref update when omitted. Ignored when `noCommit` is true. */
 	branch?: string;
-	/** Committer identity. Defaults to the original commit's author when omitted. */
+	/** Committer identity. Defaults to the original commit's author when omitted, so both author and committer will reflect the original — pass explicitly to record who performed the cherry-pick. */
 	committer?: CommitIdentity;
 	/** Parent number for merge commits (1-based). Required when cherry-picking a merge. */
 	mainline?: number;
 	/** Append "(cherry picked from commit ...)" trailer to the message. */
 	recordOrigin?: boolean;
+	/** Override the commit message. Defaults to the original commit's message. */
+	message?: string;
+	/** When true, perform the merge but don't create a commit. `hash` will be `null` in the result. */
+	noCommit?: boolean;
 	/** Custom merge driver for content conflicts. */
 	mergeDriver?: MergeDriver;
+}
+
+/** Clean result when a commit was created. */
+export interface CleanPickCommitted {
+	clean: true;
+	hash: string;
+	treeHash: string;
+}
+
+/** Clean result when `noCommit` was set — no commit created. */
+export interface CleanPickNoCommit {
+	clean: true;
+	treeHash: string;
+}
+
+/** Conflict result — no commit was created. */
+export interface PickConflict {
+	clean: false;
+	treeHash: string;
+	conflicts: MergeConflict[];
+	messages: string[];
 }
 
 /**
  * Result of {@link cherryPick} or {@link revert}.
  *
- * - `clean: true` — the operation completed without conflicts, a commit
- *   was created, and `hash` is the new commit's hash.
- * - `clean: false` — conflicts were found. `treeHash` contains
- *   conflict-marker blobs; no commit was created.
+ * - `clean: true` with `hash` — commit was created.
+ * - `clean: true` without `hash` — `noCommit` was set, merge succeeded
+ *   but no commit was created.
+ * - `clean: false` — conflicts were found, no commit was created.
  */
-export type CherryPickResult =
-	| { clean: true; hash: string; treeHash: string }
-	| { clean: false; treeHash: string; conflicts: MergeConflict[]; messages: string[] };
+export type CherryPickResult = CleanPickCommitted | PickConflict;
+
+/** Result of {@link cherryPick} or {@link revert} when `noCommit` is true. */
+export type NoCommitPickResult = CleanPickNoCommit | PickConflict;
 
 /**
  * Cherry-pick a commit onto another commit.
@@ -207,8 +233,16 @@ export type CherryPickResult =
  */
 export async function cherryPick(
 	repo: GitRepo,
+	options: CherryPickOptions & { noCommit: true },
+): Promise<NoCommitPickResult>;
+export async function cherryPick(
+	repo: GitRepo,
 	options: CherryPickOptions,
-): Promise<CherryPickResult> {
+): Promise<CherryPickResult>;
+export async function cherryPick(
+	repo: GitRepo,
+	options: CherryPickOptions,
+): Promise<CherryPickResult | NoCommitPickResult> {
 	const theirsHash = await resolveToHash(repo, options.commit);
 	const ontoHash = await resolveToHash(repo, options.onto);
 	const theirsCommit = await _readCommit(repo, theirsHash);
@@ -216,7 +250,7 @@ export async function cherryPick(
 
 	const baseTree = await resolveBaseTree(repo, theirsCommit, theirsHash, options.mainline);
 
-	let message = theirsCommit.message;
+	let message = options.message ?? theirsCommit.message;
 	if (options.recordOrigin) {
 		message = appendCherryPickedFrom(message, theirsHash);
 	}
@@ -229,6 +263,7 @@ export async function cherryPick(
 		author: theirsCommit.author,
 		committer: options.committer,
 		message,
+		noCommit: options.noCommit,
 		branch: options.branch,
 		mergeDriver: options.mergeDriver,
 	});
@@ -242,20 +277,27 @@ export interface RevertOptions {
 	commit: string;
 	/** The commit to apply the revert on top of (hash, branch, tag, or any rev-parse expression). */
 	onto: string;
-	/** Branch to advance on clean result. No ref update when omitted. */
+	/** Branch to advance on clean result. No ref update when omitted. Ignored when `noCommit` is true. */
 	branch?: string;
 	/** Committer identity. Defaults to the caller's identity. When omitted, uses `author` as both author and committer. */
 	committer?: CommitIdentity;
-	/** Author identity for the revert commit. When omitted, uses `committer`. At least one of `author` or `committer` must be provided. */
+	/** Author identity for the revert commit. When omitted, uses `committer`. At least one of `author` or `committer` must be provided (unless `noCommit` is true). */
 	author?: CommitIdentity;
 	/** Parent number for merge commits (1-based). Required when reverting a merge. */
 	mainline?: number;
+	/** Override the commit message. Defaults to the auto-generated "Revert ..." message. */
+	message?: string;
+	/** When true, perform the merge but don't create a commit. `hash` will be `null` in the result. */
+	noCommit?: boolean;
 	/** Custom merge driver for content conflicts. */
 	mergeDriver?: MergeDriver;
 }
 
 /** Result of {@link revert}. Same shape as {@link CherryPickResult}. */
 export type RevertResult = CherryPickResult;
+
+/** Result of {@link revert} when `noCommit` is true. */
+export type NoCommitRevertResult = NoCommitPickResult;
 
 /**
  * Revert a commit on top of another commit.
@@ -279,7 +321,15 @@ export type RevertResult = CherryPickResult;
  * }
  * ```
  */
-export async function revert(repo: GitRepo, options: RevertOptions): Promise<RevertResult> {
+export async function revert(
+	repo: GitRepo,
+	options: RevertOptions & { noCommit: true },
+): Promise<NoCommitRevertResult>;
+export async function revert(repo: GitRepo, options: RevertOptions): Promise<RevertResult>;
+export async function revert(
+	repo: GitRepo,
+	options: RevertOptions,
+): Promise<RevertResult | NoCommitRevertResult> {
 	const commitHash = await resolveToHash(repo, options.commit);
 	const ontoHash = await resolveToHash(repo, options.onto);
 	const targetCommit = await _readCommit(repo, commitHash);
@@ -288,10 +338,10 @@ export async function revert(repo: GitRepo, options: RevertOptions): Promise<Rev
 	const parentTree = await resolveBaseTree(repo, targetCommit, commitHash, options.mainline);
 
 	const subject = targetCommit.message.split("\n")[0] ?? "";
-	const message = `Revert "${subject}"\n\nThis reverts commit ${commitHash}.\n`;
+	const message = options.message ?? `Revert "${subject}"\n\nThis reverts commit ${commitHash}.\n`;
 
 	const author = options.author ?? options.committer;
-	if (!author) {
+	if (!author && !options.noCommit) {
 		throw new Error("revert requires at least one of `author` or `committer`");
 	}
 
@@ -306,6 +356,7 @@ export async function revert(repo: GitRepo, options: RevertOptions): Promise<Rev
 		author,
 		committer: options.committer ?? options.author,
 		message,
+		noCommit: options.noCommit,
 		branch: options.branch,
 		mergeDriver: options.mergeDriver,
 	});
@@ -357,14 +408,18 @@ interface ApplyPickInput {
 	oursTree: string;
 	theirsTree: string;
 	ontoHash: string;
-	author: CommitIdentity | Identity;
+	author?: CommitIdentity | Identity;
 	committer?: CommitIdentity;
 	message: string;
+	noCommit?: boolean;
 	branch?: string;
 	mergeDriver?: MergeDriver;
 }
 
-async function applyPick(repo: GitRepo, input: ApplyPickInput): Promise<CherryPickResult> {
+async function applyPick(
+	repo: GitRepo,
+	input: ApplyPickInput,
+): Promise<CherryPickResult | NoCommitPickResult> {
 	const result = await mergeTreesFromTreeHashes(
 		repo,
 		input.baseTree,
@@ -380,6 +435,14 @@ async function applyPick(repo: GitRepo, input: ApplyPickInput): Promise<CherryPi
 			conflicts: result.conflicts,
 			messages: result.messages,
 		};
+	}
+
+	if (input.noCommit) {
+		return { clean: true, treeHash: result.treeHash };
+	}
+
+	if (!input.author) {
+		throw new Error("author is required when creating a commit");
 	}
 
 	const hash = await createCommit(repo, {

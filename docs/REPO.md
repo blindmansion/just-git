@@ -274,18 +274,22 @@ const rvResult = await revert(repo, {
 
 - `commit` — the commit to cherry-pick (hash, branch, tag, or any rev-parse expression)
 - `onto` — the commit to apply on top of (required — no implicit HEAD)
-- `branch?` — branch to advance on clean result
+- `branch?` — branch to advance on clean result. Ignored when `noCommit` is true
 - `committer?` — committer identity. Defaults to original author when omitted
 - `mainline?` — parent number for merge commits (1-based)
 - `recordOrigin?` — append "(cherry picked from commit ...)" trailer
+- `message?` — override the commit message (defaults to the original commit's message)
+- `noCommit?` — perform the merge but don't create a commit. `hash` will be `null` in the result
 - `mergeDriver?` — custom merge driver
 
-**`RevertOptions`:** same as `CherryPickOptions` minus `recordOrigin`, plus `author?` (defaults to `committer`).
+**`RevertOptions`:** same as `CherryPickOptions` minus `recordOrigin`, plus `author?` (defaults to `committer`). `message` defaults to the auto-generated "Revert ..." message.
 
 **`CherryPickResult` / `RevertResult`** (discriminated union):
 
 - `{ clean: true, hash, treeHash }` — commit created
 - `{ clean: false, treeHash, conflicts, messages }` — conflicts found, no commit created
+
+When `noCommit` is true, the return type narrows to `NoCommitPickResult` / `NoCommitRevertResult` — the clean variant has `treeHash` but no `hash`.
 
 #### bisect
 
