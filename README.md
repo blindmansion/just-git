@@ -65,7 +65,7 @@ Both `fs` and `cwd` can be set once in `createGit` and overridden per-call. `cwd
 
 ### Server
 
-Stand up a git server in two lines. Storage defaults to in-memory; swap in SQLite, PostgreSQL, or your own backend for persistence:
+Stand up a git server in two lines. Storage defaults to in-memory; swap in SQLite, PostgreSQL, [Cloudflare Durable Objects](docs/SERVER.md#durableobjectsqlitestorage), or your own backend for persistence:
 
 ```ts
 import { createServer } from "just-git/server";
@@ -117,7 +117,7 @@ await server.gc("my-repo");
 Bun.serve({ fetch: server.fetch });
 ```
 
-Uses web-standard `Request`/`Response`. Works with Bun, Hono, Cloudflare Workers, or any fetch-compatible runtime. For Node.js, use `server.nodeHandler` with `http.createServer` and `BetterSqlite3Storage` for `better-sqlite3`. SSH is supported via `server.handleSession`. The [`Storage` interface](docs/SERVER.md#custom-storage) is small enough to plug in any datastore. See [SERVER.md](docs/SERVER.md) for the full API.
+Uses web-standard `Request`/`Response`. Works with Bun, Hono, Cloudflare Workers, Durable Objects, or any fetch-compatible runtime. For Node.js, use `server.nodeHandler` with `http.createServer` and `BetterSqlite3Storage` for `better-sqlite3`. SSH is supported via `server.handleSession`. The [`Storage` interface](docs/SERVER.md#custom-storage) is small enough to plug in any datastore. See [SERVER.md](docs/SERVER.md) for the full API.
 
 ## Repo module
 
