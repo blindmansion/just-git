@@ -84,9 +84,15 @@ export {
 // Operations
 export {
 	bisect,
+	cherryPick,
+	revert,
 	type BisectOptions,
 	type BisectSearchResult,
 	type BisectStepInfo,
+	type CherryPickOptions,
+	type CherryPickResult,
+	type RevertOptions,
+	type RevertResult,
 } from "./operations.ts";
 
 export { createTreeAccessor, type TreeAccessor } from "./tree-accessor.ts";

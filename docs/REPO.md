@@ -237,9 +237,57 @@ Both return `{ treeHash, clean, conflicts, messages }`. Operates purely on the o
 
 ### Operations
 
-| Function | Signature                              | Description                                                                                                                                            |
-| -------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `bisect` | `(repo, options) → BisectSearchResult` | Binary-search the commit graph to find the first bad commit. Operates purely on the object store — the caller provides a `test` callback per candidate |
+| Function     | Signature                              | Description                                                                                                                                            |
+| ------------ | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cherryPick` | `(repo, options) → CherryPickResult`   | Apply a commit's changes onto another commit via three-way merge. Preserves original author. Optionally advances a branch ref                          |
+| `revert`     | `(repo, options) → RevertResult`       | Apply the inverse of a commit's changes onto another commit. Generates a "Revert ..." message. Optionally advances a branch ref                        |
+| `bisect`     | `(repo, options) → BisectSearchResult` | Binary-search the commit graph to find the first bad commit. Operates purely on the object store — the caller provides a `test` callback per candidate |
+
+#### cherryPick / revert
+
+Both operate purely on the object store, no filesystem, index, or working tree needed. On a clean result, a new commit is created automatically. On conflict, the result tree contains conflict-marker blobs and no commit is created.
+
+```ts
+import { cherryPick, revert } from "just-git/repo";
+
+// Cherry-pick a commit onto main
+const cpResult = await cherryPick(repo, {
+  commit: "feature~2",
+  onto: "main",
+  branch: "main",
+  committer: { name: "Bot", email: "bot@ci.dev" },
+});
+if (cpResult.clean) {
+  console.log(`Cherry-picked as ${cpResult.hash}`);
+}
+
+// Revert a commit
+const rvResult = await revert(repo, {
+  commit: "abc1234",
+  onto: "main",
+  branch: "main",
+  committer: { name: "Bot", email: "bot@ci.dev" },
+});
+```
+
+**`CherryPickOptions`:**
+
+- `commit` — the commit to cherry-pick (hash, branch, tag, or any rev-parse expression)
+- `onto` — the commit to apply on top of (required — no implicit HEAD)
+- `branch?` — branch to advance on clean result
+- `committer?` — committer identity. Defaults to original author when omitted
+- `mainline?` — parent number for merge commits (1-based)
+- `recordOrigin?` — append "(cherry picked from commit ...)" trailer
+- `mergeDriver?` — custom merge driver
+
+**`RevertOptions`:** same as `CherryPickOptions` minus `recordOrigin`, plus `author?` (defaults to `committer`).
+
+**`CherryPickResult` / `RevertResult`** (discriminated union):
+
+- `{ clean: true, hash, treeHash }` — commit created
+- `{ clean: false, treeHash, conflicts, messages }` — conflicts found, no commit created
+
+#### bisect
 
 `bisect` uses the same weighted-midpoint algorithm as `git bisect`: each step picks the commit that maximizes information gain. The `test` callback receives the candidate hash and a `TreeAccessor` for lazy file access:
 
