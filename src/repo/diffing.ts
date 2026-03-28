@@ -15,10 +15,10 @@ import {
 import { findAllMergeBases as _findMergeBases, isAncestor as _isAncestor } from "../lib/merge.ts";
 import { readBlobContent, readCommit as _readCommit } from "../lib/object-db.ts";
 import { detectRenames, type RenamePair } from "../lib/rename-detection.ts";
-import { resolveRevisionRepo } from "../lib/rev-parse.ts";
 import { diffTrees as _diffTrees, flattenTree as _flattenTree } from "../lib/tree-ops.ts";
 import type { FlatTreeEntry } from "../lib/tree-ops.ts";
 import type { GitRepo, Identity, ObjectId, TreeDiffEntry } from "../lib/types.ts";
+import { revParse } from "./reading.ts";
 
 export type { BlameEntry };
 
@@ -183,7 +183,7 @@ function computeHunks(oldContent: string, newContent: string, contextLines?: num
 }
 
 async function resolveToCommitHash(repo: GitRepo, refOrHash: string): Promise<string> {
-	const resolved = await resolveRevisionRepo(repo, refOrHash);
+	const resolved = await revParse(repo, refOrHash);
 	if (resolved) return resolved;
 	throw new Error(`ref or commit '${refOrHash}' not found`);
 }

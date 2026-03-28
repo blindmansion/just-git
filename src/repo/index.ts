@@ -13,6 +13,7 @@ export {
 	readHead,
 	readTree,
 	resolveRef,
+	revParse,
 	tagNameFromRef,
 	type GrepFileMatch,
 	type GrepMatch,

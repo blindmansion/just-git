@@ -1,7 +1,7 @@
 import { findBisectionCommit } from "../lib/bisect.ts";
 import { readCommit as _readCommit } from "../lib/object-db.ts";
-import { resolveRevisionRepo } from "../lib/rev-parse.ts";
 import type { GitRepo } from "../lib/types.ts";
+import { revParse } from "./reading.ts";
 import { createTreeAccessor, type TreeAccessor } from "./tree-accessor.ts";
 
 // ── Bisect ──────────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ export type BisectSearchResult =
 	| { found: false; reason: "no-testable-commits" };
 
 async function resolveToHash(repo: GitRepo, rev: string): Promise<string> {
-	const resolved = await resolveRevisionRepo(repo, rev);
+	const resolved = await revParse(repo, rev);
 	if (!resolved) throw new Error(`revision '${rev}' not found`);
 	return resolved;
 }

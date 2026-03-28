@@ -11,6 +11,7 @@ import {
 	branchNameFromRef,
 	tagNameFromRef,
 } from "../lib/refs.ts";
+import { resolveRevisionRepo } from "../lib/rev-parse.ts";
 import { flattenTree as _flattenTree } from "../lib/tree-ops.ts";
 import { compilePattern, grepContent, type GrepMatch } from "../lib/grep.ts";
 import type { Commit, GitRepo, RefEntry, TreeEntry } from "../lib/types.ts";
@@ -21,6 +22,22 @@ import { createTreeAccessor } from "./tree-accessor.ts";
 /** Resolve a ref name (e.g. "HEAD", "refs/heads/main") to a commit hash. Returns null if not found. */
 export async function resolveRef(repo: GitRepo, name: string): Promise<string | null> {
 	return _resolveRef(repo, name);
+}
+
+/**
+ * Resolve a revision expression to an object hash.
+ *
+ * Supports branch names, tag names, `HEAD`, short hashes, special refs
+ * (`ORIG_HEAD`, `MERGE_HEAD`, etc.), remote tracking refs (`origin/main`),
+ * `~N`/`^N` suffixes, `^{commit}`/`^{tree}` peel syntax, and arbitrary
+ * chaining (`main~2^2`, `v1.0^{commit}~3`).
+ *
+ * Returns null if the revision cannot be resolved. Reflog syntax
+ * (`@{N}`) is not supported — reflog entries require filesystem access
+ * and are not available through `GitRepo`.
+ */
+export async function revParse(repo: GitRepo, rev: string): Promise<string | null> {
+	return resolveRevisionRepo(repo, rev);
 }
 
 /** List all local branches (`refs/heads/*`). */

@@ -122,17 +122,36 @@ All functions accept `GitRepo` as the first argument.
 
 ### Reading
 
-| Function           | Signature                                               | Description                                                                                                                     |
-| ------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `readCommit`       | `(repo, hash) → Commit`                                 | Parse and return a commit object                                                                                                |
-| `readBlob`         | `(repo, hash) → Uint8Array`                             | Read a blob as raw bytes                                                                                                        |
-| `readBlobText`     | `(repo, hash) → string`                                 | Read a blob as a UTF-8 string                                                                                                   |
-| `readTree`         | `(repo, treeHash) → TreeEntry[]`                        | Read a tree's direct children (name, hash, mode). Round-trips with `writeTree`                                                  |
-| `readFileAtCommit` | `(repo, commitHash, filePath) → string \| null`         | Read a file's content at a specific commit                                                                                      |
-| `grep`             | `(repo, commitHash, patterns, opts?) → GrepFileMatch[]` | Search files at a commit for matching lines. Supports regex, fixed strings, globs, `allMatch`, `invert`, `maxCount`, `maxDepth` |
-| `resolveRef`       | `(repo, name) → string \| null`                         | Resolve a ref name to a commit hash                                                                                             |
-| `listBranches`     | `(repo) → RefEntry[]`                                   | List all branches (`refs/heads/*`)                                                                                              |
-| `listTags`         | `(repo) → RefEntry[]`                                   | List all tags (`refs/tags/*`)                                                                                                   |
+| Function           | Signature                                               | Description                                                                                                                              |
+| ------------------ | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `readCommit`       | `(repo, hash) → Commit`                                 | Parse and return a commit object                                                                                                         |
+| `readBlob`         | `(repo, hash) → Uint8Array`                             | Read a blob as raw bytes                                                                                                                 |
+| `readBlobText`     | `(repo, hash) → string`                                 | Read a blob as a UTF-8 string                                                                                                            |
+| `readTree`         | `(repo, treeHash) → TreeEntry[]`                        | Read a tree's direct children (name, hash, mode). Round-trips with `writeTree`                                                           |
+| `readFileAtCommit` | `(repo, commitHash, filePath) → string \| null`         | Read a file's content at a specific commit                                                                                               |
+| `grep`             | `(repo, commitHash, patterns, opts?) → GrepFileMatch[]` | Search files at a commit for matching lines. Supports regex, fixed strings, globs, `allMatch`, `invert`, `maxCount`, `maxDepth`          |
+| `resolveRef`       | `(repo, name) → string \| null`                         | Resolve a ref name to a commit hash                                                                                                      |
+| `revParse`         | `(repo, rev) → string \| null`                          | Resolve a revision expression to an object hash. Supports branch/tag names, short hashes, `~N`/`^N`, `^{commit}`/`^{tree}`, and chaining |
+| `listBranches`     | `(repo) → RefEntry[]`                                   | List all branches (`refs/heads/*`)                                                                                                       |
+| `listTags`         | `(repo) → RefEntry[]`                                   | List all tags (`refs/tags/*`)                                                                                                            |
+
+`revParse` is the universal "string → hash" resolver. Where `resolveRef` only handles exact ref paths (`refs/heads/main`), `revParse` accepts anything a user might type:
+
+```ts
+import { revParse } from "just-git/repo";
+
+await revParse(repo, "main"); // branch name
+await revParse(repo, "v1.0"); // tag name
+await revParse(repo, "HEAD~3"); // 3 commits back
+await revParse(repo, "main^2"); // second parent of a merge
+await revParse(repo, "v1.0^{commit}"); // peel annotated tag to commit
+await revParse(repo, "HEAD~2^2~1"); // chained operators
+await revParse(repo, "a1b2c3d"); // short hash prefix
+await revParse(repo, "origin/main"); // remote tracking ref
+await revParse(repo, "ORIG_HEAD"); // special ref
+```
+
+Returns `null` when the revision can't be resolved. Reflog syntax (`@{N}`) is not supported — reflog entries require filesystem access not available through `GitRepo`.
 
 ### Diffing and history
 

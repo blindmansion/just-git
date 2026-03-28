@@ -1,18 +1,18 @@
 import { buildIndex, defaultStat, writeIndex } from "../lib/index.ts";
 import { readCommit as _readCommit } from "../lib/object-db.ts";
 import { join } from "../lib/path.ts";
-import { resolveRevisionRepo } from "../lib/rev-parse.ts";
 import { flattenTree as _flattenTree, type FlatTreeEntry } from "../lib/tree-ops.ts";
 import type { GitContext, GitRepo } from "../lib/types.ts";
 import type { FileSystem } from "../fs.ts";
 import { TreeBackedFs } from "../tree-backed-fs.ts";
 import { materializeEntries } from "./materialize.ts";
+import { revParse } from "./reading.ts";
 import { overlayRepo } from "./safety.ts";
 
 // ── Internal helpers ────────────────────────────────────────────────
 
 async function resolveToCommitHash(repo: GitRepo, refOrHash: string): Promise<string> {
-	const resolved = await resolveRevisionRepo(repo, refOrHash);
+	const resolved = await revParse(repo, refOrHash);
 	if (resolved) return resolved;
 	throw new Error(`ref or commit '${refOrHash}' not found`);
 }
