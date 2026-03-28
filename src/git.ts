@@ -14,7 +14,7 @@ import {
 import type { CredentialCache } from "./lib/transport/remote.ts";
 import type { ObjectStore, RefStore, RemoteResolver } from "./lib/types.ts";
 
-export const VERSION = "1.5.12";
+export const VERSION = "1.5.13";
 
 /** Options for subcommand execution (mirrors just-bash's CommandExecOptions). */
 export interface CommandExecOptions {
