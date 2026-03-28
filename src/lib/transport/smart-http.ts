@@ -4,13 +4,15 @@
 import {
 	concatPktLines,
 	demuxSideband,
+	demuxSidebandStreaming,
 	encodePktLine,
 	flushPkt,
 	type PktLine,
 	parsePktLineStream,
+	parsePktLinesFromStream,
 	pktLineText,
 } from "./pkt-line.ts";
-import type { FetchFunction } from "../../hooks.ts";
+import type { FetchFunction, ProgressCallback } from "../../hooks.ts";
 import type { RemoteRef, ShallowFetchOptions } from "./transport.ts";
 import { ZERO_HASH } from "../hex.ts";
 
@@ -157,7 +159,6 @@ const WANTED_FETCH_CAPS = [
 interface FetchPackResult {
 	packData: Uint8Array;
 	acks: string[];
-	progress: string[];
 	shallowLines: string[];
 	unshallowLines: string[];
 }
@@ -170,6 +171,7 @@ export async function fetchPack(
 	auth?: HttpAuth,
 	fetchFn: FetchFunction = globalThis.fetch,
 	shallow?: ShallowFetchOptions,
+	onProgress?: ProgressCallback,
 ): Promise<FetchPackResult> {
 	if (wants.length === 0) {
 		throw new Error("fetchPack requires at least one want");
@@ -218,11 +220,47 @@ export async function fetchPack(
 		throw new Error(`HTTP ${res.status} fetching pack from ${cleanUrl}`);
 	}
 
+	const useSideband = clientCaps.includes("side-band-64k");
+
+	if (useSideband && res.body) {
+		return parseFetchResponseStreaming(res.body, onProgress);
+	}
+
 	const responseBody = new Uint8Array(await res.arrayBuffer());
-	return parseFetchResponse(responseBody, clientCaps.includes("side-band-64k"));
+	return parseFetchResponseBatch(responseBody, useSideband, onProgress);
 }
 
-function parseFetchResponse(body: Uint8Array, useSideband: boolean): FetchPackResult {
+async function parseFetchResponseStreaming(
+	body: ReadableStream<Uint8Array>,
+	onProgress?: ProgressCallback,
+): Promise<FetchPackResult> {
+	const pktLines = parsePktLinesFromStream(body);
+	const { packData, preambleLines } = await demuxSidebandStreaming(pktLines, onProgress);
+
+	const acks: string[] = [];
+	const shallowLines: string[] = [];
+	const unshallowLines: string[] = [];
+
+	for (const line of preambleLines) {
+		if (line.type !== "data") continue;
+		const text = pktLineText(line);
+		if (text.startsWith("shallow ")) {
+			shallowLines.push(text.slice(8));
+		} else if (text.startsWith("unshallow ")) {
+			unshallowLines.push(text.slice(10));
+		} else if (text.startsWith("ACK ") || text === "NAK") {
+			acks.push(text);
+		}
+	}
+
+	return { packData, acks, shallowLines, unshallowLines };
+}
+
+function parseFetchResponseBatch(
+	body: Uint8Array,
+	useSideband: boolean,
+	onProgress?: ProgressCallback,
+): FetchPackResult {
 	const pktLines = parsePktLineStream(body);
 	const acks: string[] = [];
 	const shallowLines: string[] = [];
@@ -260,7 +298,10 @@ function parseFetchResponse(body: Uint8Array, useSideband: boolean): FetchPackRe
 		if (errors.length > 0) {
 			throw new Error(`Remote error: ${errors.join("")}`);
 		}
-		return { packData, acks, progress, shallowLines, unshallowLines };
+		if (onProgress) {
+			for (const msg of progress) onProgress(msg);
+		}
+		return { packData, acks, shallowLines, unshallowLines };
 	}
 
 	let totalSize = 0;
@@ -276,7 +317,7 @@ function parseFetchResponse(body: Uint8Array, useSideband: boolean): FetchPackRe
 		}
 	}
 
-	return { packData, acks, progress: [], shallowLines, unshallowLines };
+	return { packData, acks, shallowLines, unshallowLines };
 }
 
 // ── Push pack ────────────────────────────────────────────────────────
@@ -293,7 +334,6 @@ interface PushPackResult {
 	unpackOk: boolean;
 	unpackError?: string;
 	refResults: Array<{ name: string; ok: boolean; error?: string }>;
-	progress: string[];
 }
 
 export async function pushPack(
@@ -303,6 +343,7 @@ export async function pushPack(
 	serverCaps: string[],
 	auth?: HttpAuth,
 	fetchFn: FetchFunction = globalThis.fetch,
+	onProgress?: ProgressCallback,
 ): Promise<PushPackResult> {
 	if (commands.length === 0) {
 		throw new Error("pushPack requires at least one command");
@@ -349,31 +390,55 @@ export async function pushPack(
 		throw new Error(`HTTP ${res.status} pushing to ${cleanUrl}`);
 	}
 
-	const responseBody = new Uint8Array(await res.arrayBuffer());
-
 	if (!clientCaps.includes("report-status")) {
-		return { unpackOk: true, refResults: [], progress: [] };
+		return { unpackOk: true, refResults: [] };
 	}
 
-	return parseReportStatus(responseBody, clientCaps.includes("side-band-64k"));
+	const useSideband = clientCaps.includes("side-band-64k");
+
+	if (useSideband && res.body) {
+		return parseReportStatusStreaming(res.body, onProgress);
+	}
+
+	const responseBody = new Uint8Array(await res.arrayBuffer());
+	return parseReportStatusBatch(responseBody, useSideband, onProgress);
 }
 
-function parseReportStatus(body: Uint8Array, useSideband: boolean): PushPackResult {
+async function parseReportStatusStreaming(
+	body: ReadableStream<Uint8Array>,
+	onProgress?: ProgressCallback,
+): Promise<PushPackResult> {
+	const pktLines = parsePktLinesFromStream(body);
+	const { packData } = await demuxSidebandStreaming(pktLines, onProgress);
+	const statusLines = parsePktLineStream(packData);
+	return extractReportStatus(statusLines);
+}
+
+function parseReportStatusBatch(
+	body: Uint8Array,
+	useSideband: boolean,
+	onProgress?: ProgressCallback,
+): PushPackResult {
 	let statusLines: PktLine[];
-	let progress: string[] = [];
 
 	if (useSideband) {
 		const pktLines = parsePktLineStream(body);
-		const { packData, progress: prog, errors } = demuxSideband(pktLines);
+		const { packData, progress, errors } = demuxSideband(pktLines);
 		if (errors.length > 0) {
 			throw new Error(`Remote error: ${errors.join("")}`);
 		}
-		progress = prog;
+		if (onProgress) {
+			for (const msg of progress) onProgress(msg);
+		}
 		statusLines = parsePktLineStream(packData);
 	} else {
 		statusLines = parsePktLineStream(body);
 	}
 
+	return extractReportStatus(statusLines);
+}
+
+function extractReportStatus(statusLines: PktLine[]): PushPackResult {
 	let unpackOk = false;
 	let unpackError: string | undefined;
 	const refResults: Array<{ name: string; ok: boolean; error?: string }> = [];
@@ -404,7 +469,7 @@ function parseReportStatus(body: Uint8Array, useSideband: boolean): PushPackResu
 		}
 	}
 
-	return { unpackOk, unpackError, refResults, progress };
+	return { unpackOk, unpackError, refResults };
 }
 
 // ── Capability negotiation ───────────────────────────────────────────

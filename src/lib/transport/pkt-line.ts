@@ -118,11 +118,197 @@ export function pktLineText(line: PktLine): string {
 	return text.endsWith("\n") ? text.slice(0, -1) : text;
 }
 
-// ── Side-band-64k demuxing ───────────────────────────────────────────
+// ── Streaming parser ─────────────────────────────────────────────────
+
+const INIT_BUF_SIZE = 65536;
+
+/**
+ * Incrementally parse pkt-lines from a ReadableStream, yielding each
+ * PktLine as soon as it is fully received. Handles network chunks that
+ * split across pkt-line boundaries.
+ */
+export async function* parsePktLinesFromStream(
+	stream: ReadableStream<Uint8Array>,
+): AsyncGenerator<PktLine> {
+	const reader = stream.getReader();
+	let buf = new Uint8Array(INIT_BUF_SIZE);
+	let bufLen = 0;
+
+	try {
+		for (;;) {
+			// Drain complete pkt-lines from the buffer
+			for (;;) {
+				if (bufLen < 4) break;
+				const lenHex = decoder.decode(buf.subarray(0, 4));
+				const len = parseInt(lenHex, 16);
+				if (Number.isNaN(len)) {
+					throw new Error(`Invalid pkt-line length: ${lenHex}`);
+				}
+				if (len === 0) {
+					yield { type: "flush" };
+					consume(4);
+					continue;
+				}
+				if (len === 1) {
+					yield { type: "delim" };
+					consume(4);
+					continue;
+				}
+				if (len === 2) {
+					yield { type: "response-end" };
+					consume(4);
+					continue;
+				}
+				if (len < 4) {
+					throw new Error(`Invalid pkt-line length: ${len}`);
+				}
+				if (bufLen < len) break; // need more data
+				yield { type: "data", data: buf.slice(4, len) };
+				consume(len);
+			}
+
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (value.byteLength === 0) continue;
+
+			// Grow buffer if needed
+			const needed = bufLen + value.byteLength;
+			if (needed > buf.byteLength) {
+				let newSize = buf.byteLength;
+				while (newSize < needed) newSize *= 2;
+				const next = new Uint8Array(newSize);
+				next.set(buf.subarray(0, bufLen));
+				buf = next;
+			}
+			buf.set(value, bufLen);
+			bufLen += value.byteLength;
+		}
+
+		// Drain any remaining complete pkt-lines after stream ends
+		for (;;) {
+			if (bufLen < 4) break;
+			const lenHex = decoder.decode(buf.subarray(0, 4));
+			const len = parseInt(lenHex, 16);
+			if (Number.isNaN(len)) {
+				throw new Error(`Invalid pkt-line length: ${lenHex}`);
+			}
+			if (len === 0) {
+				yield { type: "flush" };
+				consume(4);
+				continue;
+			}
+			if (len === 1) {
+				yield { type: "delim" };
+				consume(4);
+				continue;
+			}
+			if (len === 2) {
+				yield { type: "response-end" };
+				consume(4);
+				continue;
+			}
+			if (len < 4) {
+				throw new Error(`Invalid pkt-line length: ${len}`);
+			}
+			if (bufLen < len) {
+				throw new Error(`Truncated pkt-line: need ${len} bytes, have ${bufLen}`);
+			}
+			yield { type: "data", data: buf.slice(4, len) };
+			consume(len);
+		}
+
+		if (bufLen > 0) {
+			throw new Error("Truncated pkt-line header");
+		}
+	} finally {
+		reader.releaseLock();
+	}
+
+	function consume(n: number) {
+		buf.copyWithin(0, n, bufLen);
+		bufLen -= n;
+	}
+}
+
+// ── Side-band constants ──────────────────────────────────────────────
 
 const BAND_DATA = 1;
 const BAND_PROGRESS = 2;
 const BAND_ERROR = 3;
+
+// ── Streaming sideband demuxer ───────────────────────────────────────
+
+export interface StreamingSidebandResult {
+	packData: Uint8Array;
+	preambleLines: PktLine[];
+}
+
+/**
+ * Consume an async pkt-line stream, dispatching sideband band-2 to
+ * `onProgress` immediately and accumulating band-1 pack data. Preamble
+ * lines (ACK/NAK/shallow — anything before sideband framing) are
+ * collected and returned for the caller to interpret.
+ *
+ * Band-3 (error) throws immediately.
+ */
+export async function demuxSidebandStreaming(
+	lines: AsyncIterable<PktLine>,
+	onProgress?: (message: string) => void,
+): Promise<StreamingSidebandResult> {
+	const preambleLines: PktLine[] = [];
+	const packChunks: Uint8Array[] = [];
+	let totalPackBytes = 0;
+	let inSideband = false;
+
+	for await (const line of lines) {
+		if (line.type !== "data") {
+			if (!inSideband) preambleLines.push(line);
+			continue;
+		}
+		if (line.data.byteLength === 0) {
+			if (!inSideband) preambleLines.push(line);
+			continue;
+		}
+
+		const firstByte = line.data[0]!;
+
+		// Detect transition into sideband mode: band byte is 1, 2, or 3
+		if (!inSideband) {
+			if (firstByte >= 1 && firstByte <= 3) {
+				inSideband = true;
+			} else {
+				preambleLines.push(line);
+				continue;
+			}
+		}
+
+		const payload = line.data.subarray(1);
+		switch (firstByte) {
+			case BAND_DATA:
+				packChunks.push(payload);
+				totalPackBytes += payload.byteLength;
+				break;
+			case BAND_PROGRESS:
+				onProgress?.(decoder.decode(payload));
+				break;
+			case BAND_ERROR:
+				throw new Error(`Remote error: ${decoder.decode(payload)}`);
+			default:
+				break;
+		}
+	}
+
+	const packData = new Uint8Array(totalPackBytes);
+	let offset = 0;
+	for (const chunk of packChunks) {
+		packData.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+
+	return { packData, preambleLines };
+}
+
+// ── Side-band-64k demuxing (batch) ───────────────────────────────────
 
 export function demuxSideband(pktLines: PktLine[]): SidebandResult {
 	const packChunks: Uint8Array[] = [];

@@ -319,11 +319,16 @@ export class SmartHttpTransport implements Transport {
 			return { remoteRefs: refs, objectCount: 0 };
 		}
 
-		const result = await fetchPack(this.url, wants, haves, caps, this.auth, this.fetchFn, shallow);
-
-		if (this.onProgress) {
-			for (const msg of result.progress) this.onProgress(msg);
-		}
+		const result = await fetchPack(
+			this.url,
+			wants,
+			haves,
+			caps,
+			this.auth,
+			this.fetchFn,
+			shallow,
+			this.onProgress,
+		);
 
 		if (result.packData.byteLength === 0) {
 			return { remoteRefs: refs, objectCount: 0 };
@@ -394,11 +399,15 @@ export class SmartHttpTransport implements Transport {
 			packData = (await buildDeltifiedPack(this.local, allWants, allHaves)) ?? null;
 		}
 
-		const result = await pushPack(this.url, commands, packData, pushCaps, this.auth, this.fetchFn);
-
-		if (this.onProgress) {
-			for (const msg of result.progress) this.onProgress(msg);
-		}
+		const result = await pushPack(
+			this.url,
+			commands,
+			packData,
+			pushCaps,
+			this.auth,
+			this.fetchFn,
+			this.onProgress,
+		);
 
 		const serverResults: PushRefUpdate[] = accepted.map((u) => {
 			const refResult = result.refResults.find((r) => r.name === u.name);

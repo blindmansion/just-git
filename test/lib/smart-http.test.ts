@@ -446,16 +446,21 @@ describe("fetchPack", () => {
 			});
 		});
 
+		const progress: string[] = [];
 		const result = await fetchPack(
 			"https://github.com/test/repo.git",
 			[HASH_A],
 			[],
 			["multi_ack_detailed", "no-done", "side-band-64k", "ofs-delta"],
+			undefined,
+			undefined,
+			undefined,
+			(msg) => progress.push(msg),
 		);
 
 		expect(result.acks).toEqual(["NAK"]);
 		expect(new TextDecoder().decode(result.packData)).toBe("PACK-DATA");
-		expect(result.progress).toContain("Counting objects: 3\n");
+		expect(progress).toContain("Counting objects: 3\n");
 	});
 
 	test("sends multiple wants and haves", async () => {
@@ -644,7 +649,6 @@ describe("fetchPack", () => {
 		const result = await fetchPack("https://github.com/repo.git", [HASH_A], [], ["ofs-delta"]);
 		expect(result.acks).toEqual(["NAK"]);
 		expect(result.packData.byteLength).toBe(fakePack.byteLength);
-		expect(result.progress).toEqual([]);
 	});
 
 	test("handles multiple sideband chunks", async () => {
@@ -676,10 +680,20 @@ describe("fetchPack", () => {
 				}),
 		);
 
-		const result = await fetchPack("https://github.com/repo.git", [HASH_A], [], ["side-band-64k"]);
+		const progress: string[] = [];
+		const result = await fetchPack(
+			"https://github.com/repo.git",
+			[HASH_A],
+			[],
+			["side-band-64k"],
+			undefined,
+			undefined,
+			undefined,
+			(msg) => progress.push(msg),
+		);
 		expect(result.packData.byteLength).toBe(12);
-		expect(result.packData[0]).toBe(0x50); // 'P'
-		expect(result.progress).toContain("Resolving deltas: 100%\n");
+		expect(result.packData[0]).toBe(0x50);
+		expect(progress).toContain("Resolving deltas: 100%\n");
 	});
 
 	test("handles response with flush between ACKs and pack", async () => {
@@ -775,12 +789,22 @@ describe("fetchPack", () => {
 				}),
 		);
 
-		const result = await fetchPack("https://github.com/repo.git", [HASH_A], [], ["side-band-64k"]);
+		const progress: string[] = [];
+		const result = await fetchPack(
+			"https://github.com/repo.git",
+			[HASH_A],
+			[],
+			["side-band-64k"],
+			undefined,
+			undefined,
+			undefined,
+			(msg) => progress.push(msg),
+		);
 		expect(new TextDecoder().decode(result.packData)).toBe("PACK-DATA");
-		expect(result.progress).toHaveLength(3);
-		expect(result.progress[0]).toBe("Counting objects: 10\n");
-		expect(result.progress[1]).toBe("Compressing objects: 100%\n");
-		expect(result.progress[2]).toBe("Total 10\n");
+		expect(progress).toHaveLength(3);
+		expect(progress[0]).toBe("Counting objects: 10\n");
+		expect(progress[1]).toBe("Compressing objects: 100%\n");
+		expect(progress[2]).toBe("Total 10\n");
 	});
 });
 
@@ -1082,7 +1106,6 @@ describe("pushPack", () => {
 
 		expect(result.unpackOk).toBe(true);
 		expect(result.refResults).toEqual([]);
-		expect(result.progress).toEqual([]);
 	});
 
 	test("handles creating a new ref (old hash is ZERO)", async () => {
