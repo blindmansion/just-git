@@ -53,6 +53,7 @@ const bash = new Bash({ cwd: "/repo", customCommands: [git] });
 - `disabled` — `GitCommandName[]` of subcommands to block. Disabled commands return unknown-command errors.
 - `identity` — `IdentityOverride` with `name`, `email`, optional `locked`. When `locked: true`, overrides env vars (`GIT_AUTHOR_NAME`, etc.); when unlocked (default), acts as fallback when env vars and git config are absent. Identity values are surfaced through `git config user.name` / `user.email` reads — locked identity becomes locked config, unlocked becomes default config.
 - `credentials` — `CredentialProvider` callback `(url) => HttpAuth | null`. Provides auth for Smart HTTP transport. Takes precedence over `GIT_HTTP_BEARER_TOKEN`/`GIT_HTTP_USER` env vars.
+- `onProgress` — `ProgressCallback` `(message: string) => void`. Called with server progress messages (sideband band-2) during fetch, clone, and push over HTTP. Messages are raw text from the remote — format varies by server. Only fires for `SmartHttpTransport` (not local transport).
 - `config` — `ConfigOverrides` with `locked` and `defaults` maps. `locked` values always win over `.git/config` — the agent can run `git config set` but the locked value takes precedence on every read. `defaults` supply fallback values when a key is absent from `.git/config` — the agent _can_ override these with `git config`. Keys are dotted config names (e.g. `"push.default"`, `"merge.ff"`). Applied transparently via `getConfigValue()` so all commands respect overrides automatically.
 - `resolveRemote` — `RemoteResolver` callback `(url) => GitRepo | null`. Resolves non-HTTP remote URLs to a `GitRepo`, enabling cross-VFS transport. Called before local filesystem lookup. Return null to fall back to `findRepo` on the local VFS. Enables multi-agent setups where each agent has its own isolated filesystem but can clone/fetch/push between repos on different VFS instances via `LocalTransport`. Also enables resolving to server-backed repos for hybrid in-process/server scenarios.
 
@@ -107,7 +108,7 @@ Command-level hooks:
 - Low-level events chain in order, individually try/caught.
 - Mutable message hooks (`commitMsg`, `mergeMsg`) chain, passing the mutated message through.
 
-**`GitExtensions`** — internal bundle threaded into command handlers via closures. Contains `hooks?: GitHooks`, `credentialProvider?`, `identityOverride?`, `fetchFn?`, `networkPolicy?`, `resolveRemote?`, `configOverrides?`. Command handlers access these to call hooks, resolve identity/credentials, resolve cross-VFS remotes, and apply config overrides.
+**`GitExtensions`** — internal bundle threaded into command handlers via closures. Contains `hooks?: GitHooks`, `credentialProvider?`, `identityOverride?`, `fetchFn?`, `networkPolicy?`, `resolveRemote?`, `configOverrides?`, `onProgress?`. Command handlers access these to call hooks, resolve identity/credentials, resolve cross-VFS remotes, apply config overrides, and deliver server progress messages.
 
 ### Commands
 
@@ -228,7 +229,7 @@ See [FILE_REFERENCE.md](docs/FILE_REFERENCE.md) for exported functions, types, a
 
 ### `src/index.ts` — Package exports
 
-Re-exports `createGit`, `Git`, `GitOptions`, `GitCommandName`, `GitExtensions`, `ConfigOverrides`, `GitHooks`, `Rejection`, `isRejection`, `composeGitHooks`, and all hook event/type interfaces from `src/git.ts` and `src/hooks.ts`.
+Re-exports `createGit`, `Git`, `GitOptions`, `GitCommandName`, `GitExtensions`, `ConfigOverrides`, `GitHooks`, `Rejection`, `isRejection`, `composeGitHooks`, `ProgressCallback`, and all hook event/type interfaces from `src/git.ts` and `src/hooks.ts`.
 
 ### `src/git.ts` — Git class and factory
 
@@ -246,6 +247,7 @@ Re-exports `createGit`, `Git`, `GitOptions`, `GitCommandName`, `GitExtensions`, 
 - `isRejection(value)` — type guard for `Rejection`
 - `composeGitHooks(...hookSets)` — combines multiple `GitHooks` objects with proper chaining semantics
 - `CredentialProvider` type — `(url: string) => HttpAuth | null | Promise<HttpAuth | null>`
+- `ProgressCallback` type — `(message: string) => void`. Server progress messages (sideband band-2) during network operations.
 - `IdentityOverride` interface — `{ name, email, locked? }`
 - `ConfigOverrides` interface — `{ locked?, defaults? }`. Operator-level config overrides. `locked` values always win on read; `defaults` are fallbacks when absent from `.git/config`.
 - `BeforeCommandEvent` interface — `{ command, args, fs, cwd, env }` for command-level interception

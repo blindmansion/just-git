@@ -13,6 +13,7 @@ export type {
 	MergeMsgEvent,
 	NetworkPolicy,
 	ObjectWriteEvent,
+	ProgressCallback,
 	PostApplyEvent,
 	PostCheckoutEvent,
 	PostCherryPickEvent,

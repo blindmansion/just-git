@@ -9,6 +9,15 @@ export interface ExecResult {
 
 import type { GitRepo, Identity, Index, ObjectId, ObjectType } from "./lib/types.ts";
 
+// ── Progress callback ───────────────────────────────────────────────
+
+/**
+ * Called with server progress messages (sideband band-2) during
+ * network operations (fetch, clone, push). Messages are raw text
+ * from the remote — format varies by server.
+ */
+export type ProgressCallback = (message: string) => void;
+
 // ── Credential & Identity overrides ─────────────────────────────────
 
 /**

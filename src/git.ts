@@ -8,6 +8,7 @@ import {
 	type GitHooks,
 	type IdentityOverride,
 	type NetworkPolicy,
+	type ProgressCallback,
 	isRejection,
 } from "./hooks.ts";
 import type { CredentialCache } from "./lib/transport/remote.ts";
@@ -133,6 +134,12 @@ export interface GitOptions {
 	 * `defaults` supply fallbacks when a key is absent from config.
 	 */
 	config?: ConfigOverrides;
+	/**
+	 * Called with server progress messages during network operations
+	 * (fetch, clone, push). Messages are raw sideband text from the
+	 * remote — format varies by server.
+	 */
+	onProgress?: ProgressCallback;
 }
 
 /**
@@ -159,6 +166,8 @@ export interface GitExtensions {
 	workTree?: string;
 	/** In-memory credential cache for URL-extracted auth, keyed by origin. */
 	credentialCache?: CredentialCache;
+	/** Callback for server progress messages (sideband band-2). */
+	onProgress?: ProgressCallback;
 }
 
 /** Simplified context for {@link Git.exec}. */
@@ -254,6 +263,7 @@ export class Git {
 			networkPolicy: network,
 			resolveRemote: options?.resolveRemote,
 			credentialCache: new Map(),
+			onProgress: options?.onProgress,
 			...(options?.objectStore ? { objectStore: options.objectStore } : {}),
 			...(options?.refStore ? { refStore: options.refStore } : {}),
 			...gitDirExt,

@@ -157,7 +157,7 @@ export async function createTransportForUrl(
 		const networkErr = validateNetworkAccess(cleanUrl, ctx.networkPolicy);
 		if (networkErr) throw new Error(networkErr);
 		const auth = await resolveAuthForUrl(ctx, cleanUrl, env);
-		return new SmartHttpTransport(ctx, cleanUrl, auth, ctx.fetchFn);
+		return new SmartHttpTransport(ctx, cleanUrl, auth, ctx.fetchFn, ctx.onProgress);
 	}
 	if (!remoteRepo && ctx.resolveRemote) {
 		remoteRepo = (await ctx.resolveRemote(cleanUrl)) ?? undefined;
@@ -191,7 +191,7 @@ export async function resolveRemoteTransport(
 		if (networkErr) throw new Error(networkErr);
 		const auth = env ? await resolveAuthForUrl(ctx, cleanUrl, env) : undefined;
 		return {
-			transport: new SmartHttpTransport(ctx, cleanUrl, auth, ctx.fetchFn),
+			transport: new SmartHttpTransport(ctx, cleanUrl, auth, ctx.fetchFn, ctx.onProgress),
 			config: { ...remote, url: cleanUrl },
 		};
 	}

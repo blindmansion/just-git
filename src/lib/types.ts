@@ -6,6 +6,7 @@ import type {
 	GitHooks,
 	IdentityOverride,
 	NetworkPolicy,
+	ProgressCallback,
 } from "../hooks.ts";
 import type { PackObject } from "./pack/packfile.ts";
 import type { CredentialCache } from "./transport/remote.ts";
@@ -261,6 +262,8 @@ export interface GitContext extends GitRepo {
 	configOverrides?: ConfigOverrides;
 	/** In-memory credential cache for URL-extracted auth, keyed by origin. */
 	credentialCache?: CredentialCache;
+	/** Callback for server progress messages (sideband band-2). */
+	onProgress?: ProgressCallback;
 }
 
 // ── Diff result types ───────────────────────────────────────────────

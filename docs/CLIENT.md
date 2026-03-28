@@ -16,6 +16,7 @@ Operator API for configuring git command execution in sandboxed environments. Se
 | `network`       | `{ allowed?: string[], fetch?: FetchFunction }` to restrict HTTP access and/or provide a custom `fetch`. `allowed` accepts hostnames (`"github.com"`) or URL prefixes (`"https://github.com/myorg/"`). Set to `false` to block all network access. |
 | `config`        | `{ locked?, defaults? }` config overrides. `locked` values always win over `.git/config`; `defaults` supply fallbacks when a key is absent. See [Config overrides](#config-overrides).                                                             |
 | `hooks`         | `GitHooks` config object with named callback properties. See [Hooks](#hooks).                                                                                                                                                                      |
+| `onProgress`    | `(message: string) => void` callback for server progress messages during fetch/clone/push over HTTP. Messages are raw sideband text from the remote.                                                                                               |
 | `resolveRemote` | `(url) => GitRepo \| null` callback for cross-VFS remote resolution. See [Multi-agent collaboration](#multi-agent-collaboration).                                                                                                                  |
 
 ```ts
@@ -176,7 +177,7 @@ Four transport modes for moving objects between repositories:
 
 - **Local paths**: direct filesystem transfer between repositories on the same VFS.
 - **Cross-VFS**: clone, fetch, and push between isolated in-memory filesystems via `resolveRemote`. The remote can be any `GitRepo` (VFS-backed, SQLite-backed, or any custom `ObjectStore` + `RefStore`). See [Multi-agent collaboration](#multi-agent-collaboration).
-- **Smart HTTP**: clone, fetch, and push against real Git servers (e.g. GitHub) via Git Smart HTTP protocol. Auth via `credentials` option or `GIT_HTTP_BEARER_TOKEN` / `GIT_HTTP_USER` + `GIT_HTTP_PASSWORD` env vars. Restrict access with the `network` option.
+- **Smart HTTP**: clone, fetch, and push against real Git servers (e.g. GitHub) via Git Smart HTTP protocol. Auth via `credentials` option or `GIT_HTTP_BEARER_TOKEN` / `GIT_HTTP_USER` + `GIT_HTTP_PASSWORD` env vars. Restrict access with the `network` option. Use `onProgress` to observe server progress messages (sideband band-2) during transfer.
 - **In-process server**: connect a `createGit` client to a `GitServer` without any network stack. Use `server.asNetwork()` to get a `NetworkPolicy` that routes HTTP transport calls directly to the server's `fetch` handler in-process. All server hooks, auth, and policy enforcement work exactly as they do over real HTTP. See [In-process server](#in-process-server).
 
 ## In-process server

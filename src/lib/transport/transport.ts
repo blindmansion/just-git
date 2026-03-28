@@ -1,4 +1,4 @@
-import type { FetchFunction } from "../../hooks.ts";
+import type { FetchFunction, ProgressCallback } from "../../hooks.ts";
 import { ZERO_HASH } from "../hex.ts";
 import { isAncestor } from "../merge.ts";
 import { ingestPackData, objectExists } from "../object-db.ts";
@@ -274,6 +274,7 @@ export class SmartHttpTransport implements Transport {
 		private url: string,
 		private auth?: HttpAuth,
 		private fetchFn?: FetchFunction,
+		private onProgress?: ProgressCallback,
 	) {}
 
 	async advertiseRefs(): Promise<RemoteRef[]> {
@@ -319,6 +320,10 @@ export class SmartHttpTransport implements Transport {
 		}
 
 		const result = await fetchPack(this.url, wants, haves, caps, this.auth, this.fetchFn, shallow);
+
+		if (this.onProgress) {
+			for (const msg of result.progress) this.onProgress(msg);
+		}
 
 		if (result.packData.byteLength === 0) {
 			return { remoteRefs: refs, objectCount: 0 };
@@ -390,6 +395,10 @@ export class SmartHttpTransport implements Transport {
 		}
 
 		const result = await pushPack(this.url, commands, packData, pushCaps, this.auth, this.fetchFn);
+
+		if (this.onProgress) {
+			for (const msg of result.progress) this.onProgress(msg);
+		}
 
 		const serverResults: PushRefUpdate[] = accepted.map((u) => {
 			const refResult = result.refResults.find((r) => r.name === u.name);
