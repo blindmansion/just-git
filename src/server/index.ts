@@ -75,3 +75,4 @@ export { MemoryStorage } from "./memory-storage.ts";
 export { BunSqliteStorage, type BunSqliteDatabase } from "./bun-sqlite-storage.ts";
 export { BetterSqlite3Storage, type BetterSqlite3Database } from "./better-sqlite3-storage.ts";
 export { PgStorage, type PgPool } from "./pg-storage.ts";
+export { DurableObjectSqliteStorage, type DurableObjectStorageSql } from "./do-sqlite-storage.ts";

@@ -34,7 +34,7 @@ Bun.serve({ fetch: server.fetch });
 // git push http://localhost:3000/my-repo main ← repo created on first push
 ```
 
-For persistent storage, pass a SQLite or Postgres backend:
+For persistent storage, pass a SQLite, Postgres, or Durable Object backend:
 
 ```ts
 import { createServer, BunSqliteStorage } from "just-git/server";
@@ -387,9 +387,64 @@ const server = createServer({
 await server.createRepo("my-repo");
 ```
 
+### `DurableObjectSqliteStorage`
+
+For Cloudflare Durable Objects with SQLite storage. A full example with auth and repo-per-DO routing:
+
+```ts
+import { DurableObject } from "cloudflare:workers";
+import { createServer, DurableObjectSqliteStorage } from "just-git/server";
+
+interface Env {
+  GIT_REPO: DurableObjectNamespace<GitRepoDO>;
+  GIT_TOKEN: string;
+}
+
+export class GitRepoDO extends DurableObject<Env> {
+  private server;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.server = createServer({
+      storage: new DurableObjectSqliteStorage(ctx.storage),
+      autoCreate: true,
+      auth: {
+        http: (request) => {
+          const header = request.headers.get("Authorization");
+          if (header !== `Bearer ${env.GIT_TOKEN}`) {
+            return new Response("Unauthorized", {
+              status: 401,
+              headers: { "WWW-Authenticate": 'Bearer realm="git"' },
+            });
+          }
+          return { authenticated: true };
+        },
+      },
+    });
+  }
+
+  async fetch(request: Request) {
+    return this.server.fetch(request);
+  }
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+
+    const match = url.pathname.match(/^\/([^/]+)\//);
+    if (!match) return new Response("Not found", { status: 404 });
+
+    const repoName = match[1];
+    const id = env.GIT_REPO.idFromName(repoName);
+    return env.GIT_REPO.get(id).fetch(request);
+  },
+} satisfies ExportedHandler<Env>;
+```
+
 ### Database schema
 
-The SQL backends (`BunSqliteStorage`, `BetterSqlite3Storage`, `PgStorage`) create four tables on the provided database if they don't already exist:
+The SQL backends (`BunSqliteStorage`, `BetterSqlite3Storage`, `PgStorage`, `DurableObjectSqliteStorage`) create four tables on the provided database if they don't already exist:
 
 | Table         | Purpose                                       | Key                     |
 | ------------- | --------------------------------------------- | ----------------------- |
@@ -668,7 +723,7 @@ const fork = await server.forkRepo("upstream", "user/fork");
 
 **GC:** When GC'ing a root repo, the server includes all fork ref tips in the reachability walk, so objects referenced only by forks are not collected. When GC'ing a fork, only the fork's own partition is examined.
 
-**Storage requirements:** Fork support requires the storage backend to implement the optional `forkRepo`, `getForkParent`, and `listForks` methods. All built-in backends (`MemoryStorage`, `BunSqliteStorage`, `BetterSqlite3Storage`, `PgStorage`) support forks. Custom backends that don't implement these methods will throw `"storage backend does not support forks"` when `server.forkRepo()` is called — all other operations work unchanged.
+**Storage requirements:** Fork support requires the storage backend to implement the optional `forkRepo`, `getForkParent`, and `listForks` methods. All built-in backends (`MemoryStorage`, `BunSqliteStorage`, `BetterSqlite3Storage`, `PgStorage`, `DurableObjectSqliteStorage`) support forks. Custom backends that don't implement these methods will throw `"storage backend does not support forks"` when `server.forkRepo()` is called — all other operations work unchanged.
 
 ## Graceful shutdown
 

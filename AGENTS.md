@@ -186,12 +186,13 @@ Key behaviors:
 
 `Storage` (thin raw key-value CRUD) is the user-facing abstraction. Drivers implement raw object/ref I/O and an `atomicRefUpdate` primitive; the internal adapter handles object hashing, pack ingestion, symref resolution, and CAS semantics. All `Storage` methods use `MaybeAsync<T>` (`T | Promise<T>`) return types so sync (SQLite) and async (Pg) drivers both work. Three optional fork methods (`forkRepo?`, `getForkParent?`, `listForks?`) enable fork semantics — all built-in backends implement them. The adapter handles object fallback (fork reads from parent) and fork-of-fork flattening.
 
-| Backend                | File                               | Construction                   | Database interface                                |
-| ---------------------- | ---------------------------------- | ------------------------------ | ------------------------------------------------- |
-| `MemoryStorage`        | `server/memory-storage.ts`         | `new MemoryStorage()`          | None                                              |
-| `BunSqliteStorage`     | `server/bun-sqlite-storage.ts`     | `new BunSqliteStorage(db)`     | `BunSqliteDatabase` (native `bun:sqlite`)         |
-| `BetterSqlite3Storage` | `server/better-sqlite3-storage.ts` | `new BetterSqlite3Storage(db)` | `BetterSqlite3Database` (native `better-sqlite3`) |
-| `PgStorage`            | `server/pg-storage.ts`             | `await PgStorage.create(pool)` | `PgPool` (duck-typed, matches `pg.Pool`)          |
+| Backend                      | File                               | Construction                                  | Database interface                                                        |
+| ---------------------------- | ---------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------- |
+| `MemoryStorage`              | `server/memory-storage.ts`         | `new MemoryStorage()`                         | None                                                                      |
+| `BunSqliteStorage`           | `server/bun-sqlite-storage.ts`     | `new BunSqliteStorage(db)`                    | `BunSqliteDatabase` (native `bun:sqlite`)                                 |
+| `BetterSqlite3Storage`       | `server/better-sqlite3-storage.ts` | `new BetterSqlite3Storage(db)`                | `BetterSqlite3Database` (native `better-sqlite3`)                         |
+| `PgStorage`                  | `server/pg-storage.ts`             | `await PgStorage.create(pool)`                | `PgPool` (duck-typed, matches `pg.Pool`)                                  |
+| `DurableObjectSqliteStorage` | `server/do-sqlite-storage.ts`      | `new DurableObjectSqliteStorage(ctx.storage)` | `DurableObjectStorageSql` (duck-typed, matches CF `DurableObjectStorage`) |
 
 **Unified server (`createServer`):**
 
