@@ -238,7 +238,7 @@ const BAND_ERROR = 3;
 
 // ── Streaming sideband demuxer ───────────────────────────────────────
 
-export interface StreamingSidebandResult {
+interface StreamingSidebandResult {
 	packData: Uint8Array;
 	preambleLines: PktLine[];
 }
