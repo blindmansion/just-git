@@ -59,6 +59,7 @@ export type {
 	RemoteResolver,
 	SymbolicRef,
 } from "./lib/types";
+export type { MergeDriver, MergeDriverResult } from "./lib/merge-ort";
 export type { PackObject } from "./lib/pack/packfile";
 export type { HttpAuth } from "./lib/transport/transport";
 export { findRepo } from "./lib/repo";

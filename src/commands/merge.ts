@@ -248,7 +248,7 @@ async function handleThreeWayMerge(
 	const labels = { a: "HEAD", b: branchName, conflictStyle };
 
 	// Step 1: Run merge-ort (recursive — handles criss-cross merges)
-	const result = await mergeOrtRecursive(gitCtx, headHash, theirsHash, labels);
+	const result = await mergeOrtRecursive(gitCtx, headHash, theirsHash, labels, ext?.mergeDriver);
 
 	// Step 2: Apply merge result to index and worktree
 	const applyResult = await applyMergeResult(gitCtx, result, headCommit.tree, {
@@ -426,7 +426,7 @@ async function handleSquashMerge(
 		? `Updating ${abbreviateHash(headHash)}..${abbreviateHash(theirsHash)}\n`
 		: "";
 
-	const result = await mergeOrtRecursive(gitCtx, headHash, theirsHash, labels);
+	const result = await mergeOrtRecursive(gitCtx, headHash, theirsHash, labels, _ext?.mergeDriver);
 
 	const applyResult = await applyMergeResult(gitCtx, result, headCommit.tree, {
 		labels,

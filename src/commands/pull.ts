@@ -488,7 +488,13 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				| "diff3";
 			const labels = { a: "HEAD", b: branchLabel, conflictStyle };
 
-			const mergeResult = await mergeOrtRecursive(gitCtx, headHash, theirsHash, labels);
+			const mergeResult = await mergeOrtRecursive(
+				gitCtx,
+				headHash,
+				theirsHash,
+				labels,
+				ext?.mergeDriver,
+			);
 
 			const headCommit = await readCommit(gitCtx, headHash);
 			const applyResult = await applyMergeResult(gitCtx, mergeResult, headCommit.tree, {

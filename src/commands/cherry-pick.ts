@@ -234,6 +234,7 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 				headCommit.tree,
 				theirsCommit.tree,
 				labels,
+				ext?.mergeDriver,
 			);
 
 			// ── Empty cherry-pick detection ───────────────────────────

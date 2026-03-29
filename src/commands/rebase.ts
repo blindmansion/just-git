@@ -27,7 +27,7 @@ import {
 	readIndex,
 	writeIndex,
 } from "../lib/index.ts";
-import { mergeOrtNonRecursive } from "../lib/merge-ort.ts";
+import { type MergeDriver, mergeOrtNonRecursive } from "../lib/merge-ort.ts";
 import { readCommit } from "../lib/object-db.ts";
 import {
 	clearAllOperationState,
@@ -518,7 +518,7 @@ export async function performRebase(
 	await updateRef(gitCtx, "ORIG_HEAD", origHead);
 
 	// ── Run the pick loop ────────────────────────────────────
-	const pickResult = await runPickLoop(gitCtx, env);
+	const pickResult = await runPickLoop(gitCtx, env, ext?.mergeDriver);
 	if (skipStderr) {
 		pickResult.stderr = skipStderr + pickResult.stderr;
 	}
@@ -549,10 +549,10 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 				return handleAbort(gitCtx, ctx.env);
 			}
 			if (args.continue) {
-				return handleContinue(gitCtx, ctx.env);
+				return handleContinue(gitCtx, ctx.env, ext?.mergeDriver);
 			}
 			if (args.skip) {
-				return handleSkip(gitCtx, ctx.env);
+				return handleSkip(gitCtx, ctx.env, ext?.mergeDriver);
 			}
 
 			// ── Starting a new rebase ────────────────────────────────
@@ -619,7 +619,11 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 
 // ── Pick loop — replays commits from the todo list ──────────────────
 
-async function runPickLoop(gitCtx: GitContext, env: Map<string, string>): Promise<CommandResult> {
+async function runPickLoop(
+	gitCtx: GitContext,
+	env: Map<string, string>,
+	mergeDriver?: MergeDriver,
+): Promise<CommandResult> {
 	const stderrLines: string[] = [];
 	const stdoutLines: string[] = [];
 
@@ -637,7 +641,7 @@ async function runPickLoop(gitCtx: GitContext, env: Map<string, string>): Promis
 		// records attempted picks, not just successful ones).
 		await advanceRebaseState(gitCtx);
 
-		const result = await pickOneCommit(gitCtx, entry, env);
+		const result = await pickOneCommit(gitCtx, entry, env, mergeDriver);
 
 		if (result.conflict) {
 			if (result.rescheduleCurrent) {
@@ -687,6 +691,7 @@ async function pickOneCommit(
 	gitCtx: GitContext,
 	entry: RebaseTodoEntry,
 	env: Map<string, string>,
+	mergeDriver?: MergeDriver,
 ): Promise<PickResult> {
 	const theirsHash = entry.hash;
 	const theirsCommit = await readCommit(gitCtx, theirsHash);
@@ -777,6 +782,7 @@ async function pickOneCommit(
 		headCommit.tree,
 		theirsCommit.tree,
 		labels,
+		mergeDriver,
 	);
 
 	// Build final index
@@ -1040,6 +1046,7 @@ async function handleAbort(gitCtx: GitContext, env: Map<string, string>): Promis
 async function handleContinue(
 	gitCtx: GitContext,
 	env: Map<string, string>,
+	mergeDriver?: MergeDriver,
 ): Promise<CommandResult> {
 	let continueStdout = "";
 
@@ -1192,7 +1199,7 @@ async function handleContinue(
 
 	// State was already advanced when the pick was attempted (before
 	// conflict), so no need to advance again. Just continue.
-	const pickResult = await runPickLoop(gitCtx, env);
+	const pickResult = await runPickLoop(gitCtx, env, mergeDriver);
 	if (continueStdout) {
 		pickResult.stdout = continueStdout + pickResult.stdout;
 	}
@@ -1201,7 +1208,11 @@ async function handleContinue(
 
 // ── --skip ──────────────────────────────────────────────────────────
 
-async function handleSkip(gitCtx: GitContext, env: Map<string, string>): Promise<CommandResult> {
+async function handleSkip(
+	gitCtx: GitContext,
+	env: Map<string, string>,
+	mergeDriver?: MergeDriver,
+): Promise<CommandResult> {
 	const state = await readRebaseState(gitCtx);
 	if (!state) {
 		return fatal("no rebase in progress");
@@ -1238,5 +1249,5 @@ async function handleSkip(gitCtx: GitContext, env: Map<string, string>): Promise
 
 	// State was already advanced when the pick was attempted (before
 	// conflict), so no need to advance again. Just continue.
-	return runPickLoop(gitCtx, env);
+	return runPickLoop(gitCtx, env, mergeDriver);
 }

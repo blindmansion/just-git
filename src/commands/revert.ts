@@ -199,6 +199,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				headCommit.tree,
 				parentTree,
 				labels,
+				ext?.mergeDriver,
 			);
 
 			// ── Empty revert detection ────────────────────────────────

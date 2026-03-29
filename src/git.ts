@@ -12,6 +12,7 @@ import {
 	isRejection,
 } from "./hooks.ts";
 import type { CredentialCache } from "./lib/transport/remote.ts";
+import type { MergeDriver } from "./lib/merge-ort.ts";
 import type { ObjectStore, RefStore, RemoteResolver } from "./lib/types.ts";
 
 export const VERSION = "1.5.13";
@@ -140,6 +141,15 @@ export interface GitOptions {
 	 * remote — format varies by server.
 	 */
 	onProgress?: ProgressCallback;
+	/**
+	 * Custom merge driver for content conflicts. Called during
+	 * `git merge`, `git cherry-pick`, `git revert`, `git rebase`,
+	 * and `git pull` when both sides modify the same file.
+	 *
+	 * Return `{ content, conflict: false }` for a clean resolution,
+	 * or `null` to fall back to the default diff3 algorithm.
+	 */
+	mergeDriver?: MergeDriver;
 }
 
 /**
@@ -168,6 +178,8 @@ export interface GitExtensions {
 	credentialCache?: CredentialCache;
 	/** Callback for server progress messages (sideband band-2). */
 	onProgress?: ProgressCallback;
+	/** Custom merge driver for content conflicts. */
+	mergeDriver?: MergeDriver;
 }
 
 /** Simplified context for {@link Git.exec}. */
@@ -264,6 +276,7 @@ export class Git {
 			resolveRemote: options?.resolveRemote,
 			credentialCache: new Map(),
 			onProgress: options?.onProgress,
+			mergeDriver: options?.mergeDriver,
 			...(options?.objectStore ? { objectStore: options.objectStore } : {}),
 			...(options?.refStore ? { refStore: options.refStore } : {}),
 			...gitDirExt,
