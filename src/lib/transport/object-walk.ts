@@ -1,4 +1,4 @@
-import { objectExists, readCommit, readObject } from "../object-db.ts";
+import { readCommit, readObject } from "../object-db.ts";
 import { parseCommit } from "../objects/commit.ts";
 import { parseTag } from "../objects/tag.ts";
 import { parseTree } from "../objects/tree.ts";
@@ -86,12 +86,7 @@ export async function enumerateObjects(
 
 /**
  * Like `enumerateObjects`, but each yielded object includes its raw
- * content bytes. Content is read lazily during iteration — only one
- * object's content is in memory at a time (from the consumer's
- * perspective).
- *
- * Internally, the graph walk runs first to discover all hashes (needed
- * for the count). Content is then read on demand during iteration.
+ * content bytes. This avoids a second read pass during pack building.
  */
 export async function enumerateObjectsWithContent(
 	ctx: GitRepo,
@@ -100,17 +95,35 @@ export async function enumerateObjectsWithContent(
 	shallowBoundary?: Set<ObjectId>,
 	clientShallowBoundary?: Set<ObjectId>,
 ): Promise<EnumerationResult<WalkObjectWithContent>> {
-	const { count, objects } = await enumerateObjects(
-		ctx,
-		wants,
-		haves,
-		shallowBoundary,
-		clientShallowBoundary,
-	);
+	const haveBoundary = clientShallowBoundary ?? shallowBoundary;
+	const haveSet = new Set<ObjectId>();
+	for (const hash of haves) {
+		await walkReachable(ctx, hash, haveSet, haveBoundary);
+	}
+
+	const effectiveWants = [...wants];
+	if (clientShallowBoundary && shallowBoundary) {
+		for (const shallowHash of clientShallowBoundary) {
+			try {
+				const commit = await readCommit(ctx, shallowHash);
+				for (const parent of commit.parents) {
+					if (!haveSet.has(parent)) effectiveWants.push(parent);
+				}
+			} catch {
+				// Object may not exist on the server
+			}
+		}
+	}
+
+	const result: WalkObjectWithContent[] = [];
+	const visited = new Set<ObjectId>();
+	for (const hash of effectiveWants) {
+		await collectMissingWithContent(ctx, hash, haveSet, visited, result, shallowBoundary);
+	}
 
 	return {
-		count,
-		objects: readContentLazily(ctx, objects),
+		count: result.length,
+		objects: yieldArray(result),
 	};
 }
 
@@ -118,16 +131,6 @@ export async function enumerateObjectsWithContent(
 
 async function* yieldArray<T>(items: T[]): AsyncIterable<T> {
 	for (const item of items) yield item;
-}
-
-async function* readContentLazily(
-	ctx: GitRepo,
-	objects: AsyncIterable<WalkObject>,
-): AsyncIterable<WalkObjectWithContent> {
-	for await (const obj of objects) {
-		const raw = await readObject(ctx, obj.hash);
-		yield { hash: obj.hash, type: obj.type, content: raw.content };
-	}
 }
 
 /**
@@ -154,9 +157,8 @@ async function walkReachable(
 	if (visited.has(hash)) return;
 	visited.add(hash);
 
-	if (!(await objectExists(ctx, hash))) return;
-
-	const raw = await readObject(ctx, hash);
+	const raw = await readObjectIfExists(ctx, hash);
+	if (!raw) return;
 
 	switch (raw.type) {
 		case "commit": {
@@ -183,6 +185,64 @@ async function walkReachable(
 		}
 		case "blob":
 			break;
+	}
+}
+
+async function collectMissingWithContent(
+	ctx: GitRepo,
+	hash: ObjectId,
+	haveSet: Set<ObjectId>,
+	visited: Set<ObjectId>,
+	result: WalkObjectWithContent[],
+	shallowBoundary?: Set<ObjectId>,
+): Promise<void> {
+	if (visited.has(hash) || haveSet.has(hash)) return;
+	visited.add(hash);
+
+	const raw = await readObject(ctx, hash);
+	result.push({ hash, type: raw.type, content: raw.content });
+
+	switch (raw.type) {
+		case "commit": {
+			const commit = parseCommit(raw.content);
+			await collectMissingWithContent(ctx, commit.tree, haveSet, visited, result, shallowBoundary);
+			if (!shallowBoundary?.has(hash)) {
+				for (const parent of commit.parents) {
+					await collectMissingWithContent(ctx, parent, haveSet, visited, result, shallowBoundary);
+				}
+			}
+			break;
+		}
+		case "tree": {
+			const tree = parseTree(raw.content);
+			for (const entry of tree.entries) {
+				await collectMissingWithContent(ctx, entry.hash, haveSet, visited, result, shallowBoundary);
+			}
+			break;
+		}
+		case "tag": {
+			const tag = parseTag(raw.content);
+			await collectMissingWithContent(ctx, tag.object, haveSet, visited, result, shallowBoundary);
+			break;
+		}
+		case "blob":
+			break;
+	}
+}
+
+async function readObjectIfExists(ctx: GitRepo, hash: ObjectId) {
+	if (ctx.objectStore.readMany) {
+		const objects = await ctx.objectStore.readMany([hash]);
+		return objects.get(hash) ?? null;
+	}
+
+	try {
+		return await readObject(ctx, hash);
+	} catch (err) {
+		if (err instanceof Error && err.message === `object ${hash} not found`) {
+			return null;
+		}
+		throw err;
 	}
 }
 

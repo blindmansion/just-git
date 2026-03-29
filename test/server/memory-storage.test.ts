@@ -64,6 +64,27 @@ describe("MemoryStorage", () => {
 			expect(await objects.exists("0000000000000000000000000000000000000000")).toBe(false);
 		});
 
+		test("adapter batch helpers fall back when driver has no batch APIs", async () => {
+			await storage.createRepo("test-repo");
+			const { objectStore: objects } = (await storage.repo("test-repo"))!;
+			const alpha = encoder.encode("alpha");
+			const bravo = encoder.encode("bravo");
+			const hashA = await objects.write("blob", alpha);
+			const hashB = await objects.write("blob", bravo);
+			const missing = "0000000000000000000000000000000000000000";
+
+			expect(objects.readMany).toBeDefined();
+			expect(objects.existsMany).toBeDefined();
+
+			const found = await objects.readMany!([hashA, hashB, missing, hashA]);
+			expect(Array.from(found.keys()).sort()).toEqual([hashA, hashB].sort());
+			expect(new TextDecoder().decode(found.get(hashA)!.content)).toBe("alpha");
+			expect(new TextDecoder().decode(found.get(hashB)!.content)).toBe("bravo");
+
+			const present = await objects.existsMany!([hashA, missing, hashB, hashA]);
+			expect(Array.from(present).sort()).toEqual([hashA, hashB].sort());
+		});
+
 		test("findByPrefix", async () => {
 			await storage.createRepo("test-repo");
 			const { objectStore: objects } = (await storage.repo("test-repo"))!;

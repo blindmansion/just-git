@@ -56,6 +56,7 @@ if (!canRun) {
 // ── Setup / teardown ────────────────────────────────────────────────
 
 let pool: pg.Pool | null = null;
+let driver: PgStorage | null = null;
 let storage: StorageAdapter | null = null;
 
 async function waitForReady(url: string, maxMs = 20_000): Promise<boolean> {
@@ -81,7 +82,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 		const ready = await waitForReady(connectionUrl!);
 		if (!ready) throw new Error("Postgres not ready after 20s");
 		pool = new pg.Pool({ connectionString: connectionUrl! });
-		const driver = await PgStorage.create(pool);
+		driver = await PgStorage.create(pool);
 		storage = createStorageAdapter(driver);
 	});
 
@@ -136,6 +137,29 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
 			expect(await objects.exists(hash)).toBe(true);
 			expect(await objects.exists("0000000000000000000000000000000000000000")).toBe(false);
+		});
+
+		test("batch object helpers return only stored hashes", async () => {
+			await storage!.createRepo("test-repo-obj-4b");
+			const { objectStore: objects } = (await storage!.repo("test-repo-obj-4b"))!;
+			const alpha = encoder.encode("alpha");
+			const bravo = encoder.encode("bravo");
+			const hashA = await objects.write("blob", alpha);
+			const hashB = await objects.write("blob", bravo);
+			const missing = "0000000000000000000000000000000000000000";
+
+			expect(driver!.getObjects).toBeDefined();
+			expect(driver!.hasObjects).toBeDefined();
+			expect(objects.readMany).toBeDefined();
+			expect(objects.existsMany).toBeDefined();
+
+			const found = await objects.readMany!([hashA, hashB, missing, hashA]);
+			expect(Array.from(found.keys()).sort()).toEqual([hashA, hashB].sort());
+			expect(new TextDecoder().decode(found.get(hashA)!.content)).toBe("alpha");
+			expect(new TextDecoder().decode(found.get(hashB)!.content)).toBe("bravo");
+
+			const present = await objects.existsMany!([hashA, missing, hashB, hashA]);
+			expect(Array.from(present).sort()).toEqual([hashA, hashB].sort());
 		});
 
 		test("findByPrefix", async () => {

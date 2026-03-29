@@ -136,6 +136,12 @@ export interface Storage {
 	 */
 	getObject(repoId: string, hash: string): MaybeAsync<RawObject | null>;
 
+	/**
+	 * Batch-read raw git objects by hash.
+	 * Returns only objects that exist for `repoId`.
+	 */
+	getObjects?(repoId: string, hashes: ReadonlyArray<string>): MaybeAsync<Map<string, RawObject>>;
+
 	/** Store a single git object. `content` is the uncompressed object body (no git header). */
 	putObject(repoId: string, hash: string, type: string, content: Uint8Array): MaybeAsync<void>;
 
@@ -155,6 +161,12 @@ export interface Storage {
 
 	/** Check whether an object exists without reading its content. */
 	hasObject(repoId: string, hash: string): MaybeAsync<boolean>;
+
+	/**
+	 * Batch existence check for objects.
+	 * Returns the subset of `hashes` that exist for `repoId`.
+	 */
+	hasObjects?(repoId: string, hashes: ReadonlyArray<string>): MaybeAsync<Set<string>>;
 
 	/**
 	 * Find all object hashes starting with `prefix` (for short-hash resolution).
@@ -374,10 +386,75 @@ class AdaptedObjectStore implements ObjectStore, DeferrableObjectStore {
 		return obj;
 	}
 
+	async readMany(hashes: ReadonlyArray<ObjectId>): Promise<Map<ObjectId, RawObject>> {
+		const uniqueHashes = dedupeHashes(hashes);
+		const result = new Map<ObjectId, RawObject>();
+		const missingOwn: ObjectId[] = [];
+
+		for (const hash of uniqueHashes) {
+			const cached = this.cache.get(hash);
+			if (cached) {
+				result.set(hash, cached);
+			} else {
+				missingOwn.push(hash);
+			}
+		}
+
+		if (missingOwn.length > 0) {
+			const ownObjects = await this.loadObjects(this.repoId, missingOwn);
+			for (const [hash, obj] of ownObjects) {
+				this.cache.set(hash, obj);
+				result.set(hash, obj);
+			}
+		}
+
+		if (this.parentId) {
+			const missingParent = missingOwn.filter((hash) => !result.has(hash));
+			if (missingParent.length > 0) {
+				const parentObjects = await this.loadObjects(this.parentId, missingParent);
+				for (const [hash, obj] of parentObjects) {
+					this.cache.set(hash, obj);
+					result.set(hash, obj);
+				}
+			}
+		}
+
+		return result;
+	}
+
 	async exists(hash: ObjectId): Promise<boolean> {
 		if (await this.driver.hasObject(this.repoId, hash)) return true;
 		if (this.parentId) return !!(await this.driver.hasObject(this.parentId, hash));
 		return false;
+	}
+
+	async existsMany(hashes: ReadonlyArray<ObjectId>): Promise<Set<ObjectId>> {
+		const uniqueHashes = dedupeHashes(hashes);
+		const present = new Set<ObjectId>();
+		const missingOwn: ObjectId[] = [];
+
+		for (const hash of uniqueHashes) {
+			if (this.cache.get(hash)) {
+				present.add(hash);
+			} else {
+				missingOwn.push(hash);
+			}
+		}
+
+		if (missingOwn.length > 0) {
+			const ownSet = await this.checkObjects(this.repoId, missingOwn);
+			for (const hash of ownSet) present.add(hash);
+		}
+
+		if (this.parentId) {
+			const missingParent = missingOwn.filter((hash) => !present.has(hash));
+			if (missingParent.length > 0) {
+				const parentSet = await this.checkObjects(this.parentId, missingParent);
+				for (const hash of parentSet) present.add(hash);
+			}
+		}
+
+		return present;
 	}
 
 	async preparePack(
@@ -454,6 +531,41 @@ class AdaptedObjectStore implements ObjectStore, DeferrableObjectStore {
 		const set = new Set(own);
 		for (const h of parent) set.add(h);
 		return Array.from(set);
+	}
+
+	private async loadObjects(
+		repoId: string,
+		hashes: ReadonlyArray<ObjectId>,
+	): Promise<Map<ObjectId, RawObject>> {
+		if (hashes.length === 0) return new Map();
+		if (this.driver.getObjects) {
+			const rows = await this.driver.getObjects(repoId, hashes);
+			return new Map(rows as Map<ObjectId, RawObject>);
+		}
+
+		const result = new Map<ObjectId, RawObject>();
+		for (const hash of hashes) {
+			const obj = await this.driver.getObject(repoId, hash);
+			if (obj) result.set(hash, obj);
+		}
+		return result;
+	}
+
+	private async checkObjects(
+		repoId: string,
+		hashes: ReadonlyArray<ObjectId>,
+	): Promise<Set<ObjectId>> {
+		if (hashes.length === 0) return new Set();
+		if (this.driver.hasObjects) {
+			const rows = await this.driver.hasObjects(repoId, hashes);
+			return new Set(rows as Set<ObjectId>);
+		}
+
+		const result = new Set<ObjectId>();
+		for (const hash of hashes) {
+			if (await this.driver.hasObject(repoId, hash)) result.add(hash);
+		}
+		return result;
 	}
 }
 
@@ -545,4 +657,8 @@ function resolveRefChain(
 		}
 		return null;
 	});
+}
+
+function dedupeHashes<T extends string>(hashes: ReadonlyArray<T>): T[] {
+	return Array.from(new Set(hashes));
 }

@@ -6,6 +6,7 @@ import {
 	enumerateObjects,
 	enumerateObjectsWithContent,
 } from "../../src/lib/transport/object-walk.ts";
+import type { GitRepo, ObjectId, RawObject } from "../../src/lib/types.ts";
 import { TEST_ENV as ENV } from "../fixtures";
 import { createTestBash } from "../util";
 
@@ -112,5 +113,36 @@ describe("enumerateObjectsWithContent", () => {
 		const withoutContent = await enumerateObjects(ctx, [head], []);
 		const withContent = await enumerateObjectsWithContent(ctx, [head], []);
 		expect(withContent.count).toBe(withoutContent.count);
+	});
+
+	test("does not re-read objects during content enumeration", async () => {
+		const bash = await setupRepo({
+			"/repo/a.txt": "file a",
+			"/repo/b.txt": "file b",
+		});
+		await bash.exec("git add .");
+		await bash.exec('git commit -m "multi"');
+
+		const ctx = (await findRepo(bash.fs, "/repo"))!;
+		const head = (await resolveHead(ctx))!;
+		const readCounts = new Map<ObjectId, number>();
+		const countingRepo: GitRepo = {
+			...ctx,
+			objectStore: {
+				...ctx.objectStore,
+				async read(hash: ObjectId): Promise<RawObject> {
+					readCounts.set(hash, (readCounts.get(hash) ?? 0) + 1);
+					return ctx.objectStore.read(hash);
+				},
+			},
+		};
+
+		const result = await enumerateObjectsWithContent(countingRepo, [head], []);
+		const collected = await collectEnumeration(result);
+
+		expect(collected.length).toBe(result.count);
+		for (const obj of collected) {
+			expect(readCounts.get(obj.hash)).toBe(1);
+		}
 	});
 });

@@ -54,7 +54,10 @@ const SQL = {
 	objInsert:
 		"INSERT INTO git_objects (repo_id, hash, type, content) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING hash",
 	objRead: "SELECT type, content FROM git_objects WHERE repo_id = $1 AND hash = $2",
+	objReadMany:
+		"SELECT hash, type, content FROM git_objects WHERE repo_id = $1 AND hash = ANY($2::text[])",
 	objExists: "SELECT 1 FROM git_objects WHERE repo_id = $1 AND hash = $2 LIMIT 1",
+	objExistsMany: "SELECT hash FROM git_objects WHERE repo_id = $1 AND hash = ANY($2::text[])",
 	objPrefix: "SELECT hash FROM git_objects WHERE repo_id = $1 AND hash LIKE $2",
 	objDeleteAll: "DELETE FROM git_objects WHERE repo_id = $1",
 	objListHashes: "SELECT hash FROM git_objects WHERE repo_id = $1",
@@ -74,6 +77,8 @@ const SQL = {
 	forkListChildren: "SELECT repo_id FROM git_forks WHERE parent_id = $1",
 	forkDelete: "DELETE FROM git_forks WHERE repo_id = $1",
 } as const;
+
+const OBJECT_INSERT_BATCH_SIZE = 256;
 
 // ── PgStorage ────────────────────────────────────────────────────────
 
@@ -141,6 +146,22 @@ export class PgStorage implements Storage {
 		return { type: row.type as RawObject["type"], content: new Uint8Array(row.content) };
 	}
 
+	async getObjects(repoId: string, hashes: ReadonlyArray<string>): Promise<Map<string, RawObject>> {
+		if (hashes.length === 0) return new Map();
+		const { rows } = await this.pool.query<{ hash: string; type: string; content: Uint8Array }>(
+			SQL.objReadMany,
+			[repoId, Array.from(new Set(hashes))],
+		);
+		const result = new Map<string, RawObject>();
+		for (const row of rows) {
+			result.set(row.hash, {
+				type: row.type as RawObject["type"],
+				content: new Uint8Array(row.content),
+			});
+		}
+		return result;
+	}
+
 	async putObject(repoId: string, hash: string, type: string, content: Uint8Array): Promise<void> {
 		await this.pool.query(SQL.objInsert, [repoId, hash, type, content]);
 	}
@@ -149,16 +170,15 @@ export class PgStorage implements Storage {
 		repoId: string,
 		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
 	): Promise<string[]> {
+		if (objects.length === 0) return [];
 		return await this.transaction(async (query) => {
 			const inserted: string[] = [];
-			for (const obj of objects) {
-				const { rows } = await query<{ hash: string }>(SQL.objInsert, [
-					repoId,
-					obj.hash,
-					obj.type,
-					obj.content,
-				]);
-				if (rows[0]?.hash) inserted.push(rows[0].hash);
+			for (const batch of chunkArray(objects, OBJECT_INSERT_BATCH_SIZE)) {
+				const { text, values } = buildBulkObjectInsert(repoId, batch);
+				const { rows } = await query<{ hash: string }>(text, values);
+				for (const row of rows) {
+					inserted.push(row.hash);
+				}
 			}
 			return inserted;
 		});
@@ -167,6 +187,15 @@ export class PgStorage implements Storage {
 	async hasObject(repoId: string, hash: string): Promise<boolean> {
 		const { rows } = await this.pool.query(SQL.objExists, [repoId, hash]);
 		return rows.length > 0;
+	}
+
+	async hasObjects(repoId: string, hashes: ReadonlyArray<string>): Promise<Set<string>> {
+		if (hashes.length === 0) return new Set();
+		const { rows } = await this.pool.query<{ hash: string }>(SQL.objExistsMany, [
+			repoId,
+			Array.from(new Set(hashes)),
+		]);
+		return new Set(rows.map((row) => row.hash));
 	}
 
 	async findObjectsByPrefix(repoId: string, prefix: string): Promise<string[]> {
@@ -273,4 +302,32 @@ function rowToRef(row: RefRow | null): Ref | null {
 		return { type: "direct", hash: row.hash };
 	}
 	return null;
+}
+
+function buildBulkObjectInsert(
+	repoId: string,
+	objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
+): { text: string; values: any[] } {
+	const values: any[] = [];
+	const tuples: string[] = [];
+
+	for (let i = 0; i < objects.length; i++) {
+		const base = i * 4;
+		const obj = objects[i]!;
+		values.push(repoId, obj.hash, obj.type, obj.content);
+		tuples.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`);
+	}
+
+	return {
+		text: `INSERT INTO git_objects (repo_id, hash, type, content) VALUES ${tuples.join(", ")} ON CONFLICT DO NOTHING RETURNING hash`,
+		values,
+	};
+}
+
+function chunkArray<T>(items: ReadonlyArray<T>, size: number): T[][] {
+	const chunks: T[][] = [];
+	for (let i = 0; i < items.length; i += size) {
+		chunks.push(items.slice(i, i + size));
+	}
+	return chunks;
 }

@@ -192,8 +192,10 @@ export interface RefStore {
  */
 export interface ObjectStore {
 	read(hash: ObjectId): Promise<RawObject>;
+	readMany?(hashes: ReadonlyArray<ObjectId>): Promise<Map<ObjectId, RawObject>>;
 	write(type: ObjectType, content: Uint8Array): Promise<ObjectId>;
 	exists(hash: ObjectId): Promise<boolean>;
+	existsMany?(hashes: ReadonlyArray<ObjectId>): Promise<Set<ObjectId>>;
 	ingestPack(packData: Uint8Array): Promise<number>;
 	/**
 	 * Ingest pre-resolved objects from a streaming source.
