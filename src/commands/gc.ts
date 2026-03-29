@@ -9,7 +9,7 @@ import { readReflog, writeReflog, ZERO_HASH } from "../lib/reflog.ts";
 import { listRefs, resolveHead, resolveRef, writePackedRefs } from "../lib/refs.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { type Command, f } from "../parse/index.ts";
-import { formatRepackStderr, repackFromTips } from "./repack.ts";
+import { formatRepackStderr, repackFromTips } from "../lib/repack.ts";
 
 export function registerGcCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("gc", {

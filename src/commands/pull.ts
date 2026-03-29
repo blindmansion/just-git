@@ -44,7 +44,7 @@ import { resolveRemoteTransport } from "../lib/transport/remote.ts";
 import type { RemoteRef, ShallowFetchOptions } from "../lib/transport/transport.ts";
 import type { GitContext, ObjectId, Ref } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
-import { performRebase } from "./rebase.ts";
+import { performRebase } from "../lib/rebase-engine.ts";
 
 export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("pull", {
