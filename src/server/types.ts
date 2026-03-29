@@ -519,9 +519,13 @@ export interface ServerHooks<A = Auth> {
 	postReceive?: (event: PostReceiveEvent<A>) => void | Promise<void>;
 
 	/**
-	 * Called when a client wants to fetch or push (during ref advertisement).
-	 * Return a filtered ref list to hide branches, a Rejection to deny
-	 * access entirely, or void to advertise all refs.
+	 * Called during upload-pack / receive-pack ref advertisement.
+	 * Return a filtered ref list to hide refs, a Rejection to deny
+	 * access to that service entirely, or void to advertise all refs.
+	 *
+	 * This hook is primarily for ref visibility and coarse service access.
+	 * Use `preReceive` / `update` for push authorization and per-ref write
+	 * policy.
 	 */
 	advertiseRefs?: (
 		event: AdvertiseRefsEvent<A>,

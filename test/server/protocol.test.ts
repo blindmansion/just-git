@@ -17,6 +17,7 @@ import { createServer } from "../../src/server/handler.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
 import { createStorageAdapter } from "../../src/server/storage.ts";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
+import { createGit, MemoryFileSystem } from "../../src/index.ts";
 
 // ── Protocol codec tests ────────────────────────────────────────────
 
@@ -305,6 +306,54 @@ describe("handler HTTP conformance", () => {
 		serverFetch = server.fetch;
 	};
 
+	const captureReceivePackRequest = async (repoId: string) => {
+		const server = createServer({ storage: new MemoryStorage() });
+		await server.createRepo(repoId);
+
+		let captured:
+			| {
+					body: Uint8Array;
+					headers: Headers;
+			  }
+			| undefined;
+
+		const fs = new MemoryFileSystem();
+		const git = createGit({
+			fs,
+			cwd: "/work",
+			identity: { name: "Test", email: "test@test.com", locked: true },
+			network: {
+				allowed: ["localhost"],
+				fetch: async (input, init) => {
+					const req = new Request(input as string, init);
+					const url = new URL(req.url);
+					if (req.method === "POST" && url.pathname.endsWith("/git-receive-pack")) {
+						const body = new Uint8Array(await req.arrayBuffer());
+						captured = { body, headers: new Headers(req.headers) };
+						return server.fetch(
+							new Request(req.url, {
+								method: "POST",
+								headers: req.headers,
+								body,
+							}),
+						);
+					}
+					return server.fetch(req);
+				},
+			},
+		});
+
+		await git.exec("init /work");
+		await fs.writeFile("/work/README.md", "# test\n");
+		await git.exec("add .");
+		await git.exec('commit -m "initial"');
+		await git.exec(`remote add origin http://localhost/${repoId}`);
+		const push = await git.exec("push origin main");
+		expect(push.exitCode).toBe(0);
+		expect(captured).toBeDefined();
+		return captured!;
+	};
+
 	test("GET /info/refs without service param returns 403", async () => {
 		await setup();
 		const res = await serverFetch(new Request("http://localhost/repo/info/refs"));
@@ -437,6 +486,34 @@ describe("handler HTTP conformance", () => {
 		expect(await directUpload.text()).toContain("denied");
 	});
 
+	test("denied advertiseRefs also blocks direct POST /git-receive-pack", async () => {
+		const captured = await captureReceivePackRequest("repo");
+
+		const server = createServer({
+			storage: new MemoryStorage(),
+			hooks: {
+				advertiseRefs: async ({ service }) =>
+					service === "git-receive-pack" ? { reject: true, message: "denied" } : undefined,
+			},
+		});
+		await server.createRepo("repo");
+
+		const deniedInfoRefs = await server.fetch(
+			new Request("http://localhost/repo/info/refs?service=git-receive-pack"),
+		);
+		expect(deniedInfoRefs.status).toBe(403);
+
+		const directPush = await server.fetch(
+			new Request("http://localhost/repo/git-receive-pack", {
+				method: "POST",
+				headers: captured.headers,
+				body: captured.body,
+			}),
+		);
+		expect(directPush.status).toBe(403);
+		expect(await directPush.text()).toContain("denied");
+	});
+
 	test("filtered hidden refs cannot be fetched by hash over v1 upload-pack", async () => {
 		const driver = new MemoryStorage();
 		const storage = createStorageAdapter(driver);
@@ -495,6 +572,41 @@ describe("handler HTTP conformance", () => {
 
 		expect(res.status).toBe(403);
 		expect(await res.text()).toContain("forbidden want");
+	});
+
+	test("filtered refs do not leak HEAD symref target", async () => {
+		const driver = new MemoryStorage();
+		const storage = createStorageAdapter(driver);
+		const repo = await storage.createRepo("repo", { defaultBranch: "secret" });
+
+		const blob = await writeBlob(repo, "classified");
+		const tree = await writeTree(repo, [{ name: "secret.txt", hash: blob }]);
+		const secretHash = await createCommit(repo, {
+			tree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "secret\n",
+		});
+		await repo.refStore.writeRef("refs/heads/secret", { type: "direct", hash: secretHash });
+		await repo.refStore.writeRef("refs/heads/public", { type: "direct", hash: secretHash });
+
+		const server = createServer({
+			storage: driver,
+			hooks: {
+				advertiseRefs: async ({ refs }) =>
+					refs.filter((ref) => ref.name === "HEAD" || ref.name === "refs/heads/public"),
+			},
+		});
+
+		const res = await server.fetch(
+			new Request("http://localhost/repo/info/refs?service=git-upload-pack"),
+		);
+		expect(res.status).toBe(200);
+		const body = new TextDecoder().decode(new Uint8Array(await res.arrayBuffer()));
+		expect(body).toContain("refs/heads/public");
+		expect(body).not.toContain("refs/heads/secret\n");
+		expect(body).not.toContain("symref=HEAD:refs/heads/secret");
 	});
 
 	test("POST /git-receive-pack returns correct Content-Type", async () => {

@@ -135,7 +135,7 @@ Authentication (verifying identity) and authorization (checking permissions) liv
 | Layer                | Concern                                                          | Mechanism                                                                |
 | -------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | Auth provider        | **Authentication** — parse credentials, verify identity          | HTTP: return `Response` to reject, or a typed context. SSH: enrich only. |
-| `advertiseRefs` hook | **Read authorization** — control who can clone/fetch             | Return `Rejection` to deny repo access                                   |
+| `advertiseRefs` hook | **Ref visibility / service access** — control discovery results  | Return `Rejection` to deny upload-pack or receive-pack access            |
 | `preReceive` hook    | **Write authorization** (batch) — control who can push           | Return `Rejection` to deny the entire push                               |
 | `update` hook        | **Write authorization** (per-ref) — control specific ref updates | Return `Rejection` to deny one ref                                       |
 
@@ -305,14 +305,16 @@ const server = createServer({
 });
 ```
 
-| Hook            | Fires when                                         | Can reject?                |
-| --------------- | -------------------------------------------------- | -------------------------- |
-| `preReceive`    | After objects are unpacked, before any ref updates | Yes (aborts entire push)   |
-| `update`        | Per-ref, after `preReceive` passes                 | Yes (blocks this ref only) |
-| `postReceive`   | After all ref updates succeed                      | No                         |
-| `advertiseRefs` | Client requests ref listing (clone/fetch/push)     | Yes (denies repo access)   |
+| Hook            | Fires when                                         | Can reject?                      |
+| --------------- | -------------------------------------------------- | -------------------------------- |
+| `preReceive`    | After objects are unpacked, before any ref updates | Yes (aborts entire push)         |
+| `update`        | Per-ref, after `preReceive` passes                 | Yes (blocks this ref only)       |
+| `postReceive`   | After all ref updates succeed                      | No                               |
+| `advertiseRefs` | During upload-pack / receive-pack advertisement    | Yes (denies that service access) |
 
 All hook payloads include `repo: GitRepo`, `repoId`, and `auth` (from the auth provider). Pre-hooks return `{ reject: true, message? }` to block the operation, using the same `Rejection` protocol as [client-side hooks](HOOKS.md).
+
+`advertiseRefs` is best suited for hiding refs and denying coarse access to upload-pack / receive-pack. For push authorization and branch policy, prefer `preReceive` and `update`, which run on the actual receive-pack path.
 
 ### Composing hooks
 

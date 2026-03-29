@@ -293,7 +293,13 @@ export async function advertiseRefsWithHooks<A>(
 		if (isRejection(result)) return result;
 		if (result) refs = result;
 	}
-	return { refs, headTarget };
+	const visibleHeadTarget =
+		headTarget &&
+		refs.some((ref) => ref.name === "HEAD") &&
+		refs.some((ref) => ref.name === headTarget)
+			? headTarget
+			: undefined;
+	return { refs, headTarget: visibleHeadTarget };
 }
 
 // ── Upload-pack (fetch/clone serving) ───────────────────────────────

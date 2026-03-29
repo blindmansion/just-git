@@ -318,6 +318,17 @@ export function createServer<A = Auth>(
 					const resolved = await resolveRepo(requestPath);
 					if (!resolved) return new Response("Not Found", { status: 404 });
 
+					if (hooks?.advertiseRefs) {
+						const adv = await advertiseRefsWithHooks(
+							resolved.repo,
+							resolved.repoId,
+							"git-receive-pack",
+							hooks,
+							auth,
+						);
+						if (isRejection(adv)) return forbiddenResponse(adv);
+					}
+
 					const body = await readRequestBody(req, receiveLimits);
 					const ingestResult = await ingestReceivePack(resolved.repo, body, receiveLimits);
 
