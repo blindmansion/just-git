@@ -600,28 +600,26 @@ export async function replayAndCheck(
 
 		// Output comparison (exit code + stdout + stderr) — checked AFTER
 		// state so state-level failures and post-mortem classification fire
-		// first. Skip if there are state-level warnings at this step, since
-		// warned divergences (e.g. different commit hash) will cascade into
-		// stdout/stderr differences that aren't separate bugs.
-		if (result.status !== "warn") {
-			const outputDivs = checker.checkOutput(seq, output);
-			if (outputDivs.length > 0) {
-				if (options?.verbose) {
-					console.log(`  [${seq}] FAIL  ${command.slice(0, 60)}`);
-					for (const d of outputDivs) {
-						console.log(
-							`         ${d.field} [${d.severity}]: expected=${JSON.stringify(d.expected)} actual=${JSON.stringify(d.actual)}`,
-						);
-					}
+		// first. Even warn-level state drift still gets output validation;
+		// command-specific checker relaxations should own any tolerated
+		// stdout/stderr differences instead of replay skipping them wholesale.
+		const outputDivs = checker.checkOutput(seq, output);
+		if (outputDivs.length > 0) {
+			if (options?.verbose) {
+				console.log(`  [${seq}] FAIL  ${command.slice(0, 60)}`);
+				for (const d of outputDivs) {
+					console.log(
+						`         ${d.field} [${d.severity}]: expected=${JSON.stringify(d.expected)} actual=${JSON.stringify(d.actual)}`,
+					);
 				}
-				return {
-					totalSteps,
-					passed,
-					warned,
-					firstWarning,
-					firstDivergence: { seq, command, divergences: outputDivs },
-				};
 			}
+			return {
+				totalSteps,
+				passed,
+				warned,
+				firstWarning,
+				firstDivergence: { seq, command, divergences: outputDivs },
+			};
 		}
 
 		// If we got here, state is pass or warn-only, and output (if checked) matched

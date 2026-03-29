@@ -51,6 +51,10 @@ export interface Divergence {
 
 // ── Severity classification ──────────────────────────────────────
 
+interface SeverityContext {
+	currentBranchRef: string | null;
+}
+
 /**
  * Classify a divergence field as error or warning.
  *
@@ -58,22 +62,33 @@ export interface Divergence {
  *   - work_tree: different files on disk
  *   - head_ref: on the wrong branch
  *   - active_operation: wrong operation state (rebase vs none, etc.)
+ *   - head_sha: wrong commit when HEAD is attached to a branch
+ *   - ref:*: checked-out branch moved to the wrong commit, or missing/extra refs
  *   - index:*: any index difference (structure, content, mode)
- *   - ref:* missing/extra: branch exists on one side but not the other
  *
  * Warnings (different history, equivalent behavior):
- *   - head_sha: different commit hash (but same branch, same worktree)
- *   - ref:* sha mismatch: branch points to different commit (both exist)
+ *   - head_sha: detached HEAD points to different commit
+ *   - ref:* sha mismatch on non-current refs
  *   - operation_state_hash: internal operation state differs
  */
-function classifySeverity(field: string, expected: unknown, actual: unknown): DivergenceSeverity {
+function classifySeverity(
+	field: string,
+	expected: unknown,
+	actual: unknown,
+	context: SeverityContext,
+): DivergenceSeverity {
 	// Worktree, head_ref, active_operation are always errors
 	if (field === "work_tree") return "error";
 	if (field === "head_ref") return "error";
 	if (field === "active_operation") return "error";
 
-	// head_sha: different commit, possibly equivalent content
-	if (field === "head_sha") return "warn";
+	// When HEAD is attached, a different commit hash means the checked-out
+	// branch points somewhere else. Detached HEAD drift remains warning-only
+	// for now because some planner-related history differences are still
+	// intentionally tolerated elsewhere in the oracle flow.
+	if (field === "head_sha") {
+		return context.currentBranchRef ? "error" : "warn";
+	}
 
 	// operation_state_hash: internal state differs but operation type matches
 	// (operation type mismatch is caught separately by active_operation)
@@ -85,6 +100,7 @@ function classifySeverity(field: string, expected: unknown, actual: unknown): Di
 	if (field.startsWith("ref:")) {
 		if (/^ref:refs\/remotes\/[^/]+\/HEAD$/.test(field)) return "warn";
 		if (expected === "<missing>" || actual === "<missing>") return "error";
+		if (context.currentBranchRef && field === `ref:${context.currentBranchRef}`) return "error";
 		return "warn";
 	}
 
@@ -110,13 +126,19 @@ function classifySeverity(field: string, expected: unknown, actual: unknown): Di
  */
 export function compare(oracle: OracleState, impl: ImplState): Divergence[] {
 	const divergences: Divergence[] = [];
+	const currentBranchRef =
+		oracle.head.headRef !== null &&
+		oracle.head.headRef === impl.headRef &&
+		oracle.head.headRef.startsWith("ref: ")
+			? oracle.head.headRef.slice("ref: ".length)
+			: null;
 
 	function push(field: string, expected: unknown, actual: unknown) {
 		divergences.push({
 			field,
 			expected,
 			actual,
-			severity: classifySeverity(field, expected, actual),
+			severity: classifySeverity(field, expected, actual, { currentBranchRef }),
 		});
 	}
 

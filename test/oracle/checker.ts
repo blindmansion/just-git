@@ -785,14 +785,13 @@ export class BatchChecker {
 	 * missing ancestry paths that cross timestamp valleys. Our impl does
 	 * full reachability walk, giving the correct (empty) result.
 	 */
-	private static logRangeTimestampWalkerDiffers(
+	static logRangeTimestampWalkerDiffers(
 		command: string,
 		expected: string,
 		actual: string,
 	): boolean {
 		if (!command.includes("..")) return false;
 		if (expected === actual) return false;
-		if ((actual === "") !== (expected === "")) return true;
 		const extractHashes = (s: string): string[] => {
 			const hashes: string[] = [];
 			for (const line of s.split("\n")) {
@@ -1267,3 +1266,9 @@ export class BatchChecker {
 		return divergences;
 	}
 }
+
+export const checkerTestUtils = {
+	logRangeTimestampWalkerDiffers(command: string, expected: string, actual: string): boolean {
+		return BatchChecker.logRangeTimestampWalkerDiffers(command, expected, actual);
+	},
+};
