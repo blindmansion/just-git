@@ -28,25 +28,27 @@ export type MaybeAsync<T> = T | Promise<T>;
 
 /** Options for creating a new repo via `GitServer.createRepo`. */
 export interface CreateRepoOptions {
-	/** Name of the default branch (default: `"main"`). Used for HEAD initialization. */
+	/** Default branch name for the initial `HEAD -> refs/heads/<branch>` symref. */
 	defaultBranch?: string;
 }
 
 /**
  * Abstract storage backend for multi-repo git object and ref storage.
  *
- * Repos must be explicitly created via `createRepo` before they can be
- * accessed with `repo`. This prevents accidental repo creation when
- * `storage.repo(path)` is passed directly as a server's `resolveRepo`.
+ * Repos must be explicitly created via {@link StorageAdapter.createRepo}
+ * before they can be accessed with {@link StorageAdapter.repo}. This keeps
+ * repo creation explicit and avoids accidental creation when a resolved path
+ * is passed through server code.
  *
- * Use `createStorageAdapter(driver)` to build a `StorageAdapter` from a {@link Storage}.
+ * Construct a `StorageAdapter` with {@link createStorageAdapter}. The adapter
+ * adds all git-aware behavior on top of a raw {@link Storage} backend.
  */
 export interface StorageAdapter {
 	/**
 	 * Create a new repo and initialize HEAD.
 	 *
-	 * Writes `HEAD → refs/heads/{defaultBranch}` so the repo is ready
-	 * to accept its first push. Throws if the repo already exists.
+	 * Writes `HEAD -> refs/heads/<defaultBranch>` so the repo is ready to
+	 * accept its first push. Throws if the repo already exists.
 	 */
 	createRepo(repoId: string, options?: CreateRepoOptions): GitRepo | Promise<GitRepo>;
 
@@ -56,15 +58,16 @@ export interface StorageAdapter {
 	 */
 	repo(repoId: string): GitRepo | null | Promise<GitRepo | null>;
 
-	/** Delete all objects, refs, and the repo record. */
+	/** Delete the repo record plus all repo-local objects and refs. */
 	deleteRepo(repoId: string): void | Promise<void>;
 
 	/**
 	 * Fork an existing repo. Copies refs from source to target.
-	 * The forked repo's object reads fall through to the root's
+	 * The forked repo's object reads fall through to the root repo's
 	 * object partition when not found locally.
 	 *
-	 * Only available when the storage backend implements fork methods.
+	 * Throws when the underlying storage backend does not implement the
+	 * optional fork methods.
 	 */
 	forkRepo(sourceId: string, targetId: string, options?: CreateRepoOptions): Promise<GitRepo>;
 }
@@ -110,6 +113,8 @@ export interface RefOps {
  * atomic ref operation primitive. All git-aware logic — object hashing,
  * pack ingestion, symref resolution, compare-and-swap semantics — lives
  * in the internal adapter and does not need to be implemented by backends.
+ * Optional batch helpers (`getObjects`, `hasObjects`) let the adapter reduce
+ * round trips during object walks and pack generation, but are not required.
  *
  * All methods use {@link MaybeAsync} return types: sync backends (SQLite)
  * can return values directly, async backends (PostgreSQL) return promises.
@@ -138,11 +143,17 @@ export interface Storage {
 
 	/**
 	 * Batch-read raw git objects by hash.
-	 * Returns only objects that exist for `repoId`.
+	 * Returns only objects that exist for `repoId`, keyed by full hash.
+	 * Missing hashes must simply be omitted from the returned map.
 	 */
 	getObjects?(repoId: string, hashes: ReadonlyArray<string>): MaybeAsync<Map<string, RawObject>>;
 
-	/** Store a single git object. `content` is the uncompressed object body (no git header). */
+	/**
+	 * Store a single git object.
+	 *
+	 * `content` is the raw object body (no git header / envelope). Because
+	 * git objects are immutable, duplicate writes may be ignored.
+	 */
 	putObject(repoId: string, hash: string, type: string, content: Uint8Array): MaybeAsync<void>;
 
 	/**
@@ -150,9 +161,10 @@ export interface Storage {
 	 * Implementations should use their optimal batch strategy (e.g. a
 	 * single transaction for SQL backends).
 	 *
-	 * Returns the hashes that were newly inserted for `repoId`. Existing
-	 * rows must not be reported, even if the same object appears in the
-	 * incoming batch.
+	 * Returns the hashes newly inserted for `repoId`. Existing rows must not
+	 * be reported, even if the same object appears in the incoming batch.
+	 * The adapter uses this return value for rejected-push rollback, so it
+	 * must reflect only rows created by this call in this repo partition.
 	 */
 	putObjects(
 		repoId: string,
@@ -165,6 +177,7 @@ export interface Storage {
 	/**
 	 * Batch existence check for objects.
 	 * Returns the subset of `hashes` that exist for `repoId`.
+	 * Missing hashes must simply be omitted from the returned set.
 	 */
 	hasObjects?(repoId: string, hashes: ReadonlyArray<string>): MaybeAsync<Set<string>>;
 
@@ -179,7 +192,9 @@ export interface Storage {
 
 	/**
 	 * Delete specific objects by hash.
-	 * Returns the number of objects actually deleted.
+	 * Returns the number of objects actually deleted from this repo's own
+	 * object partition. Fork-aware backends must not treat this as a request
+	 * to delete from a parent/shared object partition.
 	 */
 	deleteObjects(repoId: string, hashes: ReadonlyArray<string>): MaybeAsync<number>;
 
@@ -209,7 +224,9 @@ export interface Storage {
 	 *
 	 * The storage backend wraps the callback in whatever isolation
 	 * mechanism it supports (SQL transaction, in-memory lock, etc.).
-	 * The adapter uses this for compare-and-swap with symref resolution.
+	 * The adapter uses this for compare-and-swap with symref resolution and
+	 * expects all reads/writes inside `fn` to observe the same transaction or
+	 * lock scope.
 	 */
 	atomicRefUpdate<T>(repoId: string, fn: (ops: RefOps) => MaybeAsync<T>): MaybeAsync<T>;
 
@@ -217,18 +234,20 @@ export interface Storage {
 
 	/**
 	 * Record a fork relationship. `targetId` becomes a fork of `sourceId`.
-	 * The adapter layer handles ref copying and root resolution.
+	 * The adapter layer handles ref copying and root resolution; this method
+	 * only needs to persist the parent relationship.
 	 */
 	forkRepo?(sourceId: string, targetId: string): MaybeAsync<void>;
 
 	/**
-	 * Get the parent (root) repo ID for a fork, or `null` if the repo
-	 * is not a fork.
+	 * Get the root parent repo ID for a fork, or `null` if the repo is not
+	 * a fork.
 	 */
 	getForkParent?(repoId: string): MaybeAsync<string | null>;
 
 	/**
-	 * List all direct fork IDs of a repo.
+	 * List all direct fork IDs of a repo. Used to block deletion of a root
+	 * repo while active forks still exist.
 	 */
 	listForks?(repoId: string): MaybeAsync<string[]>;
 }
@@ -239,7 +258,8 @@ export interface Storage {
  * Build a {@link StorageAdapter} from a {@link Storage} backend.
  *
  * The returned adapter handles all git-aware logic (object hashing,
- * pack ingestion, symref resolution, CAS) on top of the backend's raw I/O.
+ * pack ingestion, batch object lookup fallback, symref resolution, and CAS
+ * on top of the backend's raw I/O.
  */
 export function createStorageAdapter(driver: Storage): StorageAdapter {
 	async function buildRepo(repoId: string): Promise<GitRepo> {
@@ -333,14 +353,19 @@ export type PendingObjectBatch = Array<{ hash: string; type: string; content: Ui
  * (prepare → commit) and rollback via `deleteObjects`.
  *
  * The server push path uses this to ingest objects before hook
- * evaluation, then roll back if a hook rejects the push.
+ * evaluation, then roll back newly inserted objects if a hook rejects the
+ * push before any refs apply.
  */
 export interface DeferrableObjectStore {
+	/** Parse a buffered packfile into a batch ready for storage. */
 	preparePack(packData: Uint8Array): Promise<PendingObjectBatch>;
+	/** Parse a streamed packfile into a batch ready for storage. */
 	preparePackStream(entries: AsyncIterable<PackObject>): Promise<PendingObjectBatch>;
+	/** Commit a prepared batch and return only the hashes newly inserted. */
 	commitPack(
 		batch: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
 	): Promise<string[]>;
+	/** Delete repo-local objects by hash and return the number removed. */
 	deleteObjects(hashes: ReadonlyArray<string>): Promise<number>;
 }
 

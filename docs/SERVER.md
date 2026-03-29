@@ -459,7 +459,7 @@ All tables are partitioned by `repo_id`. The library only references the `id` co
 
 ### Custom storage
 
-Implement the `Storage` interface to back repos with any datastore — DynamoDB, Turso, Firestore, a REST API, etc. The interface is intentionally thin: raw key-value CRUD for objects and refs, plus one atomicity primitive. All git-aware logic (object hashing, pack ingestion, symref resolution, compare-and-swap) is handled by the adapter layer — your implementation doesn't need to know anything about git.
+Implement the `Storage` interface to back repos with any datastore — DynamoDB, Turso, Firestore, a REST API, etc. The interface is intentionally thin: raw key-value CRUD for objects and refs, plus one atomicity primitive. All git-aware logic (object hashing, pack ingestion, symref resolution, compare-and-swap) is handled by the adapter layer — your implementation doesn't need to know anything about git. Two optional batch helpers, `getObjects` and `hasObjects`, let the adapter avoid N round trips during object walks and pack generation; they are recommended for remote-backed stores but not required.
 
 ```ts
 import type { Storage } from "just-git/server";
@@ -480,6 +480,9 @@ class MyStorage implements Storage {
   getObject(repoId, hash) {
     /* return { type, content } or null */
   }
+  getObjects?(repoId, hashes) {
+    /* optional batch read — return Map<hash, RawObject> for hits only */
+  }
   putObject(repoId, hash, type, content) {
     /* upsert, ignore duplicates */
   }
@@ -488,6 +491,9 @@ class MyStorage implements Storage {
   }
   hasObject(repoId, hash) {
     /* existence check */
+  }
+  hasObjects?(repoId, hashes) {
+    /* optional batch exists — return Set of hashes that exist */
   }
   findObjectsByPrefix(repoId, prefix) {
     /* for short-hash resolution */
@@ -527,6 +533,8 @@ Key things to know:
 - **`putObjects` is the hot path.** It's called during push with every object in the pack. Wrapping it in a single transaction (rather than one insert per object) makes a large difference for SQL backends.
 
 - **`putObjects` must return only newly inserted hashes.** Existing rows must not be reported. The receive-pack path uses that return value to roll back objects from all-failed pushes without deleting objects that were already present before the push.
+
+- **`getObjects` and `hasObjects` are optional but valuable.** They let the adapter batch object reads and existence checks during upload-pack negotiation and pack generation. For remote/datastore-backed implementations, they can remove a large amount of per-object overhead.
 
 - **`deleteObjects` should delete only repo-local rows.** The adapter uses it for GC and for receive-pack rollback of newly inserted objects. Fork-aware backends should never treat this as a request to delete from the parent object's partition.
 
