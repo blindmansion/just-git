@@ -157,7 +157,7 @@ export class BetterSqlite3Storage implements Storage {
 	private stmts: Statements;
 	private batchInsertTx: (
 		rows: ReadonlyArray<{ repoId: string; hash: string; type: string; content: Uint8Array }>,
-	) => void;
+	) => string[];
 	private batchDeleteTx: (
 		repoId: string,
 		hashes: ReadonlyArray<string>,
@@ -176,9 +176,13 @@ export class BetterSqlite3Storage implements Storage {
 					content: Uint8Array;
 				}>,
 			) => {
+				const inserted: string[] = [];
 				for (const row of rows) {
+					if (this.stmts.objExists.get(row.repoId, row.hash) !== null) continue;
 					this.stmts.objInsert.run(row.repoId, row.hash, row.type, row.content);
+					inserted.push(row.hash);
 				}
+				return inserted;
 			},
 		);
 		this.batchDeleteTx = db.transaction(
@@ -228,8 +232,8 @@ export class BetterSqlite3Storage implements Storage {
 	putObjects(
 		repoId: string,
 		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
-	): void {
-		this.batchInsertTx(objects.map((o) => ({ repoId, ...o })));
+	): string[] {
+		return this.batchInsertTx(objects.map((o) => ({ repoId, ...o })));
 	}
 
 	hasObject(repoId: string, hash: string): boolean {

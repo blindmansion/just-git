@@ -52,7 +52,7 @@ const SQL = {
 	repoDelete: "DELETE FROM git_repos WHERE id = $1",
 
 	objInsert:
-		"INSERT INTO git_objects (repo_id, hash, type, content) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
+		"INSERT INTO git_objects (repo_id, hash, type, content) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING hash",
 	objRead: "SELECT type, content FROM git_objects WHERE repo_id = $1 AND hash = $2",
 	objExists: "SELECT 1 FROM git_objects WHERE repo_id = $1 AND hash = $2 LIMIT 1",
 	objPrefix: "SELECT hash FROM git_objects WHERE repo_id = $1 AND hash LIKE $2",
@@ -148,11 +148,19 @@ export class PgStorage implements Storage {
 	async putObjects(
 		repoId: string,
 		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
-	): Promise<void> {
-		await this.transaction(async (query) => {
+	): Promise<string[]> {
+		return await this.transaction(async (query) => {
+			const inserted: string[] = [];
 			for (const obj of objects) {
-				await query(SQL.objInsert, [repoId, obj.hash, obj.type, obj.content]);
+				const { rows } = await query<{ hash: string }>(SQL.objInsert, [
+					repoId,
+					obj.hash,
+					obj.type,
+					obj.content,
+				]);
+				if (rows[0]?.hash) inserted.push(rows[0].hash);
 			}
+			return inserted;
 		});
 	}
 

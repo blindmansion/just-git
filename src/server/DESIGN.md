@@ -312,7 +312,7 @@ The push handling flow with hooks:
 7. Build report-status response
 ```
 
-Objects are ingested before hooks fire (step 2) so hooks can inspect pushed content. If `preReceive` rejects, those objects become orphaned — same behavior as real git. `server.gc(repoId)` cleans them up.
+Objects are ingested before hooks fire (step 2) so hooks can inspect pushed content. For deferrable server-backed stores, newly inserted objects are rolled back if `preReceive` rejects or if later validation / `update` hooks / CAS checks leave the push with zero applied refs. Partial-success pushes still keep their ingested objects, matching the need to preserve objects referenced by successful ref updates.
 
 ## Working copies in hooks
 

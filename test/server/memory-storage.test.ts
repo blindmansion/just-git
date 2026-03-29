@@ -111,6 +111,27 @@ describe("MemoryStorage", () => {
 			expect(await objects.ingestPack(new Uint8Array(0))).toBe(0);
 			expect(await objects.ingestPack(new Uint8Array(10))).toBe(0);
 		});
+
+		test("putObjects reports only newly inserted hashes", async () => {
+			await storage.createRepo("test-repo");
+
+			const existing = encoder.encode("existing");
+			const fresh = encoder.encode("fresh");
+			const existingHash = await makeHash("blob", existing);
+			const freshHash = await makeHash("blob", fresh);
+
+			driver.putObject("test-repo", existingHash, "blob", existing);
+			const inserted = driver.putObjects("test-repo", [
+				{ hash: existingHash, type: "blob", content: existing },
+				{ hash: freshHash, type: "blob", content: fresh },
+			]);
+
+			expect(inserted).toEqual([freshHash]);
+
+			driver.deleteObjects("test-repo", inserted);
+			expect(driver.hasObject("test-repo", existingHash)).toBe(true);
+			expect(driver.hasObject("test-repo", freshHash)).toBe(false);
+		});
 	});
 
 	// ── RefStore ────────────────────────────────────────────────

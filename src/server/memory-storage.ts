@@ -54,16 +54,19 @@ export class MemoryStorage implements Storage {
 	putObjects(
 		repoId: string,
 		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
-	): void {
+	): string[] {
 		const map = this.getObjMap(repoId);
+		const inserted: string[] = [];
 		for (const obj of objects) {
 			if (!map.has(obj.hash)) {
 				map.set(obj.hash, {
 					type: obj.type as RawObject["type"],
 					content: new Uint8Array(obj.content),
 				});
+				inserted.push(obj.hash);
 			}
 		}
+		return inserted;
 	}
 
 	hasObject(repoId: string, hash: string): boolean {

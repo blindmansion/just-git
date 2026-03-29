@@ -190,6 +190,44 @@ describe("rejected push side effects", () => {
 		}
 	});
 
+	test("update rejection with no applied refs rolls back new objects", async () => {
+		const { driver } = await setupRepo();
+		const countBefore = driver.listObjectHashes("repo").length;
+
+		const { server, srv, port } = startServer({
+			storage: driver,
+			hooks: {
+				update: async () => ({ reject: true, message: "blocked" }),
+			},
+		});
+
+		try {
+			const client = createServerClient();
+			await client.exec(`git clone http://localhost:${port}/repo /local`, {
+				env: envAt(1000000150),
+			});
+
+			await client.writeFile("/local/update-blocked.txt", "should not persist");
+			await client.exec("git add .", { cwd: "/local" });
+			await client.exec('git commit -m "blocked update"', {
+				cwd: "/local",
+				env: envAt(1000000160),
+			});
+
+			const headResult = await client.exec("git rev-parse HEAD", { cwd: "/local" });
+			const commitHash = headResult.stdout.trim();
+
+			const pushResult = await client.exec("git push origin main", { cwd: "/local" });
+			expect(pushResult.exitCode).not.toBe(0);
+
+			const repo = await server.requireRepo("repo");
+			expect(await repo.objectStore.exists(commitHash)).toBe(false);
+			expect(driver.listObjectHashes("repo")).toHaveLength(countBefore);
+		} finally {
+			srv.stop();
+		}
+	});
+
 	test("approved push persists objects correctly (regression)", async () => {
 		const { driver } = await setupRepo();
 

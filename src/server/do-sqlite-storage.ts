@@ -153,12 +153,16 @@ export class DurableObjectSqliteStorage implements Storage {
 	putObjects(
 		repoId: string,
 		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
-	): void {
+	): string[] {
+		const inserted: string[] = [];
 		this.storage.transactionSync(() => {
 			for (const obj of objects) {
+				if (first(this.sql.exec(SQL.objExists, repoId, obj.hash)) !== null) continue;
 				this.sql.exec(SQL.objInsert, repoId, obj.hash, obj.type, obj.content);
+				inserted.push(obj.hash);
 			}
 		});
+		return inserted;
 	}
 
 	hasObject(repoId: string, hash: string): boolean {

@@ -484,7 +484,7 @@ class MyStorage implements Storage {
     /* upsert, ignore duplicates */
   }
   putObjects(repoId, objects) {
-    /* batch insert — use a transaction if available */
+    /* batch insert — return hashes newly inserted for repoId */
   }
   hasObject(repoId, hash) {
     /* existence check */
@@ -496,7 +496,7 @@ class MyStorage implements Storage {
     /* all hashes — used by GC */
   }
   deleteObjects(repoId, hashes) {
-    /* bulk delete — used by GC */
+    /* bulk delete — used by GC and receive-pack rollback */
   }
 
   // Refs — keyed by (repoId, name)
@@ -525,6 +525,10 @@ Key things to know:
 - **`content` is the raw object body** (a `Uint8Array`), not the full git envelope. The adapter handles hashing and envelope framing. Store it as a blob/bytea column or binary value.
 
 - **`putObjects` is the hot path.** It's called during push with every object in the pack. Wrapping it in a single transaction (rather than one insert per object) makes a large difference for SQL backends.
+
+- **`putObjects` must return only newly inserted hashes.** Existing rows must not be reported. The receive-pack path uses that return value to roll back objects from all-failed pushes without deleting objects that were already present before the push.
+
+- **`deleteObjects` should delete only repo-local rows.** The adapter uses it for GC and for receive-pack rollback of newly inserted objects. Fork-aware backends should never treat this as a request to delete from the parent object's partition.
 
 - **Refs are either direct or symbolic.** A `Ref` is `{ type: "direct", hash: string }` or `{ type: "symbolic", target: string }`. Store and return them as-is — the adapter resolves symref chains. `HEAD` is typically a symbolic ref pointing to `refs/heads/main`.
 

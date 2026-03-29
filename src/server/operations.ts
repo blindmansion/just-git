@@ -591,8 +591,7 @@ async function ingestWithTracking(
 	store: DeferrableObjectStore,
 	batch: PendingObjectBatch,
 ): Promise<string[]> {
-	await store.commitPack(batch);
-	return batch.map((o) => o.hash);
+	return await store.commitPack(batch);
 }
 
 async function rollbackIngestedObjects(repo: GitRepo, hashes: string[]): Promise<void> {
@@ -607,8 +606,12 @@ export interface ReceivePackResult {
 	capabilities: string[];
 	/** Whether the request body contained a valid pkt-line flush packet. */
 	sawFlush: boolean;
-	/** Hashes of objects ingested from the pack (for rollback on hook rejection). Only populated when the object store supports deferred ingestion (server-backed stores). Undefined for VFS-backed stores. */
-	ingestedHashes?: string[];
+	/**
+	 * Hashes of objects newly inserted for this repo partition while
+	 * ingesting the pack. Used for rollback on all-failed hook paths.
+	 * Only populated for deferrable server-backed stores.
+	 */
+	insertedHashes?: string[];
 }
 
 /**
@@ -617,8 +620,9 @@ export interface ReceivePackResult {
  * call `applyReceivePack` to run hooks and apply refs.
  *
  * Objects are persisted immediately (needed by `buildRefUpdates` for
- * ancestry checks). If hooks later reject the push, `applyReceivePack`
- * rolls back the ingested objects.
+ * ancestry checks). `applyReceivePack` can roll back the newly inserted
+ * objects if `preReceive` rejects the push or if later processing ends
+ * with zero applied ref updates.
  */
 export async function ingestReceivePack(
 	repo: GitRepo,
@@ -628,13 +632,13 @@ export async function ingestReceivePack(
 	const { commands, packData, capabilities, sawFlush } = parseReceivePackRequest(requestBody);
 
 	let unpackOk = true;
-	let ingestedHashes: string[] | undefined;
+	let insertedHashes: string[] | undefined;
 	if (packData.byteLength > 0) {
 		try {
 			enforcePackLimits(packData, limits);
 			if (isDeferrableObjectStore(repo.objectStore)) {
 				const batch = await repo.objectStore.preparePack(packData);
-				ingestedHashes = await ingestWithTracking(repo.objectStore, batch);
+				insertedHashes = await ingestWithTracking(repo.objectStore, batch);
 			} else {
 				await repo.objectStore.ingestPack(packData);
 			}
@@ -645,7 +649,7 @@ export async function ingestReceivePack(
 	}
 
 	const updates = await buildRefUpdates(repo, commands, unpackOk);
-	return { updates, unpackOk, capabilities, sawFlush, ingestedHashes };
+	return { updates, unpackOk, capabilities, sawFlush, insertedHashes };
 }
 
 /**
@@ -666,7 +670,7 @@ export async function ingestReceivePackFromStream(
 	limits?: ReceivePackLimitOptions,
 ): Promise<ReceivePackResult> {
 	let unpackOk = true;
-	let ingestedHashes: string[] | undefined;
+	let insertedHashes: string[] | undefined;
 	const needsPack = commands.some((c) => c.newHash !== ZERO_HASH);
 	if (needsPack) {
 		try {
@@ -680,7 +684,7 @@ export async function ingestReceivePackFromStream(
 			const entries = readPackStreaming(limitPackStream(packStream, limits), externalBase);
 			if (isDeferrableObjectStore(repo.objectStore)) {
 				const batch = await repo.objectStore.preparePackStream(entries);
-				ingestedHashes = await ingestWithTracking(repo.objectStore, batch);
+				insertedHashes = await ingestWithTracking(repo.objectStore, batch);
 			} else {
 				await repo.objectStore.ingestPackStream(entries);
 			}
@@ -691,7 +695,7 @@ export async function ingestReceivePackFromStream(
 	}
 
 	const updates = await buildRefUpdates(repo, commands, unpackOk);
-	return { updates, unpackOk, capabilities, sawFlush, ingestedHashes };
+	return { updates, unpackOk, capabilities, sawFlush, insertedHashes };
 }
 
 async function buildRefUpdates(
@@ -814,8 +818,9 @@ export interface ApplyReceivePackOptions<A = unknown> {
 
 /**
  * Run the full receive-pack lifecycle: preReceive hook, per-ref update
- * hook with ref format validation, CAS ref application, and postReceive
- * hook. Transport-only — used by HTTP and SSH push handlers.
+ * hook with ref format validation, CAS ref application, optional
+ * rollback when no refs are applied, and postReceive hook.
+ * Transport-only — used by HTTP and SSH push handlers.
  *
  * Returns per-ref results and the list of successfully applied updates.
  * Does NOT handle unpack failures — the caller should check
@@ -832,8 +837,8 @@ export async function applyReceivePack<A = unknown>(
 		const result = await hooks.preReceive({ repo, repoId, updates, auth });
 		if (isRejection(result)) {
 			// Roll back ingested objects so rejected pushes leave no side effects
-			if (ingestResult.ingestedHashes?.length) {
-				await rollbackIngestedObjects(repo, ingestResult.ingestedHashes);
+			if (ingestResult.insertedHashes?.length) {
+				await rollbackIngestedObjects(repo, ingestResult.insertedHashes);
 			}
 			const msg = result.message ?? "pre-receive hook declined";
 			return {
@@ -895,6 +900,12 @@ export async function applyReceivePack<A = unknown>(
 				error: err instanceof Error ? err.message : String(err),
 			});
 		}
+	}
+
+	// If the push ingested new objects but every ref later failed validation,
+	// hook policy, or CAS, clean those new objects back out of the repo.
+	if (applied.length === 0 && ingestResult.insertedHashes?.length) {
+		await rollbackIngestedObjects(repo, ingestResult.insertedHashes);
 	}
 
 	// Post-receive hook (fire-and-forget, only for successful updates)

@@ -143,11 +143,15 @@ export interface Storage {
 	 * Bulk-insert objects. Called during pack ingestion (push, fetch).
 	 * Implementations should use their optimal batch strategy (e.g. a
 	 * single transaction for SQL backends).
+	 *
+	 * Returns the hashes that were newly inserted for `repoId`. Existing
+	 * rows must not be reported, even if the same object appears in the
+	 * incoming batch.
 	 */
 	putObjects(
 		repoId: string,
 		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
-	): MaybeAsync<void>;
+	): MaybeAsync<string[]>;
 
 	/** Check whether an object exists without reading its content. */
 	hasObject(repoId: string, hash: string): MaybeAsync<boolean>;
@@ -324,7 +328,7 @@ export interface DeferrableObjectStore {
 	preparePackStream(entries: AsyncIterable<PackObject>): Promise<PendingObjectBatch>;
 	commitPack(
 		batch: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
-	): Promise<number>;
+	): Promise<string[]>;
 	deleteObjects(hashes: ReadonlyArray<string>): Promise<number>;
 }
 
@@ -420,20 +424,21 @@ class AdaptedObjectStore implements ObjectStore, DeferrableObjectStore {
 
 	async commitPack(
 		batch: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
-	): Promise<number> {
-		if (batch.length === 0) return 0;
-		await this.driver.putObjects(this.repoId, batch);
-		return batch.length;
+	): Promise<string[]> {
+		if (batch.length === 0) return [];
+		return await this.driver.putObjects(this.repoId, batch);
 	}
 
 	async ingestPack(packData: Uint8Array): Promise<number> {
 		const batch = await this.preparePack(packData);
-		return this.commitPack(batch);
+		const inserted = await this.commitPack(batch);
+		return inserted.length;
 	}
 
 	async ingestPackStream(entries: AsyncIterable<PackObject>): Promise<number> {
 		const batch = await this.preparePackStream(entries);
-		return this.commitPack(batch);
+		const inserted = await this.commitPack(batch);
+		return inserted.length;
 	}
 
 	async deleteObjects(hashes: ReadonlyArray<string>): Promise<number> {
