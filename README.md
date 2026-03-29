@@ -2,13 +2,14 @@
 
 [![CI](https://github.com/blindmansion/just-git/actions/workflows/ci.yml/badge.svg)](https://github.com/blindmansion/just-git/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/just-git)](https://www.npmjs.com/package/just-git)
-[![bundle size](https://img.shields.io/bundlejs/size/just-git)](https://bundlejs.com/?q=just-git)
+[![client size](https://img.shields.io/bundlejs/size/just-git?label=client)](https://bundlejs.com/?q=just-git)
+[![server size](https://img.shields.io/bundlejs/size/just-git/server?label=server)](https://bundlejs.com/?q=just-git/server)
 
 Pure TypeScript git implementation. Zero dependencies. 36 commands. Works in Node, Bun, Deno, Cloudflare Workers, and the browser. [Tested against real git](docs/TESTING.md) across more than a million randomized operations.
 
 The Git CLI, Git servers, and CI workflows are no longer just things you use to develop apps: they can be part of the apps themselves. The goal of this project is to make that practical.
 
-- **Virtual filesystem client** for sandboxed environments. Pairs with [just-bash](https://github.com/vercel-labs/just-bash), or use standalone.
+- **[Virtual filesystem client](docs/CLIENT.md)** for sandboxed environments. Pairs with [just-bash](https://github.com/vercel-labs/just-bash), or use standalone.
 - **[Embeddable git server](docs/SERVER.md)** with pluggable storage, auth, and hooks. Supports HTTP, SSH, and in-process transport.
 - **[Repo module](docs/REPO.md)** with typed functions for commits, diffs, merges, blame, and bisect that work identically against a virtual filesystem or a database.
 
@@ -61,7 +62,14 @@ await git.exec('git commit -m "initial commit"');
 
 Both `fs` and `cwd` can be set once in `createGit` and overridden per-call. `cwd` defaults to `"/"`. Set it to the repo root so every `exec` call finds `.git` automatically.
 
-`createGit` also supports [command restrictions, network policies, and config overrides](docs/CLIENT.md#options) for sandboxing, a [lifecycle hooks API](docs/CLIENT.md#hooks) covering pre-commit secret scanning to push gating, and [cross-VFS remote resolution](docs/CLIENT.md#multi-agent-collaboration) for multi-agent collaboration. See [CLIENT.md](docs/CLIENT.md) for the full reference.
+`createGit` also supports:
+
+- [Command restrictions, network policies, and config overrides](docs/CLIENT.md#options) for sandboxing
+- [Lifecycle hooks](docs/CLIENT.md#hooks) from pre-commit secret scanning to push gating
+- [Custom merge drivers](docs/CLIENT.md#merge-driver) for programmatic conflict resolution
+- [Cross-VFS remote resolution](docs/CLIENT.md#multi-agent-collaboration) for multi-agent collaboration
+
+See [CLIENT.md](docs/CLIENT.md) for the full reference.
 
 ### Server
 
@@ -117,7 +125,12 @@ await server.gc("my-repo");
 Bun.serve({ fetch: server.fetch });
 ```
 
-Uses web-standard `Request`/`Response`. Works with Bun, Hono, Cloudflare Workers, Durable Objects, or any fetch-compatible runtime. For Node.js, use `server.nodeHandler` with `http.createServer` and `BetterSqlite3Storage` for `better-sqlite3`. SSH is supported via `server.handleSession`. The [`Storage` interface](docs/SERVER.md#custom-storage) is small enough to plug in any datastore. See [SERVER.md](docs/SERVER.md) for the full API.
+- Web-standard `Request`/`Response` — works with Bun, Hono, Cloudflare Workers, Durable Objects, or any fetch-compatible runtime
+- Node.js support via `server.nodeHandler` with `http.createServer` and `BetterSqlite3Storage`
+- [SSH](docs/SERVER.md#ssh) via `server.handleSession`
+- [`Storage` interface](docs/SERVER.md#custom-storage) small enough to plug in any datastore
+
+See [SERVER.md](docs/SERVER.md) for the full API.
 
 ## Repo module
 

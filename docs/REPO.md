@@ -225,7 +225,7 @@ const updated = await updateTree(repo, c.tree, [
 | `mergeTrees`               | `(repo, oursCommit, theirsCommit, labels?) → MergeTreesResult`       | Three-way merge using merge-ort. Finds merge bases automatically, handles criss-cross merges |
 | `mergeTreesFromTreeHashes` | `(repo, baseTree, oursTree, theirsTree, labels?) → MergeTreesResult` | Three-way merge from raw tree hashes when you already have the base                          |
 
-Both return `{ treeHash, clean, conflicts, messages }`. Operates purely on the object store, with no filesystem or worktree needed.
+Both return `{ treeHash, clean, conflicts, messages }`. Operates purely on the object store, with no filesystem or worktree needed. All three merging functions (`mergeTrees`, `mergeTreesFromTreeHashes`, `cherryPick`, `revert`) accept an optional `mergeDriver` callback for custom content conflict resolution — see [CLIENT.md](CLIENT.md#merge-driver) for details.
 
 ### Worktree
 

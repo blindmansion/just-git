@@ -18,6 +18,7 @@ Operator API for configuring git command execution in sandboxed environments. Se
 | `hooks`         | `GitHooks` config object with named callback properties. See [Hooks](#hooks).                                                                                                                                                                      |
 | `onProgress`    | `(message: string) => void` callback for server progress messages during fetch/clone/push over HTTP. Messages are raw sideband text from the remote.                                                                                               |
 | `resolveRemote` | `(url) => GitRepo \| null` callback for cross-VFS remote resolution. See [Multi-agent collaboration](#multi-agent-collaboration).                                                                                                                  |
+| `mergeDriver`   | Custom content merge callback. Called during `merge`, `cherry-pick`, `revert`, `rebase`, and `pull` when both sides modify the same file. See [Merge driver](#merge-driver).                                                                       |
 
 ```ts
 const git = createGit({
@@ -117,6 +118,29 @@ const git = createGit({
 - **`defaults`**: fallback values when a key is absent from `.git/config`. The agent _can_ override these with `git config set`. Useful for sensible defaults without restricting the agent.
 
 Applied transparently via `getConfigValue()`, so all commands respect overrides automatically. Any dotted config key works (e.g. `"merge.ff"`, `"push.default"`, `"pull.rebase"`, `"merge.conflictstyle"`, `"branch.autoSetupMerge"`).
+
+## Merge driver
+
+Override the default diff3 content merge algorithm with a custom callback. The driver is invoked whenever both sides of a merge modify the same file — during `git merge`, `git cherry-pick`, `git revert`, `git rebase`, and `git pull`.
+
+```ts
+import { createGit, type MergeDriver } from "just-git";
+
+const aiMerge: MergeDriver = async ({ path, base, ours, theirs }) => {
+  const merged = await agent(`Merge these two versions of ${path}:\n${ours}\n---\n${theirs}`);
+  return { content: merged, conflict: false };
+};
+
+const git = createGit({ mergeDriver: aiMerge });
+```
+
+The callback receives `{ path, base, ours, theirs }` where `base` is `null` for add/add conflicts. Return one of:
+
+- **`{ content, conflict: false }`** — clean resolution. The content is written as a resolved stage-0 index entry.
+- **`{ content, conflict: true }`** — mark as conflicting despite providing content. The original base/ours/theirs blobs are preserved as index stages 1/2/3 (so `--ours`/`--theirs` checkout still works) and the returned content becomes the worktree file.
+- **`null`** — fall back to the default diff3 algorithm for this file.
+
+The driver is only called for text content conflicts (modify/modify, add/add, rename+content). Symlinks and binary files bypass it. Trivially resolvable one-sided changes don't invoke it.
 
 ## Multi-agent collaboration
 
