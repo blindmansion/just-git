@@ -455,15 +455,11 @@ async function handleSquashMerge(
 		return failure;
 	}
 
-	// Real git writes SQUASH_MSG (not MERGE_MSG) for squash merges,
-	// in both success and conflict paths.
-	let squashMsg: string;
-	if (customMessage) {
-		squashMsg = `Squashed commit of the following:\n\n${customMessage}`;
-	} else {
-		const commitLog = await buildSquashMessageLog(gitCtx, headHash, theirsHash);
-		squashMsg = `Squashed commit of the following:\n\n${commitLog}`;
-	}
+	// Real git always persists the generated squash log in SQUASH_MSG.
+	// A user-provided -m affects only the user-facing status line, not the
+	// message buffer later consumed by commit/cherry-pick --continue.
+	const commitLog = await buildSquashMessageLog(gitCtx, headHash, theirsHash);
+	const squashMsg = `Squashed commit of the following:\n\n${commitLog}`;
 	await writeStateFile(gitCtx, "SQUASH_MSG", squashMsg);
 
 	if (result.conflicts.length > 0) {

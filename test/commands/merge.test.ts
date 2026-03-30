@@ -270,6 +270,33 @@ describe("git merge", () => {
 		});
 	});
 
+	describe("squash merges", () => {
+		test("merge --squash -m still writes generated SQUASH_MSG", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec("git branch feature");
+
+			await bash.exec("git checkout feature");
+			await bash.fs.writeFile("/repo/feature.txt", "feature content\n");
+			await bash.exec("git add feature.txt");
+			await bash.exec('git commit -m "feature work"');
+
+			await bash.exec("git checkout main");
+			const result = await bash.exec('git merge --squash -m "custom squash title" feature');
+
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("Squash commit -- not updating HEAD");
+
+			const squashMsg = await readFile(bash.fs, "/repo/.git/SQUASH_MSG");
+			expect(squashMsg).toContain("Squashed commit of the following:");
+			expect(squashMsg).toContain("commit ");
+			expect(squashMsg).toContain("feature work");
+			expect(squashMsg).not.toContain("custom squash title");
+		});
+	});
+
 	// ── --abort ──────────────────────────────────────────────────────
 
 	describe("--abort", () => {
