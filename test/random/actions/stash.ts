@@ -67,10 +67,23 @@ const stashDrop: Action = {
 	},
 };
 
+const stashClear: Action = {
+	name: "stashClear",
+	category: "stash",
+	canRun: (state) => state.stashCount > 0,
+	precondition: () => true,
+	weight: () => 1,
+	async execute(harness) {
+		const result = await harness.git("stash clear");
+		return { description: "git stash clear", result };
+	},
+};
+
 export const STASH_ACTIONS: readonly Action[] = [
 	stashPush,
 	stashPushUntracked,
 	stashPop,
 	stashApply,
 	stashDrop,
+	stashClear,
 ];

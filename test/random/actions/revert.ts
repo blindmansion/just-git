@@ -1,4 +1,4 @@
-import { inConflict, pickCommitHash } from "../pickers";
+import { inConflict, pickCommitHash, pickMergeCommitHash } from "../pickers";
 import type { Action } from "../types";
 
 const revert: Action = {
@@ -23,6 +23,45 @@ const revert: Action = {
 			description: `git revert ${short} --no-edit`,
 			result,
 		};
+	},
+};
+
+const revertNoCommit: Action = {
+	name: "revertNoCommit",
+	category: "revert",
+	canRun: (state) => state.hasCommits,
+	precondition: (state) => !inConflict(state),
+	weight: () => 1,
+	async execute(harness, rng, _state, fuzz?) {
+		const hash = await pickCommitHash(harness, rng, {
+			fuzzRate: fuzz?.commitRate,
+		});
+		if (hash === null) {
+			return { description: "revertNoCommit: no commits", result: null };
+		}
+		const short = hash.slice(0, 8);
+		const result = await harness.git(`revert -n ${hash}`);
+		return { description: `git revert -n ${short}`, result };
+	},
+};
+
+const revertMainline: Action = {
+	name: "revertMainline",
+	category: "revert",
+	canRun: (state) => state.hasCommits,
+	precondition: (state) => !inConflict(state),
+	weight: () => 1,
+	async execute(harness, rng, _state, fuzz?) {
+		const hash = await pickMergeCommitHash(harness, rng, {
+			fuzzRate: fuzz?.commitRate,
+		});
+		if (hash === null) {
+			return { description: "revertMainline: no merge commits", result: null };
+		}
+		const short = hash.slice(0, 8);
+		const parent = rng.bool(0.8) ? 1 : 2;
+		const result = await harness.git(`revert -m ${parent} ${hash} --no-edit`);
+		return { description: `git revert -m ${parent} ${short} --no-edit`, result };
 	},
 };
 
@@ -68,4 +107,11 @@ const revertSkip: Action = {
 	},
 };
 
-export const REVERT_ACTIONS: readonly Action[] = [revert, revertAbort, revertContinue, revertSkip];
+export const REVERT_ACTIONS: readonly Action[] = [
+	revert,
+	revertNoCommit,
+	revertMainline,
+	revertAbort,
+	revertContinue,
+	revertSkip,
+];

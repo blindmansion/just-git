@@ -4,8 +4,11 @@ import {
 	pickAnyBranch,
 	pickCommitHash,
 	pickOtherBranch,
+	pickRemoteTrackingBranch,
 } from "../pickers";
 import type { Action } from "../types";
+
+const hasOrigin = (remotes: string[]) => remotes.includes("origin");
 
 const switchBranchViaSwitchCmd: Action = {
 	name: "switchBranchViaSwitch",
@@ -113,6 +116,50 @@ const switchOrphan: Action = {
 	},
 };
 
+const switchPrevious: Action = {
+	name: "switchPrevious",
+	category: "branch",
+	canRun: (state) => state.branches.length >= 2 && state.hasCommits,
+	precondition: (state) => !inConflict(state),
+	weight: () => 1,
+	async execute(harness) {
+		const result = await harness.git("switch -");
+		return { description: "git switch -", result };
+	},
+};
+
+const switchGuess: Action = {
+	name: "switchGuess",
+	category: "branch",
+	canRun: (state) => hasOrigin(state.remotes) && state.hasCommits,
+	precondition: (state) => !inConflict(state),
+	weight: () => 1,
+	async execute(harness, rng, state, fuzz?) {
+		let remoteBranch = await pickRemoteTrackingBranch(harness, rng, {
+			fuzzRate: fuzz?.branchRate,
+			remote: "origin",
+			excludeLocals: state.branches,
+		});
+
+		if (!remoteBranch && harness.serverCommit) {
+			const branchName = newBranchName(rng, state.branches);
+			await harness.serverCommit(rng.int(0, 1_000_000), branchName);
+			await harness.git(
+				`fetch origin refs/heads/${branchName}:refs/remotes/origin/${branchName}`,
+			);
+			remoteBranch = `origin/${branchName}`;
+		}
+
+		if (!remoteBranch) {
+			return { description: "switchGuess: no remote-only branch", result: null };
+		}
+
+		const branchName = remoteBranch.slice("origin/".length);
+		const result = await harness.git(`switch --guess ${branchName}`);
+		return { description: `git switch --guess ${branchName}`, result };
+	},
+};
+
 export const SWITCH_ACTIONS: readonly Action[] = [
 	switchBranchViaSwitchCmd,
 	switchCreate,
@@ -120,4 +167,6 @@ export const SWITCH_ACTIONS: readonly Action[] = [
 	switchForceCreate,
 	switchDetach,
 	switchOrphan,
+	switchPrevious,
+	switchGuess,
 ];

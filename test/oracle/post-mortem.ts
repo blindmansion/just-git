@@ -243,6 +243,33 @@ export async function runPostMortem(
 		}
 	}
 
+	// commit -a with unresolved conflicts: real git's add_files_to_cache
+	// runs diffcore_rename which can pair a deleted stage-0 file with an
+	// unmerged file sharing the same blob hash. The resulting diff pair
+	// has the deleted path as p->one->path but UNMERGED status, so
+	// fix_unmerged_status converts it to MODIFIED and add_file_to_index
+	// tries to lstat the deleted path → "fatal: unable to stat". Our impl
+	// doesn't run rename detection during commit -a, so it correctly
+	// resolves the conflicts and commits.
+	if (/^git commit\b/.test(command) && /\s-a(?:\s|$)/.test(command)) {
+		const db = initDb(dbPath);
+		const store = new OracleStore(db);
+		const oracleStep = store.getFullStep(traceId, step);
+		db.close();
+
+		if (
+			oracleStep &&
+			oracleStep.exit_code !== 0 &&
+			/unable to stat/.test(oracleStep.stderr ?? "")
+		) {
+			return {
+				pattern: "rename-detection-ambiguity",
+				explanation:
+					"commit -a rename detection bug in real git — diffcore_rename pairs deleted file with unmerged file sharing same blob hash",
+			};
+		}
+	}
+
 	// General fallback: index conflict stage mismatches (stages 1-3) are
 	// genuine merge-related divergences regardless of the triggering command,
 	// since conflict entries only exist from merge-family operations.

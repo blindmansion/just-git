@@ -1,4 +1,4 @@
-import { inConflict, pickCommitHash, pickOtherBranch } from "../pickers";
+import { inConflict, pickCommitHash, pickMergeCommitHash, pickOtherBranch } from "../pickers";
 import type { Action } from "../types";
 
 const cherryPick: Action = {
@@ -142,6 +142,42 @@ const cherryPickNoCommit: Action = {
 	},
 };
 
+const cherryPickMainline: Action = {
+	name: "cherryPickMainline",
+	category: "cherry-pick",
+	canRun: (state) => state.branches.length >= 2 && state.hasCommits,
+	precondition: (state) => !inConflict(state),
+	weight: () => 1,
+	async execute(harness, rng, state, fuzz?) {
+		const sourceBranch = pickOtherBranch(rng, state, {
+			fuzzRate: fuzz?.branchRate,
+		});
+		if (sourceBranch === null) {
+			return {
+				description: "cherryPickMainline: no other branch",
+				result: null,
+			};
+		}
+		const hash = await pickMergeCommitHash(harness, rng, {
+			fuzzRate: fuzz?.commitRate,
+			branch: sourceBranch,
+		});
+		if (hash === null) {
+			return {
+				description: "cherryPickMainline: no merge commits on source",
+				result: null,
+			};
+		}
+		const short = hash.slice(0, 8);
+		const parent = rng.bool(0.8) ? 1 : 2;
+		const result = await harness.git(`cherry-pick -m ${parent} ${hash}`);
+		return {
+			description: `git cherry-pick -m ${parent} ${short} (from ${sourceBranch})`,
+			result,
+		};
+	},
+};
+
 export const CHERRY_PICK_ACTIONS: readonly Action[] = [
 	cherryPick,
 	cherryPickX,
@@ -149,4 +185,5 @@ export const CHERRY_PICK_ACTIONS: readonly Action[] = [
 	cherryPickContinue,
 	cherryPickSkip,
 	cherryPickNoCommit,
+	cherryPickMainline,
 ];

@@ -4,7 +4,12 @@
  * `state.remotes.length > 0`.
  */
 
-import { inConflict, pickAnyBranch, pickOtherBranch } from "../pickers";
+import {
+	inConflict,
+	pickAnyBranch,
+	pickOtherBranch,
+	pickRemoteTrackingBranch,
+} from "../pickers";
 import type { Action } from "../types";
 
 const hasOrigin = (remotes: string[]) => remotes.includes("origin");
@@ -73,6 +78,18 @@ const pushDelete: Action = {
 	},
 };
 
+const pushTags: Action = {
+	name: "pushTags",
+	category: "remote",
+	canRun: (state) => hasOrigin(state.remotes) && state.hasCommits,
+	precondition: (state) => !inConflict(state),
+	weight: () => 1,
+	async execute(harness) {
+		const result = await harness.git("push --tags");
+		return { description: "git push --tags", result };
+	},
+};
+
 const fetchOrigin: Action = {
 	name: "fetchOrigin",
 	category: "remote",
@@ -106,6 +123,28 @@ const fetchTags: Action = {
 	async execute(harness) {
 		const result = await harness.git("fetch --tags");
 		return { description: "git fetch --tags", result };
+	},
+};
+
+const fetchRefspec: Action = {
+	name: "fetchRefspec",
+	category: "remote",
+	canRun: (state) => hasOrigin(state.remotes),
+	precondition: (state) => !inConflict(state),
+	weight: () => 1,
+	async execute(harness, rng, state, fuzz?) {
+		const remoteBranch = await pickRemoteTrackingBranch(harness, rng, {
+			fuzzRate: fuzz?.branchRate,
+			remote: "origin",
+		});
+		let branchName = remoteBranch?.slice("origin/".length) ?? state.currentBranch;
+		if (!branchName) {
+			branchName = pickAnyBranch(rng, state, { fuzzRate: fuzz?.branchRate });
+		}
+		if (!branchName) return { description: "fetchRefspec: no branch", result: null };
+		const refspec = `refs/heads/${branchName}:refs/remotes/origin/${branchName}`;
+		const result = await harness.git(`fetch origin ${refspec}`);
+		return { description: `git fetch origin ${refspec}`, result };
 	},
 };
 
@@ -165,9 +204,11 @@ export const NETWORK_ACTIONS: readonly Action[] = [
 	pushForce,
 	pushUpstream,
 	pushDelete,
+	pushTags,
 	fetchOrigin,
 	fetchPrune,
 	fetchTags,
+	fetchRefspec,
 	pullOrigin,
 	pullFfOnly,
 	pullNoFf,

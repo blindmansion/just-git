@@ -81,7 +81,9 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 				// Also handle conflict-only files (stage > 0, no stage 0).
 				// These are tracked files that diffIndexToWorkTree skips
 				// (they belong in "Unmerged paths" for status, not "Unstaged").
-				// But commit -a should stage them to resolve conflicts.
+				// Real git's commit -a resolves these by staging the worktree
+				// version (fix_unmerged_status converts UNMERGED→MODIFIED) or
+				// removing the entry when the file is deleted from the worktree.
 				const stage0Paths = new Set(getStage0Entries(index).map((e) => e.path));
 				const conflictOnlyPaths = new Set(
 					index.entries.filter((e) => e.stage > 0 && !stage0Paths.has(e.path)).map((e) => e.path),

@@ -39,6 +39,44 @@ const createTagAtCommit: Action = {
 	},
 };
 
+const createAnnotatedTagAtCommit: Action = {
+	name: "createAnnotatedTagAtCommit",
+	category: "tag",
+	canRun: (state) => state.hasCommits,
+	precondition: (state) => !inConflict(state),
+	weight: () => 1,
+	async execute(harness, rng, _state, fuzz?) {
+		const hash = await pickCommitHash(harness, rng, {
+			fuzzRate: fuzz?.commitRate,
+		});
+		if (!hash) {
+			return { description: "createAnnotatedTagAtCommit: no commits", result: null };
+		}
+		const name = newTagName(rng);
+		const msg = `tag-msg-${rng.alphanumeric(4)}`;
+		const result = await harness.git(`tag -m "${msg}" ${name} ${hash}`);
+		return { description: `git tag -m "${msg}" ${name} ${hash.slice(0, 8)}`, result };
+	},
+};
+
+const forceTag: Action = {
+	name: "forceTag",
+	category: "tag",
+	canRun: (state) => state.hasCommits,
+	precondition: (state) => !inConflict(state),
+	weight: () => 1,
+	async execute(harness, rng, _state, fuzz?) {
+		const tag = await pickTag(harness, rng, { fuzzRate: fuzz?.tagRate });
+		if (!tag) return { description: "forceTag: no tags", result: null };
+		const hash = await pickCommitHash(harness, rng, {
+			fuzzRate: fuzz?.commitRate,
+		});
+		if (!hash) return { description: "forceTag: no commits", result: null };
+		const result = await harness.git(`tag -f ${tag} ${hash}`);
+		return { description: `git tag -f ${tag} ${hash.slice(0, 8)}`, result };
+	},
+};
+
 const deleteTag: Action = {
 	name: "deleteTag",
 	category: "tag",
@@ -68,4 +106,11 @@ const listTags: Action = {
 	},
 };
 
-export const TAG_ACTIONS: readonly Action[] = [createTag, createTagAtCommit, deleteTag, listTags];
+export const TAG_ACTIONS: readonly Action[] = [
+	createTag,
+	createTagAtCommit,
+	createAnnotatedTagAtCommit,
+	forceTag,
+	deleteTag,
+	listTags,
+];

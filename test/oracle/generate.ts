@@ -473,6 +473,7 @@ const CORE_ACTIONS = includeNames(
 	"commitAll",
 	"commitAmend",
 	"commitAmendNoEdit",
+	"commitAllowEmpty",
 	// branch
 	"createBranch",
 	"switchBranch",
@@ -488,6 +489,7 @@ const CORE_ACTIONS = includeNames(
 	"mergeContinue",
 	// rebase
 	"rebase",
+	"rebaseOnto",
 	"rebaseAbort",
 	"rebaseContinue",
 	"rebaseSkip",
@@ -523,6 +525,7 @@ const CORE_ACTIONS = includeNames(
 	// switch (modern branch switching)
 	"switchBranchViaSwitch",
 	"switchCreate",
+	"switchPrevious",
 	// restore
 	"restoreWorktree",
 	"restoreStaged",

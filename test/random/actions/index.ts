@@ -3,6 +3,7 @@ import { BRANCH_ACTIONS } from "./branch";
 import { CHERRY_PICK_ACTIONS } from "./cherry-pick";
 import { CLEAN_ACTIONS } from "./clean";
 import { COMMIT_ACTIONS } from "./commit";
+import { CONFIG_ACTIONS } from "./config";
 import { CONFLICT_ACTIONS } from "./conflict";
 import { DIAGNOSTIC_ACTIONS } from "./diagnostic";
 import { FILE_OPS_ACTIONS } from "./file-ops";
@@ -25,6 +26,7 @@ export const ALL_ACTIONS: readonly Action[] = [
 	...FILE_OPS_ACTIONS,
 	...STAGING_ACTIONS,
 	...COMMIT_ACTIONS,
+	...CONFIG_ACTIONS,
 	...BRANCH_ACTIONS,
 	...MERGE_ACTIONS,
 	...REBASE_ACTIONS,

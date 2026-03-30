@@ -20,6 +20,31 @@ const rebase: Action = {
 	},
 };
 
+const rebaseOnto: Action = {
+	name: "rebaseOnto",
+	category: "rebase",
+	canRun: (state) => state.branches.length >= 3 && state.hasCommits,
+	precondition: (state) => !inConflict(state) && state.currentBranch !== null,
+	weight: () => 1,
+	async execute(harness, rng, state, fuzz?) {
+		const candidates = state.branches.filter((branch) => branch !== state.currentBranch);
+		if (candidates.length < 2) {
+			return { description: "rebaseOnto: not enough other branches", result: null };
+		}
+		const oldBase = rng.pick(candidates);
+		const ontoCandidates = candidates.filter((branch) => branch !== oldBase);
+		const newBase =
+			ontoCandidates.length > 0
+				? rng.pick(ontoCandidates)
+				: pickOtherBranch(rng, state, { fuzzRate: fuzz?.branchRate });
+		if (!newBase || newBase === oldBase) {
+			return { description: "rebaseOnto: could not choose distinct bases", result: null };
+		}
+		const result = await harness.git(`rebase --onto ${newBase} ${oldBase}`);
+		return { description: `git rebase --onto ${newBase} ${oldBase}`, result };
+	},
+};
+
 const rebaseAbort: Action = {
 	name: "rebaseAbort",
 	category: "rebase",
@@ -62,4 +87,10 @@ const rebaseSkip: Action = {
 	},
 };
 
-export const REBASE_ACTIONS: readonly Action[] = [rebase, rebaseAbort, rebaseContinue, rebaseSkip];
+export const REBASE_ACTIONS: readonly Action[] = [
+	rebase,
+	rebaseOnto,
+	rebaseAbort,
+	rebaseContinue,
+	rebaseSkip,
+];

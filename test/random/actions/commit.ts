@@ -55,9 +55,23 @@ const commitAmendNoEdit: Action = {
 	},
 };
 
+const commitAllowEmpty: Action = {
+	name: "commitAllowEmpty",
+	category: "commit",
+	canRun: () => true,
+	precondition: (state) => !inConflict(state),
+	weight: () => 1,
+	async execute(harness, rng) {
+		const msg = `empty-${rng.alphanumeric(6)}`;
+		const result = await harness.git(`commit --allow-empty -m "${msg}"`);
+		return { description: `git commit --allow-empty -m "${msg}"`, result };
+	},
+};
+
 export const COMMIT_ACTIONS: readonly Action[] = [
 	commit,
 	commitAll,
 	commitAmend,
 	commitAmendNoEdit,
+	commitAllowEmpty,
 ];

@@ -5,8 +5,11 @@ import {
 	pickCommitHash,
 	pickFile,
 	pickOtherBranch,
+	pickRemoteTrackingBranch,
 } from "../pickers";
 import type { Action } from "../types";
+
+const hasOrigin = (remotes: string[]) => remotes.includes("origin");
 
 const createBranch: Action = {
 	name: "createBranch",
@@ -191,6 +194,27 @@ const checkoutFileFromCommit: Action = {
 	},
 };
 
+const branchSetUpstream: Action = {
+	name: "branchSetUpstream",
+	category: "branch",
+	canRun: (state) => hasOrigin(state.remotes) && state.hasCommits,
+	precondition: (state) => !inConflict(state) && state.currentBranch !== null,
+	weight: () => 1,
+	async execute(harness, rng, state, fuzz?) {
+		const remoteBranch = await pickRemoteTrackingBranch(harness, rng, {
+			fuzzRate: fuzz?.branchRate,
+			remote: "origin",
+		});
+		if (!remoteBranch) {
+			return { description: "branchSetUpstream: no remote-tracking branch", result: null };
+		}
+		const branchName = state.currentBranch ?? pickAnyBranch(rng, state);
+		if (!branchName) return { description: "branchSetUpstream: no local branch", result: null };
+		const result = await harness.git(`branch -u ${remoteBranch} ${branchName}`);
+		return { description: `git branch -u ${remoteBranch} ${branchName}`, result };
+	},
+};
+
 export const BRANCH_ACTIONS: readonly Action[] = [
 	createBranch,
 	checkoutOrphan,
@@ -202,4 +226,5 @@ export const BRANCH_ACTIONS: readonly Action[] = [
 	detachedCheckout,
 	checkoutFile,
 	checkoutFileFromCommit,
+	branchSetUpstream,
 ];

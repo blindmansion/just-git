@@ -121,6 +121,32 @@ export async function pickCommitHash(
 	return hashes.length > 0 ? rng.pick(hashes) : null;
 }
 
+/**
+ * Pick a recent merge commit hash from a branch (or current HEAD).
+ * Uses parent count from `git log --format="%H %P"`.
+ */
+export async function pickMergeCommitHash(
+	harness: WalkHarness,
+	rng: SeededRNG,
+	opts?: PickerOpts & { branch?: string; n?: number },
+): Promise<string | null> {
+	if (shouldFuzz(rng, opts)) return fuzzCommitHash(rng);
+	const branch = opts?.branch;
+	const n = opts?.n ?? 20;
+	const cmd = branch
+		? `log ${branch} --format="%H %P" -n ${n}`
+		: `log --format="%H %P" -n ${n}`;
+	const logResult = await harness.git(cmd);
+	const hashes = logResult.stdout
+		.trim()
+		.split("\n")
+		.map((line) => line.trim().split(/\s+/))
+		.filter((parts) => parts.length >= 3)
+		.map((parts) => parts[0]!)
+		.filter(Boolean);
+	return hashes.length > 0 ? rng.pick(hashes) : null;
+}
+
 /** Pick an existing tag name. Returns null if no tags exist. */
 export async function pickTag(
 	harness: WalkHarness,
@@ -150,4 +176,37 @@ export async function pickRemote(
 		remotes = remotes.filter((r) => r !== "origin");
 	}
 	return remotes.length > 0 ? rng.pick(remotes) : null;
+}
+
+/**
+ * Pick an existing remote-tracking branch like `origin/main`.
+ * When `excludeLocals` is set, filters out remote branches that already
+ * have a matching local branch name.
+ */
+export async function pickRemoteTrackingBranch(
+	harness: WalkHarness,
+	rng: SeededRNG,
+	opts?: PickerOpts & { remote?: string; excludeLocals?: string[] },
+): Promise<string | null> {
+	if (shouldFuzz(rng, opts)) {
+		const remote = opts?.remote ?? "origin";
+		return `${remote}/${fuzzBranchName(rng)}`;
+	}
+	const result = await harness.git("branch -r");
+	const remote = opts?.remote;
+	const excludeLocals = new Set(opts?.excludeLocals ?? []);
+	const branches = result.stdout
+		.trim()
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.filter((line) => !line.includes(" -> "))
+		.filter((line) => (remote ? line.startsWith(`${remote}/`) : true))
+		.filter((line) => {
+			const slash = line.indexOf("/");
+			if (slash < 0) return false;
+			const localName = line.slice(slash + 1);
+			return !excludeLocals.has(localName);
+		});
+	return branches.length > 0 ? rng.pick(branches) : null;
 }
