@@ -15,7 +15,7 @@ import type { CredentialCache } from "./lib/transport/remote.ts";
 import type { MergeDriver } from "./lib/merge-ort.ts";
 import type { ObjectStore, RefStore, RemoteResolver } from "./lib/types.ts";
 
-export const VERSION = "1.5.14";
+export const VERSION = "1.6.0";
 
 /** Options for subcommand execution (mirrors just-bash's CommandExecOptions). */
 export interface CommandExecOptions {
