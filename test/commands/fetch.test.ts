@@ -239,8 +239,27 @@ describe("git fetch", () => {
 		expect(result.exitCode).toBe(1);
 		expect(result.stderr).toContain("[rejected]");
 		expect(result.stderr).toContain("would clobber existing tag");
+		expect(result.stderr).toContain(
+			"! [rejected]        v1.0       -> v1.0  (would clobber existing tag)",
+		);
 		const localTagAfter = await readFile(bash.fs, "/local/.git/refs/tags/v1.0");
 		expect(localTagAfter).toBe(localTagBefore);
+	});
+
+	test("fetch --tags reports branch updates before rejected tags", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /local && git tag v1.0");
+		await bash.exec("cd /remote && echo remote > remote.txt && git add . && git commit -m remote");
+		await bash.exec("cd /remote && git tag -f v1.0 HEAD");
+
+		const result = await bash.exec("git fetch --tags", { cwd: "/local" });
+		expect(result.exitCode).toBe(1);
+
+		const branchLine = result.stderr.indexOf("main       -> origin/main");
+		const rejectedLine = result.stderr.indexOf("! [rejected]");
+		expect(branchLine).toBeGreaterThanOrEqual(0);
+		expect(rejectedLine).toBeGreaterThan(branchLine);
 	});
 
 	test("auto-follows reachable annotated tags without --tags", async () => {

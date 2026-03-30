@@ -340,6 +340,20 @@ describe("git pull", () => {
 			expect(result.exitCode).toBe(0);
 			expect(result.stdout).toContain("Merge made by");
 		});
+
+		test("--ff-only overrides pull.rebase=true for up-to-date pulls", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("git config pull.rebase true", { cwd: "/local" });
+			await bash.exec(
+				"cd /local && echo local > local.txt && git add local.txt && git commit -m local",
+			);
+
+			const result = await bash.exec("git pull --ff-only", { cwd: "/local" });
+
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toBe("Already up to date.\n");
+		});
 	});
 
 	// ── pull.ff config ──────────────────────────────────────────────
@@ -412,5 +426,34 @@ describe("git pull", () => {
 			expect(result.exitCode).toBe(128);
 			expect(result.stderr).toContain("Not possible to fast-forward");
 		});
+
+		test("merge.ff=only rejects non-fast-forward pull when pull.ff is unset", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec(
+				"cd /remote && echo remote > remote.txt && git add . && git commit -m remote",
+			);
+			await bash.exec("cd /local && echo local > local.txt && git add . && git commit -m local");
+
+			await bash.exec("git config merge.ff only", { cwd: "/local" });
+			const result = await bash.exec("git pull", { cwd: "/local" });
+
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("Not possible to fast-forward");
+		});
+	});
+
+	test("pull refuses unrelated histories before reconciliation advice", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("git config pull.rebase false", { cwd: "/local" });
+		await bash.exec("git switch --orphan unrelated", { cwd: "/local" });
+		await bash.exec('git commit --allow-empty -m "unrelated"', { cwd: "/local" });
+		await bash.exec("git branch -u origin/main unrelated", { cwd: "/local" });
+
+		const result = await bash.exec("git pull", { cwd: "/local" });
+
+		expect(result.exitCode).toBe(128);
+		expect(result.stderr).toBe("fatal: refusing to merge unrelated histories\n");
 	});
 });

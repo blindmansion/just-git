@@ -377,7 +377,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			// ── Rebase path ─────────────────────────────────────────
-			if (pullMode.useRebase) {
+			if (pullMode.useRebase && !pullMode.ffOnly) {
 				const headName = head?.type === "symbolic" ? head.target : "detached HEAD";
 				const upstreamLabel = remoteBranch ? `${remoteName}/${remoteBranch}` : remoteName;
 
@@ -713,12 +713,16 @@ async function resolvePullMode(
 				if (pullRebase === "true") {
 					useRebase = true;
 					configured = true;
+				} else if (pullRebase === "false") {
+					configured = true;
 				}
 			}
 		} else {
 			const pullRebase = await getConfigValue(gitCtx, "pull.rebase");
 			if (pullRebase === "true") {
 				useRebase = true;
+				configured = true;
+			} else if (pullRebase === "false") {
 				configured = true;
 			}
 		}
@@ -733,6 +737,15 @@ async function resolvePullMode(
 		} else if (pullFFConfig === "only") {
 			ffOnly = true;
 			configured = true;
+		} else {
+			const mergeFFConfig = await getConfigValue(gitCtx, "merge.ff");
+			if (mergeFFConfig === "false") {
+				noFf = true;
+				configured = true;
+			} else if (mergeFFConfig === "only") {
+				ffOnly = true;
+				configured = true;
+			}
 		}
 	}
 

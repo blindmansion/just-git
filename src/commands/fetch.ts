@@ -258,6 +258,7 @@ async function fetchOneRemote(
 
 	const ident = await getReflogIdentity(gitCtx, env);
 	const refLines: TransferRefLine[] = [];
+	const rejectedTagLines: TransferRefLine[] = [];
 	let hadTagRejection = false;
 	const appliedUpdates: Array<(typeof refUpdates)[number]> = [];
 	const appliedOldHashes: Array<string | null> = [];
@@ -271,11 +272,11 @@ async function fetchOneRemote(
 			oldHash !== update.remote.hash
 		) {
 			hadTagRejection = true;
-			refLines.push({
+			rejectedTagLines.push({
 				prefix: " ! [rejected]",
 				from: shortenRef(update.remote.name),
 				to: shortenRef(update.localRef),
-				suffix: "(would clobber existing tag)",
+				suffix: " (would clobber existing tag)",
 			});
 			continue;
 		}
@@ -300,6 +301,7 @@ async function fetchOneRemote(
 			abbreviateHash,
 		),
 	);
+	refLines.push(...rejectedTagLines);
 
 	if (!tags) {
 		const autoFollowTags: RemoteRef[] = [];
