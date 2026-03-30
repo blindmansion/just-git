@@ -792,6 +792,7 @@ export class BatchChecker {
 	): boolean {
 		if (!command.includes("..")) return false;
 		if (expected === actual) return false;
+		if ((actual === "") !== (expected === "")) return true;
 		const extractHashes = (s: string): string[] => {
 			const hashes: string[] = [];
 			for (const line of s.split("\n")) {

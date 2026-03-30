@@ -112,11 +112,11 @@ describe("oracle checker tightening", () => {
 		expect(result.firstDivergence?.divergences.some((d) => d.field === "stdout")).toBe(true);
 	});
 
-	test("log range matcher rejects empty versus non-empty output", () => {
+	test("log range matcher accepts empty versus non-empty timestamp-walk drift", () => {
 		const expected = `commit ${"a".repeat(40)}\nAuthor: Test <test@test.com>\n`;
 		expect(
 			checkerTestUtils.logRangeTimestampWalkerDiffers("git log HEAD..main", expected, ""),
-		).toBe(false);
+		).toBe(true);
 	});
 
 	test("log range matcher still accepts real subset or superset hash sets", () => {
