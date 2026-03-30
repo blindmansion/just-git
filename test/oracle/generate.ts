@@ -148,7 +148,7 @@ class RecordingHarness implements WalkHarness {
 	async serverCommit(seed: number, branch?: string): Promise<void> {
 		await this.inner.serverCommit(seed, branch);
 		this.buffer.push({
-			command: serializeServerCommit(seed),
+			command: serializeServerCommit(seed, branch),
 			result: null,
 		});
 	}

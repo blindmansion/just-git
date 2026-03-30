@@ -28,7 +28,7 @@ import {
 	parseFileOp,
 	parseFileOpBatchSeed,
 	parseFileResolveSeed,
-	parseServerCommitSeed,
+	parseServerCommit,
 } from "./fileops";
 import { buildRealGitEnv } from "./real-harness";
 import { initDb } from "./schema";
@@ -151,7 +151,7 @@ export async function replayTo(
 			} else if (isIndividualFileOp(step.command)) {
 				await execIndividualFileOp(repoDir, step.command);
 			} else if (isServerCommit(step.command)) {
-				const seed = parseServerCommitSeed(step.command);
+				const { seed, branch } = parseServerCommit(step.command);
 				const files = generateServerCommitFiles(seed, fileGenConfig);
 				await server!.commit("repo", {
 					files,
@@ -161,7 +161,7 @@ export async function replayTo(
 						email: "server@test.com",
 						date: new Date((3000000000 + seed) * 1000),
 					},
-					branch: "main",
+					branch,
 				});
 			} else {
 				let stepEnv = env;

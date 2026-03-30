@@ -4,7 +4,7 @@
  * Four categories:
  *   FILE_BATCH:<seed>      — seed-based random file op batch (regenerated at replay time)
  *   FILE_RESOLVE:<seed>    — seed-based resolve-all-files (conflict resolution, regenerated at replay time)
- *   SERVER_COMMIT:<seed>   — seed-based server-side commit (replayed via server.commit())
+ *   SERVER_COMMIT:<seed>[:branch] — seed-based server-side commit (replayed via server.commit())
  *   FILE_WRITE:<json>      — individual write (legacy, used by initial seed file)
  *   FILE_DELETE:<json>     — individual delete (legacy)
  */
@@ -81,13 +81,21 @@ export function isServerCommit(command: string): boolean {
 }
 
 /** Serialize a server-side commit as a command string. */
-export function serializeServerCommit(seed: number): string {
-	return `${SERVER_COMMIT_PREFIX}${seed}`;
+export function serializeServerCommit(seed: number, branch: string = "main"): string {
+	return branch === "main" ? `${SERVER_COMMIT_PREFIX}${seed}` : `${SERVER_COMMIT_PREFIX}${seed}:${branch}`;
 }
 
-/** Extract the seed from a SERVER_COMMIT command. */
-export function parseServerCommitSeed(command: string): number {
-	return parseInt(command.slice(SERVER_COMMIT_PREFIX.length), 10);
+/** Extract the seed and branch from a SERVER_COMMIT command. */
+export function parseServerCommit(command: string): { seed: number; branch: string } {
+	const payload = command.slice(SERVER_COMMIT_PREFIX.length);
+	const colonIdx = payload.indexOf(":");
+	if (colonIdx === -1) {
+		return { seed: parseInt(payload, 10), branch: "main" };
+	}
+	return {
+		seed: parseInt(payload.slice(0, colonIdx), 10),
+		branch: payload.slice(colonIdx + 1),
+	};
 }
 
 // ── Individual op parse/serialize ────────────────────────────────────

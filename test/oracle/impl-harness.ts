@@ -34,7 +34,7 @@ import {
 	parseFileOp,
 	parseFileOpBatchSeed,
 	parseFileResolveSeed,
-	parseServerCommitSeed,
+	parseServerCommit,
 } from "./fileops";
 
 // ── Constants ────────────────────────────────────────────────────
@@ -461,7 +461,7 @@ async function executeCommand(
 		return NO_OUTPUT;
 	} else if (isServerCommit(command)) {
 		if (!server) throw new Error("SERVER_COMMIT command but no server in replay environment");
-		const seed = parseServerCommitSeed(command);
+		const { seed, branch } = parseServerCommit(command);
 		const files = generateServerCommitFiles(seed, fileGenConfig);
 		await server.commit("repo", {
 			files,
@@ -471,7 +471,7 @@ async function executeCommand(
 				email: "server@test.com",
 				date: new Date((3000000000 + seed) * 1000),
 			},
-			branch: "main",
+			branch,
 		});
 		return NO_OUTPUT;
 	} else if (isIndividualFileOp(command)) {
