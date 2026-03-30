@@ -272,6 +272,37 @@ describe("git rebase", () => {
 			expect(parent.message).toContain("feature commit");
 		});
 
+		test("preserves intentionally empty root commits during rebase", async () => {
+			const bash = createTestBash({
+				files: EMPTY_REPO,
+				env: envAt("100"),
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+
+			await bash.exec("git branch feature");
+			await bash.fs.writeFile("/repo/main.txt", "main\n");
+			await bash.exec("git add main.txt");
+			await bash.exec('git commit -m "main commit"');
+
+			await bash.exec("git switch --orphan empty-root");
+			await bash.exec('git commit --allow-empty -m "empty root"');
+
+			const result = await bash.exec("git rebase main");
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).not.toContain("dropping");
+
+			const gitCtx = await findRepo(bash.fs, "/repo");
+			const headHash = await resolveHead(gitCtx!);
+			const headCommit = await readCommit(gitCtx!, headHash!);
+			expect(headCommit.message).toContain("empty root");
+			expect(headCommit.parents).toHaveLength(1);
+
+			const parent = await readCommit(gitCtx!, headCommit.parents[0]!);
+			expect(parent.message).toContain("main commit");
+		});
+
 		test("up-to-date rebase is a no-op", async () => {
 			const bash = createTestBash({
 				files: EMPTY_REPO,

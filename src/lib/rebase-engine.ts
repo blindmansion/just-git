@@ -79,6 +79,8 @@ async function headLabel(gitCtx: GitContext): Promise<string> {
 	return "detached HEAD";
 }
 
+const EMPTY_TREE_HASH = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
 function upToDateMessage(branchName: string): string {
 	if (branchName === "HEAD") return "HEAD is up to date.\n";
 	return `Current branch ${branchName} is up to date.\n`;
@@ -459,19 +461,21 @@ export async function performRebase(
 	const done: RebaseTodoEntry[] = todo.splice(0, skippedCount);
 
 	if (todo.length === 0) {
-		if (checkoutTarget === origHead) {
+		if (checkoutTarget === origHead && !skipStderr) {
 			return {
 				stdout: upToDateMessage(branchName),
-				stderr: skipStderr,
+				stderr: "",
 				exitCode: 0,
 			};
 		}
-		const ffErr = await fastForwardTo(gitCtx, checkoutTarget, currentIndex, headName);
-		if (ffErr) {
-			ffErr.stderr = skipStderr + ffErr.stderr;
-			return ffErr;
+		if (checkoutTarget !== origHead) {
+			const ffErr = await fastForwardTo(gitCtx, checkoutTarget, currentIndex, headName);
+			if (ffErr) {
+				ffErr.stderr = skipStderr + ffErr.stderr;
+				return ffErr;
+			}
+			await writeRebaseFfReflog(gitCtx, env, origHead, checkoutTarget, headName, checkoutLabel);
 		}
-		await writeRebaseFfReflog(gitCtx, env, origHead, checkoutTarget, headName, checkoutLabel);
 		return {
 			stdout: "",
 			stderr: `${skipStderr}Successfully rebased and updated ${headName}.\n`,
@@ -794,8 +798,10 @@ async function pickOneCommit(
 
 	// Distinguish commits that become empty during rebase from commits that
 	// were intentionally empty in the original history. Real git preserves the
-	// latter and only drops the former.
-	const originallyEmpty = theirsCommit.tree === baseTree;
+	// latter and only drops the former, including empty root commits created on
+	// orphan branches.
+	const originallyEmpty =
+		parentHash === null ? theirsCommit.tree === EMPTY_TREE_HASH : theirsCommit.tree === baseTree;
 	if (mergedTreeHash === headCommit.tree && !originallyEmpty) {
 		return {
 			conflict: false,
