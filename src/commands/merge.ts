@@ -74,6 +74,9 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 			if (!branch) {
 				return fatal("you must specify a branch to merge");
 			}
+			if (args.squash && args.noFf) {
+				return fatal("options '--squash' and '--no-ff.' cannot be used together");
+			}
 
 			// Resolve current HEAD first
 			const headHash = await requireHead(gitCtx);
@@ -109,6 +112,18 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 			}
 			const theirsHash = await peelToCommit(gitCtx, resolvedHash);
 
+			// Resolve effective FF mode: CLI flags override merge.ff config
+			let noFf = !!args.noFf;
+			let ffOnly = !!args.ffOnly;
+			if (!args.noFf && !args.ffOnly) {
+				const mergeFFConfig = await getConfigValue(gitCtx, "merge.ff");
+				if (mergeFFConfig === "false") noFf = true;
+				else if (mergeFFConfig === "only") ffOnly = true;
+			}
+			if (args.squash && noFf) {
+				return fatal("options '--squash' and '--no-ff.' cannot be used together");
+			}
+
 			// Find merge bases for already-up-to-date / fast-forward checks
 			const bases = await findAllMergeBases(gitCtx, headHash, theirsHash);
 			const baseCommit = bases[0] ?? null;
@@ -127,15 +142,6 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 					stderr: "",
 					exitCode: 0,
 				};
-			}
-
-			// Resolve effective FF mode: CLI flags override merge.ff config
-			let noFf = !!args.noFf;
-			let ffOnly = !!args.ffOnly;
-			if (!args.noFf && !args.ffOnly) {
-				const mergeFFConfig = await getConfigValue(gitCtx, "merge.ff");
-				if (mergeFFConfig === "false") noFf = true;
-				else if (mergeFFConfig === "only") ffOnly = true;
 			}
 
 			if (noFf && ffOnly) {

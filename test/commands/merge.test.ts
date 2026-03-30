@@ -295,6 +295,26 @@ describe("git merge", () => {
 			expect(squashMsg).toContain("feature work");
 			expect(squashMsg).not.toContain("custom squash title");
 		});
+
+		test("rejects --squash and --no-ff before merge analysis", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec("git branch feature");
+
+			await bash.exec("git checkout feature");
+			await bash.fs.writeFile("/repo/feature.txt", "feature content\n");
+			await bash.exec("git add feature.txt");
+			await bash.exec('git commit -m "feature work"');
+
+			await bash.exec("git checkout main");
+			const result = await bash.exec("git merge --squash --no-ff feature");
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toBe(
+				"fatal: options '--squash' and '--no-ff.' cannot be used together\n",
+			);
+		});
 	});
 
 	// ── --abort ──────────────────────────────────────────────────────

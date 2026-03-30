@@ -559,6 +559,32 @@ describe("git revert", () => {
 
 			expect(await pathExists(bash.fs, "/repo/new.txt")).toBe(false);
 		});
+
+		test("enters revert state even when -n produces no tree changes", async () => {
+			const bash = createTestBash({
+				files: EMPTY_REPO,
+				env: envAt("100"),
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+
+			await bash.fs.writeFile("/repo/new.txt", "content");
+			await bash.exec("git add new.txt");
+			await bash.exec('git commit -m "add new file"');
+			await bash.exec("git rm new.txt");
+			await bash.exec('git commit -m "remove new file"');
+
+			const gitCtx = await findRepo(bash.fs, "/repo");
+			const addCommit = (await bash.exec("git rev-parse HEAD~1")).stdout.trim();
+
+			const result = await bash.exec(`git revert -n ${addCommit}`);
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toBe("");
+			expect(result.stderr).toBe("");
+			expect(await resolveRef(gitCtx!, "REVERT_HEAD")).toBe(addCommit);
+			expect(await pathExists(bash.fs, "/repo/.git/MERGE_MSG")).toBe(true);
+		});
 	});
 
 	// ── Dirty worktree ──────────────────────────────────────────────
@@ -584,6 +610,34 @@ describe("git revert", () => {
 			const result = await bash.exec("git revert HEAD");
 			expect(result.exitCode).toBe(128);
 			expect(result.stderr).toContain("would be overwritten by revert");
+		});
+
+		test("merge commits still require -m before staged-change checks", async () => {
+			const bash = createTestBash({
+				files: EMPTY_REPO,
+				env: envAt("100"),
+			});
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/file.txt", "base\n");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "base"');
+			await bash.exec("git checkout -b feature");
+			await bash.fs.writeFile("/repo/feature.txt", "feature\n");
+			await bash.exec("git add feature.txt");
+			await bash.exec('git commit -m "feature"');
+			await bash.exec("git checkout main");
+			await bash.fs.writeFile("/repo/main.txt", "main\n");
+			await bash.exec("git add main.txt");
+			await bash.exec('git commit -m "main"');
+			await bash.exec('git merge feature -m "merge feature"');
+
+			const mergeHash = (await bash.exec("git rev-parse HEAD")).stdout.trim();
+			await bash.fs.writeFile("/repo/README.md", "staged change\n");
+			await bash.exec("git add README.md");
+
+			const result = await bash.exec(`git revert -n ${mergeHash}`);
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("is a merge but no -m option was given");
 		});
 	});
 

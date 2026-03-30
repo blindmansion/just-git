@@ -130,26 +130,6 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 			const headHash = await requireHead(gitCtx);
 			if (isCommandError(headHash)) return headHash;
 
-			// Check for unmerged index entries
-			const currentIndex = await readIndex(gitCtx);
-			const conflictErr = requireNoConflicts(currentIndex, "Reverting", "fatal: revert failed\n");
-			if (conflictErr) return conflictErr;
-
-			const headCommit = await readCommit(gitCtx, headHash);
-
-			// ── Staged-change check ──────────────────────────────────
-			if (gitCtx.workTree) {
-				const headMap = await flattenTreeToMap(gitCtx, headCommit.tree);
-				if (hasStagedChanges(currentIndex, headMap)) {
-					return err(
-						"error: your local changes would be overwritten by revert.\n" +
-							"hint: commit your changes or stash them to proceed.\n" +
-							"fatal: revert failed\n",
-						128,
-					);
-				}
-			}
-
 			// ── Merge commit handling ─────────────────────────────────
 			const mainlineParent: number | undefined = args.mainline;
 			let parentTree: string;
@@ -176,6 +156,26 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				const parentHash = revertedCommit.parents[0] as string;
 				const parentCommit = await readCommit(gitCtx, parentHash);
 				parentTree = parentCommit.tree;
+			}
+
+			// Check for unmerged index entries
+			const currentIndex = await readIndex(gitCtx);
+			const conflictErr = requireNoConflicts(currentIndex, "Reverting", "fatal: revert failed\n");
+			if (conflictErr) return conflictErr;
+
+			const headCommit = await readCommit(gitCtx, headHash);
+
+			// ── Staged-change check ──────────────────────────────────
+			if (gitCtx.workTree) {
+				const headMap = await flattenTreeToMap(gitCtx, headCommit.tree);
+				if (hasStagedChanges(currentIndex, headMap)) {
+					return err(
+						"error: your local changes would be overwritten by revert.\n" +
+							"hint: commit your changes or stash them to proceed.\n" +
+							"fatal: revert failed\n",
+						128,
+					);
+				}
 			}
 
 			// Build revert commit message
@@ -205,6 +205,11 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 			// ── Empty revert detection ────────────────────────────────
 			if (result.conflicts.length === 0) {
 				if (result.resultTree === headCommit.tree) {
+					if (args["no-commit"]) {
+						await updateRef(gitCtx, "REVERT_HEAD", resolvedHash);
+						await writeStateFile(gitCtx, "MERGE_MSG", revertMessage);
+						return { stdout: "", stderr: "", exitCode: 0 };
+					}
 					const mergeOutput = result.messages.length > 0 ? `${result.messages.join("\n")}\n` : "";
 					const statusOutput = await generateLongFormStatus(gitCtx, {
 						fromCommit: true,
@@ -250,14 +255,19 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				return {
 					stdout: mergeOutput ? `${mergeOutput}\n` : "",
 					stderr:
-						`error: could not revert ${shortHash}... ${firstLine(revertedCommit.message)}\n` +
-						"hint: After resolving the conflicts, mark them with\n" +
-						'hint: "git add/rm <pathspec>", then run\n' +
-						'hint: "git revert --continue".\n' +
-						'hint: You can instead skip this commit with "git revert --skip".\n' +
-						'hint: To abort and get back to the state before "git revert",\n' +
-						'hint: run "git revert --abort".\n' +
-						'hint: Disable this message with "git config set advice.mergeConflict false"\n',
+						args["no-commit"]
+							? `error: could not revert ${shortHash}... ${firstLine(revertedCommit.message)}\n` +
+								"hint: after resolving the conflicts, mark the corrected paths\n" +
+								"hint: with 'git add <paths>' or 'git rm <paths>'\n" +
+								'hint: Disable this message with "git config set advice.mergeConflict false"\n'
+							: `error: could not revert ${shortHash}... ${firstLine(revertedCommit.message)}\n` +
+								"hint: After resolving the conflicts, mark them with\n" +
+								'hint: "git add/rm <pathspec>", then run\n' +
+								'hint: "git revert --continue".\n' +
+								'hint: You can instead skip this commit with "git revert --skip".\n' +
+								'hint: To abort and get back to the state before "git revert",\n' +
+								'hint: run "git revert --abort".\n' +
+								'hint: Disable this message with "git config set advice.mergeConflict false"\n',
 					exitCode: 1,
 				};
 			}
