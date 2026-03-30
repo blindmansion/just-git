@@ -585,6 +585,61 @@ describe("git revert", () => {
 			expect(await resolveRef(gitCtx!, "REVERT_HEAD")).toBe(addCommit);
 			expect(await pathExists(bash.fs, "/repo/.git/MERGE_MSG")).toBe(true);
 		});
+
+		test("allows -n to enter revert state with staged changes", async () => {
+			const bash = createTestBash({
+				files: EMPTY_REPO,
+				env: envAt("100"),
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+
+			await bash.fs.writeFile("/repo/new.txt", "content");
+			await bash.exec("git add new.txt");
+			await bash.exec('git commit -m "add new file"');
+			await bash.exec("git rm new.txt");
+			await bash.exec('git commit -m "remove new file"');
+
+			await bash.fs.writeFile("/repo/README.md", "staged change\n");
+			await bash.exec("git add README.md");
+
+			const gitCtx = await findRepo(bash.fs, "/repo");
+			const addCommit = (await bash.exec("git rev-parse HEAD~1")).stdout.trim();
+
+			const result = await bash.exec(`git revert -n ${addCommit}`);
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toBe("");
+			expect(result.stderr).toBe("");
+			expect(await resolveRef(gitCtx!, "REVERT_HEAD")).toBe(addCommit);
+			expect(await pathExists(bash.fs, "/repo/.git/MERGE_MSG")).toBe(true);
+		});
+
+		test("reports per-file unmerged entries for -n with conflicts in index", async () => {
+			const bash = createTestBash({
+				files: EMPTY_REPO,
+				env: envAt("100"),
+			});
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/file.txt", "base\n");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "base"');
+			await bash.exec("git checkout -b feature");
+			await bash.fs.writeFile("/repo/file.txt", "feature\n");
+			await bash.exec("git add file.txt");
+			await bash.exec('git commit -m "feature"');
+			await bash.exec("git checkout main");
+			await bash.fs.writeFile("/repo/file.txt", "main\n");
+			await bash.exec("git add file.txt");
+			await bash.exec('git commit -m "main"');
+			await bash.exec("git merge feature", { env: envAt("200") });
+
+			const result = await bash.exec("git revert -n HEAD");
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("file.txt: unmerged (");
+			expect(result.stderr).toContain("error: your index file is unmerged.");
+			expect(result.stderr).toContain("fatal: revert failed");
+		});
 	});
 
 	// ── Dirty worktree ──────────────────────────────────────────────

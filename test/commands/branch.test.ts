@@ -647,7 +647,7 @@ describe("git branch", () => {
 			expect(result.stderr).toBe("error: the branch 'feature' is not fully merged\n");
 		});
 
-		test("includes disable hint when advice.forceDeleteBranch is true", async () => {
+		test("does not add disable hint when advice.forceDeleteBranch is true", async () => {
 			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
 			await bash.exec("git init");
 			await bash.exec("git add .");
@@ -661,8 +661,10 @@ describe("git branch", () => {
 
 			const result = await bash.exec("git branch -d feature");
 			expect(result.exitCode).toBe(1);
-			expect(result.stderr).toContain("git branch -D feature");
-			expect(result.stderr).toContain("advice.forceDeleteBranch");
+			expect(result.stderr).toBe(
+				"error: the branch 'feature' is not fully merged\n" +
+					"hint: If you are sure you want to delete it, run 'git branch -D feature'\n",
+			);
 		});
 
 		test("allows deleting a branch that is merged into HEAD", async () => {

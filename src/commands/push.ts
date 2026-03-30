@@ -176,7 +176,9 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				const pushDefault =
 					(await getConfigValue(gitCtx, "push.default"))?.toLowerCase() ?? "simple";
 				if (pushDefault === "nothing") {
-					return fatal("You didn't specify any refspecs to push, and " + 'push.default is "nothing".');
+					return fatal(
+						"You didn't specify any refspecs to push, and " + 'push.default is "nothing".',
+					);
 				}
 				const head = await readHead(gitCtx);
 				if (!head || head.type !== "symbolic") {
@@ -305,8 +307,8 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 						: isTag && isNonFF
 							? "already exists"
 							: isNonFF
-							? "non-fast-forward"
-							: (update.error ?? "failed");
+								? "non-fast-forward"
+								: (update.error ?? "failed");
 					pushLines.push({
 						prefix: " ! [rejected]",
 						from: shortRef,

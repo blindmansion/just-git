@@ -54,9 +54,17 @@ async function formatDeleteBranchNotFullyMerged(
 	name: string,
 	warning = "",
 ) {
-	const adviceForceDelete = (await getConfigValue(gitCtx, "advice.forceDeleteBranch"))?.toLowerCase();
+	const adviceForceDelete = (
+		await getConfigValue(gitCtx, "advice.forceDeleteBranch")
+	)?.toLowerCase();
 	if (adviceForceDelete === "false") {
 		return err(`${warning}error: the branch '${name}' is not fully merged\n`);
+	}
+	if (adviceForceDelete === "true") {
+		return err(
+			`${warning}error: the branch '${name}' is not fully merged\n` +
+				`hint: If you are sure you want to delete it, run 'git branch -D ${name}'\n`,
+		);
 	}
 	return err(
 		`${warning}error: the branch '${name}' is not fully merged\n` +

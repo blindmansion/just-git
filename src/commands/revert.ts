@@ -158,15 +158,28 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				parentTree = parentCommit.tree;
 			}
 
-			// Check for unmerged index entries
 			const currentIndex = await readIndex(gitCtx);
-			const conflictErr = requireNoConflicts(currentIndex, "Reverting", "fatal: revert failed\n");
-			if (conflictErr) return conflictErr;
+			if (args["no-commit"]) {
+				const unmerged = currentIndex.entries.filter((e) => e.stage > 0);
+				if (unmerged.length > 0) {
+					const MAX_UNMERGED_ENTRIES = 10;
+					const shown = unmerged.slice(0, MAX_UNMERGED_ENTRIES);
+					const lines = shown.map((e) => `${e.path}: unmerged (${e.hash})`).join("\n");
+					const ellipsis = unmerged.length > MAX_UNMERGED_ENTRIES ? "\n..." : "";
+					return err(
+						`${lines}${ellipsis}\nerror: your index file is unmerged.\nfatal: revert failed\n`,
+						128,
+					);
+				}
+			} else {
+				const conflictErr = requireNoConflicts(currentIndex, "Reverting", "fatal: revert failed\n");
+				if (conflictErr) return conflictErr;
+			}
 
 			const headCommit = await readCommit(gitCtx, headHash);
 
 			// ── Staged-change check ──────────────────────────────────
-			if (gitCtx.workTree) {
+			if (gitCtx.workTree && !args["no-commit"]) {
 				const headMap = await flattenTreeToMap(gitCtx, headCommit.tree);
 				if (hasStagedChanges(currentIndex, headMap)) {
 					return err(
@@ -254,20 +267,19 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 
 				return {
 					stdout: mergeOutput ? `${mergeOutput}\n` : "",
-					stderr:
-						args["no-commit"]
-							? `error: could not revert ${shortHash}... ${firstLine(revertedCommit.message)}\n` +
-								"hint: after resolving the conflicts, mark the corrected paths\n" +
-								"hint: with 'git add <paths>' or 'git rm <paths>'\n" +
-								'hint: Disable this message with "git config set advice.mergeConflict false"\n'
-							: `error: could not revert ${shortHash}... ${firstLine(revertedCommit.message)}\n` +
-								"hint: After resolving the conflicts, mark them with\n" +
-								'hint: "git add/rm <pathspec>", then run\n' +
-								'hint: "git revert --continue".\n' +
-								'hint: You can instead skip this commit with "git revert --skip".\n' +
-								'hint: To abort and get back to the state before "git revert",\n' +
-								'hint: run "git revert --abort".\n' +
-								'hint: Disable this message with "git config set advice.mergeConflict false"\n',
+					stderr: args["no-commit"]
+						? `error: could not revert ${shortHash}... ${firstLine(revertedCommit.message)}\n` +
+							"hint: after resolving the conflicts, mark the corrected paths\n" +
+							"hint: with 'git add <paths>' or 'git rm <paths>'\n" +
+							'hint: Disable this message with "git config set advice.mergeConflict false"\n'
+						: `error: could not revert ${shortHash}... ${firstLine(revertedCommit.message)}\n` +
+							"hint: After resolving the conflicts, mark them with\n" +
+							'hint: "git add/rm <pathspec>", then run\n' +
+							'hint: "git revert --continue".\n' +
+							'hint: You can instead skip this commit with "git revert --skip".\n' +
+							'hint: To abort and get back to the state before "git revert",\n' +
+							'hint: run "git revert --abort".\n' +
+							'hint: Disable this message with "git config set advice.mergeConflict false"\n',
 					exitCode: 1,
 				};
 			}

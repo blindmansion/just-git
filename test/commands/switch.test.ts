@@ -355,7 +355,9 @@ describe("git switch", () => {
 			await bash.exec(
 				"cd /remote && git checkout -b feature && echo feat > feat.txt && git add . && git commit -m feat",
 			);
-			await bash.exec("cd /local && git fetch origin refs/heads/feature:refs/remotes/origin/feature");
+			await bash.exec(
+				"cd /local && git fetch origin refs/heads/feature:refs/remotes/origin/feature",
+			);
 			await bash.exec("cd /local && echo local > local.txt && git add local.txt");
 
 			const result = await bash.exec("git switch --guess feature", { cwd: "/local" });

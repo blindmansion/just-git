@@ -242,6 +242,7 @@ describe("git push", () => {
 			expect(result.exitCode).toBe(128);
 			expect(result.stderr).toContain("does not match");
 			expect(result.stderr).toContain("the name of your current branch");
+			expect(result.stderr).toContain("To choose either option permanently");
 		});
 
 		test("simple refuses push when no upstream configured", async () => {
@@ -332,7 +333,7 @@ describe("git push", () => {
 			const result = await bash.exec("git push", { cwd: "/local" });
 			expect(result.exitCode).toBe(128);
 			expect(result.stderr).toBe(
-				"fatal: You didn't specify any refspecs to push, and push.default is \"nothing\".\n",
+				'fatal: You didn\'t specify any refspecs to push, and push.default is "nothing".\n',
 			);
 		});
 
