@@ -389,8 +389,10 @@ async function buildSquashMessageLog(
 ): Promise<string> {
 	const lines: string[] = [];
 	for await (const entry of walkCommits(gitCtx, theirsHash, { exclude: [headHash] })) {
-		if (entry.commit.parents.length > 1) continue;
 		lines.push(`commit ${entry.hash}`);
+		if (entry.commit.parents.length > 1) {
+			lines.push(`Merge: ${entry.commit.parents.map((p) => p.slice(0, 7)).join(" ")}`);
+		}
 		const a = entry.commit.author;
 		lines.push(`Author: ${a.name} <${a.email}>`);
 		lines.push(`Date:   ${formatDate(a.timestamp, a.timezone)}`);
