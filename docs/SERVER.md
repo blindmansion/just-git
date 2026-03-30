@@ -10,16 +10,17 @@ import { createServer } from "just-git/server";
 
 - [Quick start](#quick-start)
 - [Repo management](#repo-management)
+- [Hooks](#hooks)
 - [Authentication and authorization](#authentication-and-authorization)
 - [SSH](#ssh)
 - [Policy](#policy)
-- [Hooks](#hooks)
 - [Storage backends](#storage-backends)
 - [Programmatic commits](#programmatic-commits)
 - [Working with pushed code](#working-with-pushed-code)
 - [Configuration](#configuration)
 - [In-process access](#in-process-access)
 - [Forks](#forks)
+- [Garbage collection](#garbage-collection)
 - [Graceful shutdown](#graceful-shutdown)
 
 ## Quick start
@@ -81,31 +82,6 @@ The server manages repos through three methods:
 | `deleteRepo(id)`           | `void`            | Delete all data and the repo record.                 |
 | `forkRepo(src, target)`    | `GitRepo`         | Fork a repo. See [Forks](#forks).                    |
 
-### Garbage collection
-
-`server.gc(repoId)` removes unreachable objects from storage — objects not reachable from any ref. Typical sources of unreachable objects are force-pushed-away commits, deleted branches, and objects ingested from rejected pushes.
-
-```ts
-const result = await server.gc("my-repo");
-// result: { deleted: 12, retained: 847 }
-```
-
-Use `dryRun` to preview what would be deleted without actually deleting:
-
-```ts
-const result = await server.gc("my-repo", { dryRun: true });
-console.log(`Would delete ${result.deleted} objects`);
-```
-
-If refs change during the walk (e.g. a concurrent push completes), GC aborts and returns `{ aborted: true }` instead of risking deletion of newly-reachable objects. Callers can retry.
-
-```ts
-const result = await server.gc("my-repo");
-if (result.aborted) {
-  // refs changed during GC — retry later
-}
-```
-
 By default, requests to unknown repos return 404 (HTTP) or exit 128 (SSH). Set `autoCreate` to create repos on first access (e.g. for a push-to-create workflow):
 
 ```ts
@@ -125,6 +101,64 @@ const server = createServer({
     if (!path.startsWith("repos/")) return null; // 404
     return path.slice("repos/".length);
   },
+});
+```
+
+## Hooks
+
+Server hooks fire during push and ref advertisement. All are optional.
+
+```ts
+const server = createServer({
+  storage: new BunSqliteStorage(db),
+  hooks: {
+    preReceive: async ({ repo, updates, auth }) => {
+      if (!auth.canWrite) return { reject: true, message: "write access denied" };
+    },
+
+    update: async ({ repo, update }) => {
+      if (update.ref === "refs/heads/main" && !update.isFF && !update.isCreate) {
+        return { reject: true, message: "non-fast-forward to main" };
+      }
+    },
+
+    postReceive: async ({ repo, repoId, updates }) => {
+      for (const u of updates) {
+        const files = await getChangedFiles(repo, u.oldHash, u.newHash);
+        console.log(`${repoId}: ${u.ref} updated, ${files.length} files changed`);
+      }
+    },
+
+    advertiseRefs: async ({ refs, repoId, auth }) => {
+      return refs.filter((r) => !r.name.startsWith("refs/internal/"));
+    },
+  },
+});
+```
+
+| Hook            | Fires when                                         | Can reject?                      |
+| --------------- | -------------------------------------------------- | -------------------------------- |
+| `preReceive`    | After objects are unpacked, before any ref updates | Yes (aborts entire push)         |
+| `update`        | Per-ref, after `preReceive` passes                 | Yes (blocks this ref only)       |
+| `postReceive`   | After all ref updates succeed                      | No                               |
+| `advertiseRefs` | During upload-pack / receive-pack advertisement    | Yes (denies that service access) |
+
+All hook payloads include `repo: GitRepo`, `repoId`, and `auth` (from the auth provider). Pre-hooks return `{ reject: true, message? }` to block the operation, using the same `Rejection` protocol as [client-side hooks](HOOKS.md).
+
+`advertiseRefs` is best suited for hiding refs and denying coarse access to upload-pack / receive-pack. For push authorization and branch policy, prefer `preReceive` and `update`, which run on the actual receive-pack path.
+
+### Composing hooks
+
+Combine multiple hook sets with `composeHooks()`. Pre-hooks chain in order and short-circuit on the first rejection. Post-hooks all run regardless.
+
+All composed hook sets must share the same auth type `A`. For reusable hooks that don't inspect the auth context, use `ServerHooks<unknown>` — it composes with any concrete auth type thanks to contravariance.
+
+```ts
+import { createServer, composeHooks } from "just-git/server";
+
+const server = createServer({
+  storage: new BunSqliteStorage(db),
+  hooks: composeHooks(auditHooks, ciTriggerHooks),
 });
 ```
 
@@ -272,64 +306,6 @@ const server = createServer({
 | `immutableTags`      | Tags are immutable — no deletion, no overwrite       |
 
 Policy rules are checked first. If a policy check rejects, user hooks don't run.
-
-## Hooks
-
-Server hooks fire during push and ref advertisement. All are optional.
-
-```ts
-const server = createServer({
-  storage: new BunSqliteStorage(db),
-  hooks: {
-    preReceive: async ({ repo, updates, auth }) => {
-      if (!auth.canWrite) return { reject: true, message: "write access denied" };
-    },
-
-    update: async ({ repo, update }) => {
-      if (update.ref === "refs/heads/main" && !update.isFF && !update.isCreate) {
-        return { reject: true, message: "non-fast-forward to main" };
-      }
-    },
-
-    postReceive: async ({ repo, repoId, updates }) => {
-      for (const u of updates) {
-        const files = await getChangedFiles(repo, u.oldHash, u.newHash);
-        console.log(`${repoId}: ${u.ref} updated, ${files.length} files changed`);
-      }
-    },
-
-    advertiseRefs: async ({ refs, repoId, auth }) => {
-      return refs.filter((r) => !r.name.startsWith("refs/internal/"));
-    },
-  },
-});
-```
-
-| Hook            | Fires when                                         | Can reject?                      |
-| --------------- | -------------------------------------------------- | -------------------------------- |
-| `preReceive`    | After objects are unpacked, before any ref updates | Yes (aborts entire push)         |
-| `update`        | Per-ref, after `preReceive` passes                 | Yes (blocks this ref only)       |
-| `postReceive`   | After all ref updates succeed                      | No                               |
-| `advertiseRefs` | During upload-pack / receive-pack advertisement    | Yes (denies that service access) |
-
-All hook payloads include `repo: GitRepo`, `repoId`, and `auth` (from the auth provider). Pre-hooks return `{ reject: true, message? }` to block the operation, using the same `Rejection` protocol as [client-side hooks](HOOKS.md).
-
-`advertiseRefs` is best suited for hiding refs and denying coarse access to upload-pack / receive-pack. For push authorization and branch policy, prefer `preReceive` and `update`, which run on the actual receive-pack path.
-
-### Composing hooks
-
-Combine multiple hook sets with `composeHooks()`. Pre-hooks chain in order and short-circuit on the first rejection. Post-hooks all run regardless.
-
-All composed hook sets must share the same auth type `A`. For reusable hooks that don't inspect the auth context, use `ServerHooks<unknown>` — it composes with any concrete auth type thanks to contravariance.
-
-```ts
-import { createServer, composeHooks } from "just-git/server";
-
-const server = createServer({
-  storage: new BunSqliteStorage(db),
-  hooks: composeHooks(auditHooks, ciTriggerHooks),
-});
-```
 
 ## Storage backends
 
@@ -742,6 +718,31 @@ const fork = await server.forkRepo("upstream", "user/fork");
 **GC:** When GC'ing a root repo, the server includes all fork ref tips in the reachability walk, so objects referenced only by forks are not collected. When GC'ing a fork, only the fork's own partition is examined.
 
 **Storage requirements:** Fork support requires the storage backend to implement the optional `forkRepo`, `getForkParent`, and `listForks` methods. All built-in backends (`MemoryStorage`, `BunSqliteStorage`, `BetterSqlite3Storage`, `PgStorage`, `DurableObjectSqliteStorage`) support forks. Custom backends that don't implement these methods will throw `"storage backend does not support forks"` when `server.forkRepo()` is called — all other operations work unchanged.
+
+## Garbage collection
+
+`server.gc(repoId)` removes unreachable objects from storage — objects not reachable from any ref. Typical sources of unreachable objects are force-pushed-away commits, deleted branches, and objects ingested from rejected pushes.
+
+```ts
+const result = await server.gc("my-repo");
+// result: { deleted: 12, retained: 847 }
+```
+
+Use `dryRun` to preview what would be deleted without actually deleting:
+
+```ts
+const result = await server.gc("my-repo", { dryRun: true });
+console.log(`Would delete ${result.deleted} objects`);
+```
+
+If refs change during the walk (e.g. a concurrent push completes), GC aborts and returns `{ aborted: true }` instead of risking deletion of newly-reachable objects. Callers can retry.
+
+```ts
+const result = await server.gc("my-repo");
+if (result.aborted) {
+  // refs changed during GC — retry later
+}
+```
 
 ## Graceful shutdown
 
