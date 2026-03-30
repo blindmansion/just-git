@@ -146,6 +146,30 @@ export class DurableObjectSqliteStorage implements Storage {
 		return { type: row.type as RawObject["type"], content: new Uint8Array(row.content) };
 	}
 
+	getObjects(repoId: string, hashes: ReadonlyArray<string>): Map<string, RawObject> {
+		const uniqueHashes = Array.from(new Set(hashes));
+		if (uniqueHashes.length === 0) return new Map();
+		if (uniqueHashes.length === 1) {
+			const obj = this.getObject(repoId, uniqueHashes[0]!);
+			return obj ? new Map([[uniqueHashes[0]!, obj]]) : new Map();
+		}
+		const rows = this.sql
+			.exec(
+				`SELECT hash, type, content FROM git_objects WHERE repo_id = ? AND hash IN (${placeholders(uniqueHashes.length)})`,
+				repoId,
+				...uniqueHashes,
+			)
+			.toArray() as Array<{ hash: string; type: string; content: Uint8Array }>;
+		const result = new Map<string, RawObject>();
+		for (const row of rows) {
+			result.set(row.hash, {
+				type: row.type as RawObject["type"],
+				content: new Uint8Array(row.content),
+			});
+		}
+		return result;
+	}
+
 	putObject(repoId: string, hash: string, type: string, content: Uint8Array): void {
 		this.sql.exec(SQL.objInsert, repoId, hash, type, content);
 	}
@@ -169,6 +193,22 @@ export class DurableObjectSqliteStorage implements Storage {
 		return first(this.sql.exec(SQL.objExists, repoId, hash)) !== null;
 	}
 
+	hasObjects(repoId: string, hashes: ReadonlyArray<string>): Set<string> {
+		const uniqueHashes = Array.from(new Set(hashes));
+		if (uniqueHashes.length === 0) return new Set();
+		if (uniqueHashes.length === 1) {
+			return this.hasObject(repoId, uniqueHashes[0]!) ? new Set(uniqueHashes) : new Set();
+		}
+		const rows = this.sql
+			.exec(
+				`SELECT hash FROM git_objects WHERE repo_id = ? AND hash IN (${placeholders(uniqueHashes.length)})`,
+				repoId,
+				...uniqueHashes,
+			)
+			.toArray() as Array<{ hash: string }>;
+		return new Set(rows.map((row) => row.hash));
+	}
+
 	findObjectsByPrefix(repoId: string, prefix: string): string[] {
 		return this.sql
 			.exec(SQL.objPrefix, repoId, `${prefix}*`)
@@ -185,9 +225,12 @@ export class DurableObjectSqliteStorage implements Storage {
 
 	deleteObjects(repoId: string, hashes: ReadonlyArray<string>): number {
 		if (hashes.length === 0) return 0;
+		const uniqueHashes = Array.from(new Set(hashes));
+		const existing = this.hasObjects(repoId, uniqueHashes);
+		if (existing.size === 0) return 0;
 		let deleted = 0;
 		this.storage.transactionSync(() => {
-			for (const hash of hashes) {
+			for (const hash of existing) {
 				this.sql.exec(SQL.objDelete, repoId, hash);
 				deleted++;
 			}
@@ -273,4 +316,8 @@ function rowToRef(row: RefRow | null): Ref | null {
 		return { type: "direct", hash: row.hash };
 	}
 	return null;
+}
+
+function placeholders(count: number): string {
+	return Array(count).fill("?").join(", ");
 }

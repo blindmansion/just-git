@@ -145,6 +145,9 @@ export interface Storage {
 	 * Batch-read raw git objects by hash.
 	 * Returns only objects that exist for `repoId`, keyed by full hash.
 	 * Missing hashes must simply be omitted from the returned map.
+	 * Backends should keep the singleton case cheap as well — callers may
+	 * sometimes probe one hash at a time, so avoid batch-only overhead such as
+	 * per-call query preparation or heavy intermediate allocation.
 	 */
 	getObjects?(repoId: string, hashes: ReadonlyArray<string>): MaybeAsync<Map<string, RawObject>>;
 
@@ -178,6 +181,9 @@ export interface Storage {
 	 * Batch existence check for objects.
 	 * Returns the subset of `hashes` that exist for `repoId`.
 	 * Missing hashes must simply be omitted from the returned set.
+	 * As with `getObjects`, implementations should preserve a fast path for
+	 * single-hash probes and prefer reusable query plans / statement caches when
+	 * the backend benefits from them.
 	 */
 	hasObjects?(repoId: string, hashes: ReadonlyArray<string>): MaybeAsync<Set<string>>;
 

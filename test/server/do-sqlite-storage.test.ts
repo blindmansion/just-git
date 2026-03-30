@@ -77,11 +77,12 @@ async function makeHash(type: ObjectType, content: Uint8Array): Promise<string> 
 
 describe("DurableObjectSqliteStorage", () => {
 	let db: Database;
+	let doStorage: DurableObjectStorageSql;
 	let storage: StorageAdapter;
 
 	beforeEach(() => {
 		db = new Database(":memory:");
-		const doStorage = createDOStorageShim(db);
+		doStorage = createDOStorageShim(db);
 		storage = createStorageAdapter(new DurableObjectSqliteStorage(doStorage));
 	});
 
@@ -125,6 +126,43 @@ describe("DurableObjectSqliteStorage", () => {
 
 			expect(await objects.exists(hash)).toBe(true);
 			expect(await objects.exists("0000000000000000000000000000000000000000")).toBe(false);
+		});
+
+		test("batch object helpers return only stored hashes", async () => {
+			await storage.createRepo("test-repo-batch");
+			const { objectStore: objects } = (await storage.repo("test-repo-batch"))!;
+			const alpha = encoder.encode("alpha");
+			const bravo = encoder.encode("bravo");
+			const hashA = await objects.write("blob", alpha);
+			const hashB = await objects.write("blob", bravo);
+			const missing = "0000000000000000000000000000000000000000";
+
+			expect(objects.readMany).toBeDefined();
+			expect(objects.existsMany).toBeDefined();
+
+			const found = await objects.readMany!([hashA, hashB, missing, hashA]);
+			expect(Array.from(found.keys()).sort()).toEqual([hashA, hashB].sort());
+			expect(new TextDecoder().decode(found.get(hashA)!.content)).toBe("alpha");
+			expect(new TextDecoder().decode(found.get(hashB)!.content)).toBe("bravo");
+
+			const present = await objects.existsMany!([hashA, missing, hashB, hashA]);
+			expect(Array.from(present).sort()).toEqual([hashA, hashB].sort());
+		});
+
+		test("deleteObjects counts only hashes actually removed", () => {
+			const driver = new DurableObjectSqliteStorage(doStorage);
+			driver.insertRepo("test-repo-delete");
+			const alpha = encoder.encode("alpha");
+			const bravo = encoder.encode("bravo");
+
+			driver.putObject("test-repo-delete", "a".repeat(40), "blob", alpha);
+			driver.putObject("test-repo-delete", "b".repeat(40), "blob", bravo);
+
+			expect(
+				driver.deleteObjects("test-repo-delete", ["a".repeat(40), "a".repeat(40), "nope"]),
+			).toBe(1);
+			expect(driver.hasObject("test-repo-delete", "a".repeat(40))).toBe(false);
+			expect(driver.hasObject("test-repo-delete", "b".repeat(40))).toBe(true);
 		});
 
 		test("findByPrefix", async () => {

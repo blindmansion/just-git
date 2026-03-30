@@ -64,7 +64,7 @@ describe("MemoryStorage", () => {
 			expect(await objects.exists("0000000000000000000000000000000000000000")).toBe(false);
 		});
 
-		test("adapter batch helpers fall back when driver has no batch APIs", async () => {
+		test("batch object helpers return only stored hashes", async () => {
 			await storage.createRepo("test-repo");
 			const { objectStore: objects } = (await storage.repo("test-repo"))!;
 			const alpha = encoder.encode("alpha");
@@ -73,6 +73,8 @@ describe("MemoryStorage", () => {
 			const hashB = await objects.write("blob", bravo);
 			const missing = "0000000000000000000000000000000000000000";
 
+			expect(driver.getObjects).toBeDefined();
+			expect(driver.hasObjects).toBeDefined();
 			expect(objects.readMany).toBeDefined();
 			expect(objects.existsMany).toBeDefined();
 
@@ -83,6 +85,21 @@ describe("MemoryStorage", () => {
 
 			const present = await objects.existsMany!([hashA, missing, hashB, hashA]);
 			expect(Array.from(present).sort()).toEqual([hashA, hashB].sort());
+		});
+
+		test("deleteObjects counts only hashes actually removed", async () => {
+			await storage.createRepo("test-repo-delete");
+			const alpha = encoder.encode("alpha");
+			const bravo = encoder.encode("bravo");
+			const hashA = await makeHash("blob", alpha);
+			const hashB = await makeHash("blob", bravo);
+
+			driver.putObject("test-repo-delete", hashA, "blob", alpha);
+			driver.putObject("test-repo-delete", hashB, "blob", bravo);
+
+			expect(driver.deleteObjects("test-repo-delete", [hashA, hashA, "nope"])).toBe(1);
+			expect(driver.hasObject("test-repo-delete", hashA)).toBe(false);
+			expect(driver.hasObject("test-repo-delete", hashB)).toBe(true);
 		});
 
 		test("findByPrefix", async () => {

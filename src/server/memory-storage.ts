@@ -44,6 +44,17 @@ export class MemoryStorage implements Storage {
 		return { type: obj.type, content: new Uint8Array(obj.content) };
 	}
 
+	getObjects(repoId: string, hashes: ReadonlyArray<string>): Map<string, RawObject> {
+		const map = this.getObjMap(repoId);
+		const result = new Map<string, RawObject>();
+		for (const hash of new Set(hashes)) {
+			const obj = map.get(hash);
+			if (!obj) continue;
+			result.set(hash, { type: obj.type, content: new Uint8Array(obj.content) });
+		}
+		return result;
+	}
+
 	putObject(repoId: string, hash: string, type: string, content: Uint8Array): void {
 		const map = this.getObjMap(repoId);
 		if (!map.has(hash)) {
@@ -71,6 +82,15 @@ export class MemoryStorage implements Storage {
 
 	hasObject(repoId: string, hash: string): boolean {
 		return this.getObjMap(repoId).has(hash);
+	}
+
+	hasObjects(repoId: string, hashes: ReadonlyArray<string>): Set<string> {
+		const map = this.getObjMap(repoId);
+		const result = new Set<string>();
+		for (const hash of new Set(hashes)) {
+			if (map.has(hash)) result.add(hash);
+		}
+		return result;
 	}
 
 	findObjectsByPrefix(repoId: string, prefix: string): string[] {

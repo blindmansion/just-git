@@ -536,6 +536,10 @@ Key things to know:
 
 - **`getObjects` and `hasObjects` are optional but valuable.** They let the adapter batch object reads and existence checks during upload-pack negotiation and pack generation. For remote/datastore-backed implementations, they can remove a large amount of per-object overhead.
 
+- **Batch helpers still need a cheap singleton fast path.** Some adapter call sites probe one hash at a time, especially during fetch negotiation / reachability walks. If a backend implements `getObjects` / `hasObjects`, make sure the one-hash case stays as cheap as `getObject` / `hasObject` rather than paying extra batch-only costs.
+
+- **Avoid per-call batch setup overhead on local backends.** For SQL-backed implementations, reusable prepared statements / cached query plans by batch size are usually better than preparing a fresh `IN (...)` query on every call.
+
 - **`deleteObjects` should delete only repo-local rows.** The adapter uses it for GC and for receive-pack rollback of newly inserted objects. Fork-aware backends should never treat this as a request to delete from the parent object's partition.
 
 - **Refs are either direct or symbolic.** A `Ref` is `{ type: "direct", hash: string }` or `{ type: "symbolic", target: string }`. Store and return them as-is — the adapter resolves symref chains. `HEAD` is typically a symbolic ref pointing to `refs/heads/main`.

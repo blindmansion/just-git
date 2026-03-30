@@ -231,11 +231,6 @@ async function collectMissingWithContent(
 }
 
 async function readObjectIfExists(ctx: GitRepo, hash: ObjectId) {
-	if (ctx.objectStore.readMany) {
-		const objects = await ctx.objectStore.readMany([hash]);
-		return objects.get(hash) ?? null;
-	}
-
 	try {
 		return await readObject(ctx, hash);
 	} catch (err) {

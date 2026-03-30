@@ -121,6 +121,8 @@ function prepareStatements(db: BunSqliteDatabase): Statements {
  */
 export class BunSqliteStorage implements Storage {
 	private stmts: Statements;
+	private objectReadManyStatements = new Map<number, BunSqliteStatement>();
+	private objectExistsManyStatements = new Map<number, BunSqliteStatement>();
 	private batchInsertTx: (
 		rows: ReadonlyArray<{ repoId: string; hash: string; type: string; content: Uint8Array }>,
 	) => string[];
@@ -191,6 +193,29 @@ export class BunSqliteStorage implements Storage {
 		return { type: row.type as RawObject["type"], content: new Uint8Array(row.content) };
 	}
 
+	getObjects(repoId: string, hashes: ReadonlyArray<string>): Map<string, RawObject> {
+		const uniqueHashes = Array.from(new Set(hashes));
+		if (uniqueHashes.length === 0) return new Map();
+		if (uniqueHashes.length === 1) {
+			const obj = this.getObject(repoId, uniqueHashes[0]!);
+			return obj ? new Map([[uniqueHashes[0]!, obj]]) : new Map();
+		}
+		const stmt = this.getObjectReadManyStatement(uniqueHashes.length);
+		const rows = stmt.all(repoId, ...uniqueHashes) as Array<{
+			hash: string;
+			type: string;
+			content: Uint8Array;
+		}>;
+		const result = new Map<string, RawObject>();
+		for (const row of rows) {
+			result.set(row.hash, {
+				type: row.type as RawObject["type"],
+				content: new Uint8Array(row.content),
+			});
+		}
+		return result;
+	}
+
 	putObject(repoId: string, hash: string, type: string, content: Uint8Array): void {
 		this.stmts.objInsert.run(repoId, hash, type, content);
 	}
@@ -206,6 +231,17 @@ export class BunSqliteStorage implements Storage {
 		return this.stmts.objExists.get(repoId, hash) !== null;
 	}
 
+	hasObjects(repoId: string, hashes: ReadonlyArray<string>): Set<string> {
+		const uniqueHashes = Array.from(new Set(hashes));
+		if (uniqueHashes.length === 0) return new Set();
+		if (uniqueHashes.length === 1) {
+			return this.hasObject(repoId, uniqueHashes[0]!) ? new Set(uniqueHashes) : new Set();
+		}
+		const stmt = this.getObjectExistsManyStatement(uniqueHashes.length);
+		const rows = stmt.all(repoId, ...uniqueHashes) as Array<{ hash: string }>;
+		return new Set(rows.map((row) => row.hash));
+	}
+
 	findObjectsByPrefix(repoId: string, prefix: string): string[] {
 		const rows = this.stmts.objPrefix.all(repoId, `${prefix}*`) as Array<{ hash: string }>;
 		return rows.map((r) => r.hash);
@@ -218,11 +254,43 @@ export class BunSqliteStorage implements Storage {
 
 	deleteObjects(repoId: string, hashes: ReadonlyArray<string>): number {
 		if (hashes.length === 0) return 0;
+		const uniqueHashes = Array.from(new Set(hashes));
+		const existing = this.hasObjects(repoId, uniqueHashes);
+		if (existing.size === 0) return 0;
 		let deleted = 0;
-		this.batchDeleteTx(repoId, hashes, (count) => {
+		this.batchDeleteTx(repoId, Array.from(existing), (count) => {
 			deleted += count;
 		});
 		return deleted;
+	}
+
+	private getObjectReadManyStatement(count: number): BunSqliteStatement {
+		return this.getCachedStatement(
+			this.objectReadManyStatements,
+			count,
+			`SELECT hash, type, content FROM git_objects WHERE repo_id = ? AND hash IN (${placeholders(count)})`,
+		);
+	}
+
+	private getObjectExistsManyStatement(count: number): BunSqliteStatement {
+		return this.getCachedStatement(
+			this.objectExistsManyStatements,
+			count,
+			`SELECT hash FROM git_objects WHERE repo_id = ? AND hash IN (${placeholders(count)})`,
+		);
+	}
+
+	private getCachedStatement(
+		cache: Map<number, BunSqliteStatement>,
+		count: number,
+		sql: string,
+	): BunSqliteStatement {
+		let stmt = cache.get(count);
+		if (!stmt) {
+			stmt = this.db.prepare(sql);
+			cache.set(count, stmt);
+		}
+		return stmt;
 	}
 
 	// ── Refs ────────────────────────────────────────────────────
@@ -304,4 +372,8 @@ function rowToRef(row: RefRow | null): Ref | null {
 		return { type: "direct", hash: row.hash };
 	}
 	return null;
+}
+
+function placeholders(count: number): string {
+	return Array(count).fill("?").join(", ");
 }
