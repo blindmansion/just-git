@@ -490,7 +490,6 @@ async function resolvePushDefault(
 						`    git push ${remoteName} HEAD:${upstreamBranch}\n\n` +
 						"To push to the branch of the same name on the remote, use\n\n" +
 						`    git push ${remoteName} HEAD\n\n` +
-						"To choose either option permanently, see push.default in 'git help config'.\n\n" +
 						"To avoid automatically configuring an upstream branch when its name\n" +
 						"won't match the local branch, see option 'simple' of branch.autoSetupMerge\n" +
 						"in 'git help config'.\n",

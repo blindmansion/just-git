@@ -212,6 +212,20 @@ export class LocalTransport implements Transport {
 			try {
 				const isDelete = update.newHash === ZERO_HASH;
 				const expectedOld = update.oldHash ?? null;
+				const isTagUpdate =
+					update.name.startsWith("refs/tags/") &&
+					update.oldHash &&
+					update.oldHash !== ZERO_HASH &&
+					update.newHash !== ZERO_HASH;
+
+				if (isTagUpdate && !update.ok) {
+					results.push({
+						...update,
+						ok: false,
+						error: `non-fast-forward update rejected for ${update.name}`,
+					});
+					continue;
+				}
 
 				if (!isDelete && !update.ok && update.oldHash) {
 					const ff = await isAncestor(this.remote, update.oldHash, update.newHash);
@@ -365,6 +379,17 @@ export class SmartHttpTransport implements Transport {
 		const rejectedNames = new Set<string>();
 		const rejectedResults: PushRefUpdate[] = [];
 		for (const update of updates) {
+			if (
+				update.name.startsWith("refs/tags/") &&
+				update.oldHash &&
+				update.oldHash !== ZERO_HASH &&
+				update.newHash !== ZERO_HASH &&
+				!update.ok
+			) {
+				rejectedNames.add(update.name);
+				rejectedResults.push({ ...update, ok: false, error: "non-fast-forward" });
+				continue;
+			}
 			if (
 				update.oldHash &&
 				update.oldHash !== ZERO_HASH &&

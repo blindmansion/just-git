@@ -208,6 +208,22 @@ describe("git push", () => {
 		expect(result.stderr).toContain("tag already exists in the remote");
 	});
 
+	test("--tags rejects updating an existing remote tag even when fast-forward", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /remote && git tag beta-61.3");
+		await bash.exec("git fetch --tags", { cwd: "/local" });
+		await bash.exec("cd /local && echo local > local.txt && git add . && git commit -m local");
+		await bash.exec("cd /local && git tag -f beta-61.3 HEAD");
+
+		const result = await bash.exec("git push origin --tags", { cwd: "/local" });
+		expect(result.exitCode).toBe(1);
+		expect(result.stderr).toContain("! [rejected]");
+		expect(result.stderr).toContain("beta-61.3 -> beta-61.3 (already exists)");
+		expect(result.stderr).toContain("tag already exists in the remote");
+		expect(result.stderr).not.toContain("beta-61.3 -> beta-61.3\n");
+	});
+
 	test("up-to-date push reports everything up-to-date", async () => {
 		const bash = await setupClonePair();
 
@@ -242,7 +258,7 @@ describe("git push", () => {
 			expect(result.exitCode).toBe(128);
 			expect(result.stderr).toContain("does not match");
 			expect(result.stderr).toContain("the name of your current branch");
-			expect(result.stderr).toContain("To choose either option permanently");
+			expect(result.stderr).not.toContain("To choose either option permanently");
 		});
 
 		test("simple refuses push when no upstream configured", async () => {
