@@ -4,12 +4,7 @@
  * `state.remotes.length > 0`.
  */
 
-import {
-	inConflict,
-	pickAnyBranch,
-	pickOtherBranch,
-	pickRemoteTrackingBranch,
-} from "../pickers";
+import { inConflict, pickAnyBranch, pickOtherBranch, pickRemoteTrackingBranch } from "../pickers";
 import type { Action } from "../types";
 
 const hasOrigin = (remotes: string[]) => remotes.includes("origin");

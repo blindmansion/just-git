@@ -133,9 +133,7 @@ export async function pickMergeCommitHash(
 	if (shouldFuzz(rng, opts)) return fuzzCommitHash(rng);
 	const branch = opts?.branch;
 	const n = opts?.n ?? 20;
-	const cmd = branch
-		? `log ${branch} --format="%H %P" -n ${n}`
-		: `log --format="%H %P" -n ${n}`;
+	const cmd = branch ? `log ${branch} --format="%H %P" -n ${n}` : `log --format="%H %P" -n ${n}`;
 	const logResult = await harness.git(cmd);
 	const hashes = logResult.stdout
 		.trim()

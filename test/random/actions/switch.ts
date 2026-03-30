@@ -144,9 +144,7 @@ const switchGuess: Action = {
 		if (!remoteBranch && harness.serverCommit) {
 			const branchName = newBranchName(rng, state.branches);
 			await harness.serverCommit(rng.int(0, 1_000_000), branchName);
-			await harness.git(
-				`fetch origin refs/heads/${branchName}:refs/remotes/origin/${branchName}`,
-			);
+			await harness.git(`fetch origin refs/heads/${branchName}:refs/remotes/origin/${branchName}`);
 			remoteBranch = `origin/${branchName}`;
 		}
 

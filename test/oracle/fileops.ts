@@ -82,7 +82,9 @@ export function isServerCommit(command: string): boolean {
 
 /** Serialize a server-side commit as a command string. */
 export function serializeServerCommit(seed: number, branch: string = "main"): string {
-	return branch === "main" ? `${SERVER_COMMIT_PREFIX}${seed}` : `${SERVER_COMMIT_PREFIX}${seed}:${branch}`;
+	return branch === "main"
+		? `${SERVER_COMMIT_PREFIX}${seed}`
+		: `${SERVER_COMMIT_PREFIX}${seed}:${branch}`;
 }
 
 /** Extract the seed and branch from a SERVER_COMMIT command. */

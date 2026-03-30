@@ -635,11 +635,12 @@ export const PRESETS: Record<string, Preset> = {
 	},
 
 	/** Kitchen sink: chaos + light fuzz + gitignore. Good general-purpose validation.
-	 *  Excludes cherryPickNoCommit — cherry-pick -n leaves merge results in the
-	 *  index without committing, so rename-detection tie-breaking differences
-	 *  cascade through every subsequent operation, poisoning ~90% of traces. */
+	 *  Excludes cherryPickNoCommit and revertNoCommit — the no-commit merge-family
+	 *  variants leave merge results in the index without committing, so
+	 *  rename-detection tie-breaking differences cascade through every subsequent
+	 *  operation, poisoning traces. */
 	kitchen: {
-		actions: excludeNames(ALL_ACTIONS, "cherryPickNoCommit"),
+		actions: excludeNames(ALL_ACTIONS, "cherryPickNoCommit", "revertNoCommit"),
 		chaosRate: 0.12,
 		fuzz: FUZZ_LIGHT,
 		fileGen: {
@@ -687,7 +688,7 @@ export const PRESETS: Record<string, Preset> = {
 	/** Remote kitchen sink: kitchen preset with a remote server.
 	 *  Same chaos/fuzz/gitignore as kitchen, plus push/fetch/pull coverage. */
 	"remote-kitchen": {
-		actions: excludeNames(ALL_ACTIONS, "cherryPickNoCommit"),
+		actions: excludeNames(ALL_ACTIONS, "cherryPickNoCommit", "revertNoCommit"),
 		chaosRate: 0.12,
 		fuzz: FUZZ_LIGHT,
 		fileGen: {
