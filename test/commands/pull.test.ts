@@ -172,6 +172,50 @@ describe("git pull", () => {
 		expect(await pathExists(bash.fs, "/local/.git/refs/tags/v1.2")).toBe(true);
 	});
 
+	test("pull --rebase fails before fetch on dirty tracked branch", async () => {
+		const bash = await setupClonePair();
+
+		const trackingBefore = await readFile(bash.fs, "/local/.git/refs/remotes/origin/main");
+		await bash.exec("git config pull.rebase true", { cwd: "/local" });
+		await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+		await bash.exec('cd /remote && git tag -a -m "remote tag" v1.3 HEAD');
+		await bash.exec("cd /local && echo staged > local-only.txt && git add local-only.txt");
+
+		const result = await bash.exec("git pull", { cwd: "/local" });
+		expect(result.exitCode).toBe(128);
+		expect(result.stderr).toContain(
+			"error: cannot pull with rebase: Your index contains uncommitted changes.",
+		);
+		expect(result.stderr).toContain("error: Please commit or stash them.");
+		expect(result.stderr).not.toContain("From /remote");
+		expect(await readFile(bash.fs, "/local/.git/refs/remotes/origin/main")).toBe(trackingBefore);
+		expect(await pathExists(bash.fs, "/local/.git/refs/tags/v1.3")).toBe(false);
+	});
+
+	test("pull --rebase fails before fetch on dirty no-tracking branch", async () => {
+		const bash = await setupClonePair();
+
+		const trackingBefore = await readFile(bash.fs, "/local/.git/refs/remotes/origin/main");
+		await bash.exec("git config pull.rebase true", { cwd: "/local" });
+		await bash.exec("cd /local && git switch -c feature");
+		await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+		await bash.exec('cd /remote && git tag -a -m "remote tag" v1.4 HEAD');
+		await bash.exec("cd /local && echo dirty >> README.md");
+		await bash.exec("cd /local && echo staged > local-only.txt && git add local-only.txt");
+
+		const result = await bash.exec("git pull", { cwd: "/local" });
+		expect(result.exitCode).toBe(128);
+		expect(result.stderr).toContain("error: cannot pull with rebase: You have unstaged changes.");
+		expect(result.stderr).toContain(
+			"error: additionally, your index contains uncommitted changes.",
+		);
+		expect(result.stderr).toContain("error: Please commit or stash them.");
+		expect(result.stderr).not.toContain("There is no tracking information for the current branch.");
+		expect(result.stderr).not.toContain("From /remote");
+		expect(await readFile(bash.fs, "/local/.git/refs/remotes/origin/main")).toBe(trackingBefore);
+		expect(await pathExists(bash.fs, "/local/.git/refs/tags/v1.4")).toBe(false);
+	});
+
 	// ── pull --rebase ───────────────────────────────────────────────
 
 	describe("pull --rebase", () => {

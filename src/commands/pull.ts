@@ -5,6 +5,7 @@ import {
 	buildRefUpdateLines,
 	fatal,
 	formatTransferRefLines,
+	hasStagedChanges,
 	isCommandError,
 	requireAuthor,
 	requireCommitter,
@@ -39,10 +40,12 @@ import {
 	isShallowRepo,
 	readShallowCommits,
 } from "../lib/shallow.ts";
+import { flattenTreeToMap } from "../lib/tree-ops.ts";
 import { mapRefspec, parseRefspec } from "../lib/transport/refspec.ts";
 import { resolveRemoteTransport } from "../lib/transport/remote.ts";
 import type { RemoteRef, ShallowFetchOptions } from "../lib/transport/transport.ts";
 import type { GitContext, ObjectId, Ref } from "../lib/types.ts";
+import { diffIndexToWorkTree } from "../lib/worktree.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { performRebase } from "../lib/rebase-engine.ts";
 
@@ -126,6 +129,10 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			remoteName = remoteName || "origin";
 
 			const pullMode = await resolvePullMode(gitCtx, args, head);
+			if (pullMode.useRebase) {
+				const dirtyResult = await checkPullRebaseWorktree(gitCtx, headHash, currentIndex);
+				if (dirtyResult) return dirtyResult;
+			}
 
 			let resolved;
 			try {
@@ -730,4 +737,38 @@ async function resolvePullMode(
 	}
 
 	return { useRebase, noFf, ffOnly, configured };
+}
+
+async function checkPullRebaseWorktree(
+	gitCtx: GitContext,
+	headHash: ObjectId,
+	currentIndex: Awaited<ReturnType<typeof readIndex>>,
+) {
+	if (!gitCtx.workTree) return null;
+
+	const headCommit = await readCommit(gitCtx, headHash);
+	const headMap = await flattenTreeToMap(gitCtx, headCommit.tree);
+	const hasStaged = hasStagedChanges(currentIndex, headMap);
+	const wtDiffs = await diffIndexToWorkTree(gitCtx, currentIndex);
+	const hasUnstaged = wtDiffs.some((d) => d.status === "modified" || d.status === "deleted");
+
+	if (!hasStaged && !hasUnstaged) return null;
+
+	const lines: string[] = [];
+	if (hasUnstaged) {
+		lines.push("error: cannot pull with rebase: You have unstaged changes.");
+	}
+	if (hasStaged) {
+		if (hasUnstaged) {
+			lines.push("error: additionally, your index contains uncommitted changes.");
+		} else {
+			lines.push("error: cannot pull with rebase: Your index contains uncommitted changes.");
+		}
+	}
+	lines.push("error: Please commit or stash them.");
+	return {
+		stdout: "",
+		stderr: `${lines.join("\n")}\n`,
+		exitCode: 128,
+	};
 }
