@@ -144,6 +144,34 @@ describe("git pull", () => {
 		expect(fetchHead).toBeDefined();
 	});
 
+	test("pull auto-follows reachable tags during fetch phase", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+		await bash.exec('cd /remote && git tag -a -m "remote tag" v1.1 HEAD');
+
+		const result = await bash.exec("git pull", { cwd: "/local" });
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain("[new tag]");
+		expect(result.stderr).toContain("v1.1");
+		expect(await pathExists(bash.fs, "/local/.git/refs/tags/v1.1")).toBe(true);
+	});
+
+	test("pull fetch phase follows reachable tags before no-tracking error", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /local && git switch -c feature");
+		await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+		await bash.exec('cd /remote && git tag -a -m "remote tag" v1.2 HEAD');
+
+		const result = await bash.exec("git pull", { cwd: "/local" });
+		expect(result.exitCode).toBe(1);
+		expect(result.stderr).toContain("[new tag]");
+		expect(result.stderr).toContain("v1.2");
+		expect(result.stderr).toContain("There is no tracking information for the current branch.");
+		expect(await pathExists(bash.fs, "/local/.git/refs/tags/v1.2")).toBe(true);
+	});
+
 	// ── pull --rebase ───────────────────────────────────────────────
 
 	describe("pull --rebase", () => {

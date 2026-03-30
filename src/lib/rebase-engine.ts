@@ -306,6 +306,7 @@ export async function performRebase(
 	upstreamHash: ObjectId,
 	ontoHash: ObjectId,
 	upstreamLabel: string,
+	checkoutLabel: string,
 	ext?: GitExtensions,
 	options?: { reapplyCherryPicks?: boolean },
 ): Promise<CommandResult> {
@@ -370,7 +371,7 @@ export async function performRebase(
 		if (ontoHash !== origHead) {
 			const ffErr = await fastForwardTo(gitCtx, ontoHash, currentIndex, headName);
 			if (ffErr) return ffErr;
-			await writeRebaseFfReflog(gitCtx, env, origHead, ontoHash, headName, upstreamLabel);
+			await writeRebaseFfReflog(gitCtx, env, origHead, ontoHash, headName, checkoutLabel);
 			return {
 				stdout: "",
 				stderr: `Successfully rebased and updated ${headName}.\n`,
@@ -429,7 +430,7 @@ export async function performRebase(
 				ffErr.stderr = skipStderr + ffErr.stderr;
 				return ffErr;
 			}
-			await writeRebaseFfReflog(gitCtx, env, origHead, ontoHash, headName, upstreamLabel);
+			await writeRebaseFfReflog(gitCtx, env, origHead, ontoHash, headName, checkoutLabel);
 		}
 		return {
 			stdout: "",
@@ -470,7 +471,7 @@ export async function performRebase(
 			ffErr.stderr = skipStderr + ffErr.stderr;
 			return ffErr;
 		}
-		await writeRebaseFfReflog(gitCtx, env, origHead, checkoutTarget, headName, upstreamLabel);
+		await writeRebaseFfReflog(gitCtx, env, origHead, checkoutTarget, headName, checkoutLabel);
 		return {
 			stdout: "",
 			stderr: `${skipStderr}Successfully rebased and updated ${headName}.\n`,
@@ -496,7 +497,7 @@ export async function performRebase(
 		"HEAD",
 		origHead,
 		checkoutTarget,
-		`rebase (start): checkout ${upstreamLabel}`,
+		`rebase (start): checkout ${checkoutLabel}`,
 	);
 
 	// ── Initialize rebase state ──────────────────────────────
@@ -791,8 +792,11 @@ async function pickOneCommit(
 
 	// ── Clean pick — create commit ───────────────────────────────
 
-	// Check if this commit would be empty (tree matches HEAD)
-	if (mergedTreeHash === headCommit.tree) {
+	// Distinguish commits that become empty during rebase from commits that
+	// were intentionally empty in the original history. Real git preserves the
+	// latter and only drops the former.
+	const originallyEmpty = theirsCommit.tree === baseTree;
+	if (mergedTreeHash === headCommit.tree && !originallyEmpty) {
 		return {
 			conflict: false,
 			stdout: "",

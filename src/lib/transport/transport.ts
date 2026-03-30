@@ -1,7 +1,7 @@
 import type { FetchFunction, ProgressCallback } from "../../hooks.ts";
 import { ZERO_HASH } from "../hex.ts";
 import { isAncestor } from "../merge.ts";
-import { ingestPackData, objectExists } from "../object-db.ts";
+import { ingestPackData, objectExists, peelToCommit, readObject } from "../object-db.ts";
 import { findBestDeltas } from "../pack/delta.ts";
 import type { DeltaPackInput } from "../pack/packfile.ts";
 import { writePackDeltified } from "../pack/packfile.ts";
@@ -109,6 +109,21 @@ export class LocalTransport implements Transport {
 		const refs = await listRefs(this.remote);
 		const result: RemoteRef[] = [];
 		for (const ref of refs) {
+			if (ref.name.startsWith("refs/tags/")) {
+				try {
+					const raw = await readObject(this.remote, ref.hash);
+					if (raw.type === "tag") {
+						result.push({
+							name: ref.name,
+							hash: ref.hash,
+							peeledHash: await peelToCommit(this.remote, ref.hash),
+						});
+						continue;
+					}
+				} catch {
+					// If the tag object is missing or unreadable, fall back to the raw ref.
+				}
+			}
 			result.push({ name: ref.name, hash: ref.hash });
 		}
 

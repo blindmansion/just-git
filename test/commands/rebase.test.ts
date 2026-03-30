@@ -235,6 +235,43 @@ describe("git rebase", () => {
 			expect(await pathExists(bash.fs, "/repo/m.txt")).toBe(true);
 		});
 
+		test("preserves intentionally empty commits during rebase", async () => {
+			const bash = createTestBash({
+				files: EMPTY_REPO,
+				env: envAt("100"),
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec("git branch feature");
+
+			await bash.fs.writeFile("/repo/main.txt", "main\n");
+			await bash.exec("git add main.txt");
+			await bash.exec('git commit -m "main commit"');
+
+			await bash.exec("git checkout feature");
+			await bash.fs.writeFile("/repo/feature.txt", "feature\n");
+			await bash.exec("git add feature.txt");
+			await bash.exec('git commit -m "feature commit"');
+			await bash.exec('git commit --allow-empty -m "empty marker"');
+
+			const beforeRebase = (await bash.exec("git rev-list --count HEAD")).stdout.trim();
+			const result = await bash.exec("git rebase main");
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).not.toContain("dropping");
+
+			const afterRebase = (await bash.exec("git rev-list --count HEAD")).stdout.trim();
+			expect(afterRebase).toBe(beforeRebase);
+
+			const gitCtx = await findRepo(bash.fs, "/repo");
+			const headHash = await resolveHead(gitCtx!);
+			const headCommit = await readCommit(gitCtx!, headHash!);
+			expect(headCommit.message).toContain("empty marker");
+
+			const parent = await readCommit(gitCtx!, headCommit.parents[0]!);
+			expect(parent.message).toContain("feature commit");
+		});
+
 		test("up-to-date rebase is a no-op", async () => {
 			const bash = createTestBash({
 				files: EMPTY_REPO,
@@ -307,6 +344,9 @@ describe("git rebase", () => {
 			// Parent should be main tip (commit B)
 			const parent = await readCommit(gitCtx!, headCommit.parents[0]!);
 			expect(parent.message).toContain("commit B");
+
+			const reflog = await bash.exec("git reflog -n 10");
+			expect(reflog.stdout).toContain("rebase (start): checkout main");
 		});
 	});
 

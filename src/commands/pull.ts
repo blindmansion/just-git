@@ -18,7 +18,7 @@ import { getReflogIdentity } from "../lib/identity.ts";
 import { getConflictedPaths, hasConflicts, readIndex } from "../lib/index.ts";
 import { buildMergeMessage, findAllMergeBases, handleFastForward } from "../lib/merge.ts";
 import { applyMergeResult, mergeOrtRecursive } from "../lib/merge-ort.ts";
-import { readCommit } from "../lib/object-db.ts";
+import { objectExists, readCommit } from "../lib/object-db.ts";
 import { deleteStateFile, writeStateFile } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
@@ -226,6 +226,46 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				shortenRef,
 				abbreviateHash,
 			);
+			const autoFollowTags: RemoteRef[] = [];
+			for (const ref of remoteRefs) {
+				if (!ref.name.startsWith("refs/tags/")) continue;
+				if (await resolveRef(gitCtx, ref.name)) continue;
+
+				const targetHash = ref.peeledHash ?? ref.hash;
+				if (await objectExists(gitCtx, targetHash)) {
+					autoFollowTags.push(ref);
+				}
+			}
+			const tagObjectWants: ObjectId[] = [];
+			for (const ref of autoFollowTags) {
+				if (ref.peeledHash && !(await objectExists(gitCtx, ref.hash))) {
+					tagObjectWants.push(ref.hash);
+				}
+			}
+			if (tagObjectWants.length > 0) {
+				const currentRefs = await listRefs(gitCtx);
+				const currentHaves = currentRefs.map((r) => r.hash);
+				const currentHead = await resolveRef(gitCtx, "HEAD");
+				if (currentHead) currentHaves.push(currentHead);
+				await transport.fetch(tagObjectWants, currentHaves);
+			}
+			for (const ref of autoFollowTags) {
+				await updateRef(gitCtx, ref.name, ref.hash);
+				await appendReflog(gitCtx, ref.name, {
+					oldHash: ZERO_HASH,
+					newHash: ref.hash,
+					name: ident.name,
+					email: ident.email,
+					timestamp: ident.timestamp,
+					tz: ident.tz,
+					message: "pull: storing head",
+				});
+				fetchRefLines.push({
+					prefix: " * [new tag]",
+					from: shortenRef(ref.name),
+					to: shortenRef(ref.name),
+				});
+			}
 			const fetchOutput =
 				fetchRefLines.length > 0
 					? `From ${config.url}\n${formatTransferRefLines(fetchRefLines, 10)}`
@@ -341,6 +381,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					headName,
 					theirsHash,
 					theirsHash,
+					upstreamLabel,
 					upstreamLabel,
 					ext,
 				);

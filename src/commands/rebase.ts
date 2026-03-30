@@ -88,6 +88,7 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			const reapplyCherryPicks = !!args["reapply-cherry-picks"];
+			const ontoLabel = ontoArg ?? upstreamArg;
 
 			return performRebase(
 				gitCtx,
@@ -97,6 +98,7 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 				upstreamHash,
 				ontoHash,
 				upstreamArg,
+				ontoLabel,
 				ext,
 				reapplyCherryPicks ? { reapplyCherryPicks: true } : undefined,
 			);

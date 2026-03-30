@@ -188,9 +188,7 @@ describe("git fetch", () => {
 			},
 		);
 		expect(result.exitCode).toBe(128);
-		expect(result.stderr).toBe(
-			"fatal: couldn't find remote ref refs/heads/nonexistent\n",
-		);
+		expect(result.stderr).toBe("fatal: couldn't find remote ref refs/heads/nonexistent\n");
 	});
 
 	test("not a repo error", async () => {
@@ -243,5 +241,18 @@ describe("git fetch", () => {
 		expect(result.stderr).toContain("would clobber existing tag");
 		const localTagAfter = await readFile(bash.fs, "/local/.git/refs/tags/v1.0");
 		expect(localTagAfter).toBe(localTagBefore);
+	});
+
+	test("auto-follows reachable annotated tags without --tags", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /remote && echo remote > remote.txt && git add . && git commit -m remote");
+		await bash.exec('cd /remote && git tag -a -m "remote tag" v1.1 HEAD');
+
+		const result = await bash.exec("git fetch", { cwd: "/local" });
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain("[new tag]");
+		expect(result.stderr).toContain("v1.1");
+		expect(await pathExists(bash.fs, "/local/.git/refs/tags/v1.1")).toBe(true);
 	});
 });

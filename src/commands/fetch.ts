@@ -11,6 +11,7 @@ import {
 } from "../lib/command-utils.ts";
 import { readConfig } from "../lib/config.ts";
 import { getReflogIdentity } from "../lib/identity.ts";
+import { objectExists } from "../lib/object-db.ts";
 import { join } from "../lib/path.ts";
 import { appendReflog, ZERO_HASH } from "../lib/reflog.ts";
 import {
@@ -263,7 +264,12 @@ async function fetchOneRemote(
 
 	for (const update of refUpdates) {
 		const oldHash = await resolveRef(gitCtx, update.localRef);
-		if (tags && update.remote.name.startsWith("refs/tags/") && oldHash && oldHash !== update.remote.hash) {
+		if (
+			tags &&
+			update.remote.name.startsWith("refs/tags/") &&
+			oldHash &&
+			oldHash !== update.remote.hash
+		) {
 			hadTagRejection = true;
 			refLines.push({
 				prefix: " ! [rejected]",
@@ -296,29 +302,47 @@ async function fetchOneRemote(
 	);
 
 	if (!tags) {
+		const autoFollowTags: RemoteRef[] = [];
 		for (const ref of remoteRefs) {
 			if (!ref.name.startsWith("refs/tags/")) continue;
-			if (seen.has(ref.hash)) continue;
+			if (await resolveRef(gitCtx, ref.name)) continue;
 
-			const exists = await resolveRef(gitCtx, ref.name);
 			const targetHash = ref.peeledHash ?? ref.hash;
-			if (!exists && haveSet.has(targetHash)) {
-				await updateRef(gitCtx, ref.name, ref.hash);
-				await appendReflog(gitCtx, ref.name, {
-					oldHash: ZERO_HASH,
-					newHash: ref.hash,
-					name: ident.name,
-					email: ident.email,
-					timestamp: ident.timestamp,
-					tz: ident.tz,
-					message: "fetch: storing head",
-				});
-				refLines.push({
-					prefix: " * [new tag]",
-					from: shortenRef(ref.name),
-					to: shortenRef(ref.name),
-				});
+			if (await objectExists(gitCtx, targetHash)) {
+				autoFollowTags.push(ref);
 			}
+		}
+
+		const tagObjectWants: ObjectId[] = [];
+		for (const ref of autoFollowTags) {
+			if (ref.peeledHash && !(await objectExists(gitCtx, ref.hash))) {
+				tagObjectWants.push(ref.hash);
+			}
+		}
+		if (tagObjectWants.length > 0) {
+			const currentRefs = await listRefs(gitCtx);
+			const currentHaves = currentRefs.map((r) => r.hash);
+			const currentHead = await resolveRef(gitCtx, "HEAD");
+			if (currentHead) currentHaves.push(currentHead);
+			await transport.fetch(tagObjectWants, currentHaves);
+		}
+
+		for (const ref of autoFollowTags) {
+			await updateRef(gitCtx, ref.name, ref.hash);
+			await appendReflog(gitCtx, ref.name, {
+				oldHash: ZERO_HASH,
+				newHash: ref.hash,
+				name: ident.name,
+				email: ident.email,
+				timestamp: ident.timestamp,
+				tz: ident.tz,
+				message: "fetch: storing head",
+			});
+			refLines.push({
+				prefix: " * [new tag]",
+				from: shortenRef(ref.name),
+				to: shortenRef(ref.name),
+			});
 		}
 	}
 
