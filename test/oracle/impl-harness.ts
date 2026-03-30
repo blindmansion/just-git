@@ -551,58 +551,52 @@ export async function replayAndCheck(
 
 		const output = await executeCommand(bash, command, commitCounter, fileGenConfig, server);
 
-		// Skip comparison for placeholder snapshots
-		if (checker.isPlaceholder(seq)) {
-			passed++;
-			if (options?.verbose) {
-				console.log(`  [${seq}] SKIP  ${command.slice(0, 60)}`);
-			}
-			continue;
-		}
+		const isPlaceholder = checker.isPlaceholder(seq);
+		let stateWarn = false;
 
-		const implState = await captureImplState(bash.fs);
-		const result = checker.checkStep(seq, implState);
+		// State comparison — skip for placeholder steps (no oracle snapshot)
+		if (!isPlaceholder) {
+			const implState = await captureImplState(bash.fs);
+			const result = checker.checkStep(seq, implState);
 
-		if (result.status === "fail") {
-			// State error: stop replay (fires before output check so
-			// post-mortem classification can kick in)
-			if (options?.verbose) {
-				console.log(`  [${seq}] FAIL  ${command.slice(0, 60)}`);
-				for (const d of result.divergences) {
-					console.log(
-						`         ${d.field} [${d.severity}]: expected=${JSON.stringify(d.expected)} actual=${JSON.stringify(d.actual)}`,
-					);
+			if (result.status === "fail") {
+				if (options?.verbose) {
+					console.log(`  [${seq}] FAIL  ${command.slice(0, 60)}`);
+					for (const d of result.divergences) {
+						console.log(
+							`         ${d.field} [${d.severity}]: expected=${JSON.stringify(d.expected)} actual=${JSON.stringify(d.actual)}`,
+						);
+					}
 				}
+				return {
+					totalSteps,
+					passed,
+					warned,
+					firstWarning,
+					firstDivergence: { seq, command, divergences: result.divergences },
+				};
 			}
-			return {
-				totalSteps,
-				passed,
-				warned,
-				firstWarning,
-				firstDivergence: { seq, command, divergences: result.divergences },
-			};
-		}
 
-		if (result.status === "warn") {
-			warned++;
-			if (!firstWarning) {
-				firstWarning = { seq, command, divergences: result.divergences };
-			}
-			if (options?.verbose) {
-				console.log(`  [${seq}] WARN  ${command.slice(0, 60)}`);
-				for (const d of result.divergences) {
-					console.log(
-						`         ${d.field} [${d.severity}]: expected=${JSON.stringify(d.expected)} actual=${JSON.stringify(d.actual)}`,
-					);
+			if (result.status === "warn") {
+				stateWarn = true;
+				warned++;
+				if (!firstWarning) {
+					firstWarning = { seq, command, divergences: result.divergences };
+				}
+				if (options?.verbose) {
+					console.log(`  [${seq}] WARN  ${command.slice(0, 60)}`);
+					for (const d of result.divergences) {
+						console.log(
+							`         ${d.field} [${d.severity}]: expected=${JSON.stringify(d.expected)} actual=${JSON.stringify(d.actual)}`,
+						);
+					}
 				}
 			}
 		}
 
-		// Output comparison (exit code + stdout + stderr) — checked AFTER
-		// state so state-level failures and post-mortem classification fire
-		// first. Even warn-level state drift still gets output validation;
-		// command-specific checker relaxations should own any tolerated
-		// stdout/stderr differences instead of replay skipping them wholesale.
+		// Output comparison (exit code + stdout + stderr) — always runs,
+		// including for placeholder steps where state can't be checked.
+		// Command-specific checker relaxations own any tolerated differences.
 		const outputDivs = checker.checkOutput(seq, output);
 		if (outputDivs.length > 0) {
 			if (options?.verbose) {
@@ -622,11 +616,11 @@ export async function replayAndCheck(
 			};
 		}
 
-		// If we got here, state is pass or warn-only, and output (if checked) matched
-		if (result.status === "pass") {
+		if (!stateWarn) {
 			passed++;
 			if (options?.verbose) {
-				console.log(`  [${seq}] PASS  ${command.slice(0, 60)}`);
+				const label = isPlaceholder ? "PASS~ " : "PASS  ";
+				console.log(`  [${seq}] ${label}${command.slice(0, 60)}`);
 			}
 		}
 	}

@@ -1061,12 +1061,10 @@ export class BatchChecker {
 	 * Compare command output (exit code, stdout, stderr) against the oracle.
 	 * Returns divergences (empty array = match).
 	 *
-	 * Skips comparison for placeholder steps. Per-command skip lists allow
-	 * bypassing stdout/stderr comparison for commands with known unimplemented
-	 * output (see tables above).
+	 * Per-command skip lists allow bypassing stdout/stderr comparison for
+	 * commands with known unimplemented output (see tables above).
 	 */
 	checkOutput(seq: number, output: CommandOutput): Divergence[] {
-		if (this.isPlaceholder(seq)) return [];
 		const step = this.bySeq.get(seq);
 		if (!step) return [];
 

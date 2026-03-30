@@ -119,6 +119,101 @@ describe("oracle checker tightening", () => {
 		).toBe(true);
 	});
 
+	test("placeholder steps now have their output validated", async () => {
+		// Step 0: git init — real snapshot
+		const initResult = await captureReplayState("git init");
+		const initSnapshot = implStateToSnapshot(initResult.state);
+
+		// Build a two-step trace: step 0 has a real snapshot, step 1 is a
+		// placeholder (EMPTY_SNAPSHOT) with a deliberately wrong exit code.
+		// Previously placeholders were skipped entirely — now output should
+		// be checked, catching the exit code mismatch.
+		const { dbPath, store, close } = await createTempDb();
+		const traceId = store.createTrace(1, "placeholder-output-check");
+		store.recordStep(
+			traceId,
+			0,
+			{
+				command: "git init",
+				exitCode: initResult.output.exitCode,
+				stdout: initResult.output.stdout,
+				stderr: initResult.output.stderr,
+			},
+			initSnapshot,
+		);
+		store.recordStep(
+			traceId,
+			1,
+			{
+				command: "git status",
+				exitCode: 42,
+				stdout: "",
+				stderr: "",
+			},
+			EMPTY_SNAPSHOT,
+		);
+		close();
+
+		const result = await replayAndCheck(dbPath, traceId);
+		expect(result.firstDivergence).not.toBeNull();
+		expect(result.firstDivergence?.seq).toBe(1);
+		expect(result.firstDivergence?.divergences.some((d) => d.field === "exit_code")).toBe(true);
+	});
+
+	test("placeholder steps pass when output matches", async () => {
+		const initResult = await captureReplayState("git init");
+		const initSnapshot = implStateToSnapshot(initResult.state);
+
+		// Capture what `git status` actually outputs after init by replaying
+		// a two-step trace and grabbing the second step's output
+		const helper = await createTempDb();
+		const helperTrace = helper.store.createTrace(99, "helper");
+		helper.store.recordStep(
+			helperTrace,
+			0,
+			{ command: "git init", exitCode: 0, stdout: "", stderr: "" },
+			EMPTY_SNAPSHOT,
+		);
+		helper.store.recordStep(
+			helperTrace,
+			1,
+			{ command: "git status", exitCode: 0, stdout: "", stderr: "" },
+			EMPTY_SNAPSHOT,
+		);
+		helper.close();
+		const statusOutput = await replayToStateAndOutput(helper.dbPath, helperTrace, 1);
+
+		const { dbPath, store, close } = await createTempDb();
+		const traceId = store.createTrace(1, "placeholder-output-pass");
+		store.recordStep(
+			traceId,
+			0,
+			{
+				command: "git init",
+				exitCode: initResult.output.exitCode,
+				stdout: initResult.output.stdout,
+				stderr: initResult.output.stderr,
+			},
+			initSnapshot,
+		);
+		store.recordStep(
+			traceId,
+			1,
+			{
+				command: "git status",
+				exitCode: statusOutput.output.exitCode,
+				stdout: statusOutput.output.stdout,
+				stderr: statusOutput.output.stderr,
+			},
+			EMPTY_SNAPSHOT,
+		);
+		close();
+
+		const result = await replayAndCheck(dbPath, traceId);
+		expect(result.firstDivergence).toBeNull();
+		expect(result.passed).toBe(2);
+	});
+
 	test("log range matcher still accepts real subset or superset hash sets", () => {
 		const hashA = "a".repeat(40);
 		const hashB = "b".repeat(40);
