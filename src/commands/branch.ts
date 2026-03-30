@@ -9,7 +9,7 @@ import {
 	requireCommit,
 	requireGitContext,
 } from "../lib/command-utils.ts";
-import { readConfig, writeConfig } from "../lib/config.ts";
+import { getConfigValue, readConfig, writeConfig } from "../lib/config.ts";
 import { getReflogIdentity } from "../lib/identity.ts";
 import { isAncestor } from "../lib/merge.ts";
 import { readCommit } from "../lib/object-db.ts";
@@ -30,6 +30,40 @@ import {
 import { formatBranchTrackingInfo, getTrackingInfo } from "../lib/status-format.ts";
 import type { ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+
+function formatSetUpstreamFailure(upstream: string) {
+	return {
+		stdout: "",
+		stderr:
+			`fatal: the requested upstream branch '${upstream}' does not exist\n` +
+			"hint:\n" +
+			"hint: If you are planning on basing your work on an upstream\n" +
+			"hint: branch that already exists at the remote, you may need to\n" +
+			'hint: run "git fetch" to retrieve it.\n' +
+			"hint:\n" +
+			"hint: If you are planning to push out a new local branch that\n" +
+			"hint: will track its remote counterpart, you may want to use\n" +
+			'hint: "git push -u" to set the upstream config as you push.\n' +
+			'hint: Disable this message with "git config set advice.setUpstreamFailure false"\n',
+		exitCode: 128,
+	};
+}
+
+async function formatDeleteBranchNotFullyMerged(
+	gitCtx: Parameters<typeof getConfigValue>[0],
+	name: string,
+	warning = "",
+) {
+	const adviceForceDelete = (await getConfigValue(gitCtx, "advice.forceDeleteBranch"))?.toLowerCase();
+	if (adviceForceDelete === "false") {
+		return err(`${warning}error: the branch '${name}' is not fully merged\n`);
+	}
+	return err(
+		`${warning}error: the branch '${name}' is not fully merged\n` +
+			`hint: If you are sure you want to delete it, run 'git branch -D ${name}'\n` +
+			'hint: Disable this message with "git config set advice.forceDeleteBranch false"\n',
+	);
+}
 
 export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("branch", {
@@ -201,11 +235,7 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 							const warning = mergedToHead
 								? `warning: not deleting branch '${args.name}' that is not yet merged to\n         '${upstreamRef}', even though it is merged to HEAD\n`
 								: "";
-							return err(
-								`${warning}error: the branch '${args.name}' is not fully merged\n` +
-									`hint: If you are sure you want to delete it, run 'git branch -D ${args.name}'\n` +
-									`hint: Disable this message with "git config set advice.forceDeleteBranch false"\n`,
-							);
+							return formatDeleteBranchNotFullyMerged(gitCtx, args.name, warning);
 						}
 						const mergedToHead =
 							headHash != null && (hash === headHash || (await isAncestor(gitCtx, hash, headHash)));
@@ -216,11 +246,7 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 						if (headHash && hash !== headHash) {
 							const merged = await isAncestor(gitCtx, hash, headHash);
 							if (!merged) {
-								return err(
-									`error: the branch '${args.name}' is not fully merged\n` +
-										`hint: If you are sure you want to delete it, run 'git branch -D ${args.name}'\n` +
-										`hint: Disable this message with "git config set advice.forceDeleteBranch false"\n`,
-								);
+								return formatDeleteBranchNotFullyMerged(gitCtx, args.name);
 							}
 						}
 					}
@@ -250,7 +276,7 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 
 				const slashIdx = upstream.indexOf("/");
 				if (slashIdx < 0) {
-					return fatal(`the requested upstream branch '${upstream}' does not exist`);
+					return formatSetUpstreamFailure(upstream);
 				}
 
 				const remoteName = upstream.slice(0, slashIdx);
@@ -258,7 +284,7 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 
 				const upstreamHash = await resolveRef(gitCtx, `refs/remotes/${upstream}`);
 				if (!upstreamHash) {
-					return fatal(`the requested upstream branch '${upstream}' does not exist`);
+					return formatSetUpstreamFailure(upstream);
 				}
 
 				const config = await readConfig(gitCtx);
@@ -269,8 +295,8 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 				await writeConfig(gitCtx, config);
 
 				return {
-					stdout: "",
-					stderr: `branch '${branchName}' set up to track '${upstream}'.\n`,
+					stdout: `branch '${branchName}' set up to track '${upstream}'.\n`,
+					stderr: "",
 					exitCode: 0,
 				};
 			}

@@ -97,6 +97,7 @@ export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 
 				const isAnnotated = args.annotate || args.message;
 
+				let newRefHash: string;
 				if (isAnnotated) {
 					if (!args.message) {
 						return fatal("no tag message specified (use -m)");
@@ -117,11 +118,17 @@ export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 					});
 					const tagHash = await writeObject(gitCtx, "tag", tagContent);
 					await updateRef(gitCtx, refName, tagHash);
+					newRefHash = tagHash;
 				} else {
 					await updateRef(gitCtx, refName, targetHash);
+					newRefHash = targetHash;
 				}
 
-				return { stdout: "", stderr: "", exitCode: 0 };
+				const forceMessage =
+					existing && args.force && existing !== newRefHash
+						? `Updated tag '${args.name}' (was ${abbreviateHash(existing)})\n`
+						: "";
+				return { stdout: forceMessage, stderr: "", exitCode: 0 };
 			}
 
 			// ── List tags (no args) ─────────────────────────────────────

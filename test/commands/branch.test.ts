@@ -345,7 +345,7 @@ describe("git branch", () => {
 
 			const result = await bash.exec("git branch --set-upstream-to=origin/main");
 			expect(result.exitCode).toBe(0);
-			expect(result.stderr).toContain("branch 'main' set up to track 'origin/main'");
+			expect(result.stdout).toContain("branch 'main' set up to track 'origin/main'");
 
 			const config = await readFile(bash.fs, "/repo/.git/config");
 			expect(config).toContain('[branch "main"]');
@@ -368,7 +368,7 @@ describe("git branch", () => {
 
 			const result = await bash.exec("git branch -u origin/main feature");
 			expect(result.exitCode).toBe(0);
-			expect(result.stderr).toContain("branch 'feature' set up to track 'origin/main'");
+			expect(result.stdout).toContain("branch 'feature' set up to track 'origin/main'");
 		});
 
 		test("fails when upstream does not exist", async () => {
@@ -380,6 +380,8 @@ describe("git branch", () => {
 			const result = await bash.exec("git branch --set-upstream-to=origin/nonexistent");
 			expect(result.exitCode).toBe(128);
 			expect(result.stderr).toContain("does not exist");
+			expect(result.stderr).toContain('run "git fetch" to retrieve it');
+			expect(result.stderr).toContain('"git push -u" to set the upstream config');
 		});
 
 		test("fails when branch does not exist", async () => {
@@ -621,10 +623,46 @@ describe("git branch", () => {
 			expect(result.exitCode).toBe(1);
 			expect(result.stderr).toContain("not fully merged");
 			expect(result.stderr).toContain("git branch -D feature");
+			expect(result.stderr).toContain("advice.forceDeleteBranch");
 
 			// Verify branch still exists
 			const ref = await readFile(bash.fs, "/repo/.git/refs/heads/feature");
 			expect(ref).toBeDefined();
+		});
+
+		test("omits delete hint when advice.forceDeleteBranch is false", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "first"');
+			await bash.exec("git checkout -b feature");
+			await bash.fs.writeFile("/repo/feature.txt", "feature work\n");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "feature work"');
+			await bash.exec("git checkout main");
+			await bash.exec("git config set advice.forceDeleteBranch false");
+
+			const result = await bash.exec("git branch -d feature");
+			expect(result.exitCode).toBe(1);
+			expect(result.stderr).toBe("error: the branch 'feature' is not fully merged\n");
+		});
+
+		test("includes disable hint when advice.forceDeleteBranch is true", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "first"');
+			await bash.exec("git checkout -b feature");
+			await bash.fs.writeFile("/repo/feature.txt", "feature work\n");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "feature work"');
+			await bash.exec("git checkout main");
+			await bash.exec("git config set advice.forceDeleteBranch true");
+
+			const result = await bash.exec("git branch -d feature");
+			expect(result.exitCode).toBe(1);
+			expect(result.stderr).toContain("git branch -D feature");
+			expect(result.stderr).toContain("advice.forceDeleteBranch");
 		});
 
 		test("allows deleting a branch that is merged into HEAD", async () => {

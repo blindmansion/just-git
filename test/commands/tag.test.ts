@@ -217,10 +217,25 @@ describe("git tag", () => {
 
 			const result = await bash.exec("git tag -f v1.0");
 			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("Updated tag 'v1.0' (was ");
 
 			const headRef = await readFile(bash.fs, "/repo/.git/refs/heads/main");
 			const tagRef = await readFile(bash.fs, "/repo/.git/refs/tags/v1.0");
 			expect(tagRef?.trim()).toBe(headRef?.trim());
+		});
+
+		test("stays silent when force-updating to the same target", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "first"');
+
+			const headRef = (await readFile(bash.fs, "/repo/.git/refs/heads/main"))?.trim();
+			await bash.exec("git tag v1.0");
+
+			const result = await bash.exec(`git tag -f v1.0 ${headRef}`);
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toBe("");
 		});
 
 		test("overwrites without -f fails", async () => {

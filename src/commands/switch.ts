@@ -4,7 +4,6 @@ import {
 	buildDetachPreamble,
 	clearOperationState,
 	detachHeadCore,
-	findPreviousBranch,
 	formatCheckoutSummary,
 	formatPrevHeadPosition,
 	guessRemoteBranch,
@@ -25,7 +24,7 @@ import { clearIndex, readIndex, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { clearDetachPoint, readStateFile } from "../lib/operation-state.ts";
 import { isRebaseInProgress } from "../lib/rebase.ts";
-import { logRef, ZERO_HASH } from "../lib/reflog.ts";
+import { logRef, readReflog, ZERO_HASH } from "../lib/reflog.ts";
 import {
 	createSymbolicRef,
 	deleteRef,
@@ -179,8 +178,40 @@ async function switchToPrevious(
 	const opBlock = await checkActiveOperation(gitCtx);
 	if (opBlock) return opBlock;
 
-	const prev = await findPreviousBranch(gitCtx);
-	if (!prev) return fatal("no previous branch");
+	const entries = await readReflog(gitCtx, "HEAD");
+	let prevTarget: string | null = null;
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const entry = entries[i];
+		if (!entry) continue;
+		const match = entry.message.match(/^checkout: moving from (.+) to (.+)$/);
+		if (match?.[1]) {
+			prevTarget = match[1];
+			break;
+		}
+	}
+	if (!prevTarget) return fatal("invalid reference: @{-1}");
+
+	const refName = `refs/heads/${prevTarget}`;
+	const hash = await resolveRef(gitCtx, refName);
+	if (!hash) {
+		const commitLike = await requireCommit(
+			gitCtx,
+			prevTarget,
+			`a branch is expected, got commit '${prevTarget}'`,
+		);
+		if (!isCommandError(commitLike)) {
+			return {
+				stdout: "",
+				stderr:
+					`fatal: a branch is expected, got commit '${prevTarget}'\n` +
+					"hint: If you want to detach HEAD at the commit, try again with the --detach option.\n",
+				exitCode: 128,
+			};
+		}
+		return fatal("invalid reference: @{-1}");
+	}
+
+	const prev = { name: prevTarget, refName, hash };
 	return switchToBranch(gitCtx, prev.name, prev.refName, prev.hash, env, ext);
 }
 
@@ -347,7 +378,7 @@ async function switchCreateBranch(
 
 	let stdout = "";
 	if (trackingMsg) {
-		stdout = trackingMsg;
+		stdout = (await formatCheckoutSummary(gitCtx, targetCommit.tree, currentIndex)) + trackingMsg;
 	} else if (startPoint) {
 		stdout = await formatCheckoutSummary(gitCtx, targetCommit.tree, currentIndex);
 		const config = await readConfig(gitCtx);

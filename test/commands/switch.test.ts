@@ -253,6 +253,35 @@ describe("git switch", () => {
 		});
 	});
 
+	describe("previous branch shorthand", () => {
+		test("fails with git-compatible message when no previous branch exists", async () => {
+			const { results } = await runScenario(["git init", "git switch -"], {
+				files: EMPTY_REPO,
+				env: TEST_ENV,
+			});
+			expect(results[1].exitCode).toBe(128);
+			expect(results[1].stderr).toBe("fatal: invalid reference: @{-1}\n");
+		});
+
+		test("fails when @{-1} points to a detached commit", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "first"');
+			await bash.exec("git switch -c feature");
+			await bash.exec("git switch --detach HEAD");
+			const detachedHash = (await bash.exec("git rev-parse HEAD")).stdout.trim();
+			await bash.exec("git switch feature");
+
+			const result = await bash.exec("git switch -");
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toBe(
+				`fatal: a branch is expected, got commit '${detachedHash}'\n` +
+					"hint: If you want to detach HEAD at the commit, try again with the --detach option.\n",
+			);
+		});
+	});
+
 	describe("branch.autoSetupMerge with -c", () => {
 		test("auto-sets tracking when creating from remote tracking ref", async () => {
 			const bash = await setupClonePair();
@@ -318,6 +347,21 @@ describe("git switch", () => {
 			expect(result.exitCode).toBe(0);
 			expect(result.stdout).toContain("set up to track");
 			expect(result.stdout).toContain("origin/feature");
+		});
+
+		test("switch --guess includes checkout summary before tracking message", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec(
+				"cd /remote && git checkout -b feature && echo feat > feat.txt && git add . && git commit -m feat",
+			);
+			await bash.exec("cd /local && git fetch origin refs/heads/feature:refs/remotes/origin/feature");
+			await bash.exec("cd /local && echo local > local.txt && git add local.txt");
+
+			const result = await bash.exec("git switch --guess feature", { cwd: "/local" });
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("A\tlocal.txt");
+			expect(result.stdout).toContain("branch 'feature' set up to track 'origin/feature'.");
 		});
 	});
 });
