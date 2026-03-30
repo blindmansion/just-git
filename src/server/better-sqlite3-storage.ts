@@ -75,6 +75,7 @@ interface Statements {
 	repoDelete: Statement;
 
 	objInsert: Statement;
+	objInsertReturning: Statement;
 	objRead: Statement;
 	objExists: Statement;
 	objPrefix: Statement;
@@ -104,6 +105,11 @@ function prepareStatements(db: BetterSqlite3Database): Statements {
 		objInsert: wrapStmt(
 			db.prepare(
 				"INSERT OR IGNORE INTO git_objects (repo_id, hash, type, content) VALUES (?, ?, ?, ?)",
+			),
+		),
+		objInsertReturning: wrapStmt(
+			db.prepare(
+				"INSERT OR IGNORE INTO git_objects (repo_id, hash, type, content) VALUES (?, ?, ?, ?) RETURNING hash",
 			),
 		),
 		objRead: wrapStmt(
@@ -180,9 +186,13 @@ export class BetterSqlite3Storage implements Storage {
 			) => {
 				const inserted: string[] = [];
 				for (const row of rows) {
-					if (this.stmts.objExists.get(row.repoId, row.hash) !== null) continue;
-					this.stmts.objInsert.run(row.repoId, row.hash, row.type, row.content);
-					inserted.push(row.hash);
+					const result = this.stmts.objInsertReturning.get(
+						row.repoId,
+						row.hash,
+						row.type,
+						row.content,
+					);
+					if (result) inserted.push(result.hash);
 				}
 				return inserted;
 			},

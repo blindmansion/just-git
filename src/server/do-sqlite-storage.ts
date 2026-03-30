@@ -63,7 +63,8 @@ const SQL = {
 	repoExists: "SELECT 1 FROM git_repos WHERE id = ? LIMIT 1",
 	repoDelete: "DELETE FROM git_repos WHERE id = ?",
 
-	objInsert: "INSERT OR IGNORE INTO git_objects (repo_id, hash, type, content) VALUES (?, ?, ?, ?)",
+	objInsert:
+		"INSERT OR IGNORE INTO git_objects (repo_id, hash, type, content) VALUES (?, ?, ?, ?) RETURNING hash",
 	objRead: "SELECT type, content FROM git_objects WHERE repo_id = ? AND hash = ?",
 	objExists: "SELECT 1 FROM git_objects WHERE repo_id = ? AND hash = ? LIMIT 1",
 	objPrefix: "SELECT hash FROM git_objects WHERE repo_id = ? AND hash GLOB ?",
@@ -181,9 +182,8 @@ export class DurableObjectSqliteStorage implements Storage {
 		const inserted: string[] = [];
 		this.storage.transactionSync(() => {
 			for (const obj of objects) {
-				if (first(this.sql.exec(SQL.objExists, repoId, obj.hash)) !== null) continue;
-				this.sql.exec(SQL.objInsert, repoId, obj.hash, obj.type, obj.content);
-				inserted.push(obj.hash);
+				const row = first(this.sql.exec(SQL.objInsert, repoId, obj.hash, obj.type, obj.content));
+				if (row) inserted.push(row.hash);
 			}
 		});
 		return inserted;
