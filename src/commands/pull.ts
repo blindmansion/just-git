@@ -49,6 +49,21 @@ import { diffIndexToWorkTree } from "../lib/worktree.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { performRebase } from "../lib/rebase-engine.ts";
 
+function pullUpToDateMessage(
+	head: Awaited<ReturnType<typeof readHead>>,
+	pullMode: { useRebase: boolean },
+	explicitFfOnly: boolean,
+	fetchOutput: string,
+): string {
+	if (pullMode.useRebase && !explicitFfOnly && fetchOutput.length > 0) {
+		const currentBranch = head?.type === "symbolic" ? branchNameFromRef(head.target) : "HEAD";
+		return currentBranch === "HEAD"
+			? "HEAD is up to date.\n"
+			: `Current branch ${currentBranch} is up to date.\n`;
+	}
+	return "Already up to date.\n";
+}
+
 export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("pull", {
 		description: "Fetch from and integrate with another repository",
@@ -370,7 +385,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					commitHash: null,
 				});
 				return {
-					stdout: "Already up to date.\n",
+					stdout: pullUpToDateMessage(head, pullMode, !!args.ffOnly, fetchOutput),
 					stderr: fetchOutput,
 					exitCode: 0,
 				};
@@ -423,7 +438,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					commitHash: null,
 				});
 				return {
-					stdout: "Already up to date.\n",
+					stdout: pullUpToDateMessage(head, pullMode, !!args.ffOnly, fetchOutput),
 					stderr: fetchOutput,
 					exitCode: 0,
 				};

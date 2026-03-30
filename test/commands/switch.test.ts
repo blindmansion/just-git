@@ -263,6 +263,16 @@ describe("git switch", () => {
 			expect(results[1].stderr).toBe("fatal: invalid reference: @{-1}\n");
 		});
 
+		test("resolves @{-1} before checking rebase state", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.fs.mkdir("/repo/.git/rebase-merge", { recursive: true });
+
+			const result = await bash.exec("git switch -");
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toBe("fatal: invalid reference: @{-1}\n");
+		});
+
 		test("fails when @{-1} points to a detached commit", async () => {
 			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
 			await bash.exec("git init");

@@ -354,6 +354,38 @@ describe("git pull", () => {
 			expect(result.exitCode).toBe(0);
 			expect(result.stdout).toBe("Already up to date.\n");
 		});
+
+		test("pull.rebase=true keeps standard up-to-date message when fetch is quiet", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("git config pull.rebase true", { cwd: "/local" });
+
+			const result = await bash.exec("git pull", { cwd: "/local" });
+
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toBe("Already up to date.\n");
+		});
+
+		test("config-driven ff-only uses rebase-style up-to-date message when fetch updates other refs", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("cd /remote && git checkout -b feature");
+			await bash.exec("cd /remote && git commit --allow-empty -m feature");
+			await bash.exec("git fetch origin refs/heads/feature:refs/remotes/origin/feature", {
+				cwd: "/local",
+			});
+			await bash.exec("git switch -c feature origin/feature", { cwd: "/local" });
+			await bash.exec("git config pull.rebase true", { cwd: "/local" });
+			await bash.exec("git config merge.ff only", { cwd: "/local" });
+			await bash.exec("cd /remote && git checkout main");
+			await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+
+			const result = await bash.exec("git pull", { cwd: "/local" });
+
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toBe("Current branch feature is up to date.\n");
+			expect(result.stderr).toContain("main       -> origin/main");
+		});
 	});
 
 	// ── pull.ff config ──────────────────────────────────────────────

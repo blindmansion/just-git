@@ -175,9 +175,6 @@ async function switchToPrevious(
 	env: Map<string, string>,
 	ext?: GitExtensions,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-	const opBlock = await checkActiveOperation(gitCtx);
-	if (opBlock) return opBlock;
-
 	const entries = await readReflog(gitCtx, "HEAD");
 	let prevTarget: string | null = null;
 	for (let i = entries.length - 1; i >= 0; i--) {

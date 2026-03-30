@@ -258,7 +258,7 @@ describe("git push", () => {
 			expect(result.exitCode).toBe(128);
 			expect(result.stderr).toContain("does not match");
 			expect(result.stderr).toContain("the name of your current branch");
-			expect(result.stderr).not.toContain("To choose either option permanently");
+			expect(result.stderr).toContain("To choose either option permanently");
 		});
 
 		test("simple refuses push when no upstream configured", async () => {
