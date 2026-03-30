@@ -130,6 +130,43 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 			const headHash = await requireHead(gitCtx);
 			if (isCommandError(headHash)) return headHash;
 
+			const currentIndex = await readIndex(gitCtx);
+			if (args["no-commit"]) {
+				const unmerged = currentIndex.entries.filter((e) => e.stage > 0);
+				if (unmerged.length > 0) {
+					const MAX_UNMERGED_ENTRIES = 10;
+					const shown = unmerged.slice(0, MAX_UNMERGED_ENTRIES);
+					const lines = shown.map((e) => `${e.path}: unmerged (${e.hash})`).join("\n");
+					const ellipsis = unmerged.length > MAX_UNMERGED_ENTRIES ? "\n..." : "";
+					return err(
+						`${lines}${ellipsis}\nerror: your index file is unmerged.\nfatal: revert failed\n`,
+						128,
+					);
+				}
+			} else {
+				const conflictErr = requireNoConflicts(currentIndex, "Reverting", "fatal: revert failed\n");
+				if (conflictErr) return conflictErr;
+			}
+
+			const headCommit = await readCommit(gitCtx, headHash);
+
+			// ── Staged-change check (before merge commit check) ──────
+			// Match cherry-pick/revert sequencer behavior for the normal
+			// path: refuse local staged changes before validating -m for
+			// merge commits. The -n path skips this so merge validation and
+			// unpack-trees diagnostics can still run.
+			if (gitCtx.workTree && !args["no-commit"]) {
+				const headMap = await flattenTreeToMap(gitCtx, headCommit.tree);
+				if (hasStagedChanges(currentIndex, headMap)) {
+					return err(
+						"error: your local changes would be overwritten by revert.\n" +
+							"hint: commit your changes or stash them to proceed.\n" +
+							"fatal: revert failed\n",
+						128,
+					);
+				}
+			}
+
 			// ── Merge commit handling ─────────────────────────────────
 			const mainlineParent: number | undefined = args.mainline;
 			let parentTree: string;
@@ -158,43 +195,11 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				parentTree = parentCommit.tree;
 			}
 
-			const currentIndex = await readIndex(gitCtx);
-			if (args["no-commit"]) {
-				const unmerged = currentIndex.entries.filter((e) => e.stage > 0);
-				if (unmerged.length > 0) {
-					const MAX_UNMERGED_ENTRIES = 10;
-					const shown = unmerged.slice(0, MAX_UNMERGED_ENTRIES);
-					const lines = shown.map((e) => `${e.path}: unmerged (${e.hash})`).join("\n");
-					const ellipsis = unmerged.length > MAX_UNMERGED_ENTRIES ? "\n..." : "";
-					return err(
-						`${lines}${ellipsis}\nerror: your index file is unmerged.\nfatal: revert failed\n`,
-						128,
-					);
-				}
-			} else {
-				const conflictErr = requireNoConflicts(currentIndex, "Reverting", "fatal: revert failed\n");
-				if (conflictErr) return conflictErr;
-			}
-
-			const headCommit = await readCommit(gitCtx, headHash);
-
-			// ── Staged-change check ──────────────────────────────────
-			if (gitCtx.workTree && !args["no-commit"]) {
-				const headMap = await flattenTreeToMap(gitCtx, headCommit.tree);
-				if (hasStagedChanges(currentIndex, headMap)) {
-					return err(
-						"error: your local changes would be overwritten by revert.\n" +
-							"hint: commit your changes or stash them to proceed.\n" +
-							"fatal: revert failed\n",
-						128,
-					);
-				}
-			}
-
 			// Build revert commit message
 			const shortHash = abbreviateHash(resolvedHash);
 			const subject = firstLine(revertedCommit.message);
 			const revertMessage = buildRevertMessage(revertedCommit, resolvedHash, mainlineParent);
+			const commitMessage = ensureTrailingNewline(revertMessage);
 
 			// Three-way merge: base = commit tree, ours = HEAD tree, theirs = parent tree
 			const conflictStyle = ((await getConfigValue(gitCtx, "merge.conflictstyle")) ?? "merge") as
@@ -305,7 +310,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				[headHash],
 				author,
 				committer,
-				revertMessage,
+				commitMessage,
 			);
 
 			await clearRevertState(gitCtx);
@@ -331,7 +336,10 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				treeHash,
 				author,
 				committer,
-				author.timestamp !== committer.timestamp || author.timezone !== committer.timezone,
+				author.name !== committer.name ||
+					author.email !== committer.email ||
+					author.timestamp !== committer.timestamp ||
+					author.timezone !== committer.timezone,
 			);
 
 			const header = formatCommitOneLiner(branchName, commitHash, revertMessage);
@@ -540,9 +548,8 @@ function buildRevertMessage(
 
 	let msg = `${title}\n\nThis reverts commit ${hash}`;
 	if (mainlineParent !== undefined && commit.parents.length > 1 && mainlineParent >= 1) {
-		const otherParent =
-			commit.parents[mainlineParent === 1 ? 1 : 0] ?? (commit.parents[0] as string);
-		msg += `, reversing\nchanges made to ${otherParent}`;
+		const mainlineHash = commit.parents[mainlineParent - 1] ?? (commit.parents[0] as string);
+		msg += `, reversing\nchanges made to ${mainlineHash}`;
 	}
 	msg += ".\n";
 	return msg;

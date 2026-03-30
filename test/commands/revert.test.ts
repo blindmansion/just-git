@@ -146,6 +146,7 @@ describe("git revert", () => {
 			const commit = await readCommit(gitCtx!, newHead!);
 			expect(commit.message).toContain('Revert "add new file"');
 			expect(commit.message).toContain(`This reverts commit ${commitHash}`);
+			expect(commit.message.endsWith("\n")).toBe(true);
 		});
 
 		test("uses current committer as author (not original)", async () => {
@@ -282,6 +283,8 @@ describe("git revert", () => {
 			await bash.exec('git commit -m "main"');
 
 			await bash.exec("git merge feature");
+			const mergedHead = (await bash.exec("git rev-parse HEAD")).stdout.trim();
+			const firstParent = (await bash.exec(`git rev-parse ${mergedHead}^1`)).stdout.trim();
 
 			await bash.exec("git revert HEAD -m 1");
 
@@ -290,6 +293,7 @@ describe("git revert", () => {
 			const commit = await readCommit(gitCtx!, newHead!);
 			expect(commit.message).toContain("reversing");
 			expect(commit.message).toContain("changes made to");
+			expect(commit.message).toContain(firstParent);
 		});
 	});
 
@@ -665,6 +669,35 @@ describe("git revert", () => {
 			const result = await bash.exec("git revert HEAD");
 			expect(result.exitCode).toBe(128);
 			expect(result.stderr).toContain("would be overwritten by revert");
+		});
+
+		test("plain revert checks staged changes before merge -m validation", async () => {
+			const bash = createTestBash({
+				files: EMPTY_REPO,
+				env: envAt("100"),
+			});
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/file.txt", "base\n");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "base"');
+			await bash.exec("git checkout -b feature");
+			await bash.fs.writeFile("/repo/feature.txt", "feature\n");
+			await bash.exec("git add feature.txt");
+			await bash.exec('git commit -m "feature"');
+			await bash.exec("git checkout main");
+			await bash.fs.writeFile("/repo/main.txt", "main\n");
+			await bash.exec("git add main.txt");
+			await bash.exec('git commit -m "main"');
+			await bash.exec('git merge feature -m "merge feature"');
+
+			const mergeHash = (await bash.exec("git rev-parse HEAD")).stdout.trim();
+			await bash.fs.writeFile("/repo/README.md", "staged change\n");
+			await bash.exec("git add README.md");
+
+			const result = await bash.exec(`git revert ${mergeHash}`);
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("would be overwritten by revert");
+			expect(result.stderr).not.toContain("is a merge but no -m option was given");
 		});
 
 		test("merge commits still require -m before staged-change checks", async () => {
