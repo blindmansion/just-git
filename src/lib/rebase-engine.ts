@@ -852,6 +852,18 @@ async function finishRebase(
 
 	// Update the original branch ref and re-attach HEAD
 	if (state.headName !== "detached HEAD") {
+		const currentBranchHash = await resolveRef(gitCtx, state.headName);
+		if (currentBranchHash !== state.origHead) {
+			return {
+				stdout: "",
+				stderr:
+					stderrLines.join("") +
+					`error: update_ref failed for ref '${state.headName}': cannot lock ref '${state.headName}': ` +
+					`is at ${currentBranchHash ?? "(null)"} but expected ${state.origHead}\n` +
+					`error: could not update ${state.headName}\n`,
+				exitCode: 1,
+			};
+		}
 		await updateRef(gitCtx, state.headName, currentHead);
 		await createSymbolicRef(gitCtx, "HEAD", state.headName);
 		await clearDetachPoint(gitCtx);
@@ -1105,8 +1117,12 @@ export async function handleContinue(
 			continueStdout = `${formatCommitOneLiner(label, commitHash, message)}\n${summary}`;
 		}
 
+		const finishingFinalStep = state.todo.length === 0;
+
 		// Clean up step state (including any cherry-pick/revert started mid-rebase)
-		await deleteRef(gitCtx, "REBASE_HEAD");
+		if (!finishingFinalStep) {
+			await deleteRef(gitCtx, "REBASE_HEAD");
+		}
 		await deleteRef(gitCtx, "CHERRY_PICK_HEAD");
 		await deleteRef(gitCtx, "REVERT_HEAD");
 		await deleteStateFile(gitCtx, "MERGE_MSG");

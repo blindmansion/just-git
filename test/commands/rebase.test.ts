@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readCommit } from "../../src/lib/object-db";
 import { isRebaseInProgress, readRebaseState } from "../../src/lib/rebase";
-import { resolveHead, resolveRef } from "../../src/lib/refs";
+import { resolveHead, resolveRef, updateRef } from "../../src/lib/refs";
 import { findRepo } from "../../src/lib/repo";
 import { EMPTY_REPO, TEST_ENV_NAMED as TEST_ENV, envAt } from "../fixtures";
 import { createTestBash, pathExists, readFile } from "../util";
@@ -783,6 +783,48 @@ describe("git rebase", () => {
 			expect(await pathExists(bash.fs, "/repo/clean.txt")).toBe(true);
 			expect(await pathExists(bash.fs, "/repo/conflict.txt")).toBe(true);
 			expect(await readFile(bash.fs, "/repo/conflict.txt")).toBe("resolved");
+		});
+
+		test("keeps rebase in progress when final branch update fails", async () => {
+			const bash = createTestBash({
+				files: EMPTY_REPO,
+				env: envAt("100"),
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+
+			await bash.exec("git branch feature");
+
+			await bash.fs.writeFile("/repo/conflict.txt", "main\n");
+			await bash.exec("git add conflict.txt");
+			await bash.exec('git commit -m "main change"');
+
+			await bash.exec("git checkout feature");
+			await bash.fs.writeFile("/repo/conflict.txt", "feature\n");
+			await bash.exec("git add conflict.txt");
+			await bash.exec('git commit -m "feature change"');
+
+			const rebaseResult = await bash.exec("git rebase main");
+			expect(rebaseResult.exitCode).toBe(1);
+			expect(rebaseResult.stdout).toContain("CONFLICT");
+
+			await bash.fs.writeFile("/repo/conflict.txt", "resolved\n");
+			await bash.exec("git add conflict.txt");
+
+			const gitCtx = await findRepo(bash.fs, "/repo");
+			const mainHash = await resolveRef(gitCtx!, "refs/heads/main");
+			expect(mainHash).not.toBeNull();
+			await updateRef(gitCtx!, "refs/heads/feature", mainHash!);
+
+			const continueResult = await bash.exec("git rebase --continue");
+			expect(continueResult.exitCode).toBe(1);
+			expect(continueResult.stderr).toContain("update_ref failed for ref 'refs/heads/feature'");
+			expect(continueResult.stderr).toContain("error: could not update refs/heads/feature");
+
+			expect(await isRebaseInProgress(gitCtx!)).toBe(true);
+			expect(await resolveRef(gitCtx!, "REBASE_HEAD")).not.toBeNull();
+			expect(await readRebaseState(gitCtx!)).not.toBeNull();
 		});
 	});
 });
