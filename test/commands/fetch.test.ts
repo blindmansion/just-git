@@ -154,6 +154,8 @@ describe("git fetch", () => {
 
 		const result = await bash.exec("git fetch origin refs/heads/main", { cwd: "/local" });
 		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain("From /remote");
+		expect(result.stderr).toMatch(/\[new branch\]|\.\./);
 
 		const after = await readFile(bash.fs, "/local/.git/refs/remotes/origin/main");
 		expect(after).not.toBe(before);
@@ -163,13 +165,32 @@ describe("git fetch", () => {
 		const bash = await setupClonePair();
 
 		await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+		await bash.fs.rm("/local/.git/refs/remotes/origin/HEAD");
 
 		const result = await bash.exec("git fetch origin refs/heads/main:refs/custom/main", {
 			cwd: "/local",
 		});
 		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain("From /remote");
+		expect(result.stderr).toContain("main");
 
 		expect(await pathExists(bash.fs, "/local/.git/refs/custom/main")).toBe(true);
+		expect(await pathExists(bash.fs, "/local/.git/refs/remotes/origin/HEAD")).toBe(false);
+	});
+
+	test("fails when explicit refspec source does not exist on remote", async () => {
+		const bash = await setupClonePair();
+
+		const result = await bash.exec(
+			"git fetch origin refs/heads/nonexistent:refs/remotes/origin/nonexistent",
+			{
+				cwd: "/local",
+			},
+		);
+		expect(result.exitCode).toBe(128);
+		expect(result.stderr).toBe(
+			"fatal: couldn't find remote ref refs/heads/nonexistent\n",
+		);
 	});
 
 	test("not a repo error", async () => {
@@ -205,5 +226,22 @@ describe("git fetch", () => {
 		const result = await bash.exec("git fetch --all origin", { cwd: "/local" });
 		expect(result.exitCode).toBe(128);
 		expect(result.stderr).toContain("does not take a remote argument");
+	});
+
+	test("fetch --tags rejects clobbering an existing tag", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /local && git tag v1.0");
+		await bash.exec("cd /remote && git tag -f v1.0 HEAD~0");
+		await bash.exec("cd /remote && echo remote > remote.txt && git add . && git commit -m remote");
+		await bash.exec("cd /remote && git tag -f v1.0 HEAD");
+
+		const localTagBefore = await readFile(bash.fs, "/local/.git/refs/tags/v1.0");
+		const result = await bash.exec("git fetch --tags", { cwd: "/local" });
+		expect(result.exitCode).toBe(1);
+		expect(result.stderr).toContain("[rejected]");
+		expect(result.stderr).toContain("would clobber existing tag");
+		const localTagAfter = await readFile(bash.fs, "/local/.git/refs/tags/v1.0");
+		expect(localTagAfter).toBe(localTagBefore);
 	});
 });

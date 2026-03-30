@@ -187,13 +187,15 @@ async function fetchOneRemote(
 		localRef: string;
 		force: boolean;
 	}> = [];
+	const matchedSpecs = new Array(fetchSpecs.length).fill(false);
 
 	for (const ref of remoteRefs) {
 		if (ref.name === "HEAD") continue;
 
-		for (const spec of fetchSpecs) {
+		for (const [specIndex, spec] of fetchSpecs.entries()) {
 			const dst = mapRefspec(spec, ref.name);
 			if (dst !== null) {
+				matchedSpecs[specIndex] = true;
 				refUpdates.push({
 					remote: ref,
 					localRef: dst,
@@ -204,6 +206,14 @@ async function fetchOneRemote(
 					wants.push(ref.hash);
 				}
 				break;
+			}
+		}
+	}
+
+	if (rawRefspecs && rawRefspecs.length > 0) {
+		for (const [specIndex, spec] of fetchSpecs.entries()) {
+			if (!matchedSpecs[specIndex] && !spec.src.includes("*")) {
+				return fatal(`couldn't find remote ref ${spec.src}`);
 			}
 		}
 	}
@@ -247,11 +257,24 @@ async function fetchOneRemote(
 
 	const ident = await getReflogIdentity(gitCtx, env);
 	const refLines: TransferRefLine[] = [];
+	let hadTagRejection = false;
+	const appliedUpdates: Array<(typeof refUpdates)[number]> = [];
+	const appliedOldHashes: Array<string | null> = [];
 
-	const resolvedOldHashes: Array<string | null> = [];
 	for (const update of refUpdates) {
 		const oldHash = await resolveRef(gitCtx, update.localRef);
-		resolvedOldHashes.push(oldHash);
+		if (tags && update.remote.name.startsWith("refs/tags/") && oldHash && oldHash !== update.remote.hash) {
+			hadTagRejection = true;
+			refLines.push({
+				prefix: " ! [rejected]",
+				from: shortenRef(update.remote.name),
+				to: shortenRef(update.localRef),
+				suffix: "(would clobber existing tag)",
+			});
+			continue;
+		}
+		appliedOldHashes.push(oldHash);
+		appliedUpdates.push(update);
 		await updateRef(gitCtx, update.localRef, update.remote.hash);
 		await appendReflog(gitCtx, update.localRef, {
 			oldHash: oldHash ?? ZERO_HASH,
@@ -266,7 +289,7 @@ async function fetchOneRemote(
 
 	refLines.push(
 		...buildRefUpdateLines(
-			refUpdates.map((u, i) => ({ ...u, oldHash: resolvedOldHashes[i]! })),
+			appliedUpdates.map((u, i) => ({ ...u, oldHash: appliedOldHashes[i]! })),
 			shortenRef,
 			abbreviateHash,
 		),
@@ -335,7 +358,9 @@ async function fetchOneRemote(
 			: "of";
 		await gitCtx.fs.writeFile(fetchHeadPath, `${headRef.hash}\t\t${branchDesc} ${config.url}\n`);
 
-		await ensureRemoteHead(gitCtx, remoteName, remoteRefs, transport.headTarget);
+		if (!rawRefspecs || rawRefspecs.length === 0) {
+			await ensureRemoteHead(gitCtx, remoteName, remoteRefs, transport.headTarget);
+		}
 	}
 
 	const stderr =
@@ -343,7 +368,7 @@ async function fetchOneRemote(
 	const response = {
 		stdout: "",
 		stderr,
-		exitCode: 0,
+		exitCode: hadTagRejection ? 1 : 0,
 	};
 	await ext?.hooks?.postFetch?.({
 		repo: gitCtx,

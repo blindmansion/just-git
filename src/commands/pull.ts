@@ -235,12 +235,13 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 
 			// After fetch: check if we can determine the merge target
 			if (head?.type !== "symbolic" && !remoteBranch) {
+				const action = pullMode.useRebase ? "rebase against" : "merge with";
 				return {
 					stdout: "",
 					stderr:
 						fetchOutput +
 						"You are not currently on a branch.\n" +
-						"Please specify which branch you want to merge with.\n" +
+						`Please specify which branch you want to ${action}.\n` +
 						"See git-pull(1) for details.\n\n" +
 						"    git pull <remote> <branch>\n\n",
 					exitCode: 1,
@@ -248,6 +249,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			if (noTrackingBranch) {
+				const action = pullMode.useRebase ? "rebase against" : "merge with";
 				const cfg = await readConfig(gitCtx);
 				const remoteNames: string[] = [];
 				for (const section of Object.keys(cfg)) {
@@ -260,7 +262,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					stderr:
 						fetchOutput +
 						`There is no tracking information for the current branch.\n` +
-						`Please specify which branch you want to merge with.\n` +
+						`Please specify which branch you want to ${action}.\n` +
 						`See git-pull(1) for details.\n\n` +
 						`    git pull <remote> <branch>\n\n` +
 						`If you wish to set tracking information for this branch you can do so with:\n\n` +

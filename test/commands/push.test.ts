@@ -195,6 +195,19 @@ describe("git push", () => {
 		expect(result.stderr).not.toContain("[new branch]");
 	});
 
+	test("--tags reports already exists for conflicting remote tags", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /local && git tag v1.0");
+		await bash.exec("cd /remote && echo remote > remote.txt && git add . && git commit -m remote");
+		await bash.exec("cd /remote && git tag -f v1.0 HEAD");
+
+		const result = await bash.exec("git push origin --tags", { cwd: "/local" });
+		expect(result.exitCode).toBe(1);
+		expect(result.stderr).toContain("(already exists)");
+		expect(result.stderr).toContain("tag already exists in the remote");
+	});
+
 	test("up-to-date push reports everything up-to-date", async () => {
 		const bash = await setupClonePair();
 
@@ -308,6 +321,19 @@ describe("git push", () => {
 			const result = await bash.exec("git push", { cwd: "/local" });
 			expect(result.exitCode).toBe(128);
 			expect(result.stderr).toContain('push.default is "nothing"');
+		});
+
+		test("push.default=nothing takes precedence over detached HEAD", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("cd /local && git config set push.default nothing");
+			await bash.exec("cd /local && git tag v0 && git checkout v0");
+
+			const result = await bash.exec("git push", { cwd: "/local" });
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toBe(
+				"fatal: You didn't specify any refspecs to push, and push.default is \"nothing\".\n",
+			);
 		});
 
 		test("push.default=nothing still allows explicit refspec", async () => {

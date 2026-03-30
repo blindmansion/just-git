@@ -49,19 +49,6 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 			const remoteName = args.remote || "origin";
 			const rawRefspecs = args.refspec;
 
-			// Real git checks detached HEAD before connecting to the remote
-			if (!args.delete && !args.all && !args.tags && (!rawRefspecs || rawRefspecs.length === 0)) {
-				const head = await readHead(gitCtx);
-				if (!head || head.type !== "symbolic") {
-					return fatal(
-						"You are not currently on a branch.\n" +
-							"To push the history leading to the current (detached HEAD)\n" +
-							"state now, use\n\n" +
-							"    git push origin HEAD:<name-of-remote-branch>\n",
-					);
-				}
-			}
-
 			let resolved;
 			try {
 				resolved = await resolveRemoteTransport(gitCtx, remoteName, ctx.env);
@@ -186,6 +173,11 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				}
 			} else if (!args.tags) {
 				// No explicit refspec and no --tags — use push.default
+				const pushDefault =
+					(await getConfigValue(gitCtx, "push.default"))?.toLowerCase() ?? "simple";
+				if (pushDefault === "nothing") {
+					return fatal("You didn't specify any refspecs to push, and " + 'push.default is "nothing".');
+				}
 				const head = await readHead(gitCtx);
 				if (!head || head.type !== "symbolic") {
 					return fatal(
@@ -203,9 +195,6 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				if (!localHash) {
 					return err("error: src refspec does not match any\n");
 				}
-
-				const pushDefault =
-					(await getConfigValue(gitCtx, "push.default"))?.toLowerCase() ?? "simple";
 
 				const pushUpdate = await resolvePushDefault(
 					gitCtx,
@@ -301,6 +290,7 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 			// Build output
 			const pushLines: TransferRefLine[] = [];
 			let hasError = false;
+			let hasTagExists = false;
 
 			for (const update of result.updates) {
 				const isTag = update.name.startsWith("refs/tags/");
@@ -309,9 +299,12 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				if (!update.ok) {
 					const isFetchFirst = update.error?.includes("fetch first");
 					const isNonFF = update.error?.includes("non-fast-forward");
+					if (isTag && isNonFF) hasTagExists = true;
 					const reason = isFetchFirst
 						? "fetch first"
-						: isNonFF
+						: isTag && isNonFF
+							? "already exists"
+							: isNonFF
 							? "non-fast-forward"
 							: (update.error ?? "failed");
 					pushLines.push({
@@ -356,7 +349,11 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				stderr.push(`error: failed to push some refs to '${config.url}'\n`);
 				const hasFetchFirst = result.updates.some((u) => !u.ok && u.error?.includes("fetch first"));
 				const hasNonFF = result.updates.some((u) => !u.ok && u.error?.includes("non-fast-forward"));
-				if (hasFetchFirst) {
+				if (hasTagExists) {
+					stderr.push(
+						"hint: Updates were rejected because the tag already exists in the remote.\n",
+					);
+				} else if (hasFetchFirst) {
 					stderr.push(
 						"hint: Updates were rejected because the remote contains work that you do not\n" +
 							"hint: have locally. This is usually caused by another repository pushing to\n" +
