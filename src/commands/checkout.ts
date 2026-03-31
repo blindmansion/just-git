@@ -361,8 +361,11 @@ async function createAndSwitch(
 		stdout += formatLongTrackingInfo(trackingInfo);
 	}
 
+	const alreadyOnBranch = head?.type === "symbolic" && head.target === refName;
 	const stderrMsg = existing
-		? `Switched to and reset branch '${branchName}'\n`
+		? alreadyOnBranch
+			? `Reset branch '${branchName}'\n`
+			: `Switched to and reset branch '${branchName}'\n`
 		: `Switched to a new branch '${branchName}'\n`;
 
 	return {

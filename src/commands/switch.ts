@@ -346,9 +346,12 @@ async function switchCreateBranch(
 		isBranchCheckout: true,
 	});
 
+	const alreadyOnBranch = head?.type === "symbolic" && head.target === refName;
 	const label =
 		force && existing
-			? `Switched to and reset branch '${branchName}'\n`
+			? alreadyOnBranch
+				? `Reset branch '${branchName}'\n`
+				: `Switched to and reset branch '${branchName}'\n`
 			: `Switched to a new branch '${branchName}'\n`;
 
 	const stderr = detachPreamble + label + opWarning;
