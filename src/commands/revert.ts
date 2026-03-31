@@ -38,9 +38,11 @@ import { logRef } from "../lib/reflog.ts";
 import { branchNameFromRef, readHead, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
 import { generateLongFormStatus } from "../lib/status-format.ts";
 import { buildTreeFromIndex, flattenTreeToMap } from "../lib/tree-ops.ts";
-import type { GitContext } from "../lib/types.ts";
+import type { GitContext, Identity, ObjectId } from "../lib/types.ts";
 import { applyWorktreeOps, mergeAbort } from "../lib/unpack-trees.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+
+type RevertMode = "commit" | "no-commit";
 
 export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("revert", {
@@ -130,23 +132,10 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 			const headHash = await requireHead(gitCtx);
 			if (isCommandError(headHash)) return headHash;
 
+			const revertMode: RevertMode = args["no-commit"] ? "no-commit" : "commit";
 			const currentIndex = await readIndex(gitCtx);
-			if (args["no-commit"]) {
-				const unmerged = currentIndex.entries.filter((e) => e.stage > 0);
-				if (unmerged.length > 0) {
-					const MAX_UNMERGED_ENTRIES = 10;
-					const shown = unmerged.slice(0, MAX_UNMERGED_ENTRIES);
-					const lines = shown.map((e) => `${e.path}: unmerged (${e.hash})`).join("\n");
-					const ellipsis = unmerged.length > MAX_UNMERGED_ENTRIES ? "\n..." : "";
-					return err(
-						`${lines}${ellipsis}\nerror: your index file is unmerged.\nfatal: revert failed\n`,
-						128,
-					);
-				}
-			} else {
-				const conflictErr = requireNoConflicts(currentIndex, "Reverting", "fatal: revert failed\n");
-				if (conflictErr) return conflictErr;
-			}
+			const conflictErr = validateRevertIndexState(currentIndex, revertMode);
+			if (conflictErr) return conflictErr;
 
 			const headCommit = await readCommit(gitCtx, headHash);
 
@@ -155,7 +144,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 			// path: refuse local staged changes before validating -m for
 			// merge commits. The -n path skips this so merge validation and
 			// unpack-trees diagnostics can still run.
-			if (gitCtx.workTree && !args["no-commit"]) {
+			if (gitCtx.workTree && revertMode === "commit") {
 				const headMap = await flattenTreeToMap(gitCtx, headCommit.tree);
 				if (hasStagedChanges(currentIndex, headMap)) {
 					return err(
@@ -223,9 +212,8 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 			// ── Empty revert detection ────────────────────────────────
 			if (result.conflicts.length === 0) {
 				if (result.resultTree === headCommit.tree) {
-					if (args["no-commit"]) {
-						await updateRef(gitCtx, "REVERT_HEAD", resolvedHash);
-						await writeStateFile(gitCtx, "MERGE_MSG", revertMessage);
+					if (revertMode === "no-commit") {
+						await setPendingRevertState(gitCtx, resolvedHash, revertMessage);
 						return { stdout: "", stderr: "", exitCode: 0 };
 					}
 					const mergeOutput = result.messages.length > 0 ? `${result.messages.join("\n")}\n` : "";
@@ -258,9 +246,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 
 			// ── Handle conflicts ──────────────────────────────────────
 			if (result.conflicts.length > 0) {
-				await updateRef(gitCtx, "REVERT_HEAD", resolvedHash);
-				await updateRef(gitCtx, "ORIG_HEAD", headHash);
-				await writeStateFile(gitCtx, "MERGE_MSG", revertMessage);
+				await setPendingRevertState(gitCtx, resolvedHash, revertMessage, headHash);
 
 				const mergeOutput = result.messages.join("\n");
 				await ext?.hooks?.postRevert?.({
@@ -272,27 +258,18 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 
 				return {
 					stdout: mergeOutput ? `${mergeOutput}\n` : "",
-					stderr: args["no-commit"]
-						? `error: could not revert ${shortHash}... ${firstLine(revertedCommit.message)}\n` +
-							"hint: after resolving the conflicts, mark the corrected paths\n" +
-							"hint: with 'git add <paths>' or 'git rm <paths>'\n" +
-							'hint: Disable this message with "git config set advice.mergeConflict false"\n'
-						: `error: could not revert ${shortHash}... ${firstLine(revertedCommit.message)}\n` +
-							"hint: After resolving the conflicts, mark them with\n" +
-							'hint: "git add/rm <pathspec>", then run\n' +
-							'hint: "git revert --continue".\n' +
-							'hint: You can instead skip this commit with "git revert --skip".\n' +
-							'hint: To abort and get back to the state before "git revert",\n' +
-							'hint: run "git revert --abort".\n' +
-							'hint: Disable this message with "git config set advice.mergeConflict false"\n',
+					stderr: buildRevertConflictStderr(
+						shortHash,
+						firstLine(revertedCommit.message),
+						revertMode,
+					),
 					exitCode: 1,
 				};
 			}
 
 			// ── --no-commit path ──────────────────────────────────────
-			if (args["no-commit"]) {
-				await updateRef(gitCtx, "REVERT_HEAD", resolvedHash);
-				await writeStateFile(gitCtx, "MERGE_MSG", revertMessage);
+			if (revertMode === "no-commit") {
+				await setPendingRevertState(gitCtx, resolvedHash, revertMessage);
 				return { stdout: "", stderr: "", exitCode: 0 };
 			}
 
@@ -304,54 +281,27 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 			const committer = await requireCommitter(gitCtx, ctx.env);
 			if (isCommandError(committer)) return committer;
 
-			const commitHash = await writeCommitAndAdvance(
+			const commitOutput = await finalizeRevertCommit({
 				gitCtx,
+				env: ctx.env,
+				headHash,
+				headTreeHash: headCommit.tree,
 				treeHash,
-				[headHash],
 				author,
 				committer,
 				commitMessage,
-			);
-
-			await clearRevertState(gitCtx);
-			await clearCherryPickState(gitCtx);
-
-			const head2 = await readHead(gitCtx);
-			const revertSubject = firstLine(revertMessage);
-			const refName = head2?.type === "symbolic" ? head2.target : "HEAD";
-			await logRef(
-				gitCtx,
-				ctx.env,
-				refName,
-				headHash,
-				commitHash,
-				`revert: ${revertSubject}`,
-				head2?.type === "symbolic",
-			);
-			const branchName =
-				head2?.type === "symbolic" ? branchNameFromRef(head2.target) : "detached HEAD";
-			const summary = await formatCommitSummary(
-				gitCtx,
-				headCommit.tree,
-				treeHash,
-				author,
-				committer,
-				author.name !== committer.name ||
-					author.email !== committer.email ||
-					author.timestamp !== committer.timestamp ||
-					author.timezone !== committer.timezone,
-			);
-
-			const header = formatCommitOneLiner(branchName, commitHash, revertMessage);
+				displayMessage: revertMessage,
+				reflogMessage: `revert: ${firstLine(revertMessage)}`,
+			});
 			const mergeMessages = result.messages.length > 0 ? `${result.messages.join("\n")}\n` : "";
 			await ext?.hooks?.postRevert?.({
 				repo: gitCtx,
 				mode: "revert",
-				commitHash,
+				commitHash: commitOutput.commitHash,
 				hadConflicts: false,
 			});
 			return {
-				stdout: `${mergeMessages}${header}\n${summary}`,
+				stdout: `${mergeMessages}${commitOutput.stdout}`,
 				stderr: "",
 				exitCode: 0,
 			};
@@ -488,46 +438,148 @@ async function handleContinue(
 
 	const message = ensureTrailingNewline(messageText);
 
+	const commitOutput = await finalizeRevertCommit({
+		gitCtx,
+		env,
+		headHash,
+		headTreeHash: headCommit.tree,
+		treeHash,
+		author,
+		committer,
+		commitMessage: message,
+		displayMessage: messageText,
+		reflogMessage: `commit: ${firstLine(message)}`,
+	});
+	return {
+		stdout: commitOutput.stdout,
+		stderr: "",
+		exitCode: 0,
+	};
+}
+
+function validateRevertIndexState(
+	index: Awaited<ReturnType<typeof readIndex>>,
+	revertMode: RevertMode,
+) {
+	if (revertMode === "commit") {
+		return requireNoConflicts(index, "Reverting", "fatal: revert failed\n");
+	}
+
+	const unmerged = index.entries.filter((e) => e.stage > 0);
+	if (unmerged.length === 0) return null;
+
+	const MAX_UNMERGED_ENTRIES = 10;
+	const shown = unmerged.slice(0, MAX_UNMERGED_ENTRIES);
+	const lines = shown.map((e) => `${e.path}: unmerged (${e.hash})`).join("\n");
+	const ellipsis = unmerged.length > MAX_UNMERGED_ENTRIES ? "\n..." : "";
+	return err(
+		`${lines}${ellipsis}\nerror: your index file is unmerged.\nfatal: revert failed\n`,
+		128,
+	);
+}
+
+async function setPendingRevertState(
+	gitCtx: GitContext,
+	revertHeadHash: ObjectId,
+	message: string,
+	origHead?: ObjectId,
+) {
+	await updateRef(gitCtx, "REVERT_HEAD", revertHeadHash);
+	if (origHead) {
+		await updateRef(gitCtx, "ORIG_HEAD", origHead);
+	}
+	await writeStateFile(gitCtx, "MERGE_MSG", message);
+}
+
+function buildRevertConflictStderr(
+	shortHash: string,
+	subject: string,
+	revertMode: RevertMode,
+): string {
+	const prefix = `error: could not revert ${shortHash}... ${subject}\n`;
+	if (revertMode === "no-commit") {
+		return (
+			prefix +
+			"hint: after resolving the conflicts, mark the corrected paths\n" +
+			"hint: with 'git add <paths>' or 'git rm <paths>'\n" +
+			'hint: Disable this message with "git config set advice.mergeConflict false"\n'
+		);
+	}
+	return (
+		prefix +
+		"hint: After resolving the conflicts, mark them with\n" +
+		'hint: "git add/rm <pathspec>", then run\n' +
+		'hint: "git revert --continue".\n' +
+		'hint: You can instead skip this commit with "git revert --skip".\n' +
+		'hint: To abort and get back to the state before "git revert",\n' +
+		'hint: run "git revert --abort".\n' +
+		'hint: Disable this message with "git config set advice.mergeConflict false"\n'
+	);
+}
+
+async function finalizeRevertCommit(options: {
+	gitCtx: GitContext;
+	env: Map<string, string>;
+	headHash: ObjectId;
+	headTreeHash: ObjectId;
+	treeHash: ObjectId;
+	author: Identity;
+	committer: Identity;
+	commitMessage: string;
+	displayMessage: string;
+	reflogMessage: string;
+}): Promise<{ commitHash: ObjectId; stdout: string }> {
+	const {
+		gitCtx,
+		env,
+		headHash,
+		headTreeHash,
+		treeHash,
+		author,
+		committer,
+		commitMessage,
+		displayMessage,
+		reflogMessage,
+	} = options;
+
 	const commitHash = await writeCommitAndAdvance(
 		gitCtx,
 		treeHash,
 		[headHash],
 		author,
 		committer,
-		message,
+		commitMessage,
 	);
 
 	await clearRevertState(gitCtx);
 	await clearCherryPickState(gitCtx);
 
-	const head = await readHead(gitCtx);
-	const revertSubject = firstLine(message);
-	const refName = head?.type === "symbolic" ? head.target : "HEAD";
+	const updatedHead = await readHead(gitCtx);
+	const refName = updatedHead?.type === "symbolic" ? updatedHead.target : "HEAD";
 	await logRef(
 		gitCtx,
 		env,
 		refName,
 		headHash,
 		commitHash,
-		`commit: ${revertSubject}`,
-		head?.type === "symbolic",
+		reflogMessage,
+		updatedHead?.type === "symbolic",
 	);
-	const branchName = head?.type === "symbolic" ? branchNameFromRef(head.target) : "detached HEAD";
+	const branchName =
+		updatedHead?.type === "symbolic" ? branchNameFromRef(updatedHead.target) : "detached HEAD";
 	const summary = await formatCommitSummary(
 		gitCtx,
-		headCommit.tree,
+		headTreeHash,
 		treeHash,
 		author,
 		committer,
-		author.timestamp !== committer.timestamp || author.timezone !== committer.timezone,
+		author.name !== committer.name ||
+			author.email !== committer.email ||
+			author.timestamp !== committer.timestamp ||
+			author.timezone !== committer.timezone,
 	);
-
-	const header = formatCommitOneLiner(branchName, commitHash, messageText);
-	return {
-		stdout: `${header}\n${summary}`,
-		stderr: "",
-		exitCode: 0,
-	};
+	const header = formatCommitOneLiner(branchName, commitHash, displayMessage);
+	return { commitHash, stdout: `${header}\n${summary}` };
 }
 
 // ── Commit message ──────────────────────────────────────────────────

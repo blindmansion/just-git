@@ -5,21 +5,29 @@ import {
 	buildRefUpdateLines,
 	fatal,
 	formatTransferRefLines,
-	hasStagedChanges,
+	getSequencerDirtyState,
 	isCommandError,
 	requireAuthor,
 	requireCommitter,
 	requireGitContext,
 	requireHead,
+	sequencerDirtyWorktreeError,
 	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
 import { formatDiffStat } from "../lib/commit-summary.ts";
 import { getConfigValue, readConfig } from "../lib/config.ts";
+import {
+	autoFollowReachableTags,
+	collectFetchHaves,
+	normalizeFetchDepth,
+	prepareShallowFetch,
+	resolveRemoteTransportOrError,
+} from "../lib/fetch-helpers.ts";
 import { getReflogIdentity } from "../lib/identity.ts";
 import { getConflictedPaths, hasConflicts, readIndex } from "../lib/index.ts";
 import { buildMergeMessage, findAllMergeBases, handleFastForward } from "../lib/merge.ts";
 import { applyMergeResult, mergeOrtRecursive } from "../lib/merge-ort.ts";
-import { objectExists, readCommit } from "../lib/object-db.ts";
+import { readCommit } from "../lib/object-db.ts";
 import { deleteStateFile, writeStateFile } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
@@ -27,25 +35,16 @@ import { appendReflog } from "../lib/reflog.ts";
 import {
 	branchNameFromRef,
 	ensureRemoteHead,
-	listRefs,
 	readHead,
 	resolveHead,
 	resolveRef,
 	shortenRef,
 	updateRef,
 } from "../lib/refs.ts";
-import {
-	applyShallowUpdates,
-	INFINITE_DEPTH,
-	isShallowRepo,
-	readShallowCommits,
-} from "../lib/shallow.ts";
-import { flattenTreeToMap } from "../lib/tree-ops.ts";
+import { applyShallowUpdates } from "../lib/shallow.ts";
 import { mapRefspec, parseRefspec } from "../lib/transport/refspec.ts";
-import { resolveRemoteTransport } from "../lib/transport/remote.ts";
-import type { RemoteRef, ShallowFetchOptions } from "../lib/transport/transport.ts";
+import type { RemoteRef } from "../lib/transport/transport.ts";
 import type { GitContext, ObjectId, Ref } from "../lib/types.ts";
-import { diffIndexToWorkTree } from "../lib/worktree.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { performRebase } from "../lib/rebase-engine.ts";
 
@@ -85,17 +84,9 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
 			const gitCtx = gitCtxOrError;
 
-			if (args.depth !== undefined && args.unshallow) {
-				return fatal("--depth and --unshallow cannot be used together");
-			}
-			if (args.unshallow && !(await isShallowRepo(gitCtx))) {
-				return fatal("--unshallow on a complete repository does not make sense");
-			}
-
-			let fetchDepth: number | undefined = args.depth;
-			if (args.unshallow) {
-				fetchDepth = INFINITE_DEPTH;
-			}
+			const depthResult = await normalizeFetchDepth(gitCtx, args);
+			if (isCommandError(depthResult)) return depthResult;
+			const { depth: fetchDepth } = depthResult;
 
 			const headHash = await requireHead(gitCtx);
 			if (isCommandError(headHash)) return headHash;
@@ -146,27 +137,18 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 
 			const pullMode = await resolvePullMode(gitCtx, args, head);
 			if (pullMode.useRebase) {
-				const dirtyResult = await checkPullRebaseWorktree(gitCtx, headHash, currentIndex);
-				if (dirtyResult) return dirtyResult;
+				const dirtyState = await getSequencerDirtyState(gitCtx, headHash, currentIndex);
+				if (dirtyState) {
+					return sequencerDirtyWorktreeError("pull with rebase", dirtyState, 128);
+				}
 			}
 
-			let resolved;
-			try {
-				resolved = await resolveRemoteTransport(gitCtx, remoteName, ctx.env);
-			} catch (e) {
-				const msg = e instanceof Error ? e.message : "";
-				if (msg.startsWith("network"))
-					return { stdout: "", stderr: `fatal: ${msg}\n`, exitCode: 1 };
-				throw e;
-			}
-			if (!resolved) {
-				return {
-					stdout: "",
-					stderr: `fatal: '${remoteName}' does not appear to be a git repository\n`,
-					exitCode: 1,
-				};
-			}
-
+			const resolved = await resolveRemoteTransportOrError(gitCtx, remoteName, ctx.env, (msg) => ({
+				stdout: "",
+				stderr: `fatal: ${msg}\n`,
+				exitCode: 1,
+			}));
+			if (isCommandError(resolved)) return resolved;
 			const { transport, config } = resolved;
 			const pullBranch = remoteBranch ?? null;
 			const prePullRej = await ext?.hooks?.prePull?.({
@@ -183,10 +165,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			const remoteRefs = await transport.advertiseRefs();
 
 			// Compute wants/haves
-			const localRefs = await listRefs(gitCtx);
-			const haves: ObjectId[] = localRefs.map((r) => r.hash);
-			const localHead = await resolveRef(gitCtx, "HEAD");
-			if (localHead) haves.push(localHead);
+			const haves = await collectFetchHaves(gitCtx);
 
 			const wants: ObjectId[] = [];
 			const seen = new Set<ObjectId>();
@@ -210,12 +189,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			const haveSet = new Set(haves);
 			const filteredWants = wants.filter((w) => !haveSet.has(w));
 
-			let shallowOpts: ShallowFetchOptions | undefined;
-			const existingShallows =
-				fetchDepth !== undefined ? await readShallowCommits(gitCtx) : undefined;
-			if (fetchDepth !== undefined) {
-				shallowOpts = { depth: fetchDepth, existingShallows };
-			}
+			const { existingShallows, shallowOpts } = await prepareShallowFetch(gitCtx, fetchDepth);
 
 			const effectiveWants = filteredWants.length > 0 ? filteredWants : shallowOpts ? wants : [];
 
@@ -249,46 +223,15 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				shortenRef,
 				abbreviateHash,
 			);
-			const autoFollowTags: RemoteRef[] = [];
-			for (const ref of remoteRefs) {
-				if (!ref.name.startsWith("refs/tags/")) continue;
-				if (await resolveRef(gitCtx, ref.name)) continue;
-
-				const targetHash = ref.peeledHash ?? ref.hash;
-				if (await objectExists(gitCtx, targetHash)) {
-					autoFollowTags.push(ref);
-				}
-			}
-			const tagObjectWants: ObjectId[] = [];
-			for (const ref of autoFollowTags) {
-				if (ref.peeledHash && !(await objectExists(gitCtx, ref.hash))) {
-					tagObjectWants.push(ref.hash);
-				}
-			}
-			if (tagObjectWants.length > 0) {
-				const currentRefs = await listRefs(gitCtx);
-				const currentHaves = currentRefs.map((r) => r.hash);
-				const currentHead = await resolveRef(gitCtx, "HEAD");
-				if (currentHead) currentHaves.push(currentHead);
-				await transport.fetch(tagObjectWants, currentHaves);
-			}
-			for (const ref of autoFollowTags) {
-				await updateRef(gitCtx, ref.name, ref.hash);
-				await appendReflog(gitCtx, ref.name, {
-					oldHash: ZERO_HASH,
-					newHash: ref.hash,
-					name: ident.name,
-					email: ident.email,
-					timestamp: ident.timestamp,
-					tz: ident.tz,
-					message: "pull: storing head",
-				});
-				fetchRefLines.push({
-					prefix: " * [new tag]",
-					from: shortenRef(ref.name),
-					to: shortenRef(ref.name),
-				});
-			}
+			fetchRefLines.push(
+				...(await autoFollowReachableTags({
+					gitCtx,
+					transport,
+					remoteRefs,
+					ident,
+					reflogAction: "pull",
+				})),
+			);
 			const fetchOutput =
 				fetchRefLines.length > 0
 					? `From ${config.url}\n${formatTransferRefLines(fetchRefLines, 10)}`
@@ -446,7 +389,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				};
 			}
 
-			const { noFf, ffOnly, ffOnlySource, configured: hasReconciliationStrategy } = pullMode;
+			const { noFf, ffOnly, ffOnlySource, hasReconciliationStrategy } = pullMode;
 			const isFastForward = baseCommit === headHash;
 
 			if (!isFastForward && !hasReconciliationStrategy) {
@@ -694,7 +637,7 @@ interface PullMode {
 	noFf: boolean;
 	ffOnly: boolean;
 	ffOnlySource: "cli" | "pull" | "merge" | null;
-	configured: boolean;
+	hasReconciliationStrategy: boolean;
 }
 
 /**
@@ -710,7 +653,7 @@ async function resolvePullMode(
 	let noFf = !!args.noFf;
 	let ffOnly = !!args.ffOnly;
 	let ffOnlySource: PullMode["ffOnlySource"] = args.ffOnly ? "cli" : null;
-	let configured = !!args.rebase || !!args.noRebase || !!args.noFf || !!args.ffOnly;
+	let hasReconciliationStrategy = !!args.rebase || !!args.noRebase || !!args.noFf || !!args.ffOnly;
 	let useRebase = false;
 
 	// Rebase mode: CLI flags override config
@@ -724,25 +667,25 @@ async function resolvePullMode(
 			const branchRebase = await getConfigValue(gitCtx, `branch.${bn}.rebase`);
 			if (branchRebase === "true") {
 				useRebase = true;
-				configured = true;
+				hasReconciliationStrategy = true;
 			} else if (branchRebase === "false") {
-				configured = true;
+				hasReconciliationStrategy = true;
 			} else {
 				const pullRebase = await getConfigValue(gitCtx, "pull.rebase");
 				if (pullRebase === "true") {
 					useRebase = true;
-					configured = true;
+					hasReconciliationStrategy = true;
 				} else if (pullRebase === "false") {
-					configured = true;
+					hasReconciliationStrategy = true;
 				}
 			}
 		} else {
 			const pullRebase = await getConfigValue(gitCtx, "pull.rebase");
 			if (pullRebase === "true") {
 				useRebase = true;
-				configured = true;
+				hasReconciliationStrategy = true;
 			} else if (pullRebase === "false") {
-				configured = true;
+				hasReconciliationStrategy = true;
 			}
 		}
 	}
@@ -752,11 +695,11 @@ async function resolvePullMode(
 		const pullFFConfig = await getConfigValue(gitCtx, "pull.ff");
 		if (pullFFConfig === "false") {
 			noFf = true;
-			configured = true;
+			hasReconciliationStrategy = true;
 		} else if (pullFFConfig === "only") {
 			ffOnly = true;
 			ffOnlySource = "pull";
-			configured = true;
+			hasReconciliationStrategy = true;
 		} else {
 			const mergeFFConfig = await getConfigValue(gitCtx, "merge.ff");
 			if (mergeFFConfig === "false") {
@@ -768,39 +711,5 @@ async function resolvePullMode(
 		}
 	}
 
-	return { useRebase, noFf, ffOnly, ffOnlySource, configured };
-}
-
-async function checkPullRebaseWorktree(
-	gitCtx: GitContext,
-	headHash: ObjectId,
-	currentIndex: Awaited<ReturnType<typeof readIndex>>,
-) {
-	if (!gitCtx.workTree) return null;
-
-	const headCommit = await readCommit(gitCtx, headHash);
-	const headMap = await flattenTreeToMap(gitCtx, headCommit.tree);
-	const hasStaged = hasStagedChanges(currentIndex, headMap);
-	const wtDiffs = await diffIndexToWorkTree(gitCtx, currentIndex);
-	const hasUnstaged = wtDiffs.some((d) => d.status === "modified" || d.status === "deleted");
-
-	if (!hasStaged && !hasUnstaged) return null;
-
-	const lines: string[] = [];
-	if (hasUnstaged) {
-		lines.push("error: cannot pull with rebase: You have unstaged changes.");
-	}
-	if (hasStaged) {
-		if (hasUnstaged) {
-			lines.push("error: additionally, your index contains uncommitted changes.");
-		} else {
-			lines.push("error: cannot pull with rebase: Your index contains uncommitted changes.");
-		}
-	}
-	lines.push("error: Please commit or stash them.");
-	return {
-		stdout: "",
-		stderr: `${lines.join("\n")}\n`,
-		exitCode: 128,
-	};
+	return { useRebase, noFf, ffOnly, ffOnlySource, hasReconciliationStrategy };
 }

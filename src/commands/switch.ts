@@ -4,6 +4,7 @@ import {
 	buildDetachPreamble,
 	clearOperationState,
 	detachHeadCore,
+	findPreviousCheckoutTarget,
 	formatCheckoutSummary,
 	formatPrevHeadPosition,
 	guessRemoteBranch,
@@ -24,7 +25,7 @@ import { clearIndex, readIndex, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { clearDetachPoint, readStateFile } from "../lib/operation-state.ts";
 import { isRebaseInProgress } from "../lib/rebase.ts";
-import { logRef, readReflog, ZERO_HASH } from "../lib/reflog.ts";
+import { logRef, ZERO_HASH } from "../lib/reflog.ts";
 import {
 	createSymbolicRef,
 	deleteRef,
@@ -175,41 +176,20 @@ async function switchToPrevious(
 	env: Map<string, string>,
 	ext?: GitExtensions,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-	const entries = await readReflog(gitCtx, "HEAD");
-	let prevTarget: string | null = null;
-	for (let i = entries.length - 1; i >= 0; i--) {
-		const entry = entries[i];
-		if (!entry) continue;
-		const match = entry.message.match(/^checkout: moving from (.+) to (.+)$/);
-		if (match?.[1]) {
-			prevTarget = match[1];
-			break;
-		}
-	}
-	if (!prevTarget) return fatal("invalid reference: @{-1}");
+	const previous = await findPreviousCheckoutTarget(gitCtx);
+	if (!previous) return fatal("invalid reference: @{-1}");
 
-	const refName = `refs/heads/${prevTarget}`;
-	const hash = await resolveRef(gitCtx, refName);
-	if (!hash) {
-		const commitLike = await requireCommit(
-			gitCtx,
-			prevTarget,
-			`a branch is expected, got commit '${prevTarget}'`,
-		);
-		if (!isCommandError(commitLike)) {
-			return {
-				stdout: "",
-				stderr:
-					`fatal: a branch is expected, got commit '${prevTarget}'\n` +
-					"hint: If you want to detach HEAD at the commit, try again with the --detach option.\n",
-				exitCode: 128,
-			};
-		}
-		return fatal("invalid reference: @{-1}");
+	if (previous.kind === "commit") {
+		return {
+			stdout: "",
+			stderr:
+				`fatal: a branch is expected, got commit '${previous.target}'\n` +
+				"hint: If you want to detach HEAD at the commit, try again with the --detach option.\n",
+			exitCode: 128,
+		};
 	}
 
-	const prev = { name: prevTarget, refName, hash };
-	return switchToBranch(gitCtx, prev.name, prev.refName, prev.hash, env, ext);
+	return switchToBranch(gitCtx, previous.name, previous.refName, previous.hash, env, ext);
 }
 
 // ── Create and switch to a new branch ────────────────────────────────

@@ -59,6 +59,11 @@ export interface PushRefUpdate {
 	error?: string;
 }
 
+interface NonDeletePushRefUpdate extends PushRefUpdate {
+	oldHash: ObjectId;
+	newHash: ObjectId;
+}
+
 /**
  * Transport interface: abstracts how objects and refs are exchanged
  * between repositories. Implementations handle local paths, HTTP, etc.
@@ -212,13 +217,8 @@ export class LocalTransport implements Transport {
 			try {
 				const isDelete = update.newHash === ZERO_HASH;
 				const expectedOld = update.oldHash ?? null;
-				const isTagUpdate =
-					update.name.startsWith("refs/tags/") &&
-					update.oldHash &&
-					update.oldHash !== ZERO_HASH &&
-					update.newHash !== ZERO_HASH;
 
-				if (isTagUpdate && !update.ok) {
+				if (isTagRewrite(update) && !update.ok) {
 					results.push({
 						...update,
 						ok: false,
@@ -379,23 +379,12 @@ export class SmartHttpTransport implements Transport {
 		const rejectedNames = new Set<string>();
 		const rejectedResults: PushRefUpdate[] = [];
 		for (const update of updates) {
-			if (
-				update.name.startsWith("refs/tags/") &&
-				update.oldHash &&
-				update.oldHash !== ZERO_HASH &&
-				update.newHash !== ZERO_HASH &&
-				!update.ok
-			) {
+			if (isTagRewrite(update) && !update.ok) {
 				rejectedNames.add(update.name);
 				rejectedResults.push({ ...update, ok: false, error: "non-fast-forward" });
 				continue;
 			}
-			if (
-				update.oldHash &&
-				update.oldHash !== ZERO_HASH &&
-				update.newHash !== ZERO_HASH &&
-				!update.ok
-			) {
+			if (isNonDeleteUpdate(update) && !update.ok) {
 				const ff = await isAncestor(this.local, update.oldHash, update.newHash);
 				if (!ff) {
 					const hasRemoteObj = await objectExists(this.local, update.oldHash);
@@ -465,6 +454,14 @@ export class SmartHttpTransport implements Transport {
 export type { HttpAuth } from "./smart-http.ts";
 
 // ── Shared helpers ───────────────────────────────────────────────────
+
+function isNonDeleteUpdate(update: PushRefUpdate): update is NonDeletePushRefUpdate {
+	return !!update.oldHash && update.oldHash !== ZERO_HASH && update.newHash !== ZERO_HASH;
+}
+
+function isTagRewrite(update: PushRefUpdate): boolean {
+	return update.name.startsWith("refs/tags/") && isNonDeleteUpdate(update);
+}
 
 /**
  * Enumerate objects reachable from wants but not haves, run delta

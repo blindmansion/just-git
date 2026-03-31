@@ -1,5 +1,13 @@
 import type { GitExtensions } from "../git.ts";
-import { abbreviateHash, type CommandResult, err, fatal, firstLine } from "./command-utils.ts";
+import {
+	abbreviateHash,
+	type CommandResult,
+	err,
+	fatal,
+	firstLine,
+	isCommandError,
+	requireCommit,
+} from "./command-utils.ts";
 import { findOrphanedCommits } from "./commit-walk.ts";
 import { getConfigValue, readConfig, writeConfig } from "./config.ts";
 import { addEntry, defaultStat, readIndex, writeIndex } from "./index.ts";
@@ -25,27 +33,55 @@ import { checkoutEntry } from "./worktree.ts";
 
 /**
  * Scan the HEAD reflog for the most recent "checkout: moving from X to Y"
+ * entry and resolve the previous target. Branches return their current
+ * hash; detached commits are surfaced distinctly so callers can provide
+ * git-compatible guidance.
+ */
+export async function findPreviousCheckoutTarget(
+	gitCtx: GitContext,
+): Promise<
+	| { kind: "branch"; name: string; refName: string; hash: ObjectId }
+	| { kind: "commit"; target: string }
+	| null
+> {
+	const entries = await readReflog(gitCtx, "HEAD");
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const entry = entries[i];
+		if (!entry) continue;
+		const match = entry.message.match(/^checkout: moving from (.+) to (.+)$/);
+		if (!match?.[1]) continue;
+
+		const target = match[1];
+		const refName = `refs/heads/${target}`;
+		const hash = await resolveRef(gitCtx, refName);
+		if (hash) {
+			return { kind: "branch", name: target, refName, hash };
+		}
+
+		const commitLike = await requireCommit(
+			gitCtx,
+			target,
+			`a branch is expected, got commit '${target}'`,
+		);
+		if (!isCommandError(commitLike)) {
+			return { kind: "commit", target };
+		}
+
+		return null;
+	}
+	return null;
+}
+
+/**
+ * Scan the HEAD reflog for the most recent "checkout: moving from X to Y"
  * entry and return the previous branch name and its current hash, or null
  * if no valid previous branch can be found.
  */
 export async function findPreviousBranch(
 	gitCtx: GitContext,
 ): Promise<{ name: string; refName: string; hash: ObjectId } | null> {
-	const entries = await readReflog(gitCtx, "HEAD");
-	for (let i = entries.length - 1; i >= 0; i--) {
-		const entry = entries[i];
-		if (!entry) continue;
-		const match = entry.message.match(/^checkout: moving from (.+) to (.+)$/);
-		if (match?.[1]) {
-			const prevBranch = match[1];
-			const refName = `refs/heads/${prevBranch}`;
-			const hash = await resolveRef(gitCtx, refName);
-			if (hash) {
-				return { name: prevBranch, refName, hash };
-			}
-		}
-	}
-	return null;
+	const previous = await findPreviousCheckoutTarget(gitCtx);
+	return previous?.kind === "branch" ? previous : null;
 }
 
 /**

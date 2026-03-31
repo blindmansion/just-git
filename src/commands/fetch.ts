@@ -10,8 +10,14 @@ import {
 	type TransferRefLine,
 } from "../lib/command-utils.ts";
 import { readConfig } from "../lib/config.ts";
+import {
+	autoFollowReachableTags,
+	collectFetchHaves,
+	normalizeFetchDepth,
+	prepareShallowFetch,
+	resolveRemoteTransportOrError,
+} from "../lib/fetch-helpers.ts";
 import { getReflogIdentity } from "../lib/identity.ts";
-import { objectExists } from "../lib/object-db.ts";
 import { join } from "../lib/path.ts";
 import { appendReflog, ZERO_HASH } from "../lib/reflog.ts";
 import {
@@ -22,15 +28,9 @@ import {
 	shortenRef,
 	updateRef,
 } from "../lib/refs.ts";
-import {
-	applyShallowUpdates,
-	INFINITE_DEPTH,
-	isShallowRepo,
-	readShallowCommits,
-} from "../lib/shallow.ts";
+import { applyShallowUpdates } from "../lib/shallow.ts";
 import { mapRefspec, parseRefspec, type Refspec } from "../lib/transport/refspec.ts";
-import { resolveRemoteTransport } from "../lib/transport/remote.ts";
-import type { RemoteRef, ShallowFetchOptions } from "../lib/transport/transport.ts";
+import type { RemoteRef } from "../lib/transport/transport.ts";
 import type { ExecResult } from "../hooks.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
@@ -54,17 +54,9 @@ export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
 			const gitCtx = gitCtxOrError;
 
-			if (args.depth !== undefined && args.unshallow) {
-				return fatal("--depth and --unshallow cannot be used together");
-			}
-			if (args.unshallow && !(await isShallowRepo(gitCtx))) {
-				return fatal("--unshallow on a complete repository does not make sense");
-			}
-
-			let depth: number | undefined = args.depth;
-			if (args.unshallow) {
-				depth = INFINITE_DEPTH;
-			}
+			const depthResult = await normalizeFetchDepth(gitCtx, args);
+			if (isCommandError(depthResult)) return depthResult;
+			const { depth } = depthResult;
 
 			if (args.all) {
 				if (args.remote) {
@@ -113,6 +105,166 @@ export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 	});
 }
 
+interface FetchRefUpdate {
+	remote: RemoteRef;
+	localRef: string;
+	force: boolean;
+}
+
+interface PlannedFetchRefUpdates {
+	wants: ObjectId[];
+	refUpdates: FetchRefUpdate[];
+	matchedSpecs: boolean[];
+}
+
+interface AppliedFetchRefUpdate extends FetchRefUpdate {
+	oldHash: string | null;
+}
+
+function resolveFetchSpecs(rawRefspecs: string[] | undefined, configSpec: Refspec): Refspec[] {
+	if (!rawRefspecs || rawRefspecs.length === 0) {
+		return [configSpec];
+	}
+
+	return rawRefspecs.map((raw) => {
+		const spec = parseRefspec(raw);
+		if (raw.includes(":")) return spec;
+		// Bare name (no colon) — expand through configured fetch refspec
+		// to determine the proper destination ref. Real git resolves bare
+		// names by trying the literal value, refs/heads/<name>, then
+		// refs/tags/<name> against the configured refspec.
+		for (const candidate of [spec.src, `refs/heads/${spec.src}`, `refs/tags/${spec.src}`]) {
+			const dst = mapRefspec(configSpec, candidate);
+			if (dst !== null) {
+				return { force: spec.force || configSpec.force, src: candidate, dst };
+			}
+		}
+		return spec;
+	});
+}
+
+function planFetchRefUpdates(
+	remoteRefs: RemoteRef[],
+	fetchSpecs: Refspec[],
+): PlannedFetchRefUpdates {
+	const wants: ObjectId[] = [];
+	const seen = new Set<ObjectId>();
+	const refUpdates: FetchRefUpdate[] = [];
+	const matchedSpecs = new Array(fetchSpecs.length).fill(false);
+
+	for (const ref of remoteRefs) {
+		if (ref.name === "HEAD") continue;
+
+		for (const [specIndex, spec] of fetchSpecs.entries()) {
+			const dst = mapRefspec(spec, ref.name);
+			if (dst === null) continue;
+
+			matchedSpecs[specIndex] = true;
+			refUpdates.push({
+				remote: ref,
+				localRef: dst,
+				force: spec.force,
+			});
+			if (!seen.has(ref.hash)) {
+				seen.add(ref.hash);
+				wants.push(ref.hash);
+			}
+			break;
+		}
+	}
+
+	return { wants, refUpdates, matchedSpecs };
+}
+
+function validateExplicitFetchSpecs(
+	rawRefspecs: string[] | undefined,
+	fetchSpecs: Refspec[],
+	matchedSpecs: boolean[],
+): ExecResult | null {
+	if (!rawRefspecs || rawRefspecs.length === 0) return null;
+
+	for (const [specIndex, spec] of fetchSpecs.entries()) {
+		if (!matchedSpecs[specIndex] && !spec.src.includes("*")) {
+			return fatal(`couldn't find remote ref ${spec.src}`);
+		}
+	}
+	return null;
+}
+
+async function applyFetchRefUpdates(
+	gitCtx: GitContext,
+	refUpdates: FetchRefUpdate[],
+	ident: Awaited<ReturnType<typeof getReflogIdentity>>,
+	tags: boolean,
+): Promise<{
+	refLines: TransferRefLine[];
+	hadTagRejection: boolean;
+	appliedUpdates: AppliedFetchRefUpdate[];
+}> {
+	const refLines: TransferRefLine[] = [];
+	let hadTagRejection = false;
+	const appliedUpdates: AppliedFetchRefUpdate[] = [];
+	const orderedTagEntries: Array<
+		| TransferRefLine
+		| {
+				update: FetchRefUpdate;
+				oldHash: string | null;
+		  }
+	> = [];
+
+	for (const update of refUpdates) {
+		const oldHash = await resolveRef(gitCtx, update.localRef);
+		if (
+			tags &&
+			update.remote.name.startsWith("refs/tags/") &&
+			oldHash &&
+			oldHash !== update.remote.hash
+		) {
+			hadTagRejection = true;
+			orderedTagEntries.push({
+				prefix: " ! [rejected]",
+				from: shortenRef(update.remote.name),
+				to: shortenRef(update.localRef),
+				suffix: " (would clobber existing tag)",
+			});
+			continue;
+		}
+
+		appliedUpdates.push({ ...update, oldHash });
+		if (update.localRef.startsWith("refs/tags/")) {
+			orderedTagEntries.push({ update, oldHash });
+		}
+		await updateRef(gitCtx, update.localRef, update.remote.hash);
+		await appendReflog(gitCtx, update.localRef, {
+			oldHash: oldHash ?? ZERO_HASH,
+			newHash: update.remote.hash,
+			name: ident.name,
+			email: ident.email,
+			timestamp: ident.timestamp,
+			tz: ident.tz,
+			message: oldHash ? "fetch" : "fetch: storing head",
+		});
+	}
+
+	const branchApplied = appliedUpdates.filter((u) => !u.localRef.startsWith("refs/tags/"));
+	refLines.push(...buildRefUpdateLines(branchApplied, shortenRef, abbreviateHash));
+	for (const entry of orderedTagEntries) {
+		if ("prefix" in entry) {
+			refLines.push(entry);
+			continue;
+		}
+		refLines.push(
+			...buildRefUpdateLines(
+				[{ ...entry.update, oldHash: entry.oldHash }],
+				shortenRef,
+				abbreviateHash,
+			),
+		);
+	}
+
+	return { refLines, hadTagRejection, appliedUpdates };
+}
+
 async function fetchOneRemote(
 	gitCtx: GitContext,
 	remoteName: string,
@@ -123,41 +275,12 @@ async function fetchOneRemote(
 	ext?: GitExtensions,
 	depth?: number,
 ): Promise<ExecResult> {
-	let resolved;
-	try {
-		resolved = await resolveRemoteTransport(gitCtx, remoteName, env);
-	} catch (e) {
-		const msg = e instanceof Error ? e.message : "";
-		if (msg.startsWith("network")) return fatal(msg);
-		throw e;
-	}
-	if (!resolved) {
-		return fatal(`'${remoteName}' does not appear to be a git repository`);
-	}
-
+	const resolved = await resolveRemoteTransportOrError(gitCtx, remoteName, env);
+	if (isCommandError(resolved)) return resolved;
 	const { transport, config } = resolved;
 
-	let fetchSpecs: Refspec[];
 	const configSpec = parseRefspec(config.fetchRefspec);
-	if (rawRefspecs && rawRefspecs.length > 0) {
-		fetchSpecs = rawRefspecs.map((raw) => {
-			const spec = parseRefspec(raw);
-			if (raw.includes(":")) return spec;
-			// Bare name (no colon) — expand through configured fetch refspec
-			// to determine the proper destination ref. Real git resolves bare
-			// names by trying the literal value, refs/heads/<name>, then
-			// refs/tags/<name> against the configured refspec.
-			for (const candidate of [spec.src, `refs/heads/${spec.src}`, `refs/tags/${spec.src}`]) {
-				const dst = mapRefspec(configSpec, candidate);
-				if (dst !== null) {
-					return { force: spec.force || configSpec.force, src: candidate, dst };
-				}
-			}
-			return spec;
-		});
-	} else {
-		fetchSpecs = [configSpec];
-	}
+	const fetchSpecs = resolveFetchSpecs(rawRefspecs, configSpec);
 	const preFetchRej = await ext?.hooks?.preFetch?.({
 		repo: gitCtx,
 		remote: remoteName,
@@ -183,48 +306,10 @@ async function fetchOneRemote(
 		return { stdout: "", stderr: "", exitCode: 0 };
 	}
 
-	const localRefs = await listRefs(gitCtx);
-	const haves: ObjectId[] = localRefs.map((r) => r.hash);
-	const localHead = await resolveRef(gitCtx, "HEAD");
-	if (localHead) haves.push(localHead);
-
-	const wants: ObjectId[] = [];
-	const seen = new Set<ObjectId>();
-	const refUpdates: Array<{
-		remote: RemoteRef;
-		localRef: string;
-		force: boolean;
-	}> = [];
-	const matchedSpecs = new Array(fetchSpecs.length).fill(false);
-
-	for (const ref of remoteRefs) {
-		if (ref.name === "HEAD") continue;
-
-		for (const [specIndex, spec] of fetchSpecs.entries()) {
-			const dst = mapRefspec(spec, ref.name);
-			if (dst !== null) {
-				matchedSpecs[specIndex] = true;
-				refUpdates.push({
-					remote: ref,
-					localRef: dst,
-					force: spec.force,
-				});
-				if (!seen.has(ref.hash)) {
-					seen.add(ref.hash);
-					wants.push(ref.hash);
-				}
-				break;
-			}
-		}
-	}
-
-	if (rawRefspecs && rawRefspecs.length > 0) {
-		for (const [specIndex, spec] of fetchSpecs.entries()) {
-			if (!matchedSpecs[specIndex] && !spec.src.includes("*")) {
-				return fatal(`couldn't find remote ref ${spec.src}`);
-			}
-		}
-	}
+	const { wants, refUpdates, matchedSpecs } = planFetchRefUpdates(remoteRefs, fetchSpecs);
+	const missingRefError = validateExplicitFetchSpecs(rawRefspecs, fetchSpecs, matchedSpecs);
+	if (missingRefError) return missingRefError;
+	const seen = new Set(wants);
 
 	if (tags) {
 		for (const ref of remoteRefs) {
@@ -242,14 +327,11 @@ async function fetchOneRemote(
 		}
 	}
 
+	const haves = await collectFetchHaves(gitCtx);
 	const haveSet = new Set(haves);
 	const filteredWants = wants.filter((w) => !haveSet.has(w));
 
-	let shallowOpts: ShallowFetchOptions | undefined;
-	const existingShallows = depth !== undefined ? await readShallowCommits(gitCtx) : undefined;
-	if (depth !== undefined) {
-		shallowOpts = { depth, existingShallows };
-	}
+	const { existingShallows, shallowOpts } = await prepareShallowFetch(gitCtx, depth);
 
 	// When depth/unshallow is requested, we must call fetch even with no
 	// new wants so the shallow boundary negotiation can happen.
@@ -264,112 +346,23 @@ async function fetchOneRemote(
 	}
 
 	const ident = await getReflogIdentity(gitCtx, env);
-	const refLines: TransferRefLine[] = [];
-	let hadTagRejection = false;
-	const appliedUpdates: Array<(typeof refUpdates)[number]> = [];
-	const appliedOldHashes: Array<string | null> = [];
-	const orderedTagEntries: Array<
-		| TransferRefLine
-		| {
-				update: (typeof refUpdates)[number];
-				oldHash: string | null;
-		  }
-	> = [];
-
-	for (const update of refUpdates) {
-		const oldHash = await resolveRef(gitCtx, update.localRef);
-		if (
-			tags &&
-			update.remote.name.startsWith("refs/tags/") &&
-			oldHash &&
-			oldHash !== update.remote.hash
-		) {
-			hadTagRejection = true;
-			orderedTagEntries.push({
-				prefix: " ! [rejected]",
-				from: shortenRef(update.remote.name),
-				to: shortenRef(update.localRef),
-				suffix: " (would clobber existing tag)",
-			});
-			continue;
-		}
-		appliedOldHashes.push(oldHash);
-		appliedUpdates.push(update);
-		if (update.localRef.startsWith("refs/tags/")) {
-			orderedTagEntries.push({ update, oldHash });
-		}
-		await updateRef(gitCtx, update.localRef, update.remote.hash);
-		await appendReflog(gitCtx, update.localRef, {
-			oldHash: oldHash ?? ZERO_HASH,
-			newHash: update.remote.hash,
-			name: ident.name,
-			email: ident.email,
-			timestamp: ident.timestamp,
-			tz: ident.tz,
-			message: oldHash ? "fetch" : "fetch: storing head",
-		});
-	}
-
-	const appliedResolved = appliedUpdates.map((u, i) => ({ ...u, oldHash: appliedOldHashes[i]! }));
-	const branchApplied = appliedResolved.filter((u) => !u.localRef.startsWith("refs/tags/"));
-	refLines.push(...buildRefUpdateLines(branchApplied, shortenRef, abbreviateHash));
-	for (const entry of orderedTagEntries) {
-		if ("prefix" in entry) {
-			refLines.push(entry);
-			continue;
-		}
-		refLines.push(
-			...buildRefUpdateLines(
-				[{ ...entry.update, oldHash: entry.oldHash }],
-				shortenRef,
-				abbreviateHash,
-			),
-		);
-	}
+	const { refLines, hadTagRejection, appliedUpdates } = await applyFetchRefUpdates(
+		gitCtx,
+		refUpdates,
+		ident,
+		tags,
+	);
 
 	if (!tags) {
-		const autoFollowTags: RemoteRef[] = [];
-		for (const ref of remoteRefs) {
-			if (!ref.name.startsWith("refs/tags/")) continue;
-			if (await resolveRef(gitCtx, ref.name)) continue;
-
-			const targetHash = ref.peeledHash ?? ref.hash;
-			if (await objectExists(gitCtx, targetHash)) {
-				autoFollowTags.push(ref);
-			}
-		}
-
-		const tagObjectWants: ObjectId[] = [];
-		for (const ref of autoFollowTags) {
-			if (ref.peeledHash && !(await objectExists(gitCtx, ref.hash))) {
-				tagObjectWants.push(ref.hash);
-			}
-		}
-		if (tagObjectWants.length > 0) {
-			const currentRefs = await listRefs(gitCtx);
-			const currentHaves = currentRefs.map((r) => r.hash);
-			const currentHead = await resolveRef(gitCtx, "HEAD");
-			if (currentHead) currentHaves.push(currentHead);
-			await transport.fetch(tagObjectWants, currentHaves);
-		}
-
-		for (const ref of autoFollowTags) {
-			await updateRef(gitCtx, ref.name, ref.hash);
-			await appendReflog(gitCtx, ref.name, {
-				oldHash: ZERO_HASH,
-				newHash: ref.hash,
-				name: ident.name,
-				email: ident.email,
-				timestamp: ident.timestamp,
-				tz: ident.tz,
-				message: "fetch: storing head",
-			});
-			refLines.push({
-				prefix: " * [new tag]",
-				from: shortenRef(ref.name),
-				to: shortenRef(ref.name),
-			});
-		}
+		refLines.push(
+			...(await autoFollowReachableTags({
+				gitCtx,
+				transport,
+				remoteRefs,
+				ident,
+				reflogAction: "fetch",
+			})),
+		);
 	}
 
 	if (prune) {
@@ -424,7 +417,7 @@ async function fetchOneRemote(
 		repo: gitCtx,
 		remote: remoteName,
 		url: config.url,
-		updatedRefCount: refUpdates.length,
+		updatedRefCount: appliedUpdates.length,
 	});
 	return response;
 }

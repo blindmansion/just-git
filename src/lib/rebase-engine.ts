@@ -9,9 +9,10 @@ import {
 	fatal,
 	firstLine,
 	formatCommitOneLiner,
-	hasStagedChanges,
+	getSequencerDirtyState,
 	isCommandError,
 	requireCommitter,
+	sequencerDirtyWorktreeError,
 	stripCommentLines,
 	writeCommitAndAdvance,
 } from "./command-utils.ts";
@@ -65,7 +66,7 @@ import {
 	resetHard,
 	UnpackError,
 } from "./unpack-trees.ts";
-import { diffIndexToWorkTree, walkWorkTree } from "./worktree.ts";
+import { walkWorkTree } from "./worktree.ts";
 
 /**
  * Return the display label for the current HEAD — either the branch name
@@ -331,29 +332,9 @@ export async function performRebase(
 		};
 	}
 
-	const headCommit = await readCommit(gitCtx, origHead);
-	const headMap = await flattenTreeToMap(gitCtx, headCommit.tree);
-
-	if (gitCtx.workTree) {
-		const hasStaged = hasStagedChanges(currentIndex, headMap);
-		const wtDiffs = await diffIndexToWorkTree(gitCtx, currentIndex);
-		const hasUnstaged = wtDiffs.some((d) => d.status === "modified" || d.status === "deleted");
-
-		if (hasStaged || hasUnstaged) {
-			const lines: string[] = [];
-			if (hasUnstaged) {
-				lines.push("error: cannot rebase: You have unstaged changes.");
-			}
-			if (hasStaged) {
-				if (hasUnstaged) {
-					lines.push("error: additionally, your index contains uncommitted changes.");
-				} else {
-					lines.push("error: cannot rebase: Your index contains uncommitted changes.");
-				}
-			}
-			lines.push("error: Please commit or stash them.");
-			return err(`${lines.join("\n")}\n`);
-		}
+	const dirtyState = await getSequencerDirtyState(gitCtx, origHead, currentIndex);
+	if (dirtyState) {
+		return sequencerDirtyWorktreeError("rebase", dirtyState);
 	}
 
 	// pre-rebase hook

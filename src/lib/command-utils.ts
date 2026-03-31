@@ -9,8 +9,10 @@ import { logRef } from "./reflog.ts";
 import { advanceBranchRef, readHead, resolveHead, resolveRef } from "./refs.ts";
 import { findRepo } from "./repo.ts";
 import { resolveRevision } from "./rev-parse.ts";
+import { flattenTreeToMap } from "./tree-ops.ts";
 import type { Commit, GitContext, GitRepo, Identity, Index, ObjectId } from "./types.ts";
 import { applyWorktreeOps, mergeAbort } from "./unpack-trees.ts";
+import { diffIndexToWorkTree } from "./worktree.ts";
 
 export interface CommandResult {
 	stdout: string;
@@ -188,6 +190,48 @@ export function hasStagedChanges(index: Index, headMap: Map<string, { hash: stri
 		if (!stage0.has(path)) return true;
 	}
 	return false;
+}
+
+export interface SequencerDirtyState {
+	hasStaged: boolean;
+	hasUnstaged: boolean;
+}
+
+export async function getSequencerDirtyState(
+	gitCtx: GitContext,
+	headHash: ObjectId,
+	index: Index,
+): Promise<SequencerDirtyState | null> {
+	if (!gitCtx.workTree) return null;
+
+	const headCommit = await readCommit(gitCtx, headHash);
+	const headMap = await flattenTreeToMap(gitCtx, headCommit.tree);
+	const hasStaged = hasStagedChanges(index, headMap);
+	const wtDiffs = await diffIndexToWorkTree(gitCtx, index);
+	const hasUnstaged = wtDiffs.some((d) => d.status === "modified" || d.status === "deleted");
+
+	if (!hasStaged && !hasUnstaged) return null;
+	return { hasStaged, hasUnstaged };
+}
+
+export function sequencerDirtyWorktreeError(
+	operation: "rebase" | "pull with rebase",
+	state: SequencerDirtyState,
+	exitCode = 1,
+): CommandResult {
+	const lines: string[] = [];
+	if (state.hasUnstaged) {
+		lines.push(`error: cannot ${operation}: You have unstaged changes.`);
+	}
+	if (state.hasStaged) {
+		if (state.hasUnstaged) {
+			lines.push("error: additionally, your index contains uncommitted changes.");
+		} else {
+			lines.push(`error: cannot ${operation}: Your index contains uncommitted changes.`);
+		}
+	}
+	lines.push("error: Please commit or stash them.");
+	return err(`${lines.join("\n")}\n`, exitCode);
 }
 
 /** Standard path comparator for sorting entries by path. */
