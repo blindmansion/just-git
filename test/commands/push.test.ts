@@ -224,6 +224,62 @@ describe("git push", () => {
 		expect(result.stderr).not.toContain("beta-61.3 -> beta-61.3\n");
 	});
 
+	test("bare tag name pushes to refs/tags/ on remote", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /local && git tag v1.0");
+
+		const result = await bash.exec("git push origin v1.0", { cwd: "/local" });
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain("[new tag]");
+		expect(result.stderr).not.toContain("[new branch]");
+
+		expect(await pathExists(bash.fs, "/remote/.git/refs/tags/v1.0")).toBe(true);
+		expect(await pathExists(bash.fs, "/remote/.git/refs/heads/v1.0")).toBe(false);
+	});
+
+	test("bare tag name pushes annotated tag object hash", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec('cd /local && git tag -a v2.0 -m "release 2"');
+
+		const result = await bash.exec("git push origin v2.0", { cwd: "/local" });
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain("[new tag]");
+
+		const localTagHash = await readFile(bash.fs, "/local/.git/refs/tags/v2.0");
+		const remoteTagHash = await readFile(bash.fs, "/remote/.git/refs/tags/v2.0");
+		expect(remoteTagHash?.trim()).toBe(localTagHash?.trim());
+	});
+
+	test("--delete resolves bare tag name against remote refs", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /local && git tag v1.0");
+		await bash.exec("git push --tags", { cwd: "/local" });
+		expect(await pathExists(bash.fs, "/remote/.git/refs/tags/v1.0")).toBe(true);
+
+		const result = await bash.exec("git push --delete origin v1.0", { cwd: "/local" });
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain("[deleted]");
+
+		expect(await pathExists(bash.fs, "/remote/.git/refs/tags/v1.0")).toBe(false);
+	});
+
+	test("bare branch name still pushes to refs/heads/", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /local && git checkout -b feature");
+		await bash.exec("cd /local && echo feat > feat.txt && git add . && git commit -m feature");
+
+		const result = await bash.exec("git push origin feature", { cwd: "/local" });
+		expect(result.exitCode).toBe(0);
+		expect(result.stderr).toContain("[new branch]");
+
+		expect(await pathExists(bash.fs, "/remote/.git/refs/heads/feature")).toBe(true);
+		expect(await pathExists(bash.fs, "/remote/.git/refs/tags/feature")).toBe(false);
+	});
+
 	test("up-to-date push reports everything up-to-date", async () => {
 		const bash = await setupClonePair();
 

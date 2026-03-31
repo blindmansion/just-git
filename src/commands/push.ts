@@ -89,7 +89,13 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				}
 				const deleteErrors: string[] = [];
 				for (const ref of refs) {
-					const fullRef = ref.startsWith("refs/") ? ref : `refs/heads/${ref}`;
+					const fullRef = ref.startsWith("refs/")
+						? ref
+						: remoteRefMap.has(`refs/heads/${ref}`)
+							? `refs/heads/${ref}`
+							: remoteRefMap.has(`refs/tags/${ref}`)
+								? `refs/tags/${ref}`
+								: `refs/heads/${ref}`;
 					const oldHash = remoteRefMap.get(fullRef) ?? null;
 					if (!oldHash) {
 						deleteErrors.push(`error: unable to delete '${ref}': remote ref does not exist\n`);
@@ -153,21 +159,27 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 						}
 					}
 
-					const srcHash = await resolveRefForPush(gitCtx, spec.src);
-					if (!srcHash) {
+					const resolved = await resolveRefForPush(gitCtx, spec.src);
+					if (!resolved) {
 						return err(
 							`error: src refspec ${spec.src} does not match any\n` +
 								`error: failed to push some refs to '${config.url}'\n`,
 						);
 					}
-					const dstRef = effectiveDst.startsWith("refs/")
-						? effectiveDst
-						: `refs/heads/${effectiveDst}`;
+					let dstRef: string;
+					if (effectiveDst.startsWith("refs/")) {
+						dstRef = effectiveDst;
+					} else if (!hasExplicitDst && resolved.fullRef.startsWith("refs/")) {
+						const prefix = resolved.fullRef.slice(0, resolved.fullRef.indexOf("/", 5) + 1);
+						dstRef = prefix + effectiveDst;
+					} else {
+						dstRef = `refs/heads/${effectiveDst}`;
+					}
 					const oldHash = remoteRefMap.get(dstRef) ?? null;
 					updates.push({
 						name: dstRef,
 						oldHash,
-						newHash: srcHash,
+						newHash: resolved.hash,
 						ok: force || spec.force,
 					});
 				}
@@ -534,17 +546,21 @@ function pushLineSortKey(line: TransferRefLine): number {
 	return 4;
 }
 
-async function resolveRefForPush(ctx: GitRepo, src: string): Promise<ObjectId | null> {
+async function resolveRefForPush(
+	ctx: GitRepo,
+	src: string,
+): Promise<{ hash: ObjectId; fullRef: string } | null> {
 	if (src.startsWith("refs/")) {
-		return resolveRef(ctx, src);
+		const hash = await resolveRef(ctx, src);
+		return hash ? { hash, fullRef: src } : null;
 	}
-	// Try as branch name
 	const asBranch = await resolveRef(ctx, `refs/heads/${src}`);
-	if (asBranch) return asBranch;
-	// Try as tag
+	if (asBranch) return { hash: asBranch, fullRef: `refs/heads/${src}` };
 	const asTag = await resolveRef(ctx, `refs/tags/${src}`);
-	if (asTag) return asTag;
-	// Try HEAD
-	if (src === "HEAD") return resolveHead(ctx);
+	if (asTag) return { hash: asTag, fullRef: `refs/tags/${src}` };
+	if (src === "HEAD") {
+		const hash = await resolveHead(ctx);
+		return hash ? { hash, fullRef: "HEAD" } : null;
+	}
 	return null;
 }
