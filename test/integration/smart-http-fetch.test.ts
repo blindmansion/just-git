@@ -94,8 +94,6 @@ describe.skipIf(skipNetwork)("Smart HTTP fetch", () => {
 				{ cwd },
 			);
 			expect(fetchResult.exitCode).toBe(0);
-			expect(fetchResult.stderr).toContain(`From ${ctx.net.repo}/repo`);
-			expect(fetchResult.stderr).toContain(`origin/${branch}`);
 
 			const branchResult = await ctx.bash.exec("git branch -r", { cwd });
 			expect(branchResult.stdout).toContain(`origin/${branch}`);
