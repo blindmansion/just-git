@@ -62,6 +62,15 @@ await git.exec('git commit -m "initial commit"');
 
 Both `fs` and `cwd` can be set once in `createGit` and overridden per-call. `cwd` defaults to `"/"`. Set it to the repo root so every `exec` call finds `.git` automatically.
 
+Use `git.findRepo()` to get a `GitContext` for programmatic access via the [repo module](docs/REPO.md). It threads through all operator extensions (hooks, identity, credentials, config overrides) automatically:
+
+```ts
+const repo = await git.findRepo();
+if (repo) {
+  const diff = await diffCommits(repo, parentHash, headHash);
+}
+```
+
 `createGit` also supports:
 
 - [Command restrictions, network policies, and config overrides](docs/CLIENT.md#options) for sandboxing

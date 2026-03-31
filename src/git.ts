@@ -11,9 +11,10 @@ import {
 	type ProgressCallback,
 	isRejection,
 } from "./hooks.ts";
-import type { CredentialCache } from "./lib/transport/remote.ts";
 import type { MergeDriver } from "./lib/merge-ort.ts";
-import type { ObjectStore, RefStore, RemoteResolver } from "./lib/types.ts";
+import { findRepo as findRepoOnFs } from "./lib/repo.ts";
+import type { CredentialCache } from "./lib/transport/remote.ts";
+import type { GitContext, ObjectStore, RefStore, RemoteResolver } from "./lib/types.ts";
 
 export const VERSION = "1.6.1";
 
@@ -238,6 +239,7 @@ export class Git {
 	private defaultCwd: string;
 	private blocked: Set<string> | null;
 	private hooks: GitHooks | undefined;
+	private ext: GitExtensions;
 	private inner: { execute: (args: string[], ctx: CommandContext) => Promise<ExecResult> };
 	private locks = new WeakMap<object, Promise<unknown>>();
 
@@ -282,7 +284,49 @@ export class Git {
 			...gitDirExt,
 			...(configOverrides ? { configOverrides } : {}),
 		};
+		this.ext = extensions;
 		this.inner = createGitCommand(extensions).toCommand();
+	}
+
+	/**
+	 * Discover the git repository for the current working directory.
+	 *
+	 * Uses the instance's default `fs` and `cwd`, with optional per-call
+	 * overrides. The returned {@link GitContext} carries all operator-level
+	 * extensions (hooks, identity, credentials, config overrides) configured
+	 * on this instance, so repo SDK functions receive the full context.
+	 *
+	 * When the instance was created with explicit `objectStore`, `refStore`,
+	 * and `gitDir`, filesystem discovery is skipped entirely.
+	 *
+	 * ```ts
+	 * const repo = await git.findRepo();
+	 * if (repo) {
+	 *   const history = await walkCommitHistory(repo, headHash);
+	 * }
+	 * ```
+	 */
+	async findRepo(ctx?: { fs?: FileSystem; cwd?: string }): Promise<GitContext | null> {
+		const fs = ctx?.fs ?? this.defaultFs;
+		if (!fs) {
+			throw new Error("No filesystem: pass `fs` in findRepo() options or in createGit()");
+		}
+		const cwd = ctx?.cwd ?? this.defaultCwd;
+
+		if (this.ext.objectStore && this.ext.refStore && this.ext.gitDir) {
+			return {
+				fs,
+				gitDir: this.ext.gitDir,
+				workTree: this.ext.workTree ?? cwd,
+				objectStore: this.ext.objectStore,
+				refStore: this.ext.refStore,
+				...this.ext,
+			};
+		}
+
+		const found = await findRepoOnFs(fs, cwd);
+		if (!found) return null;
+		return { ...found, ...this.ext };
 	}
 
 	/**

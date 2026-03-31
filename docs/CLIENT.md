@@ -33,6 +33,40 @@ const git = createGit({
 });
 ```
 
+## Repository access
+
+`git.findRepo()` returns a `GitContext` for the current working directory, the bridge between command execution via `exec` and programmatic access via the [repo module](REPO.md). Like `exec`, it uses the instance's default `fs` and `cwd`, with optional per-call overrides. The returned context carries all operator-level extensions (hooks, identity, credentials, config overrides) configured on the instance.
+
+```ts
+import { createGit, MemoryFileSystem } from "just-git";
+import { walkCommitHistory, diffCommits, readFileAtCommit } from "just-git/repo";
+
+const fs = new MemoryFileSystem();
+const git = createGit({ fs, cwd: "/repo" });
+
+await git.exec("init");
+await fs.writeFile("/repo/README.md", "# Hello\n");
+await git.exec("add .");
+await git.exec('commit -m "initial"');
+
+const repo = await git.findRepo();
+if (repo) {
+  const history = await walkCommitHistory(repo, headHash);
+  const diff = await diffCommits(repo, parentHash, headHash);
+  const content = await readFileAtCommit(repo, headHash, "README.md");
+}
+```
+
+Returns `null` when no repository is found. When the instance was created with explicit `objectStore`, `refStore`, and `gitDir`, filesystem discovery is skipped entirely.
+
+Override `fs` or `cwd` per-call:
+
+```ts
+const repo = await git.findRepo({ cwd: "/other-repo" });
+```
+
+The standalone `findRepo` function from `just-git` is still available for cases where you don't have a `Git` instance, but `git.findRepo()` is preferred when you do, as it threads through all the operator extensions automatically.
+
 ## Hooks
 
 Hooks fire at specific points inside command execution. Specified as a `GitHooks` config object at construction time. All hook event payloads include `repo: GitRepo`, providing access to the [repo module](REPO.md) inside hooks.

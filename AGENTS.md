@@ -238,6 +238,7 @@ Re-exports `createGit`, `Git`, `GitOptions`, `GitCommandName`, `GitExtensions`, 
 - `Git` class — accepts `GitHooks` via `GitOptions.hooks`, implements `disabled` as pre-dispatch check, wires `beforeCommand`/`afterCommand`. Directly satisfies just-bash `Command` interface (pass `git` into `customCommands` without wrapping)
 - `Git.name` — always `"git"`, satisfies just-bash `Command` interface
 - `Git.execute(args, ctx)` — runs the git command; satisfies just-bash `Command` interface
+- `Git.findRepo(ctx?)` — discover the git repository for the current working directory. Returns `GitContext | null`. Uses instance defaults (`fs`, `cwd`) with optional per-call overrides via `{ fs?, cwd? }`. The returned `GitContext` carries all operator extensions (hooks, identity, credentials, config overrides), bridging `exec`-style usage to the repo SDK. When `objectStore`, `refStore`, and `gitDir` are set on the instance, filesystem discovery is skipped.
 
 **Types:** `GitOptions`, `GitCommandName`, `GitExtensions`, `CommandContext`, `CommandExecOptions`.
 
