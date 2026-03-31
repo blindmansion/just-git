@@ -7,25 +7,23 @@ import { resolveRemoteTransport } from "./transport/remote.ts";
 import type { RemoteRef, ShallowFetchOptions, Transport } from "./transport/transport.ts";
 import type { GitContext, ObjectId } from "./types.ts";
 
-export interface NormalizedFetchArgs {
+interface NormalizedFetchArgs {
 	depth?: number;
 }
 
-export interface PreparedShallowFetch {
+interface PreparedShallowFetch {
 	existingShallows?: Set<ObjectId>;
 	shallowOpts?: ShallowFetchOptions;
 }
 
-export interface ReflogWriteIdentity {
+interface ReflogWriteIdentity {
 	name: string;
 	email: string;
 	timestamp: number;
 	tz: string;
 }
 
-export type ResolvedRemoteTransport = NonNullable<
-	Awaited<ReturnType<typeof resolveRemoteTransport>>
->;
+type ResolvedRemoteTransport = NonNullable<Awaited<ReturnType<typeof resolveRemoteTransport>>>;
 
 export async function normalizeFetchDepth(
 	gitCtx: GitContext,

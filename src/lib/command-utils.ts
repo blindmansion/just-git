@@ -192,7 +192,7 @@ export function hasStagedChanges(index: Index, headMap: Map<string, { hash: stri
 	return false;
 }
 
-export interface SequencerDirtyState {
+interface SequencerDirtyState {
 	hasStaged: boolean;
 	hasUnstaged: boolean;
 }
