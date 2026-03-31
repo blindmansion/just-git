@@ -66,11 +66,13 @@ content via rolling-hash. For 4 678 objects that's ~47 000 delta
 computations. Mitigated by the pack cache (full clones hit cache after
 the first) and the `noDelta` streaming path (skips deltas entirely).
 
-### Object walk — per-object SQLite queries
+### Object walk — SQLite query overhead
 
-`enumerateObjectsWithContent()` does one `SELECT` per object.
-At ~20 µs per query, 4 678 objects takes ~97 ms — tolerable thanks to
-SQLite's speed, but scales poorly for 100k+ object repos.
+Object enumeration during upload-pack issues batched reads (128 objects
+per round trip via `readMany` / `getObjects`). Previously this was one
+`SELECT` per object (~20 µs each, ~97 ms for 4 678 objects). Batching
+reduces round trips ~36× for cannoli-sized repos. Still scales linearly
+with object count but the constant is much smaller.
 
 ### No thin pack support
 
@@ -157,14 +159,32 @@ pack instantly regardless of delta config).
 
 ---
 
+## Implemented optimizations (continued)
+
+### Batch object reads
+
+Added optional `getObjects` and `hasObjects` batch helpers to the
+`Storage` interface. The storage adapter falls back to per-hash reads
+when the backend doesn't implement them. All built-in backends
+(BunSqlite, BetterSqlite3, Pg, DurableObject) implement batch reads.
+
+Upload-pack streams objects in chunks of 128 (`OBJECT_READ_BATCH_SIZE`)
+via `readMany`, prefetching a batch before yielding individual entries.
+Object walk existence checks use `hasObjects` similarly.
+
+SQLite backends also use `INSERT OR IGNORE ... RETURNING hash` for
+object writes, deduplicating on insert and returning which hashes were
+actually new in a single statement.
+
+---
+
 ## Future optimizations (deferred)
 
 Not urgent — current numbers are serviceable for the target use case
 (sandbox/agent environments, localhost/LAN). Revisit when real usage
 data points to a specific bottleneck.
 
-| Fix                   | Impact | Effort | When it matters                                       |
-| --------------------- | ------ | ------ | ----------------------------------------------------- |
-| E. Batch object reads | ★★★    | Medium | Repos with 50k+ objects; enumeration is 74-97ms today |
-| F. Thin packs         | ★★★    | Medium | Frequent incremental fetches of large repos           |
-| G. Compressed storage | ★      | Low    | Disk-backed SQLite with large object stores           |
+| Fix                   | Impact | Effort | When it matters                             |
+| --------------------- | ------ | ------ | ------------------------------------------- |
+| F. Thin packs         | ★★★    | Medium | Frequent incremental fetches of large repos |
+| G. Compressed storage | ★      | Low    | Disk-backed SQLite with large object stores |

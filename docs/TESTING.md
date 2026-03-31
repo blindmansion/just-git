@@ -19,7 +19,7 @@ What gets compared at each step:
 | State    | HEAD ref and SHA, all refs, index entries (with conflict stages), worktree contents, active operation (merge/rebase/cherry-pick), operation state files, stash entries |
 | Output   | Exit code, stdout, stderr                                                                                                                                              |
 
-The full current test suite we're validating against covers over 1,000 traces totalling more than a million operations across multiple presets. The `core` preset focuses on daily-use commands with light chaos and fuzz injection. The `kitchen` preset enables everything: chaos mode, fuzz injection, gitignore generation, and nearly all 103 available actions. A quick `bun oracle validate` run covers a smaller representative sample (~10 traces, ~3,000 operations) for fast feedback.
+The full current test suite we're validating against covers thousands of traces totalling millions of operations across multiple presets. The `core` preset focuses on daily-use commands with light chaos and fuzz injection. The `kitchen` preset enables everything: chaos mode, fuzz injection, gitignore generation, and nearly all 135 available actions. A quick `bun oracle validate` run covers a smaller representative sample (~10 traces, ~3,000 operations) for fast feedback.
 
 ### Running it yourself
 

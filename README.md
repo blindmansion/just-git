@@ -5,7 +5,7 @@
 [![client size](https://img.shields.io/bundlejs/size/just-git?label=client)](https://bundlejs.com/?q=just-git)
 [![server size](https://img.shields.io/bundlejs/size/just-git/server?label=server)](https://bundlejs.com/?q=just-git/server)
 
-Pure TypeScript git implementation. Zero dependencies. 36 commands. Works in Node, Bun, Deno, Cloudflare Workers, and the browser. [Tested against real git](docs/TESTING.md) across more than a million randomized operations.
+Pure TypeScript git implementation. Zero dependencies. 36 commands. Works in Node, Bun, Deno, Cloudflare Workers, and the browser. [Tested against real git](docs/TESTING.md) across millions of randomized operations.
 
 The Git CLI, Git servers, and CI workflows are no longer just things you use to develop apps: they can be part of the apps themselves. The goal of this project is to make that practical.
 
