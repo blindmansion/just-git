@@ -304,15 +304,15 @@ Usage:
   git checkout [options] [target]
 
 Arguments:
-  target  Branch name or path to checkout
+  target  Branch, commit, path, or start-point for -b/-B
 
 Options:
-  -b, --branch        Create and switch to a new branch
-  -B, --force-branch  Create/reset and switch to a new branch
-  -d, --detach        Detach HEAD at named commit
-  --orphan            Create a new orphan branch
-  --ours              Checkout our version for unmerged files
-  --theirs            Checkout their version for unmerged files
+  -b, --branch <string>        Create and switch to a new branch
+  -B, --force-branch <string>  Create/reset and switch to a new branch
+  -d, --detach                 Detach HEAD at named commit
+  --orphan                     Create a new orphan branch
+  --ours                       Checkout our version for unmerged files
+  --theirs                     Checkout their version for unmerged files
 ```
 
 ## git cherry-pick
@@ -608,7 +608,10 @@ Options:
 git ls-files - Show information about files in the index and the working tree
 
 Usage:
-  git ls-files [options]
+  git ls-files [options] [pathspec...]
+
+Arguments:
+  pathspec...
 
 Options:
   -c, --cached         Show cached files (default)

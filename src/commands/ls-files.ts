@@ -6,11 +6,12 @@ import { matchPathspecs, parsePathspec } from "../lib/pathspec.ts";
 import { hashWorktreeEntry, lstatSafe } from "../lib/symlink.ts";
 import type { GitContext, Index, IndexEntry } from "../lib/types.ts";
 import { walkWorkTree } from "../lib/worktree.ts";
-import { type Command, f } from "../parse/index.ts";
+import { a, type Command, f } from "../parse/index.ts";
 
 export function registerLsFilesCommand(parent: Command, ext?: GitExtensions): void {
 	parent.command("ls-files", {
 		description: "Show information about files in the index and the working tree",
+		args: [a.string().name("pathspec").variadic().optional()],
 		options: {
 			cached: f().alias("c").describe("Show cached files (default)"),
 			modified: f().alias("m").describe("Show modified files"),
@@ -52,9 +53,10 @@ export function registerLsFilesCommand(parent: Command, ext?: GitExtensions): vo
 			const index = await readIndex(gitCtx);
 			const terminator = nulTerminate ? "\0" : "\n";
 
+			const rawPathspecs: string[] = [...(_args.pathspec ?? []), ...meta.passthrough];
 			const pathspecs =
-				meta.passthrough.length > 0
-					? meta.passthrough.map((p) => {
+				rawPathspecs.length > 0
+					? rawPathspecs.map((p) => {
 							const rel = ctx.cwd !== workTree ? relativePrefix(workTree, ctx.cwd) : "";
 							return parsePathspec(p, rel);
 						})
