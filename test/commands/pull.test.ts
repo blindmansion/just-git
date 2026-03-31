@@ -366,7 +366,7 @@ describe("git pull", () => {
 			expect(result.stdout).toBe("Already up to date.\n");
 		});
 
-		test("config-driven ff-only uses rebase-style up-to-date message when fetch updates other refs", async () => {
+		test("config-driven ff-only keeps standard up-to-date message when branch exactly matches upstream", async () => {
 			const bash = await setupClonePair();
 
 			await bash.exec("cd /remote && git checkout -b feature");
@@ -375,6 +375,30 @@ describe("git pull", () => {
 				cwd: "/local",
 			});
 			await bash.exec("git switch -c feature origin/feature", { cwd: "/local" });
+			await bash.exec("git config pull.rebase true", { cwd: "/local" });
+			await bash.exec("git config merge.ff only", { cwd: "/local" });
+			await bash.exec("cd /remote && git checkout main");
+			await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+
+			const result = await bash.exec("git pull", { cwd: "/local" });
+
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toBe("Already up to date.\n");
+			expect(result.stderr).toContain("main       -> origin/main");
+		});
+
+		test("config-driven ff-only uses rebase-style up-to-date message when local branch is ahead", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("cd /remote && git checkout -b feature");
+			await bash.exec("cd /remote && git commit --allow-empty -m feature");
+			await bash.exec("git fetch origin refs/heads/feature:refs/remotes/origin/feature", {
+				cwd: "/local",
+			});
+			await bash.exec("git switch -c feature origin/feature", { cwd: "/local" });
+			await bash.exec(
+				"cd /local && echo local > local.txt && git add local.txt && git commit -m local",
+			);
 			await bash.exec("git config pull.rebase true", { cwd: "/local" });
 			await bash.exec("git config merge.ff only", { cwd: "/local" });
 			await bash.exec("cd /remote && git checkout main");
@@ -459,7 +483,7 @@ describe("git pull", () => {
 			expect(result.stderr).toContain("Not possible to fast-forward");
 		});
 
-		test("merge.ff=only rejects non-fast-forward pull when pull.ff is unset", async () => {
+		test("merge.ff=only still asks pull to choose a reconciliation strategy", async () => {
 			const bash = await setupClonePair();
 
 			await bash.exec(
@@ -471,7 +495,7 @@ describe("git pull", () => {
 			const result = await bash.exec("git pull", { cwd: "/local" });
 
 			expect(result.exitCode).toBe(128);
-			expect(result.stderr).toContain("Not possible to fast-forward");
+			expect(result.stderr).toContain("Need to specify how to reconcile divergent branches");
 		});
 	});
 
@@ -479,6 +503,21 @@ describe("git pull", () => {
 		const bash = await setupClonePair();
 
 		await bash.exec("git config pull.rebase false", { cwd: "/local" });
+		await bash.exec("git switch --orphan unrelated", { cwd: "/local" });
+		await bash.exec('git commit --allow-empty -m "unrelated"', { cwd: "/local" });
+		await bash.exec("git branch -u origin/main unrelated", { cwd: "/local" });
+
+		const result = await bash.exec("git pull", { cwd: "/local" });
+
+		expect(result.exitCode).toBe(128);
+		expect(result.stderr).toBe("fatal: refusing to merge unrelated histories\n");
+	});
+
+	test("pull.rebase=false still refuses unrelated histories before merge.ff=only advice", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("git config pull.rebase false", { cwd: "/local" });
+		await bash.exec("git config merge.ff only", { cwd: "/local" });
 		await bash.exec("git switch --orphan unrelated", { cwd: "/local" });
 		await bash.exec('git commit --allow-empty -m "unrelated"', { cwd: "/local" });
 		await bash.exec("git branch -u origin/main unrelated", { cwd: "/local" });

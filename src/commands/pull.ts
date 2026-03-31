@@ -54,8 +54,9 @@ function pullUpToDateMessage(
 	pullMode: { useRebase: boolean },
 	explicitFfOnly: boolean,
 	fetchOutput: string,
+	localAheadOfUpstream: boolean,
 ): string {
-	if (pullMode.useRebase && !explicitFfOnly && fetchOutput.length > 0) {
+	if (pullMode.useRebase && !explicitFfOnly && fetchOutput.length > 0 && localAheadOfUpstream) {
 		const currentBranch = head?.type === "symbolic" ? branchNameFromRef(head.target) : "HEAD";
 		return currentBranch === "HEAD"
 			? "HEAD is up to date.\n"
@@ -385,7 +386,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					commitHash: null,
 				});
 				return {
-					stdout: pullUpToDateMessage(head, pullMode, !!args.ffOnly, fetchOutput),
+					stdout: pullUpToDateMessage(head, pullMode, !!args.ffOnly, fetchOutput, false),
 					stderr: fetchOutput,
 					exitCode: 0,
 				};
@@ -438,7 +439,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					commitHash: null,
 				});
 				return {
-					stdout: pullUpToDateMessage(head, pullMode, !!args.ffOnly, fetchOutput),
+					stdout: pullUpToDateMessage(head, pullMode, !!args.ffOnly, fetchOutput, true),
 					stderr: fetchOutput,
 					exitCode: 0,
 				};
@@ -446,25 +447,6 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 
 			const { noFf, ffOnly, configured: hasReconciliationStrategy } = pullMode;
 			const isFastForward = baseCommit === headHash;
-
-			if (ffOnly && !isFastForward) {
-				return {
-					stdout: "",
-					stderr:
-						fetchOutput +
-						"hint: Diverging branches can't be fast-forwarded, you need to either:\n" +
-						"hint:\n" +
-						"hint: \tgit merge --no-ff\n" +
-						"hint:\n" +
-						"hint: or:\n" +
-						"hint:\n" +
-						"hint: \tgit rebase\n" +
-						"hint:\n" +
-						'hint: Disable this message with "git config set advice.diverging false"\n' +
-						"fatal: Not possible to fast-forward, aborting.\n",
-					exitCode: 128,
-				};
-			}
 
 			if (!isFastForward && !hasReconciliationStrategy) {
 				return {
@@ -492,6 +474,25 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				return {
 					stdout: "",
 					stderr: fetchOutput + "fatal: refusing to merge unrelated histories\n",
+					exitCode: 128,
+				};
+			}
+
+			if (ffOnly && !isFastForward) {
+				return {
+					stdout: "",
+					stderr:
+						fetchOutput +
+						"hint: Diverging branches can't be fast-forwarded, you need to either:\n" +
+						"hint:\n" +
+						"hint: \tgit merge --no-ff\n" +
+						"hint:\n" +
+						"hint: or:\n" +
+						"hint:\n" +
+						"hint: \tgit rebase\n" +
+						"hint:\n" +
+						'hint: Disable this message with "git config set advice.diverging false"\n' +
+						"fatal: Not possible to fast-forward, aborting.\n",
 					exitCode: 128,
 				};
 			}
@@ -756,10 +757,8 @@ async function resolvePullMode(
 			const mergeFFConfig = await getConfigValue(gitCtx, "merge.ff");
 			if (mergeFFConfig === "false") {
 				noFf = true;
-				configured = true;
 			} else if (mergeFFConfig === "only") {
 				ffOnly = true;
-				configured = true;
 			}
 		}
 	}
