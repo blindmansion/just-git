@@ -191,6 +191,22 @@ describe("git fetch", () => {
 		expect(result.stderr).toBe("fatal: couldn't find remote ref refs/heads/nonexistent\n");
 	});
 
+	test("fails when explicit refspec source does not exist on an empty remote", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /remote && git update-ref -d refs/heads/main");
+
+		const result = await bash.exec(
+			"git fetch origin refs/heads/nonexistent:refs/remotes/origin/nonexistent",
+			{
+				cwd: "/local",
+			},
+		);
+
+		expect(result.exitCode).toBe(128);
+		expect(result.stderr).toBe("fatal: couldn't find remote ref refs/heads/nonexistent\n");
+	});
+
 	test("not a repo error", async () => {
 		const bash = createTestBash({ env: ENV, cwd: "/tmp" });
 		await bash.exec("mkdir -p /tmp");
@@ -260,6 +276,25 @@ describe("git fetch", () => {
 		const rejectedLine = result.stderr.indexOf("! [rejected]");
 		expect(branchLine).toBeGreaterThanOrEqual(0);
 		expect(rejectedLine).toBeGreaterThan(branchLine);
+	});
+
+	test("fetch --tags reports rejected tags before newly fetched tags", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /local && git tag v1.0");
+		await bash.exec("cd /remote && echo remote > remote.txt && git add . && git commit -m remote");
+		await bash.exec("cd /remote && git tag -f v1.0 HEAD");
+		await bash.exec("cd /remote && git tag v2.0 HEAD");
+
+		const result = await bash.exec("git fetch --tags", { cwd: "/local" });
+		expect(result.exitCode).toBe(1);
+
+		const rejectedLine = result.stderr.indexOf("! [rejected]");
+		const newTagLine = result.stderr.indexOf("* [new tag]         v2.0");
+
+		expect(rejectedLine).toBeGreaterThan(-1);
+		expect(newTagLine).toBeGreaterThan(-1);
+		expect(newTagLine).toBeGreaterThan(rejectedLine);
 	});
 
 	test("auto-follows reachable annotated tags without --tags", async () => {

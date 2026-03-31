@@ -173,6 +173,13 @@ async function fetchOneRemote(
 	const remoteRefs = await transport.advertiseRefs();
 
 	if (remoteRefs.length === 0) {
+		if (rawRefspecs && rawRefspecs.length > 0) {
+			for (const spec of fetchSpecs) {
+				if (!spec.src.includes("*")) {
+					return fatal(`couldn't find remote ref ${spec.src}`);
+				}
+			}
+		}
 		return { stdout: "", stderr: "", exitCode: 0 };
 	}
 
@@ -294,14 +301,12 @@ async function fetchOneRemote(
 		});
 	}
 
-	refLines.push(
-		...buildRefUpdateLines(
-			appliedUpdates.map((u, i) => ({ ...u, oldHash: appliedOldHashes[i]! })),
-			shortenRef,
-			abbreviateHash,
-		),
-	);
+	const appliedResolved = appliedUpdates.map((u, i) => ({ ...u, oldHash: appliedOldHashes[i]! }));
+	const branchApplied = appliedResolved.filter((u) => !u.localRef.startsWith("refs/tags/"));
+	const tagApplied = appliedResolved.filter((u) => u.localRef.startsWith("refs/tags/"));
+	refLines.push(...buildRefUpdateLines(branchApplied, shortenRef, abbreviateHash));
 	refLines.push(...rejectedTagLines);
+	refLines.push(...buildRefUpdateLines(tagApplied, shortenRef, abbreviateHash));
 
 	if (!tags) {
 		const autoFollowTags: RemoteRef[] = [];

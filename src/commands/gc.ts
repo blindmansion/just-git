@@ -1,4 +1,3 @@
-import type { FileSystem } from "../fs.ts";
 import type { GitExtensions } from "../git.ts";
 import { isCommandError, requireGitContext } from "../lib/command-utils.ts";
 import { readIndex } from "../lib/index.ts";
@@ -42,8 +41,6 @@ export function registerGcCommand(parent: Command, ext?: GitExtensions) {
 					cleanup: true,
 					all: true,
 				});
-
-				await pruneAllLoose(gitCtx.gitDir, ctx.fs);
 
 				if (result) {
 					const stderr = formatRepackStderr(result.totalCount, result.deltaCount, true);
@@ -140,27 +137,6 @@ async function expireAndCollectLogsDir(
 			for (const e of kept) {
 				if (e.newHash !== ZERO_HASH) roots.add(e.newHash);
 			}
-		}
-	}
-}
-
-// ── Prune helpers ───────────────────────────────────────────────────
-
-async function pruneAllLoose(gitDir: string, fs: FileSystem): Promise<void> {
-	const objectsDir = join(gitDir, "objects");
-	let entries: string[];
-	try {
-		entries = await fs.readdir(objectsDir);
-	} catch {
-		return;
-	}
-
-	for (const dir of entries) {
-		if (dir === "pack" || dir === "info" || dir.length !== 2) continue;
-		try {
-			await fs.rm(join(objectsDir, dir), { recursive: true });
-		} catch {
-			// ignore
 		}
 	}
 }
