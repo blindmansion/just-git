@@ -445,7 +445,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				};
 			}
 
-			const { noFf, ffOnly, configured: hasReconciliationStrategy } = pullMode;
+			const { noFf, ffOnly, ffOnlySource, configured: hasReconciliationStrategy } = pullMode;
 			const isFastForward = baseCommit === headHash;
 
 			if (!isFastForward && !hasReconciliationStrategy) {
@@ -470,7 +470,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				};
 			}
 
-			if (bases.length === 0) {
+			if (bases.length === 0 && ffOnlySource !== "cli" && ffOnlySource !== "pull") {
 				return {
 					stdout: "",
 					stderr: fetchOutput + "fatal: refusing to merge unrelated histories\n",
@@ -692,6 +692,7 @@ interface PullMode {
 	useRebase: boolean;
 	noFf: boolean;
 	ffOnly: boolean;
+	ffOnlySource: "cli" | "pull" | "merge" | null;
 	configured: boolean;
 }
 
@@ -707,6 +708,7 @@ async function resolvePullMode(
 ): Promise<PullMode> {
 	let noFf = !!args.noFf;
 	let ffOnly = !!args.ffOnly;
+	let ffOnlySource: PullMode["ffOnlySource"] = args.ffOnly ? "cli" : null;
 	let configured = !!args.rebase || !!args.noRebase || !!args.noFf || !!args.ffOnly;
 	let useRebase = false;
 
@@ -752,6 +754,7 @@ async function resolvePullMode(
 			configured = true;
 		} else if (pullFFConfig === "only") {
 			ffOnly = true;
+			ffOnlySource = "pull";
 			configured = true;
 		} else {
 			const mergeFFConfig = await getConfigValue(gitCtx, "merge.ff");
@@ -759,11 +762,12 @@ async function resolvePullMode(
 				noFf = true;
 			} else if (mergeFFConfig === "only") {
 				ffOnly = true;
+				ffOnlySource = "merge";
 			}
 		}
 	}
 
-	return { useRebase, noFf, ffOnly, configured };
+	return { useRebase, noFf, ffOnly, ffOnlySource, configured };
 }
 
 async function checkPullRebaseWorktree(

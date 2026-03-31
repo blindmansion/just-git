@@ -278,23 +278,28 @@ describe("git fetch", () => {
 		expect(rejectedLine).toBeGreaterThan(branchLine);
 	});
 
-	test("fetch --tags reports rejected tags before newly fetched tags", async () => {
+	test("fetch --tags preserves tag output order while mixing rejections and new tags", async () => {
 		const bash = await setupClonePair();
 
-		await bash.exec("cd /local && git tag v1.0");
+		await bash.exec("cd /local && git tag alpha");
+		await bash.exec("cd /local && git tag gamma");
 		await bash.exec("cd /remote && echo remote > remote.txt && git add . && git commit -m remote");
-		await bash.exec("cd /remote && git tag -f v1.0 HEAD");
-		await bash.exec("cd /remote && git tag v2.0 HEAD");
+		await bash.exec("cd /remote && git tag -f alpha HEAD");
+		await bash.exec("cd /remote && git tag beta HEAD");
+		await bash.exec("cd /remote && git tag -f gamma HEAD");
 
 		const result = await bash.exec("git fetch --tags", { cwd: "/local" });
 		expect(result.exitCode).toBe(1);
 
-		const rejectedLine = result.stderr.indexOf("! [rejected]");
-		const newTagLine = result.stderr.indexOf("* [new tag]         v2.0");
+		const alphaRejectedLine = result.stderr.indexOf("! [rejected]        alpha");
+		const betaNewLine = result.stderr.indexOf("* [new tag]         beta");
+		const gammaRejectedLine = result.stderr.indexOf("! [rejected]        gamma");
 
-		expect(rejectedLine).toBeGreaterThan(-1);
-		expect(newTagLine).toBeGreaterThan(-1);
-		expect(newTagLine).toBeGreaterThan(rejectedLine);
+		expect(alphaRejectedLine).toBeGreaterThan(-1);
+		expect(betaNewLine).toBeGreaterThan(-1);
+		expect(gammaRejectedLine).toBeGreaterThan(-1);
+		expect(betaNewLine).toBeGreaterThan(alphaRejectedLine);
+		expect(gammaRejectedLine).toBeGreaterThan(betaNewLine);
 	});
 
 	test("auto-follows reachable annotated tags without --tags", async () => {

@@ -513,6 +513,19 @@ describe("git pull", () => {
 		expect(result.stderr).toBe("fatal: refusing to merge unrelated histories\n");
 	});
 
+	test("pull --ff-only prefers fast-forward advice over unrelated histories", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("git switch --orphan unrelated", { cwd: "/local" });
+		await bash.exec('git commit --allow-empty -m "unrelated"', { cwd: "/local" });
+		await bash.exec("git branch -u origin/main unrelated", { cwd: "/local" });
+
+		const result = await bash.exec("git pull --ff-only", { cwd: "/local" });
+
+		expect(result.exitCode).toBe(128);
+		expect(result.stderr).toContain("Not possible to fast-forward");
+	});
+
 	test("pull.rebase=false still refuses unrelated histories before merge.ff=only advice", async () => {
 		const bash = await setupClonePair();
 
@@ -526,5 +539,19 @@ describe("git pull", () => {
 
 		expect(result.exitCode).toBe(128);
 		expect(result.stderr).toBe("fatal: refusing to merge unrelated histories\n");
+	});
+
+	test("pull.ff=only prefers fast-forward advice over unrelated histories", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("git config pull.ff only", { cwd: "/local" });
+		await bash.exec("git switch --orphan unrelated", { cwd: "/local" });
+		await bash.exec('git commit --allow-empty -m "unrelated"', { cwd: "/local" });
+		await bash.exec("git branch -u origin/main unrelated", { cwd: "/local" });
+
+		const result = await bash.exec("git pull", { cwd: "/local" });
+
+		expect(result.exitCode).toBe(128);
+		expect(result.stderr).toContain("Not possible to fast-forward");
 	});
 });

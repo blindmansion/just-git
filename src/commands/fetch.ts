@@ -265,10 +265,16 @@ async function fetchOneRemote(
 
 	const ident = await getReflogIdentity(gitCtx, env);
 	const refLines: TransferRefLine[] = [];
-	const rejectedTagLines: TransferRefLine[] = [];
 	let hadTagRejection = false;
 	const appliedUpdates: Array<(typeof refUpdates)[number]> = [];
 	const appliedOldHashes: Array<string | null> = [];
+	const orderedTagEntries: Array<
+		| TransferRefLine
+		| {
+				update: (typeof refUpdates)[number];
+				oldHash: string | null;
+		  }
+	> = [];
 
 	for (const update of refUpdates) {
 		const oldHash = await resolveRef(gitCtx, update.localRef);
@@ -279,7 +285,7 @@ async function fetchOneRemote(
 			oldHash !== update.remote.hash
 		) {
 			hadTagRejection = true;
-			rejectedTagLines.push({
+			orderedTagEntries.push({
 				prefix: " ! [rejected]",
 				from: shortenRef(update.remote.name),
 				to: shortenRef(update.localRef),
@@ -289,6 +295,9 @@ async function fetchOneRemote(
 		}
 		appliedOldHashes.push(oldHash);
 		appliedUpdates.push(update);
+		if (update.localRef.startsWith("refs/tags/")) {
+			orderedTagEntries.push({ update, oldHash });
+		}
 		await updateRef(gitCtx, update.localRef, update.remote.hash);
 		await appendReflog(gitCtx, update.localRef, {
 			oldHash: oldHash ?? ZERO_HASH,
@@ -303,10 +312,20 @@ async function fetchOneRemote(
 
 	const appliedResolved = appliedUpdates.map((u, i) => ({ ...u, oldHash: appliedOldHashes[i]! }));
 	const branchApplied = appliedResolved.filter((u) => !u.localRef.startsWith("refs/tags/"));
-	const tagApplied = appliedResolved.filter((u) => u.localRef.startsWith("refs/tags/"));
 	refLines.push(...buildRefUpdateLines(branchApplied, shortenRef, abbreviateHash));
-	refLines.push(...rejectedTagLines);
-	refLines.push(...buildRefUpdateLines(tagApplied, shortenRef, abbreviateHash));
+	for (const entry of orderedTagEntries) {
+		if ("prefix" in entry) {
+			refLines.push(entry);
+			continue;
+		}
+		refLines.push(
+			...buildRefUpdateLines(
+				[{ ...entry.update, oldHash: entry.oldHash }],
+				shortenRef,
+				abbreviateHash,
+			),
+		);
+	}
 
 	if (!tags) {
 		const autoFollowTags: RemoteRef[] = [];
