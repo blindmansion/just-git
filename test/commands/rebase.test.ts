@@ -379,6 +379,20 @@ describe("git rebase", () => {
 			const reflog = await bash.exec("git reflog -n 10");
 			expect(reflog.stdout).toContain("rebase (start): checkout main");
 		});
+
+		test("records rebase finish in branch reflog after continuing a conflict", async () => {
+			const bash = await setupConflict();
+
+			await bash.exec("git rebase main");
+			await bash.fs.writeFile("/repo/file.txt", "main version\nfeature version\n");
+			await bash.exec("git add file.txt");
+
+			const result = await bash.exec("git rebase --continue");
+			expect(result.exitCode).toBe(0);
+
+			const reflog = await bash.exec("git reflog show feature -n 5");
+			expect(reflog.stdout).toContain("rebase (finish): refs/heads/feature onto");
+		});
 	});
 
 	// ── Conflicts ────────────────────────────────────────────────────

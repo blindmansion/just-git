@@ -407,6 +407,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					upstreamLabel,
 					upstreamLabel,
 					ext,
+					{ reflogAction: "pull" },
 				);
 
 				if (result.exitCode === 0) {

@@ -261,6 +261,22 @@ describe("git push", () => {
 			expect(result.stderr).toContain("To choose either option permanently");
 		});
 
+		test("configured push.default=simple omits push.default advice", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("cd /local && git checkout -b my-feature");
+			await bash.exec("cd /local && echo feat > feat.txt && git add . && git commit -m feat");
+			await bash.exec("cd /local && git config set push.default simple");
+			await bash.exec(
+				"cd /local && git config set branch.my-feature.remote origin && git config set branch.my-feature.merge refs/heads/main",
+			);
+
+			const result = await bash.exec("git push", { cwd: "/local" });
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("does not match");
+			expect(result.stderr).not.toContain("To choose either option permanently");
+		});
+
 		test("simple refuses push when no upstream configured", async () => {
 			const bash = await setupClonePair();
 

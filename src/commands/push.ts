@@ -477,12 +477,17 @@ async function resolvePushDefault(
 	if (section?.remote && section?.merge) {
 		const trackedRemote = section.remote as string;
 		const upstreamRef = section.merge as string;
+		const pushDefaultConfigured = (cfg["push"]?.default as string | undefined)?.toLowerCase();
 
 		if (trackedRemote === remoteName) {
 			const upstreamBranch = upstreamRef.startsWith("refs/heads/")
 				? upstreamRef.slice("refs/heads/".length)
 				: upstreamRef;
 			if (upstreamBranch !== branchName) {
+				const pushDefaultAdvice =
+					pushDefaultConfigured === "simple"
+						? ""
+						: "To choose either option permanently, see push.default in 'git help config'.\n\n";
 				return fatal(
 					"The upstream branch of your current branch does not match\n" +
 						"the name of your current branch.  To push to the upstream branch\n" +
@@ -490,7 +495,7 @@ async function resolvePushDefault(
 						`    git push ${remoteName} HEAD:${upstreamBranch}\n\n` +
 						"To push to the branch of the same name on the remote, use\n\n" +
 						`    git push ${remoteName} HEAD\n\n` +
-						"To choose either option permanently, see push.default in 'git help config'.\n\n" +
+						pushDefaultAdvice +
 						"To avoid automatically configuring an upstream branch when its name\n" +
 						"won't match the local branch, see option 'simple' of branch.autoSetupMerge\n" +
 						"in 'git help config'.\n",

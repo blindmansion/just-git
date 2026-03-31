@@ -410,6 +410,22 @@ describe("git pull", () => {
 			expect(result.stdout).toBe("Current branch feature is up to date.\n");
 			expect(result.stderr).toContain("main       -> origin/main");
 		});
+
+		test("pull --rebase records pull finish in the branch reflog", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec(
+				"cd /remote && echo remote > remote.txt && git add . && git commit -m remote",
+			);
+			await bash.exec("cd /local && echo local > local.txt && git add . && git commit -m local");
+			await bash.exec("git config pull.rebase true", { cwd: "/local" });
+
+			const result = await bash.exec("git pull", { cwd: "/local" });
+			expect(result.exitCode).toBe(0);
+
+			const reflog = await bash.exec("git reflog show main -n 5", { cwd: "/local" });
+			expect(reflog.stdout).toContain("pull (finish): refs/heads/main onto");
+		});
 	});
 
 	// ── pull.ff config ──────────────────────────────────────────────

@@ -27,6 +27,8 @@ export interface RebaseState {
 	msgnum: number;
 	/** Total number of commits to apply. */
 	end: number;
+	/** Reflog action prefix for this rebase flow. */
+	reflogAction?: "rebase" | "pull";
 }
 
 // ── Paths ───────────────────────────────────────────────────────────
@@ -65,6 +67,9 @@ export async function readRebaseState(gitCtx: GitContext): Promise<RebaseState |
 		? await gitCtx.fs.readFile(join(dir, "done"))
 		: "";
 	const done = parseTodoList(doneText);
+	const reflogAction = (await gitCtx.fs.exists(join(dir, "reflog-action")))
+		? ((await gitCtx.fs.readFile(join(dir, "reflog-action"))).trim() as "rebase" | "pull")
+		: "rebase";
 
 	return {
 		headName: headName.trim(),
@@ -74,6 +79,7 @@ export async function readRebaseState(gitCtx: GitContext): Promise<RebaseState |
 		done,
 		msgnum,
 		end,
+		reflogAction,
 	};
 }
 
@@ -89,6 +95,7 @@ export async function writeRebaseState(gitCtx: GitContext, state: RebaseState): 
 	await gitCtx.fs.writeFile(join(dir, "onto"), `${state.onto}\n`);
 	await gitCtx.fs.writeFile(join(dir, "msgnum"), `${String(state.msgnum)}\n`);
 	await gitCtx.fs.writeFile(join(dir, "end"), `${String(state.end)}\n`);
+	await gitCtx.fs.writeFile(join(dir, "reflog-action"), `${state.reflogAction ?? "rebase"}\n`);
 	await gitCtx.fs.writeFile(join(dir, "git-rebase-todo"), formatTodoList(state.todo));
 	await gitCtx.fs.writeFile(join(dir, "done"), formatTodoList(state.done));
 	await gitCtx.fs.writeFile(join(dir, "interactive"), "");

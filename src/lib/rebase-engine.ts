@@ -234,6 +234,7 @@ async function writeRebaseFfReflog(
 	targetHash: ObjectId,
 	headName: string,
 	upstreamArg: string,
+	reflogAction: "rebase" | "pull",
 ): Promise<void> {
 	await logRef(
 		gitCtx,
@@ -250,7 +251,7 @@ async function writeRebaseFfReflog(
 			headName,
 			origHead,
 			targetHash,
-			`rebase (finish): ${headName} onto ${targetHash}`,
+			`${reflogAction} (finish): ${headName} onto ${targetHash}`,
 		);
 		await logRef(
 			gitCtx,
@@ -258,7 +259,7 @@ async function writeRebaseFfReflog(
 			"HEAD",
 			targetHash,
 			targetHash,
-			`rebase (finish): returning to ${headName}`,
+			`${reflogAction} (finish): returning to ${headName}`,
 		);
 	}
 }
@@ -310,9 +311,10 @@ export async function performRebase(
 	upstreamLabel: string,
 	checkoutLabel: string,
 	ext?: GitExtensions,
-	options?: { reapplyCherryPicks?: boolean },
+	options?: { reapplyCherryPicks?: boolean; reflogAction?: "rebase" | "pull" },
 ): Promise<CommandResult> {
 	const branchName = headName.startsWith("refs/heads/") ? branchNameFromRef(headName) : "HEAD";
+	const reflogAction = options?.reflogAction ?? "rebase";
 
 	// ── Clean worktree check ─────────────────────────────────
 	const currentIndex = await readIndex(gitCtx);
@@ -373,7 +375,15 @@ export async function performRebase(
 		if (ontoHash !== origHead) {
 			const ffErr = await fastForwardTo(gitCtx, ontoHash, currentIndex, headName);
 			if (ffErr) return ffErr;
-			await writeRebaseFfReflog(gitCtx, env, origHead, ontoHash, headName, checkoutLabel);
+			await writeRebaseFfReflog(
+				gitCtx,
+				env,
+				origHead,
+				ontoHash,
+				headName,
+				checkoutLabel,
+				reflogAction,
+			);
 			return {
 				stdout: "",
 				stderr: `Successfully rebased and updated ${headName}.\n`,
@@ -432,7 +442,15 @@ export async function performRebase(
 				ffErr.stderr = skipStderr + ffErr.stderr;
 				return ffErr;
 			}
-			await writeRebaseFfReflog(gitCtx, env, origHead, ontoHash, headName, checkoutLabel);
+			await writeRebaseFfReflog(
+				gitCtx,
+				env,
+				origHead,
+				ontoHash,
+				headName,
+				checkoutLabel,
+				reflogAction,
+			);
 		}
 		return {
 			stdout: "",
@@ -474,7 +492,15 @@ export async function performRebase(
 				ffErr.stderr = skipStderr + ffErr.stderr;
 				return ffErr;
 			}
-			await writeRebaseFfReflog(gitCtx, env, origHead, checkoutTarget, headName, checkoutLabel);
+			await writeRebaseFfReflog(
+				gitCtx,
+				env,
+				origHead,
+				checkoutTarget,
+				headName,
+				checkoutLabel,
+				reflogAction,
+			);
 		}
 		return {
 			stdout: "",
@@ -513,6 +539,7 @@ export async function performRebase(
 		done,
 		msgnum: skippedCount,
 		end: skippedCount + todo.length,
+		reflogAction,
 	};
 	await writeRebaseState(gitCtx, state);
 	await updateRef(gitCtx, "ORIG_HEAD", origHead);
@@ -664,7 +691,7 @@ async function pickOneCommit(
 			await applyWorktreeOps(gitCtx, result.worktreeOps);
 		}
 		await advanceBranchRef(gitCtx, theirsHash);
-		await logRef(gitCtx, env, "HEAD", headHash, theirsHash, `rebase (pick): ${entry.subject}`);
+		await logRef(gitCtx, env, "HEAD", headHash, theirsHash, "rebase: fast-forward");
 
 		return { conflict: false, stdout: "", stderr: "" };
 	}
@@ -874,7 +901,7 @@ async function finishRebase(
 			state.headName,
 			state.origHead,
 			currentHead,
-			`rebase (finish): ${state.headName} onto ${state.onto}`,
+			`${state.reflogAction ?? "rebase"} (finish): ${state.headName} onto ${state.onto}`,
 		);
 		await logRef(
 			gitCtx,
@@ -882,7 +909,7 @@ async function finishRebase(
 			"HEAD",
 			currentHead,
 			currentHead,
-			`rebase (finish): returning to ${state.headName}`,
+			`${state.reflogAction ?? "rebase"} (finish): returning to ${state.headName}`,
 		);
 	}
 
