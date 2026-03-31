@@ -91,6 +91,7 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 			forceMove: f().alias("M").describe("Force rename a branch"),
 			remotes: f().alias("r").describe("List remote-tracking branches"),
 			all: f().alias("a").describe("List all branches"),
+			showCurrent: f().describe("Print the current branch name"),
 			setUpstreamTo: o.string().alias("u").describe("Set upstream tracking branch"),
 			verbose: f().alias("v").count().describe("Show hash and subject"),
 		},
@@ -101,6 +102,15 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 
 			const head = await readHead(gitCtx);
 			const currentBranch = head?.type === "symbolic" ? branchNameFromRef(head.target) : null;
+
+			// ── Show current branch ────────────────────────────────────
+			if (args.showCurrent) {
+				return {
+					stdout: currentBranch ? `${currentBranch}\n` : "",
+					stderr: "",
+					exitCode: 0,
+				};
+			}
 
 			// ── Rename branch ───────────────────────────────────────────
 			const forceRename = !!args.forceMove;

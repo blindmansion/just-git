@@ -777,4 +777,87 @@ describe("git branch", () => {
 			expect(result.stderr).toBe("");
 		});
 	});
+
+	describe("--show-current", () => {
+		test("prints current branch name", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "init"', "git branch --show-current"],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			expect(results[3].exitCode).toBe(0);
+			expect(results[3].stdout).toBe("main\n");
+			expect(results[3].stderr).toBe("");
+		});
+
+		test("prints branch with slashes", async () => {
+			const { results } = await runScenario(
+				[
+					"git init",
+					"git add .",
+					'git commit -m "init"',
+					"git checkout -b feature/cool-thing",
+					"git branch --show-current",
+				],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			expect(results[4].stdout).toBe("feature/cool-thing\n");
+		});
+
+		test("prints empty on detached HEAD", async () => {
+			const { results } = await runScenario(
+				[
+					"git init",
+					"git add .",
+					'git commit -m "init"',
+					"git checkout --detach HEAD",
+					"git branch --show-current",
+				],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			expect(results[4].exitCode).toBe(0);
+			expect(results[4].stdout).toBe("");
+		});
+
+		test("prints branch name on orphan (unborn) branch", async () => {
+			const { results } = await runScenario(["git init", "git branch --show-current"], {
+				files: EMPTY_REPO,
+				env: TEST_ENV,
+			});
+			expect(results[1].exitCode).toBe(0);
+			expect(results[1].stdout).toBe("main\n");
+		});
+
+		test("prints branch name on orphan created with checkout --orphan", async () => {
+			const { results } = await runScenario(
+				[
+					"git init",
+					"git add .",
+					'git commit -m "init"',
+					"git checkout --orphan new-root",
+					"git branch --show-current",
+				],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			expect(results[4].exitCode).toBe(0);
+			expect(results[4].stdout).toBe("new-root\n");
+		});
+
+		test("overrides -v flag", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "init"', "git branch --show-current -v"],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			expect(results[3].exitCode).toBe(0);
+			expect(results[3].stdout).toBe("main\n");
+		});
+
+		test("overrides -a flag", async () => {
+			const { results } = await runScenario(
+				["git init", "git add .", 'git commit -m "init"', "git branch --show-current -a"],
+				{ files: EMPTY_REPO, env: TEST_ENV },
+			);
+			expect(results[3].exitCode).toBe(0);
+			expect(results[3].stdout).toBe("main\n");
+		});
+	});
 });

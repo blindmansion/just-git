@@ -291,6 +291,7 @@ Options:
   -M, --force-move                Force rename a branch
   -r, --remotes                   List remote-tracking branches
   -a, --all                       List all branches
+  --show-current                  Print the current branch name
   -u, --set-upstream-to <string>  Set upstream tracking branch
   -v, --verbose                   Show hash and subject (counted)
 ```
