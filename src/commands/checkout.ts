@@ -20,7 +20,7 @@ import {
 	requireGitContext,
 } from "../lib/command-utils.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
-import { findEntry, readIndex } from "../lib/index.ts";
+import { findEntry, readIndex, writeIndex } from "../lib/index.ts";
 import { peelToCommit, readCommit } from "../lib/object-db.ts";
 import { clearDetachPoint } from "../lib/operation-state.ts";
 import { logRef, ZERO_HASH } from "../lib/reflog.ts";
@@ -35,16 +35,23 @@ import {
 import { resolveRevision } from "../lib/rev-parse.ts";
 import { formatLongTrackingInfo, getTrackingInfo } from "../lib/status-format.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
+import { applyWorktreeOps, checkoutTrees } from "../lib/unpack-trees.ts";
 import { checkoutEntry } from "../lib/worktree.ts";
-import { a, type Command, f } from "../parse/index.ts";
+import { a, type Command, f, o } from "../parse/index.ts";
 
 export function registerCheckoutCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("checkout", {
 		description: "Switch branches or restore working tree files",
-		args: [a.string().name("target").describe("Branch name or path to checkout").optional()],
+		args: [
+			a
+				.string()
+				.name("target")
+				.describe("Branch, commit, path, or start-point for -b/-B")
+				.optional(),
+		],
 		options: {
-			branch: f().alias("b").describe("Create and switch to a new branch"),
-			forceBranch: f().alias("B").describe("Create/reset and switch to a new branch"),
+			branch: o.string().alias("b").describe("Create and switch to a new branch"),
+			forceBranch: o.string().alias("B").describe("Create/reset and switch to a new branch"),
 			detach: f().alias("d").describe("Detach HEAD at named commit"),
 			orphan: f().describe("Create a new orphan branch"),
 			ours: f().describe("Checkout our version for unmerged files"),
@@ -115,13 +122,14 @@ export function registerCheckoutCommand(parent: Command, ext?: GitExtensions) {
 				return detachHead(gitCtx, rev, result.hash, ctx.env, ext);
 			}
 
-			if (!target) {
-				return fatal("you must specify a branch to checkout");
-			}
-
 			// ── Create + switch (-b / -B) ───────────────────────────────
 			if (args.branch || args.forceBranch) {
-				return createAndSwitch(gitCtx, target, ctx.env, ext, !!args.forceBranch);
+				const branchName = (args.branch || args.forceBranch) as string;
+				return createAndSwitch(gitCtx, branchName, target, ctx.env, ext, !!args.forceBranch);
+			}
+
+			if (!target) {
+				return fatal("you must specify a branch to checkout");
 			}
 
 			// ── "-" shorthand for previous branch ───────────────────────
@@ -239,11 +247,12 @@ async function createOrphanBranch(
 }
 
 /**
- * Create a new branch at HEAD and switch to it.
+ * Create a new branch and switch to it, optionally at a given start-point.
  */
 async function createAndSwitch(
 	gitCtx: GitContext,
 	branchName: string,
+	startPoint: string | undefined,
 	env: Map<string, string>,
 	ext?: GitExtensions,
 	force = false,
@@ -267,14 +276,45 @@ async function createAndSwitch(
 		return fatal(`a branch named '${branchName}' already exists`);
 	}
 
-	if (force) {
+	let targetHash: ObjectId | null;
+	if (startPoint) {
+		const result = await requireCommit(gitCtx, startPoint, `invalid reference: ${startPoint}`);
+		if (isCommandError(result)) return result;
+		targetHash = result.hash;
+	} else {
+		targetHash = headHash;
+	}
+
+	if (force || startPoint) {
 		const currentIndex = await readIndex(gitCtx);
 		const conflictErr = requireResolvedIndex(currentIndex);
 		if (conflictErr) return conflictErr;
 	}
 
-	if (headHash) {
-		await updateRef(gitCtx, refName, headHash);
+	if (targetHash) {
+		await updateRef(gitCtx, refName, targetHash);
+	}
+
+	let currentIndex = await readIndex(gitCtx);
+
+	// Update worktree/index when target differs from current HEAD
+	if (targetHash && headHash && targetHash !== headHash) {
+		const currentCommit = await readCommit(gitCtx, headHash);
+		const targetCommit = await readCommit(gitCtx, targetHash);
+		if (currentCommit.tree !== targetCommit.tree) {
+			const result = await checkoutTrees(
+				gitCtx,
+				currentCommit.tree,
+				targetCommit.tree,
+				currentIndex,
+			);
+			if (!result.success) {
+				return result.errorOutput ?? err("error: checkout would overwrite local changes");
+			}
+			currentIndex = { version: 2, entries: result.newEntries };
+			await writeIndex(gitCtx, currentIndex);
+			await applyWorktreeOps(gitCtx, result.worktreeOps);
+		}
 	}
 
 	await createSymbolicRef(gitCtx, "HEAD", refName);
@@ -283,13 +323,14 @@ async function createAndSwitch(
 
 	const fromName =
 		head?.type === "symbolic" ? head.target.replace(/^refs\/heads\//, "") : (headHash ?? ZERO_HASH);
-	if (headHash) {
+	const startLabel = startPoint ?? "HEAD";
+	if (targetHash) {
 		if (existing) {
-			if (existing !== headHash) {
-				await logRef(gitCtx, env, refName, existing, headHash, "branch: Reset to HEAD");
+			if (existing !== targetHash) {
+				await logRef(gitCtx, env, refName, existing, targetHash, `branch: Reset to ${startLabel}`);
 			}
 		} else {
-			await logRef(gitCtx, env, refName, null, headHash, "branch: Created from HEAD");
+			await logRef(gitCtx, env, refName, null, targetHash, `branch: Created from ${startLabel}`);
 		}
 	}
 	await logRef(
@@ -297,22 +338,21 @@ async function createAndSwitch(
 		env,
 		"HEAD",
 		headHash,
-		headHash ?? ZERO_HASH,
+		targetHash ?? ZERO_HASH,
 		`checkout: moving from ${fromName} to ${branchName}`,
 	);
 
 	await ext?.hooks?.postCheckout?.({
 		repo: gitCtx,
 		prevHead: headHash,
-		newHead: headHash ?? ZERO_HASH,
+		newHead: targetHash ?? ZERO_HASH,
 		isBranchCheckout: true,
 	});
 
 	let stdout = "";
-	if (force && headHash) {
-		const currentIndex = await readIndex(gitCtx);
-		const headCommit = await readCommit(gitCtx, headHash);
-		stdout = await formatCheckoutSummary(gitCtx, headCommit.tree, currentIndex);
+	if ((force || startPoint) && targetHash) {
+		const targetCommit = await readCommit(gitCtx, targetHash);
+		stdout = await formatCheckoutSummary(gitCtx, targetCommit.tree, currentIndex);
 	}
 
 	const config = await readConfig(gitCtx);
