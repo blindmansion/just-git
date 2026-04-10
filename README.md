@@ -2,8 +2,8 @@
 
 [![CI](https://github.com/blindmansion/just-git/actions/workflows/ci.yml/badge.svg)](https://github.com/blindmansion/just-git/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/just-git)](https://www.npmjs.com/package/just-git)
-[![client size](https://img.shields.io/bundlejs/size/just-git?label=client)](https://bundlejs.com/?q=just-git)
-[![server size](https://img.shields.io/bundlejs/size/just-git/server?label=server)](https://bundlejs.com/?q=just-git/server)
+[![client size](https://img.shields.io/badge/client-131kB_gzip-blue)](docs/CLIENT.md)
+[![server size](https://img.shields.io/badge/server-29kB_gzip-blue)](docs/SERVER.md)
 
 Pure TypeScript git implementation. Zero dependencies. 37 commands. Works in Node, Bun, Deno, Cloudflare Workers, and the browser. [Tested against real git](docs/TESTING.md) across millions of randomized operations.
 
