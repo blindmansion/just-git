@@ -12,6 +12,7 @@ The Git CLI, Git servers, and CI workflows are no longer just things you use to 
 - **[Virtual filesystem client](docs/CLIENT.md)** for sandboxed environments. Pairs with [just-bash](https://github.com/vercel-labs/just-bash), or use standalone.
 - **[Embeddable git server](docs/SERVER.md)** with pluggable storage, auth, and hooks. Supports HTTP, SSH, and in-process transport.
 - **[Repo module](docs/REPO.md)** with typed functions for commits, diffs, merges, blame, and bisect that work identically against a virtual filesystem or a database.
+- **[CORS proxy](docs/PROXY.md)** for browser clients that need to clone/fetch/push against GitHub and other hosts that lack CORS headers.
 
 ## Install
 

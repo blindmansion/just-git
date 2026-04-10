@@ -302,6 +302,44 @@ Return a result to override the merge, or `null` to fall back to diff3. When `co
 
 All helpers accept revision strings via `resolveRevisionRepo` (from `lib/rev-parse.ts`), which supports branch names, tag names, `HEAD`, short hashes, `~N`/`^N` suffixes, and chained expressions — everything except reflog syntax (`@{N}`).
 
+### `src/proxy/` — CORS proxy (`just-git/proxy`)
+
+Stateless HTTP forwarder that adds CORS headers to git smart HTTP requests, enabling browser-based clients to clone/fetch/push against hosts like GitHub that lack CORS support. Follows the same `fetch`/`nodeHandler` pattern as `createServer`.
+
+**Server-side:**
+
+- `createProxy(config)` → `GitProxy` — factory function. Returns `{ fetch, nodeHandler }`.
+- `GitProxy.fetch(request)` — web-standard fetch handler (Bun.serve, CF Workers, Deno Deploy).
+- `GitProxy.nodeHandler(req, res)` — Node.js `http.createServer` compatible handler with streaming response body (unlike the server's `nodeHandler` which buffers).
+
+**`GitProxyConfig`:**
+
+- `allowed` — `string[]` of upstream hosts the proxy will forward to. Required — prevents open relay.
+- `allowOrigin` — CORS `Access-Control-Allow-Origin` value. String, `"*"`, or array of allowed origins. Default: `"*"`.
+- `auth` — `(request) => void | Response`. Authenticate proxy requests. Return a `Response` to reject.
+- `fetch` — custom fetch function for upstream requests. Default: `globalThis.fetch`.
+- `userAgent` — User-Agent sent upstream. Default: `"git/just-git-proxy"` (GitHub requires `git/` prefix).
+- `insecureHosts` — `string[]` of hosts to connect to via `http://` instead of `https://`.
+
+**URL scheme:** Upstream domain is the first path segment: `https://proxy.example.com/github.com/user/repo.git/info/refs` → `https://github.com/user/repo.git/info/refs`.
+
+**Request filtering:** Only forwards legitimate git smart HTTP requests — `GET info/refs?service=git-upload-pack|git-receive-pack`, `POST git-upload-pack`, `POST git-receive-pack`, `OPTIONS` preflight. Everything else gets 403.
+
+**Client-side:**
+
+- `corsProxy(proxyUrl)` → `NetworkPolicy` — client helper that rewrites URLs through the proxy. Pass to `createGit({ network: corsProxy("https://proxy.example.com") })`.
+
+```ts
+import { createGit } from "just-git";
+import { corsProxy } from "just-git/proxy";
+
+const git = createGit({
+  network: corsProxy("https://proxy.example.com"),
+});
+```
+
+**Types:** `GitProxy`, `GitProxyConfig`, `NodeHttpRequest`, `NodeHttpResponse`.
+
 ### Lib modules
 
 | File                           | Purpose                                                                                                                                                               |
@@ -578,4 +616,4 @@ Debug workflow:
 
 ## Scope
 
-init, clone, fetch, push, pull, add, rm, mv, commit, status, log, show, diff, grep, describe, branch, checkout, switch, restore, merge, rebase, cherry-pick, revert, reset, tag, stash, remote, config, clean, bisect. Local transport and Smart HTTP transport (clone/fetch/push against real Git servers like GitHub). Transfer uses real Git packfile format with zlib compression. HTTP auth via `GIT_HTTP_BEARER_TOKEN` or `GIT_HTTP_USER`/`GIT_HTTP_PASSWORD` env vars.
+init, clone, fetch, push, pull, add, rm, mv, commit, status, log, show, diff, grep, describe, branch, checkout, switch, restore, merge, rebase, cherry-pick, revert, reset, tag, stash, remote, config, clean, bisect. Local transport and Smart HTTP transport (clone/fetch/push against real Git servers like GitHub). Transfer uses real Git packfile format with zlib compression. HTTP auth via `GIT_HTTP_BEARER_TOKEN` or `GIT_HTTP_USER`/`GIT_HTTP_PASSWORD` env vars. CORS proxy (`just-git/proxy`) for browser-based clients — forwards git smart HTTP requests with CORS headers.

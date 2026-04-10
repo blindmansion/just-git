@@ -127,10 +127,7 @@ function isGitignore(path: string): boolean {
 }
 
 /** Generate a random file path (never generates .gitignore). */
-export function randomFilePath(
-	rng: SeededRNG,
-	cfg: FileGenConfig = DEFAULT_FILE_GEN_CONFIG,
-): string {
+function randomFilePath(rng: SeededRNG, cfg: FileGenConfig = DEFAULT_FILE_GEN_CONFIG): string {
 	const prefix = rng.pick(cfg.dirPrefixes);
 	const name = rng.alphanumeric(rng.int(3, 8));
 	const ext = rng.pick([".txt", ".ts", ".md", ".json"]);

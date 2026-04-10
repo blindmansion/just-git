@@ -109,10 +109,7 @@ export function startServerWithAuth(
  * Create a MemoryStorage-backed server with a pre-created (empty) repo.
  * Returns the server, HTTP port, and stop function.
  */
-export async function startMemoryServer(
-	repoId = "test-repo",
-	configOverrides?: Partial<GitServerConfig>,
-) {
+async function startMemoryServer(repoId = "test-repo", configOverrides?: Partial<GitServerConfig>) {
 	const driver = new MemoryStorage();
 	const config: GitServerConfig = {
 		storage: driver,

@@ -42,6 +42,10 @@
 		"./repo": {
 			"types": "./dist/repo/index.d.ts",
 			"import": "./dist/repo/index.js"
+		},
+		"./proxy": {
+			"types": "./dist/proxy/index.d.ts",
+			"import": "./dist/proxy/index.js"
 		}
 	},
 	"scripts": {
