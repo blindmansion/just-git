@@ -78,7 +78,8 @@ export type GitCommandName =
 	| "repack"
 	| "gc"
 	| "bisect"
-	| "grep";
+	| "grep"
+	| "shortlog";
 
 /**
  * Configuration for a {@link Git} instance.

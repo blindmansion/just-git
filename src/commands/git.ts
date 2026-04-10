@@ -32,6 +32,7 @@ import { registerRestoreCommand } from "./restore.ts";
 import { registerRevParseCommand } from "./rev-parse.ts";
 import { registerRevertCommand } from "./revert.ts";
 import { registerRmCommand } from "./rm.ts";
+import { registerShortlogCommand } from "./shortlog.ts";
 import { registerShowCommand } from "./show.ts";
 import { registerStashCommand } from "./stash.ts";
 import { registerStatusCommand } from "./status.ts";
@@ -96,7 +97,6 @@ export const KNOWN_UNIMPLEMENTED_COMMANDS = new Set([
 	"rev-list",
 	"send-email",
 	"send-pack",
-	"shortlog",
 	"show-branch",
 	"show-ref",
 	"sparse-checkout",
@@ -142,6 +142,7 @@ const COMMAND_REGISTRY: Record<GitCommandName, (git: Command, ext?: GitExtension
 	rm: (g, e) => registerRmCommand(g, e),
 	remote: (g, e) => registerRemoteCommand(g, e),
 	config: (g, e) => registerConfigCommand(g, e),
+	shortlog: (g, e) => registerShortlogCommand(g, e),
 	show: (g, e) => registerShowCommand(g, e),
 	stash: (g, e) => registerStashCommand(g, e),
 	"rev-parse": (g, e) => registerRevParseCommand(g, e),

@@ -92,10 +92,10 @@ describe("unknown command with --help", () => {
 // ── unimplemented git commands ──────────────────────────────────────
 
 describe("unimplemented commands", () => {
-	test("git shortlog reports not implemented", async () => {
-		const r = await git.exec("shortlog", { fs, cwd: "/" });
+	test("git format-patch reports not implemented", async () => {
+		const r = await git.exec("format-patch", { fs, cwd: "/" });
 		expect(r.exitCode).toBe(1);
-		expect(r.stderr).toContain("'shortlog' is not implemented");
+		expect(r.stderr).toContain("'format-patch' is not implemented");
 		expect(r.stderr).toContain("git help");
 	});
 
@@ -106,7 +106,7 @@ describe("unimplemented commands", () => {
 	});
 
 	test("unimplemented error differs from truly unknown command", async () => {
-		const unimpl = await git.exec("shortlog", { fs, cwd: "/" });
+		const unimpl = await git.exec("format-patch", { fs, cwd: "/" });
 		const unknown = await git.exec("frobnicate", { fs, cwd: "/" });
 
 		expect(unimpl.stderr).toContain("is not implemented");
@@ -124,7 +124,7 @@ describe("unimplemented commands", () => {
 	test("disabled check takes priority over unimplemented", async () => {
 		const restricted = createGit({
 			identity: { name: "Test", email: "test@test.com" },
-			disabled: ["shortlog" as any],
+			disabled: ["shortlog"],
 		});
 		const r = await restricted.exec("shortlog", { fs, cwd: "/" });
 		expect(r.exitCode).toBe(1);

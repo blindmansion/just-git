@@ -35,6 +35,7 @@ Commands:
   rm           Remove files from the working tree and from the index
   remote       Manage set of tracked repositories
   config       Get and set repository options
+  shortlog     Summarize git log output
   show         Show various types of objects
   stash        Stash the changes in a dirty working directory away
   rev-parse    Pick out and massage parameters
@@ -944,6 +945,33 @@ Options:
   -r, --recursive  Allow recursive removal when a directory name is given
   -f, --force      Override the up-to-date check
   -n, --dry-run    Don't actually remove any file(s)
+```
+
+## git shortlog
+
+```
+git shortlog - Summarize git log output
+
+Usage:
+  git shortlog [options] [revisions...]
+
+Arguments:
+  revisions...
+
+Options:
+  -s, --summary      Suppress commit descriptions, only provide count
+  -n, --numbered     Sort by number of commits per author
+  -e, --email        Show the email address of each author
+  --group <string>   Group commits by author or committer
+  --format <string>  Format string for each commit line
+  --all              Walk all refs
+  --no-merges        Exclude merge commits
+  --author <string>  Filter by author
+  --grep <string>    Filter by commit message
+  --since <string>   Show commits after date
+  --after <string>   Synonym for --since
+  --until <string>   Show commits before date
+  --before <string>  Synonym for --until
 ```
 
 ## git show

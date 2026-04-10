@@ -5,7 +5,7 @@
 [![client size](https://img.shields.io/bundlejs/size/just-git?label=client)](https://bundlejs.com/?q=just-git)
 [![server size](https://img.shields.io/bundlejs/size/just-git/server?label=server)](https://bundlejs.com/?q=just-git/server)
 
-Pure TypeScript git implementation. Zero dependencies. 36 commands. Works in Node, Bun, Deno, Cloudflare Workers, and the browser. [Tested against real git](docs/TESTING.md) across millions of randomized operations.
+Pure TypeScript git implementation. Zero dependencies. 37 commands. Works in Node, Bun, Deno, Cloudflare Workers, and the browser. [Tested against real git](docs/TESTING.md) across millions of randomized operations.
 
 The Git CLI, Git servers, and CI workflows are no longer just things you use to develop apps: they can be part of the apps themselves. The goal of this project is to make that practical.
 
@@ -178,7 +178,7 @@ See [REPO.md](docs/REPO.md) for the full API, the `GitRepo` interface, and the h
 
 ## Commands
 
-36 commands: `init`, `clone`, `fetch`, `push`, `pull`, `add`, `rm`, `mv`, `commit`, `status`, `log`, `show`, `diff`, `grep`, `blame`, `describe`, `branch`, `tag`, `checkout`, `switch`, `restore`, `reset`, `merge`, `rebase`, `cherry-pick`, `revert`, `stash`, `remote`, `config`, `bisect`, `clean`, `reflog`, `gc`, `repack`, `rev-parse`, `ls-files`. Each implements a subset of real git's flags; see [CLI.md](docs/CLI.md) for details.
+37 commands: `init`, `clone`, `fetch`, `push`, `pull`, `add`, `rm`, `mv`, `commit`, `status`, `log`, `shortlog`, `show`, `diff`, `grep`, `blame`, `describe`, `branch`, `tag`, `checkout`, `switch`, `restore`, `reset`, `merge`, `rebase`, `cherry-pick`, `revert`, `stash`, `remote`, `config`, `bisect`, `clean`, `reflog`, `gc`, `repack`, `rev-parse`, `ls-files`. Each implements a subset of real git's flags; see [CLI.md](docs/CLI.md) for details.
 
 ### Transport
 
