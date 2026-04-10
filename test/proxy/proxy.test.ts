@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createProxy, corsProxy } from "../../src/proxy/index.ts";
-import type { GitProxyConfig } from "../../src/proxy/index.ts";
+import type { GitProxyConfig, NodeHttpRequest, NodeHttpResponse } from "../../src/proxy/index.ts";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -39,6 +39,8 @@ function optionsReq(path: string) {
 	});
 }
 
+const encoder = new TextEncoder();
+
 // Fake upstream that records what it received and returns a canned response
 function mockFetch(
 	status = 200,
@@ -60,6 +62,75 @@ function mockFetch(
 		});
 	};
 	return { fn, calls };
+}
+
+function createMockNodeReq(
+	method: string,
+	url: string,
+	headers: Record<string, string> = {},
+	bodyChunks: Uint8Array[] = [],
+): NodeHttpRequest & { destroyed: boolean } {
+	const listeners: Record<string, ((...args: any[]) => void)[]> = {};
+	const req = {
+		method,
+		url,
+		headers: { host: "localhost:9999", ...headers },
+		destroyed: false,
+		on(event: string, listener: (...args: any[]) => void) {
+			if (!listeners[event]) listeners[event] = [];
+			listeners[event]!.push(listener);
+
+			if (event === "data" && bodyChunks.length > 0) {
+				queueMicrotask(() => {
+					for (const chunk of bodyChunks) {
+						if (req.destroyed) break;
+						listener(chunk);
+					}
+					for (const end of listeners.end ?? []) end();
+				});
+			}
+
+			if (event === "end" && bodyChunks.length === 0) {
+				queueMicrotask(() => listener());
+			}
+		},
+		destroy() {
+			req.destroyed = true;
+		},
+	};
+	return req;
+}
+
+function createMockNodeRes(): NodeHttpResponse & {
+	statusCode: number;
+	writtenHeaders: Record<string, string | string[]>;
+	chunks: Uint8Array[];
+	ended: boolean;
+	endData?: string;
+} {
+	const res = {
+		statusCode: 0,
+		writtenHeaders: {} as Record<string, string | string[]>,
+		chunks: [] as Uint8Array[],
+		ended: false,
+		endData: undefined as string | undefined,
+		writeHead(statusCode: number, headers?: Record<string, string | string[]>) {
+			res.statusCode = statusCode;
+			if (headers) res.writtenHeaders = headers;
+		},
+		write(chunk: any) {
+			if (chunk instanceof Uint8Array) res.chunks.push(chunk);
+		},
+		end(data?: string) {
+			res.ended = true;
+			res.endData = data;
+		},
+	};
+	return res;
+}
+
+async function waitForNodeHandler(): Promise<void> {
+	await new Promise((resolve) => setTimeout(resolve, 50));
 }
 
 // ── Request validation ──────────────────────────────────────────────
@@ -201,8 +272,8 @@ describe("CORS headers", () => {
 		expect(res.headers.get("access-control-allow-origin")).toBe("https://b.com");
 	});
 
-	test("allowOrigin array falls back to first when no match", async () => {
-		const { fn } = mockFetch();
+	test("allowOrigin array rejects mismatched origins", async () => {
+		const { fn, calls } = mockFetch();
 		const p = proxy({
 			allowOrigin: ["https://a.com", "https://b.com"],
 			fetch: fn as any,
@@ -211,7 +282,40 @@ describe("CORS headers", () => {
 			headers: { Origin: "https://c.com" },
 		});
 		const res = await p.fetch(r);
-		expect(res.headers.get("access-control-allow-origin")).toBe("https://a.com");
+		expect(res.status).toBe(403);
+		expect(res.headers.get("access-control-allow-origin")).toBeNull();
+		expect(calls).toHaveLength(0);
+	});
+
+	test("allowOrigin array allows non-browser callers without ACAO", async () => {
+		const { fn } = mockFetch();
+		const p = proxy({
+			allowOrigin: ["https://a.com", "https://b.com"],
+			fetch: fn as any,
+		});
+		const res = await p.fetch(getInfoRefs());
+		expect(res.status).toBe(200);
+		expect(res.headers.get("access-control-allow-origin")).toBeNull();
+	});
+
+	test("responses include Vary headers for cache safety", async () => {
+		const { fn } = mockFetch();
+		const p = proxy({
+			allowOrigin: ["https://a.com"],
+			fetch: fn as any,
+		});
+		const r = req("/github.com/user/repo.git/info/refs?service=git-upload-pack", {
+			headers: {
+				Origin: "https://a.com",
+				Authorization: "Bearer abc123",
+				"git-protocol": "version=2",
+			},
+		});
+		const res = await p.fetch(r);
+		const vary = res.headers.get("vary") ?? "";
+		expect(vary).toContain("Origin");
+		expect(vary).toContain("Authorization");
+		expect(vary).toContain("Git-Protocol");
 	});
 
 	test("error responses include CORS headers", async () => {
@@ -237,6 +341,7 @@ describe("OPTIONS preflight", () => {
 		expect(res.headers.get("access-control-allow-headers")).toContain("content-type");
 		expect(res.headers.get("access-control-allow-headers")).toContain("git-protocol");
 		expect(res.headers.get("access-control-max-age")).toBe("86400");
+		expect(res.headers.get("vary")).toContain("Access-Control-Request-Headers");
 	});
 
 	test("preflight does not hit upstream", async () => {
@@ -244,6 +349,26 @@ describe("OPTIONS preflight", () => {
 		const p = proxy({ fetch: fn as any });
 		await p.fetch(optionsReq("/github.com/user/repo.git/info/refs?service=git-upload-pack"));
 		expect(calls).toHaveLength(0);
+	});
+
+	test("preflight runs auth before responding", async () => {
+		let authCalls = 0;
+		const p = proxy({
+			auth: () => {
+				authCalls += 1;
+			},
+		});
+		const res = await p.fetch(
+			optionsReq("/github.com/user/repo.git/info/refs?service=git-upload-pack"),
+		);
+		expect(res.status).toBe(200);
+		expect(authCalls).toBe(1);
+	});
+
+	test("preflight rejects invalid git targets", async () => {
+		const p = proxy();
+		const res = await p.fetch(optionsReq("/github.com/user/repo.git/info/refs"));
+		expect(res.status).toBe(403);
 	});
 });
 
@@ -280,6 +405,74 @@ describe("URL rewriting", () => {
 		const p = proxy({ fetch: fn as any });
 		await p.fetch(postUploadPack("github.com", "org/project.git"));
 		expect(calls[0]!.url).toBe("https://github.com/org/project.git/git-upload-pack");
+	});
+});
+
+// ── Redirect handling ───────────────────────────────────────────────
+
+describe("redirect handling", () => {
+	test("follows validated GET redirects on allowlisted hosts", async () => {
+		const calls: string[] = [];
+		const p = proxy({
+			allowed: ["github.com", "mirror.github.com"],
+			fetch: (async (input: string | URL | Request) => {
+				const url =
+					typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+				calls.push(url);
+				if (calls.length === 1) {
+					return new Response(null, {
+						status: 302,
+						headers: {
+							Location: "https://mirror.github.com/user/repo.git/info/refs?service=git-upload-pack",
+						},
+					});
+				}
+				return new Response("ok", {
+					status: 200,
+					headers: { "Content-Type": "application/x-git-upload-pack-advertisement" },
+				});
+			}) as any,
+		});
+
+		const res = await p.fetch(getInfoRefs());
+		expect(res.status).toBe(200);
+		expect(calls).toHaveLength(2);
+		expect(res.headers.get("x-redirected-url")).toBe(
+			"https://mirror.github.com/user/repo.git/info/refs?service=git-upload-pack",
+		);
+	});
+
+	test("rejects redirects to disallowed hosts", async () => {
+		const p = proxy({
+			fetch: (async () =>
+				new Response(null, {
+					status: 302,
+					headers: {
+						Location: "https://evil.com/user/repo.git/info/refs?service=git-upload-pack",
+					},
+				})) as any,
+		});
+
+		const res = await p.fetch(getInfoRefs());
+		expect(res.status).toBe(502);
+		expect(await res.text()).toContain("Redirect target is not allowed");
+	});
+
+	test("can reject all upstream redirects via config", async () => {
+		const p = proxy({
+			redirects: { mode: "error" },
+			fetch: (async () =>
+				new Response(null, {
+					status: 302,
+					headers: {
+						Location: "https://github.com/user/repo.git/info/refs?service=git-upload-pack",
+					},
+				})) as any,
+		});
+
+		const res = await p.fetch(getInfoRefs());
+		expect(res.status).toBe(502);
+		expect(await res.text()).toContain("Upstream redirect blocked");
 	});
 });
 
@@ -478,6 +671,38 @@ describe("corsProxy", () => {
 			globalThis.fetch = originalFetch;
 		}
 	});
+
+	test("preserves Request metadata when rewriting Request inputs", async () => {
+		const network = corsProxy("https://proxy.example.com");
+		let capturedRequest: Request | undefined;
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: any) => {
+			capturedRequest = input instanceof Request ? input : new Request(input);
+			return new Response("ok");
+		}) as any;
+
+		try {
+			const original = new Request("https://github.com/user/repo.git/git-upload-pack", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/x-git-upload-pack-request",
+				},
+				body: "payload",
+				duplex: "half",
+			} as RequestInit);
+			await network.fetch!(original);
+			expect(capturedRequest!.url).toBe(
+				"https://proxy.example.com/github.com/user/repo.git/git-upload-pack",
+			);
+			expect(capturedRequest!.method).toBe("POST");
+			expect(capturedRequest!.headers.get("content-type")).toBe(
+				"application/x-git-upload-pack-request",
+			);
+			expect(await capturedRequest!.text()).toBe("payload");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
 });
 
 // ── Streaming ───────────────────────────────────────────────────────
@@ -508,6 +733,120 @@ describe("response streaming", () => {
 		const res = await p.fetch(postUploadPack());
 		const text = await res.text();
 		expect(text).toBe("chunk1chunk2chunk3");
+	});
+});
+
+// ── nodeHandler ─────────────────────────────────────────────────────
+
+describe("nodeHandler", () => {
+	test("streams POST request bodies to the upstream fetch", async () => {
+		let capturedBody = "";
+		const p = proxy({
+			fetch: (async (_input: string | URL | Request, init?: RequestInit) => {
+				capturedBody = await new Response(init?.body as ReadableStream<Uint8Array>).text();
+				return new Response("ok", {
+					status: 200,
+					headers: { "Content-Type": "application/x-git-upload-pack-result" },
+				});
+			}) as any,
+		});
+
+		const req = createMockNodeReq(
+			"POST",
+			"/github.com/user/repo.git/git-upload-pack",
+			{ "content-type": "application/x-git-upload-pack-request" },
+			[encoder.encode("hello "), encoder.encode("world")],
+		);
+		const res = createMockNodeRes();
+		p.nodeHandler(req, res);
+
+		await waitForNodeHandler();
+		expect(res.statusCode).toBe(200);
+		expect(capturedBody).toBe("hello world");
+	});
+
+	test("rejects oversized request bodies via configured limits", async () => {
+		const p = proxy({
+			limits: { maxRequestBytes: 4 },
+			fetch: (async (_input: string | URL | Request, init?: RequestInit) => {
+				await new Response(init?.body as ReadableStream<Uint8Array>).text();
+				return new Response("ok");
+			}) as any,
+		});
+		const req = createMockNodeReq(
+			"POST",
+			"/github.com/user/repo.git/git-upload-pack",
+			{ "content-type": "application/x-git-upload-pack-request" },
+			[encoder.encode("hello")],
+		);
+		const res = createMockNodeRes();
+		p.nodeHandler(req, res);
+
+		await waitForNodeHandler();
+		expect(res.statusCode).toBe(413);
+		expect(Buffer.concat(res.chunks).toString("utf8")).toBe("Request body too large");
+		expect(req.destroyed).toBe(true);
+	});
+
+	test("rejects oversized request bodies from content-length before reading", async () => {
+		const p = proxy({
+			limits: { maxRequestBytes: 4 },
+		});
+		const req = createMockNodeReq("POST", "/github.com/user/repo.git/git-upload-pack", {
+			"content-type": "application/x-git-upload-pack-request",
+			"content-length": "10",
+		});
+		const res = createMockNodeRes();
+		p.nodeHandler(req, res);
+
+		expect(res.statusCode).toBe(413);
+		expect(res.endData).toBe("Request body too large");
+		expect(req.destroyed).toBe(true);
+	});
+
+	test("streams upstream responses to the node client", async () => {
+		const upstreamBody = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(encoder.encode("chunk1"));
+				controller.enqueue(encoder.encode("chunk2"));
+				controller.close();
+			},
+		});
+		const p = proxy({
+			fetch: (async () =>
+				new Response(upstreamBody, {
+					status: 200,
+					headers: { "Content-Type": "application/x-git-upload-pack-advertisement" },
+				})) as any,
+		});
+		const req = createMockNodeReq(
+			"GET",
+			"/github.com/user/repo.git/info/refs?service=git-upload-pack",
+		);
+		const res = createMockNodeRes();
+		p.nodeHandler(req, res);
+
+		await waitForNodeHandler();
+		expect(res.statusCode).toBe(200);
+		expect(Buffer.concat(res.chunks).toString("utf8")).toBe("chunk1chunk2");
+	});
+
+	test("returns bad gateway when the node adapter encounters upstream errors", async () => {
+		const p = proxy({
+			fetch: (async () => {
+				throw new Error("explode");
+			}) as any,
+		});
+		const req = createMockNodeReq(
+			"GET",
+			"/github.com/user/repo.git/info/refs?service=git-upload-pack",
+		);
+		const res = createMockNodeRes();
+		p.nodeHandler(req, res);
+
+		await waitForNodeHandler();
+		expect(res.statusCode).toBe(502);
+		expect(Buffer.concat(res.chunks).toString("utf8")).toBe("Bad Gateway");
 	});
 });
 

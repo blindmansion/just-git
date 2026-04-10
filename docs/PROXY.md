@@ -2,7 +2,7 @@
 
 Stateless HTTP proxy that enables browser-based just-git clients to clone, fetch, and push against Git hosts like GitHub that don't serve CORS headers.
 
-GitHub's git smart HTTP endpoints actively reject browser `OPTIONS` preflight requests (405), so direct `fetch()` calls from the browser fail. The proxy sits between the browser and the upstream host, forwarding only legitimate git operations and injecting the CORS headers the browser requires.
+GitHub's git smart HTTP endpoints actively reject browser `OPTIONS` preflight requests (405), so direct `fetch()` calls from the browser fail. The proxy sits between the browser and the upstream host, forwarding only legitimate git operations, validating redirects, and injecting the CORS headers the browser requires.
 
 ```ts
 import { createProxy } from "just-git/proxy";
@@ -80,6 +80,17 @@ const proxy = createProxy({
 
   // Hosts to connect to via http:// instead of https://.
   insecureHosts: ["my-internal-git.local"],
+
+  // Node adapter request size limits. Default: 512 MiB
+  limits: {
+    maxRequestBytes: 128 * 1024 * 1024,
+  },
+
+  // Redirect handling. Default: { mode: "follow", maxHops: 5 }
+  redirects: {
+    mode: "follow",
+    maxHops: 3,
+  },
 });
 ```
 
@@ -93,7 +104,7 @@ Controls the `Access-Control-Allow-Origin` response header:
 
 - `"*"` (default) — allow any origin.
 - `"https://myapp.com"` — allow a single origin.
-- `["https://a.com", "https://b.com"]` — allow multiple origins. The proxy returns whichever matches the request's `Origin` header; falls back to the first entry if none match.
+- `["https://a.com", "https://b.com"]` — allow multiple origins. The proxy reflects the matching request origin. A mismatched `Origin` is rejected with 403. Requests without an `Origin` header still work, but no `Access-Control-Allow-Origin` header is added.
 
 ### `auth`
 
@@ -107,6 +118,20 @@ The `User-Agent` header sent to the upstream server. Defaults to `"git/just-git-
 
 Hosts listed here are connected to via `http://` instead of `https://`. All other hosts default to `https://`.
 
+### `limits.maxRequestBytes`
+
+Maximum request body size accepted by the Node.js adapter. The default is `512 * 1024 * 1024` bytes (512 MiB).
+
+The web-standard `fetch` handler streams request bodies directly. The Node.js adapter also streams request bodies now, but still enforces this limit for safety and returns `413 Request body too large` when it is exceeded.
+
+### `redirects`
+
+Controls upstream redirect handling:
+
+- `mode: "follow"` (default) — manually follows redirects that stay within the proxy's allowlist and still point to valid git smart HTTP endpoints.
+- `mode: "error"` — rejects any upstream redirect with `502`.
+- `maxHops` — maximum number of redirect hops to follow. Default: `5`.
+
 ## Security
 
 The proxy validates every request before forwarding:
@@ -119,6 +144,8 @@ The proxy validates every request before forwarding:
   - `OPTIONS` for CORS preflight
 - All other methods, paths, and content types are rejected with 403.
 - **Auth hook**: add API key checks, rate limiting, or session validation.
+- **Redirect validation**: redirect targets are checked against `allowed`, `insecureHosts`, and the smart HTTP endpoint rules before the proxy follows them.
+- **CORS/cache safety**: responses include `Vary` headers for `Origin`, `Authorization`, and `Git-Protocol` where appropriate so shared caches do not mix variants across callers.
 
 The proxy never parses or inspects pack data — it forwards the upstream response body as a stream.
 
@@ -143,7 +170,7 @@ const proxy = createProxy({ allowed: ["github.com"] });
 http.createServer(proxy.nodeHandler).listen(9999);
 ```
 
-The `nodeHandler` streams response bodies through to the client (unlike the server module's `nodeHandler` which buffers). This matters for large clone operations.
+The `nodeHandler` streams both request and response bodies. This keeps large pushes from being fully buffered in memory while still enforcing `limits.maxRequestBytes`.
 
 ### Cloudflare Workers / Deno Deploy
 
@@ -187,10 +214,12 @@ For every forwarded request, the proxy:
 
 1. Validates the request is a legitimate git operation
 2. Checks the upstream host against the `allowed` list
-3. Runs the `auth` hook if configured
-4. Rewrites `User-Agent` to `git/just-git-proxy` (required by GitHub)
-5. Forwards `Authorization`, `Content-Type`, `git-protocol`, and other headers
-6. Streams the upstream response body directly to the client
-7. Adds CORS headers (`Access-Control-Allow-Origin`, `Access-Control-Expose-Headers`) to the response
+3. Validates the browser `Origin` against `allowOrigin` when configured
+4. Runs the `auth` hook if configured, including for preflight `OPTIONS` requests
+5. Rewrites `User-Agent` to `git/just-git-proxy` (required by GitHub)
+6. Forwards `Authorization`, `Content-Type`, `git-protocol`, and other headers
+7. Optionally follows validated upstream redirects
+8. Streams the upstream response body directly to the client
+9. Adds CORS headers (`Access-Control-Allow-Origin`, `Access-Control-Expose-Headers`) and `Vary` headers to the response
 
-Preflight `OPTIONS` requests are handled entirely by the proxy — they never reach the upstream server.
+Preflight `OPTIONS` requests are handled entirely by the proxy — they never reach the upstream server — but they still go through request validation and the optional `auth` hook.

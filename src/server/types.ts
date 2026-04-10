@@ -1,8 +1,10 @@
 import type { GitRepo } from "../lib/types.ts";
 import type { NetworkPolicy, Rejection } from "../hooks.ts";
+import type { NodeHttpRequest, NodeHttpResponse } from "../node-http.ts";
 import type { CommitOptions, CommitResult } from "../repo/writing.ts";
 import type { Storage, CreateRepoOptions } from "./storage.ts";
 import type { GcOptions, GcResult } from "./gc.ts";
+export type { NodeHttpRequest, NodeHttpResponse } from "../node-http.ts";
 
 // ── Auth ─────────────────────────────────────────────────────────────
 
@@ -103,23 +105,6 @@ export interface SshChannel {
 	readonly writable: WritableStream<Uint8Array>;
 	/** Write a diagnostic/error message to the client's stderr. */
 	writeStderr?(data: Uint8Array): void;
-}
-
-// ── Node.js adapter types ───────────────────────────────────────────
-
-/** Node.js `http.IncomingMessage`-compatible request interface. */
-export interface NodeHttpRequest {
-	method?: string;
-	url?: string;
-	headers: Record<string, string | string[] | undefined>;
-	on(event: string, listener: (...args: any[]) => void): any;
-}
-
-/** Node.js `http.ServerResponse`-compatible response interface. */
-export interface NodeHttpResponse {
-	writeHead(statusCode: number, headers?: Record<string, string | string[]>): any;
-	write(chunk: any): any;
-	end(data?: string): any;
 }
 
 // ── Policy ──────────────────────────────────────────────────────────
