@@ -601,6 +601,7 @@ Options:
   --numstat                 Machine-readable insertions/deletions per file
   --graph                   Draw text-based graph of the commit history
   --first-parent            Follow only the first parent of merge commits
+  --skip <number>           Skip number of commits before starting to show output
   --date <string>           Date format: short, iso, iso-strict, relative, rfc, raw, unix, local, human, default
 ```
 
@@ -1152,4 +1153,5 @@ Options:
   -d, --delete            Delete a tag
   -f, --force             Replace an existing tag
   -l, --list              List tags matching pattern
+  --sort <string>         Sort order (e.g. creatordate, -creatordate, refname, -refname, version:refname, -version:refname)
 ```

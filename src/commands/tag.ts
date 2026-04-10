@@ -9,7 +9,7 @@ import {
 	requireGitContext,
 	requireRevision,
 } from "../lib/command-utils.ts";
-import { writeObject } from "../lib/object-db.ts";
+import { readCommit, readObject, readTag, writeObject } from "../lib/object-db.ts";
 import { serializeTag } from "../lib/objects/tag.ts";
 import {
 	deleteRef,
@@ -19,6 +19,7 @@ import {
 	resolveRef,
 	updateRef,
 } from "../lib/refs.ts";
+import type { GitRepo, ObjectId } from "../lib/types.ts";
 import { WM_MATCH, wildmatch } from "../lib/wildmatch.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 
@@ -35,6 +36,11 @@ export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 			delete: f().alias("d").describe("Delete a tag"),
 			force: f().alias("f").describe("Replace an existing tag"),
 			list: f().alias("l").describe("List tags matching pattern"),
+			sort: o
+				.string()
+				.describe(
+					"Sort order (e.g. creatordate, -creatordate, refname, -refname, version:refname, -version:refname)",
+				),
 		},
 		handler: async (args, ctx) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
@@ -63,7 +69,7 @@ export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 
 			// ── List tags with pattern (-l [<pattern>]) ─────────────────
 			if (args.list) {
-				return listTags(gitCtx, args.name || undefined);
+				return listTags(gitCtx, args.name || undefined, args.sort);
 			}
 
 			// ── Create tag ──────────────────────────────────────────────
@@ -132,29 +138,88 @@ export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			// ── List tags (no args) ─────────────────────────────────────
-			return listTags(gitCtx);
+			return listTags(gitCtx, undefined, args.sort);
 		},
 	});
 }
 
-async function listTags(gitCtx: Parameters<typeof listRefs>[0], pattern?: string) {
+async function listTags(gitCtx: GitRepo, pattern?: string, sort?: string) {
 	const refs = await listRefs(gitCtx, "refs/tags");
 	if (refs.length === 0) {
 		return { stdout: "", stderr: "", exitCode: 0 };
 	}
 
-	let names = refs.map((ref) => ref.name.replace("refs/tags/", ""));
+	let filtered = refs.map((ref) => ({ name: ref.name.replace("refs/tags/", ""), hash: ref.hash }));
 	if (pattern) {
-		names = names.filter((name) => wildmatch(pattern, name, 0) === WM_MATCH);
+		filtered = filtered.filter((t) => wildmatch(pattern, t.name, 0) === WM_MATCH);
 	}
 
-	if (names.length === 0) {
+	if (filtered.length === 0) {
 		return { stdout: "", stderr: "", exitCode: 0 };
 	}
 
+	if (sort) {
+		const reverse = sort.startsWith("-");
+		const key = reverse ? sort.slice(1) : sort;
+
+		if (key === "creatordate") {
+			const withDate = await Promise.all(
+				filtered.map(async (t) => ({
+					...t,
+					date: await getCreatorDate(gitCtx, t.hash),
+				})),
+			);
+			withDate.sort((a, b) => {
+				const d = a.date - b.date;
+				return d !== 0 ? d : a.name.localeCompare(b.name);
+			});
+			if (reverse) withDate.reverse();
+			filtered = withDate;
+		} else if (key === "version:refname" || key === "v:refname") {
+			filtered.sort((a, b) => compareVersions(a.name, b.name));
+			if (reverse) filtered.reverse();
+		} else if (key === "refname") {
+			filtered.sort((a, b) => a.name.localeCompare(b.name));
+			if (reverse) filtered.reverse();
+		}
+	}
+
 	return {
-		stdout: `${names.join("\n")}\n`,
+		stdout: `${filtered.map((t) => t.name).join("\n")}\n`,
 		stderr: "",
 		exitCode: 0,
 	};
+}
+
+async function getCreatorDate(ctx: GitRepo, hash: ObjectId): Promise<number> {
+	const raw = await readObject(ctx, hash);
+	if (raw.type === "tag") {
+		const tag = await readTag(ctx, hash);
+		return tag.tagger.timestamp;
+	}
+	try {
+		const commit = await readCommit(ctx, hash);
+		return commit.committer.timestamp;
+	} catch {
+		return 0;
+	}
+}
+
+function compareVersions(a: string, b: string): number {
+	const pa = a.replace(/^v/i, "").split(/[.\-+]/);
+	const pb = b.replace(/^v/i, "").split(/[.\-+]/);
+	const len = Math.max(pa.length, pb.length);
+	for (let i = 0; i < len; i++) {
+		const sa = pa[i] ?? "";
+		const sb = pb[i] ?? "";
+		const na = Number(sa);
+		const nb = Number(sb);
+		if (!Number.isNaN(na) && !Number.isNaN(nb)) {
+			if (na !== nb) return na - nb;
+		} else {
+			const cmp = sa.localeCompare(sb);
+			if (cmp !== 0) return cmp;
+		}
+	}
+	return 0;
 }

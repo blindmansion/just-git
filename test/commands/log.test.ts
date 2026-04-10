@@ -1391,4 +1391,71 @@ describe("git log", () => {
 			expect(result.stderr).toContain("unknown date format bogus");
 		});
 	});
+
+	describe("--skip", () => {
+		test("skips first N commits", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init && git add . && git commit -m 'first'");
+			await bash.exec("echo two > /repo/two.txt && git add . && git commit -m 'second'");
+			await bash.exec("echo three > /repo/three.txt && git add . && git commit -m 'third'");
+			const result = await bash.exec("git log --oneline --skip=1");
+			expect(result.exitCode).toBe(0);
+			const lines = result.stdout.trim().split("\n");
+			expect(lines).toHaveLength(2);
+			expect(lines[0]).toContain("second");
+			expect(lines[1]).toContain("first");
+		});
+
+		test("skip=0 shows all commits", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init && git add . && git commit -m 'first'");
+			await bash.exec("echo two > /repo/two.txt && git add . && git commit -m 'second'");
+			const result = await bash.exec("git log --oneline --skip=0");
+			expect(result.exitCode).toBe(0);
+			const lines = result.stdout.trim().split("\n");
+			expect(lines).toHaveLength(2);
+		});
+
+		test("combines with -n for pagination", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init && git add . && git commit -m 'first'");
+			await bash.exec("echo two > /repo/two.txt && git add . && git commit -m 'second'");
+			await bash.exec("echo three > /repo/three.txt && git add . && git commit -m 'third'");
+			await bash.exec("echo four > /repo/four.txt && git add . && git commit -m 'fourth'");
+			const result = await bash.exec("git log --oneline --skip=1 -n 2");
+			expect(result.exitCode).toBe(0);
+			const lines = result.stdout.trim().split("\n");
+			expect(lines).toHaveLength(2);
+			expect(lines[0]).toContain("third");
+			expect(lines[1]).toContain("second");
+		});
+
+		test("skip greater than commit count yields empty output", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init && git add . && git commit -m 'first'");
+			const result = await bash.exec("git log --oneline --skip=5");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toBe("");
+		});
+
+		test("skip applies after filters", async () => {
+			const bash = createTestBash({
+				files: EMPTY_REPO,
+				env: {
+					...TEST_ENV,
+					GIT_AUTHOR_NAME: "Alice",
+					GIT_COMMITTER_NAME: "Alice",
+				},
+			});
+			await bash.exec("git init && git add . && git commit -m 'alice-1'");
+			await bash.exec("echo a2 > /repo/a2.txt && git add . && git commit -m 'alice-2'");
+			await bash.exec("echo a3 > /repo/a3.txt && git add . && git commit -m 'alice-3'");
+			const result = await bash.exec("git log --oneline --author=Alice --skip=1");
+			expect(result.exitCode).toBe(0);
+			const lines = result.stdout.trim().split("\n");
+			expect(lines).toHaveLength(2);
+			expect(lines[0]).toContain("alice-2");
+			expect(lines[1]).toContain("alice-1");
+		});
+	});
 });

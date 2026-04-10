@@ -387,4 +387,129 @@ describe("git tag", () => {
 			expect(results[1].stderr).toContain("tag name required");
 		});
 	});
+
+	describe("--sort", () => {
+		const env1 = { ...TEST_ENV, GIT_AUTHOR_DATE: "1000000001", GIT_COMMITTER_DATE: "1000000001" };
+		const env2 = { ...TEST_ENV, GIT_AUTHOR_DATE: "1000000002", GIT_COMMITTER_DATE: "1000000002" };
+		const env3 = { ...TEST_ENV, GIT_AUTHOR_DATE: "1000000003", GIT_COMMITTER_DATE: "1000000003" };
+
+		test("--sort=creatordate sorts lightweight tags by commit date", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: env1 });
+			await bash.exec("git init && git add . && git commit -m 'first'");
+			await bash.exec("echo two > /repo/two.txt && git add . && git commit -m 'second'", {
+				env: env2,
+			});
+			await bash.exec("echo three > /repo/three.txt && git add . && git commit -m 'third'", {
+				env: env3,
+			});
+			const c1 = (await bash.exec("git rev-parse HEAD~2")).stdout.trim();
+			const c3 = (await bash.exec("git rev-parse HEAD")).stdout.trim();
+			const c2 = (await bash.exec("git rev-parse HEAD~1")).stdout.trim();
+			await bash.exec(`git tag beta ${c2}`);
+			await bash.exec(`git tag alpha ${c3}`);
+			await bash.exec(`git tag gamma ${c1}`);
+
+			const result = await bash.exec("git tag --sort=creatordate");
+			expect(result.exitCode).toBe(0);
+			const lines = result.stdout.trim().split("\n");
+			expect(lines).toEqual(["gamma", "beta", "alpha"]);
+		});
+
+		test("--sort=-creatordate sorts newest first", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: env1 });
+			await bash.exec("git init && git add . && git commit -m 'first'");
+			await bash.exec("echo two > /repo/two.txt && git add . && git commit -m 'second'", {
+				env: env2,
+			});
+			await bash.exec(`git tag old HEAD~1`);
+			await bash.exec(`git tag new HEAD`);
+
+			const result = await bash.exec("git tag --sort=-creatordate");
+			expect(result.exitCode).toBe(0);
+			const lines = result.stdout.trim().split("\n");
+			expect(lines).toEqual(["new", "old"]);
+		});
+
+		test("--sort=creatordate uses tagger date for annotated tags", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: env1 });
+			await bash.exec("git init && git add . && git commit -m 'first'");
+			const env10 = { ...TEST_ENV, GIT_COMMITTER_DATE: "1000000010" };
+			const env20 = { ...TEST_ENV, GIT_COMMITTER_DATE: "1000000020" };
+			await bash.exec("git tag -a early-ann -m 'annotated early'", { env: env10 });
+			await bash.exec("git tag -a late-ann -m 'annotated late'", { env: env20 });
+
+			const result = await bash.exec("git tag --sort=creatordate");
+			expect(result.exitCode).toBe(0);
+			const lines = result.stdout.trim().split("\n");
+			expect(lines).toEqual(["early-ann", "late-ann"]);
+		});
+
+		test("--sort=version:refname sorts by semantic version", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init && git add . && git commit -m 'first'");
+			await bash.exec("git tag v1.10.0");
+			await bash.exec("git tag v1.2.0");
+			await bash.exec("git tag v2.0.0");
+			await bash.exec("git tag v1.2.1");
+
+			const result = await bash.exec("git tag --sort=version:refname");
+			expect(result.exitCode).toBe(0);
+			const lines = result.stdout.trim().split("\n");
+			expect(lines).toEqual(["v1.2.0", "v1.2.1", "v1.10.0", "v2.0.0"]);
+		});
+
+		test("--sort=-version:refname reverses version sort", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init && git add . && git commit -m 'first'");
+			await bash.exec("git tag v1.0");
+			await bash.exec("git tag v2.0");
+			await bash.exec("git tag v3.0");
+
+			const result = await bash.exec("git tag --sort=-version:refname");
+			expect(result.exitCode).toBe(0);
+			const lines = result.stdout.trim().split("\n");
+			expect(lines).toEqual(["v3.0", "v2.0", "v1.0"]);
+		});
+
+		test("--sort=refname sorts alphabetically (default behavior)", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init && git add . && git commit -m 'first'");
+			await bash.exec("git tag charlie");
+			await bash.exec("git tag alpha");
+			await bash.exec("git tag bravo");
+
+			const result = await bash.exec("git tag --sort=refname");
+			expect(result.exitCode).toBe(0);
+			const lines = result.stdout.trim().split("\n");
+			expect(lines).toEqual(["alpha", "bravo", "charlie"]);
+		});
+
+		test("--sort=-refname reverses alphabetical order", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init && git add . && git commit -m 'first'");
+			await bash.exec("git tag alpha");
+			await bash.exec("git tag bravo");
+
+			const result = await bash.exec("git tag --sort=-refname");
+			expect(result.exitCode).toBe(0);
+			const lines = result.stdout.trim().split("\n");
+			expect(lines).toEqual(["bravo", "alpha"]);
+		});
+
+		test("--sort works with -l pattern", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: env1 });
+			await bash.exec("git init && git add . && git commit -m 'first'");
+			await bash.exec("echo two > /repo/two.txt && git add . && git commit -m 'second'", {
+				env: env2,
+			});
+			await bash.exec("git tag release-2 HEAD~1");
+			await bash.exec("git tag release-1 HEAD");
+			await bash.exec("git tag other HEAD~1");
+
+			const result = await bash.exec("git tag -l 'release-*' --sort=creatordate");
+			expect(result.exitCode).toBe(0);
+			const lines = result.stdout.trim().split("\n");
+			expect(lines).toEqual(["release-2", "release-1"]);
+		});
+	});
 });

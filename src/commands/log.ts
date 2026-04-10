@@ -66,6 +66,7 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 			numstat: f().describe("Machine-readable insertions/deletions per file"),
 			graph: f().describe("Draw text-based graph of the commit history"),
 			firstParent: f().describe("Follow only the first parent of merge commits"),
+			skip: o.number().describe("Skip number of commits before starting to show output"),
 			date: o
 				.string()
 				.describe(
@@ -260,6 +261,7 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 					});
 
 			const collected: CommitEntry[] = [];
+			let skipRemaining = args.skip ?? 0;
 			for await (const entry of walker) {
 				if (maxCount !== undefined && collected.length >= maxCount) break;
 
@@ -279,6 +281,11 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 
 				if (grepPattern) {
 					if (!grepPattern(commit.message)) continue;
+				}
+
+				if (skipRemaining > 0) {
+					skipRemaining--;
+					continue;
 				}
 
 				collected.push(entry);
