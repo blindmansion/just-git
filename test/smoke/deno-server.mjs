@@ -59,7 +59,12 @@ const port = srv.addr.port;
 
 const clientFs = new InMemoryFs();
 const clientGit = createGit();
-const client = new Bash({ fs: clientFs, cwd: "/", customCommands: [clientGit] });
+const client = new Bash({
+	fs: clientFs,
+	cwd: "/",
+	customCommands: [clientGit],
+	defenseInDepth: false,
+});
 
 let r = await client.exec(`git clone http://localhost:${port}/repo /work`, { env: ENV });
 console.log("clone:", r.exitCode === 0 ? "OK" : "FAIL", r.stderr.trim());

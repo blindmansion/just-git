@@ -1,4 +1,4 @@
-import type { GitExtensions } from "../git.ts";
+import type { CommandContext, GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
 	ensureTrailingNewline,
@@ -38,6 +38,19 @@ import { generateLongFormStatus } from "../lib/status-format.ts";
 import { buildTreeFromIndex } from "../lib/tree-ops.ts";
 import { diffIndexToWorkTree, stageFile } from "../lib/worktree.ts";
 import { type Command, f, o } from "../parse/index.ts";
+
+function stdinToText(stdin: CommandContext["stdin"]): string {
+	const raw = stdin as string;
+	for (let i = 0; i < raw.length; i++) {
+		if (raw.charCodeAt(i) > 255) return raw;
+	}
+	const bytes = Uint8Array.from(raw, (ch) => ch.charCodeAt(0));
+	try {
+		return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+	} catch {
+		return raw;
+	}
+}
 
 export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("commit", {
@@ -171,7 +184,7 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 			}
 			if (!messageText && args.file !== undefined) {
 				if (args.file === "-") {
-					messageText = ctx.stdin;
+					messageText = stdinToText(ctx.stdin);
 				} else {
 					const filePath = args.file.startsWith("/") ? args.file : join(ctx.cwd, args.file);
 					if (!(await ctx.fs.exists(filePath))) {

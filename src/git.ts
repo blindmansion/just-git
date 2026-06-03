@@ -24,8 +24,18 @@ export interface CommandExecOptions {
 	replaceEnv?: boolean;
 	cwd: string;
 	stdin?: string;
+	stdinKind?: "text" | "bytes";
 	signal?: AbortSignal;
 }
+
+/**
+ * Standard input passed to commands.
+ *
+ * Standalone `Git.exec()` calls use plain text strings. Shell integrations such as
+ * just-bash v3 pass an opaque byte string instead, so command handlers must decode
+ * stdin at text-reading boundaries.
+ */
+export type CommandStdin = string | object;
 
 /**
  * Context provided to commands during execution.
@@ -36,7 +46,7 @@ export interface CommandContext {
 	fs: FileSystem;
 	cwd: string;
 	env: Map<string, string>;
-	stdin: string;
+	stdin: CommandStdin;
 	exec?: (command: string, options: CommandExecOptions) => Promise<ExecResult>;
 	signal?: AbortSignal;
 }
