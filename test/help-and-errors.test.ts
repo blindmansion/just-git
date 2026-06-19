@@ -114,11 +114,12 @@ describe("unimplemented commands", () => {
 		expect(unknown.stderr).toContain("is not a git command");
 	});
 
-	test("git worktree reports not implemented (not unknown command)", async () => {
-		const r = await git.exec("worktree list", { fs, cwd: "/" });
-		expect(r.exitCode).toBe(1);
-		expect(r.stderr).toContain("'worktree' is not implemented");
-		expect(r.stderr).toContain("git help");
+	test("git worktree now dispatches instead of reporting not implemented", async () => {
+		const cmd = "worktree list";
+		const r = await git.exec(cmd, { fs, cwd: "/" });
+		expect(r.stderr).not.toContain("is not implemented");
+		// It runs the command, which fails only because there is no repo here.
+		expect(r.stderr).toContain("not a git repository");
 	});
 
 	test("disabled check takes priority over unimplemented", async () => {

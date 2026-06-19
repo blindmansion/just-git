@@ -1,7 +1,7 @@
 import type { FileSystem } from "../fs.ts";
 import { type GitConfig, serializeConfig } from "./config.ts";
 import { PackedObjectStore } from "./object-store.ts";
-import { join } from "./path.ts";
+import { join, resolve } from "./path.ts";
 import { createSymbolicRef, FileSystemRefStore } from "./refs.ts";
 import type { GitContext } from "./types.ts";
 
@@ -22,25 +22,20 @@ export async function findRepo(fs: FileSystem, startPath: string): Promise<GitCo
 		if (await fs.exists(candidate)) {
 			const stat = await fs.stat(candidate);
 			if (stat.isDirectory) {
-				return {
-					fs,
-					gitDir: candidate,
-					workTree: current,
-					objectStore: new PackedObjectStore(fs, candidate),
-					refStore: new FileSystemRefStore(fs, candidate),
-				};
+				return buildContext(fs, candidate, candidate, current);
+			}
+			if (stat.isFile) {
+				// A `.git` file points at a linked worktree's private dir. A
+				// present-but-broken pointer is a hard stop, not a walk-up that
+				// would silently attach this cwd to an unrelated ancestor repo.
+				const resolved = await resolveGitDirFile(fs, candidate, current);
+				return resolved ? buildContext(fs, resolved.gitDir, resolved.commonDir, current) : null;
 			}
 		}
 
 		// Check for bare repo (HEAD + objects/ + refs/ in directory itself)
 		if (await isBareGitDir(fs, current)) {
-			return {
-				fs,
-				gitDir: current,
-				workTree: null,
-				objectStore: new PackedObjectStore(fs, current),
-				refStore: new FileSystemRefStore(fs, current),
-			};
+			return buildContext(fs, current, current, null);
 		}
 
 		// Move up one level
@@ -50,6 +45,60 @@ export async function findRepo(fs: FileSystem, startPath: string): Promise<GitCo
 		}
 		current = parent;
 	}
+}
+
+/**
+ * Build a GitContext from its resolved directories. The object store is rooted
+ * at the shared `commonDir`; the ref store at the private `gitDir`. For a plain
+ * repo, a bare repo, and the main worktree these coincide.
+ */
+function buildContext(
+	fs: FileSystem,
+	gitDir: string,
+	commonDir: string,
+	workTree: string | null,
+): GitContext {
+	return {
+		fs,
+		gitDir,
+		commonDir,
+		workTree,
+		objectStore: new PackedObjectStore(fs, commonDir),
+		refStore: new FileSystemRefStore(fs, gitDir, commonDir),
+	};
+}
+
+/**
+ * Resolve a `.git` *file* (a linked worktree's gitlink) to its private
+ * `gitDir` and shared `commonDir`.
+ *
+ * The file holds a `gitdir: <path>` pointer, resolved against the worktree
+ * directory. The private dir's `commondir` file (usually `../..`) names the
+ * shared dir; absent, `commonDir` falls back to `gitDir`. Returns null when
+ * the file is not a `gitdir:` pointer or names a target that does not exist.
+ */
+export async function resolveGitDirFile(
+	fs: FileSystem,
+	dotGitFile: string,
+	workTree: string,
+): Promise<{ gitDir: string; commonDir: string } | null> {
+	const content = (await fs.readFile(dotGitFile)).trim();
+	const prefix = "gitdir:";
+	if (!content.startsWith(prefix)) return null;
+
+	const pointer = content.slice(prefix.length).trim();
+	if (!pointer) return null;
+
+	const gitDir = resolve(workTree, pointer);
+	if (!(await fs.exists(gitDir))) return null;
+
+	const commonDirFile = join(gitDir, "commondir");
+	if (!(await fs.exists(commonDirFile))) {
+		return { gitDir, commonDir: gitDir };
+	}
+
+	const rel = (await fs.readFile(commonDirFile)).trim();
+	return { gitDir, commonDir: rel ? resolve(gitDir, rel) : gitDir };
 }
 
 /**
@@ -134,6 +183,7 @@ export async function initRepository(
 	const ctx: GitContext = {
 		fs,
 		gitDir,
+		commonDir: gitDir,
 		workTree,
 		objectStore: new PackedObjectStore(fs, gitDir),
 		refStore: new FileSystemRefStore(fs, gitDir),

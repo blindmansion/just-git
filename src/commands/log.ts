@@ -28,6 +28,7 @@ import { detectRenames, formatRenamePath, type RenamePair } from "../lib/rename-
 import { resolveRevision } from "../lib/rev-parse.ts";
 import { diffTrees } from "../lib/tree-ops.ts";
 import type { Commit, GitRepo, ObjectId, TreeDiffEntry } from "../lib/types.ts";
+import { worktreeHeadCommits } from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 
 type LogDiffFormat =
@@ -124,6 +125,9 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 					}
 					const headHash = await resolveHead(gitCtx);
 					if (headHash && !startHashes.includes(headHash)) startHashes.push(headHash);
+					for (const h of await worktreeHeadCommits(gitCtx)) {
+						if (!startHashes.includes(h)) startHashes.push(h);
+					}
 				}
 			} else if (args.all) {
 				const allRefs = await listRefs(gitCtx);
@@ -137,6 +141,7 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 				}
 				const headHash = await resolveHead(gitCtx);
 				if (headHash) hashes.add(headHash);
+				for (const h of await worktreeHeadCommits(gitCtx)) hashes.add(h);
 				startHashes = [...hashes];
 			} else if (revisions && revisions.length > 0) {
 				const hashes: ObjectId[] = [];

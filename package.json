@@ -53,6 +53,8 @@
 		"size": "tsup && bun -e \"const{gzipSync}=require('zlib'),{readFileSync}=require('fs'),b=readFileSync('dist/index.js'),g=gzipSync(b);console.log('dist/index.js  '+((b.length/1024).toFixed(1))+' kB');console.log('gzipped        '+((g.length/1024).toFixed(1))+' kB')\"",
 		"prepublishOnly": "bun run build",
 		"check": "bunx tsc --noEmit && bunx tsc --noEmit -p test/tsconfig.json && oxfmt && oxlint --fix",
+		"test": "bun test",
+		"test:coverage": "bun test --coverage",
 		"oracle": "bun test/oracle/cli.ts",
 		"browser-test": "bun test/smoke/serve-browser-test.ts",
 		"sandbox": "bun scripts/sandbox.ts",

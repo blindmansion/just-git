@@ -1,0 +1,519 @@
+import type { CommandContext, GitExtensions } from "../git.ts";
+import { guessRemoteBranch, maybeSetupTracking } from "../lib/checkout-utils.ts";
+import {
+	type CommandResult,
+	fatal,
+	hasStagedChanges,
+	isCommandError,
+	requireGitContext,
+} from "../lib/command-utils.ts";
+import { buildIndex, defaultStat, readIndex, writeIndex } from "../lib/index.ts";
+import { readCommit } from "../lib/object-db.ts";
+import { basename, resolve } from "../lib/path.ts";
+import { logRef, ZERO_HASH } from "../lib/reflog.ts";
+import { FileSystemRefStore, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
+import { resolveRevision } from "../lib/rev-parse.ts";
+import { flattenTree, flattenTreeToMap } from "../lib/tree-ops.ts";
+import type { GitContext } from "../lib/types.ts";
+import { diffIndexToWorkTree } from "../lib/worktree.ts";
+import {
+	branchCheckedOutAt,
+	deriveWorktreeId,
+	isWorktreeLocked,
+	listWorktrees,
+	lockWorktree,
+	readLockReason,
+	unlockWorktree,
+	type WorktreeHead,
+	type WorktreeInfo,
+	writeGitFile,
+	writeWorktreeAdmin,
+} from "../lib/worktree-admin.ts";
+import { materializeEntries } from "../repo/materialize.ts";
+import { a, type Command, f, o } from "../parse/index.ts";
+
+const USAGE =
+	"usage: git worktree add [<options>] <path> [<commit-ish>]\n" +
+	"   or: git worktree list [<options>]\n" +
+	"   or: git worktree lock [<options>] <worktree>\n" +
+	"   or: git worktree move <worktree> <new-path>\n" +
+	"   or: git worktree prune [<options>]\n" +
+	"   or: git worktree remove [<options>] <worktree>\n" +
+	"   or: git worktree repair [<path>...]\n" +
+	"   or: git worktree unlock <worktree>\n";
+
+export function registerWorktreeCommand(parent: Command, ext?: GitExtensions) {
+	const worktree = parent.command("worktree", {
+		description: "Manage multiple working trees",
+		handler: async () => ({ stdout: "", stderr: USAGE, exitCode: 129 }),
+	});
+
+	worktree.command("add", {
+		description: "Create a new working tree",
+		args: [
+			a.string().name("path").describe("Path for the new worktree"),
+			a.string().name("commitish").describe("Commit-ish to check out").optional(),
+		],
+		options: {
+			newBranch: o.string().alias("b").describe("Create a new branch"),
+			forceNewBranch: o.string().alias("B").describe("Create or reset a branch"),
+			detach: f().alias("d").describe("Detach HEAD in the new worktree"),
+			force: f().alias("f").count().describe("Override safety checks"),
+			lock: f().describe("Keep the worktree locked after creation"),
+			reason: o.string().describe("Reason for locking"),
+			noCheckout: f().describe("Do not populate the new worktree"),
+			quiet: f().alias("q").describe("Suppress progress output"),
+		},
+		handler: async (args, ctx) => {
+			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
+			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
+			return handleAdd(gitCtxOrError, ctx, args);
+		},
+	});
+
+	worktree.command("list", {
+		description: "List details of each working tree",
+		options: {
+			porcelain: f().describe("Machine-readable output"),
+		},
+		handler: async (args, ctx) => {
+			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
+			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
+			return handleList(gitCtxOrError, !!args.porcelain);
+		},
+	});
+
+	worktree.command("remove", {
+		description: "Remove a working tree",
+		args: [a.string().name("worktree").describe("Worktree to remove")],
+		options: { force: f().alias("f").count().describe("Override safety checks") },
+		handler: async (args, ctx) => {
+			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
+			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
+			return handleRemove(gitCtxOrError, ctx, args.worktree as string, (args.force as number) ?? 0);
+		},
+	});
+
+	worktree.command("prune", {
+		description: "Prune working tree information",
+		options: {
+			dryRun: f().alias("n").describe("Do not remove, just report"),
+			verbose: f().alias("v").describe("Report pruned worktrees"),
+		},
+		handler: async (args, ctx) => {
+			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
+			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
+			return handlePrune(gitCtxOrError, !!args.dryRun, !!args.verbose);
+		},
+	});
+
+	worktree.command("lock", {
+		description: "Lock a working tree to prevent pruning",
+		args: [a.string().name("worktree").describe("Worktree to lock")],
+		options: { reason: o.string().describe("Reason for locking") },
+		handler: async (args, ctx) => {
+			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
+			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
+			return handleLock(
+				gitCtxOrError,
+				ctx,
+				args.worktree as string,
+				args.reason as string | undefined,
+			);
+		},
+	});
+
+	worktree.command("unlock", {
+		description: "Unlock a working tree",
+		args: [a.string().name("worktree").describe("Worktree to unlock")],
+		handler: async (args, ctx) => {
+			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
+			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
+			return handleUnlock(gitCtxOrError, ctx, args.worktree as string);
+		},
+	});
+
+	for (const stub of ["move", "repair"]) {
+		worktree.command(stub, {
+			description: `(${stub} is not yet implemented)`,
+			args: [a.string().name("args").variadic().optional()],
+			handler: async () => fatal(`worktree ${stub} is not yet implemented`),
+		});
+	}
+}
+
+// ── add ─────────────────────────────────────────────────────────────
+
+async function handleAdd(
+	gitCtx: GitContext,
+	ctx: CommandContext,
+	args: Record<string, unknown>,
+): Promise<CommandResult> {
+	const worktreePath = resolve(ctx.cwd, args.path as string);
+	const force = ((args.force as number) ?? 0) > 0;
+
+	if (!force && (await pathExistsNonEmpty(gitCtx, worktreePath))) {
+		return fatal(`'${args.path}' already exists`);
+	}
+
+	const commitish = (args.commitish as string | undefined) ?? "HEAD";
+	const baseCommit = await resolveRevision(gitCtx, commitish);
+
+	const branchName = (args.newBranch ?? args.forceNewBranch) as string | undefined;
+	const resetBranch = args.forceNewBranch !== undefined;
+
+	const plan = await planHead(gitCtx, {
+		worktreePath,
+		commitish,
+		baseCommit,
+		detach: !!args.detach,
+		branchName,
+		resetBranch,
+		explicitCommitish: args.commitish !== undefined,
+		force,
+	});
+	if (isCommandError(plan)) return plan;
+
+	const id = await deriveWorktreeId(gitCtx, worktreePath);
+	const adminDir = await writeWorktreeAdmin(gitCtx, id, worktreePath, plan.head);
+	await writeGitFile(gitCtx, worktreePath, adminDir);
+
+	if (plan.createBranchRef && plan.checkoutCommit) {
+		await updateRef(gitCtx, plan.createBranchRef, plan.checkoutCommit);
+		await logRef(
+			gitCtx,
+			ctx.env,
+			plan.createBranchRef,
+			ZERO_HASH,
+			plan.checkoutCommit,
+			`branch: Created from ${commitish}`,
+		);
+		if (plan.trackingRef) {
+			await maybeSetupTracking(gitCtx, basename(plan.createBranchRef), plan.trackingRef);
+		}
+	}
+
+	if (!args.noCheckout && plan.checkoutCommit) {
+		await materializeWorktree(gitCtx, adminDir, worktreePath, plan.checkoutCommit);
+	}
+
+	if (args.lock) {
+		await lockWorktree(gitCtx, adminDir, args.reason as string | undefined);
+	}
+
+	if (args.quiet) return { stdout: "", stderr: "", exitCode: 0 };
+
+	let stdout = "";
+	if (plan.checkoutCommit) {
+		const subject = (await readCommit(gitCtx, plan.checkoutCommit)).message.split("\n", 1)[0];
+		stdout = `HEAD is now at ${plan.checkoutCommit.slice(0, 7)} ${subject}\n`;
+	}
+	const prefix = plan.orphan ? "No possible source branch, inferring '--orphan'\n" : "";
+	return { stdout, stderr: `${prefix}Preparing worktree (${plan.summary})\n`, exitCode: 0 };
+}
+
+interface HeadPlan {
+	head: WorktreeHead;
+	/** Branch ref to create at baseCommit, if any. */
+	createBranchRef: string | null;
+	/** Commit to materialise into the working tree. */
+	checkoutCommit: string | null;
+	summary: string;
+	/** A new branch on an unborn HEAD — nothing to check out, ref stays unborn. */
+	orphan?: boolean;
+	/** Remote-tracking ref to set as upstream for a DWIM'd local branch. */
+	trackingRef?: string;
+}
+
+/** Plan for a new branch on an unborn HEAD: no checkout, no ref yet. */
+function orphanPlan(ref: string, name: string): HeadPlan {
+	return {
+		head: { type: "branch", ref },
+		createBranchRef: null,
+		checkoutCommit: null,
+		summary: `new branch '${name}'`,
+		orphan: true,
+	};
+}
+
+async function planHead(
+	gitCtx: GitContext,
+	opts: {
+		worktreePath: string;
+		commitish: string;
+		baseCommit: string | null;
+		detach: boolean;
+		branchName: string | undefined;
+		resetBranch: boolean;
+		explicitCommitish: boolean;
+		force: boolean;
+	},
+): Promise<HeadPlan | CommandResult> {
+	const { baseCommit, detach, branchName, resetBranch, explicitCommitish, force } = opts;
+
+	if (detach) {
+		if (!baseCommit) return fatal(`invalid reference: ${opts.commitish}`);
+		return {
+			head: { type: "detached", hash: baseCommit },
+			createBranchRef: null,
+			checkoutCommit: baseCommit,
+			summary: `detached HEAD ${baseCommit.slice(0, 7)}`,
+		};
+	}
+
+	if (branchName) {
+		const ref = `refs/heads/${branchName}`;
+		if (!resetBranch && (await resolveRef(gitCtx, ref))) {
+			return fatal(`a branch named '${branchName}' already exists`);
+		}
+		const refusal = await refuseIfCheckedOut(gitCtx, ref, branchName, force);
+		if (refusal) return refusal;
+		if (!baseCommit) {
+			if (explicitCommitish) return fatal(`invalid reference: ${opts.commitish}`);
+			return orphanPlan(ref, branchName);
+		}
+		return {
+			head: { type: "branch", ref },
+			createBranchRef: ref,
+			checkoutCommit: baseCommit,
+			summary: `new branch '${branchName}'`,
+		};
+	}
+
+	// A bare name that is an existing branch is checked out; otherwise it
+	// detaches. With no commit-ish, DWIM a new branch named after the path.
+	const dwimName = explicitCommitish ? opts.commitish : basename(opts.worktreePath);
+	const ref = `refs/heads/${dwimName}`;
+	const branchTip = await resolveRef(gitCtx, ref);
+
+	if (branchTip) {
+		const refusal = await refuseIfCheckedOut(gitCtx, ref, dwimName, force);
+		if (refusal) return refusal;
+		return {
+			head: { type: "branch", ref },
+			createBranchRef: null,
+			checkoutCommit: branchTip,
+			summary: `checking out '${dwimName}'`,
+		};
+	}
+
+	if (explicitCommitish) {
+		// A bare name matching a unique remote branch DWIMs a tracking branch.
+		const guessed = await guessRemoteBranch(gitCtx, dwimName);
+		if (guessed) {
+			const tip = await resolveRevision(gitCtx, guessed.startPoint);
+			if (tip) {
+				return {
+					head: { type: "branch", ref },
+					createBranchRef: ref,
+					checkoutCommit: tip,
+					summary: `new branch '${dwimName}'`,
+					trackingRef: guessed.trackingRef,
+				};
+			}
+		}
+		if (!baseCommit) return fatal(`invalid reference: ${opts.commitish}`);
+		return {
+			head: { type: "detached", hash: baseCommit },
+			createBranchRef: null,
+			checkoutCommit: baseCommit,
+			summary: `detached HEAD ${baseCommit.slice(0, 7)}`,
+		};
+	}
+
+	if (!baseCommit) return orphanPlan(ref, dwimName);
+	return {
+		head: { type: "branch", ref },
+		createBranchRef: ref,
+		checkoutCommit: baseCommit,
+		summary: `new branch '${dwimName}'`,
+	};
+}
+
+async function refuseIfCheckedOut(
+	gitCtx: GitContext,
+	ref: string,
+	name: string,
+	force: boolean,
+): Promise<CommandResult | null> {
+	if (force) return null;
+	const usedAt = await branchCheckedOutAt(gitCtx, ref);
+	if (usedAt) return fatal(`'${name}' is already used by worktree at '${usedAt}'`);
+	return null;
+}
+
+async function materializeWorktree(
+	gitCtx: GitContext,
+	adminDir: string,
+	worktreePath: string,
+	commitHash: string,
+): Promise<void> {
+	const wtCtx: GitContext = {
+		...gitCtx,
+		gitDir: adminDir,
+		workTree: worktreePath,
+		refStore: new FileSystemRefStore(gitCtx.fs, adminDir, gitCtx.commonDir),
+	};
+
+	const commit = await readCommit(wtCtx, commitHash);
+	const entries = await flattenTree(wtCtx, commit.tree);
+	await materializeEntries(wtCtx, entries, gitCtx.fs, worktreePath);
+	await writeIndex(
+		wtCtx,
+		buildIndex(
+			entries.map((e) => ({
+				path: e.path,
+				mode: parseInt(e.mode, 8),
+				hash: e.hash,
+				stage: 0,
+				stat: defaultStat(),
+			})),
+		),
+	);
+}
+
+async function pathExistsNonEmpty(gitCtx: GitContext, path: string): Promise<boolean> {
+	if (!(await gitCtx.fs.exists(path))) return false;
+	const stat = await gitCtx.fs.stat(path);
+	if (!stat.isDirectory) return true;
+	return (await gitCtx.fs.readdir(path)).length > 0;
+}
+
+// ── list ────────────────────────────────────────────────────────────
+
+async function handleList(gitCtx: GitContext, porcelain: boolean): Promise<CommandResult> {
+	const worktrees = await listWorktrees(gitCtx);
+
+	if (porcelain) {
+		const blocks = worktrees.map((wt) => {
+			const lines = [`worktree ${wt.path}`];
+			if (wt.bare) {
+				lines.push("bare");
+			} else {
+				if (wt.head) lines.push(`HEAD ${wt.head}`);
+				lines.push(wt.branch ? `branch ${wt.branch}` : "detached");
+			}
+			if (wt.locked) lines.push(wt.lockReason ? `locked ${wt.lockReason}` : "locked");
+			if (wt.prunable) lines.push(`prunable ${wt.prunable}`);
+			return `${lines.join("\n")}\n`;
+		});
+		// Every block, including the last, is terminated by a blank line.
+		return { stdout: blocks.map((b) => `${b}\n`).join(""), stderr: "", exitCode: 0 };
+	}
+
+	const pad = Math.max(0, ...worktrees.map((wt) => wt.path.length));
+	const lines = worktrees.map((wt) => {
+		if (wt.bare) return `${wt.path.padEnd(pad)} (bare)`;
+		const sha = wt.head ? wt.head.slice(0, 7) : "0000000";
+		const label = wt.branch ? `[${wt.branch.replace("refs/heads/", "")}]` : "(detached HEAD)";
+		const annotation = wt.locked ? " locked" : wt.prunable ? " prunable" : "";
+		return `${wt.path.padEnd(pad)} ${sha} ${label}${annotation}`;
+	});
+	return { stdout: `${lines.join("\n")}\n`, stderr: "", exitCode: 0 };
+}
+
+// ── remove / prune / lock / unlock ──────────────────────────────────
+
+async function resolveWorktreeArg(
+	gitCtx: GitContext,
+	ctx: CommandContext,
+	arg: string,
+): Promise<WorktreeInfo | null> {
+	const target = resolve(ctx.cwd, arg);
+	const worktrees = await listWorktrees(gitCtx);
+	return (
+		worktrees.find(
+			(wt) => wt.path === target || wt.path === arg || basename(wt.adminDir) === arg,
+		) ?? null
+	);
+}
+
+async function handleRemove(
+	gitCtx: GitContext,
+	ctx: CommandContext,
+	arg: string,
+	force: number,
+): Promise<CommandResult> {
+	const wt = await resolveWorktreeArg(gitCtx, ctx, arg);
+	if (!wt) return fatal(`'${arg}' is not a working tree`);
+	if (wt.isMain) return fatal("'remove' cannot remove the main working tree");
+	if (wt.locked && force < 2) {
+		const reason = await readLockReason(gitCtx, wt.adminDir);
+		const firstLine = reason
+			? `cannot remove a locked working tree, lock reason: ${reason}`
+			: "cannot remove a locked working tree;";
+		return fatal(`${firstLine}\nuse 'remove -f -f' to override or unlock first`);
+	}
+	if (force < 1 && (await worktreeIsDirty(gitCtx, wt))) {
+		return fatal(`'${arg}' contains modified or untracked files, use --force to delete it`);
+	}
+
+	await gitCtx.fs.rm(wt.path, { recursive: true, force: true });
+	await gitCtx.fs.rm(wt.adminDir, { recursive: true, force: true });
+	return { stdout: "", stderr: "", exitCode: 0 };
+}
+
+/** Whether a worktree has staged or unstaged changes (or untracked files). */
+async function worktreeIsDirty(gitCtx: GitContext, wt: WorktreeInfo): Promise<boolean> {
+	const wtCtx: GitContext = {
+		...gitCtx,
+		gitDir: wt.adminDir,
+		workTree: wt.path,
+		refStore: new FileSystemRefStore(gitCtx.fs, wt.adminDir, gitCtx.commonDir),
+	};
+
+	const index = await readIndex(wtCtx);
+	if ((await diffIndexToWorkTree(wtCtx, index)).length > 0) return true;
+
+	const headHash = await resolveHead(wtCtx);
+	if (!headHash) return index.entries.length > 0;
+
+	const headMap = await flattenTreeToMap(wtCtx, (await readCommit(wtCtx, headHash)).tree);
+	return hasStagedChanges(index, headMap);
+}
+
+async function handlePrune(
+	gitCtx: GitContext,
+	dryRun: boolean,
+	verbose: boolean,
+): Promise<CommandResult> {
+	const out: string[] = [];
+	for (const wt of await listWorktrees(gitCtx)) {
+		if (wt.isMain || wt.locked || !wt.prunable) continue;
+
+		if (verbose || dryRun) out.push(`Removing worktrees/${basename(wt.adminDir)}: ${wt.prunable}`);
+		if (!dryRun) await gitCtx.fs.rm(wt.adminDir, { recursive: true, force: true });
+	}
+	return { stdout: out.length ? `${out.join("\n")}\n` : "", stderr: "", exitCode: 0 };
+}
+
+async function handleLock(
+	gitCtx: GitContext,
+	ctx: CommandContext,
+	arg: string,
+	reason: string | undefined,
+): Promise<CommandResult> {
+	const wt = await resolveWorktreeArg(gitCtx, ctx, arg);
+	if (!wt) return fatal(`'${arg}' is not a working tree`);
+	if (wt.isMain) return fatal("The main working tree cannot be locked or unlocked");
+	if (await isWorktreeLocked(gitCtx, wt.adminDir)) {
+		return fatal(`'${arg}' is already locked`);
+	}
+	await lockWorktree(gitCtx, wt.adminDir, reason);
+	return { stdout: "", stderr: "", exitCode: 0 };
+}
+
+async function handleUnlock(
+	gitCtx: GitContext,
+	ctx: CommandContext,
+	arg: string,
+): Promise<CommandResult> {
+	const wt = await resolveWorktreeArg(gitCtx, ctx, arg);
+	if (!wt) return fatal(`'${arg}' is not a working tree`);
+	if (wt.isMain) return fatal("The main working tree cannot be locked or unlocked");
+	if (!(await isWorktreeLocked(gitCtx, wt.adminDir))) {
+		return fatal(`'${arg}' is not locked`);
+	}
+	await unlockWorktree(gitCtx, wt.adminDir);
+	return { stdout: "", stderr: "", exitCode: 0 };
+}

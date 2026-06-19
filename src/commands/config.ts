@@ -216,7 +216,7 @@ async function handleUnset(
 }
 
 async function handleList(gitCtx: {
-	gitDir: string;
+	commonDir: string;
 	fs: { exists: (p: string) => Promise<boolean>; readFile: (p: string) => Promise<string> };
 	configOverrides?: { locked?: Record<string, string>; defaults?: Record<string, string> };
 }): Promise<{
@@ -224,7 +224,8 @@ async function handleList(gitCtx: {
 	stderr: string;
 	exitCode: number;
 }> {
-	const configPath = join(gitCtx.gitDir, "config");
+	// Config is shared across worktrees; read it from the common dir.
+	const configPath = join(gitCtx.commonDir, "config");
 	let raw = "";
 	if (await gitCtx.fs.exists(configPath)) {
 		raw = await gitCtx.fs.readFile(configPath);

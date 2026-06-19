@@ -33,16 +33,38 @@ const NOT_A_GIT_REPO = fatal("not a git repository (or any of the parent directo
 const NOT_A_WORK_TREE = fatal("this operation must be run in a work tree");
 
 /**
- * Resolve the git context for the current working directory.
- * Returns either a GitContext or a pre-built error result for
- * "not a git repository".
+ * Build a GitContext from pre-resolved extensions (objectStore, refStore,
+ * gitDir). `commonDir` defaults to `gitDir`. Operator-level extension fields
+ * are carried onto the context, but the resolved path and store fields always
+ * win — so an explicit `commonDir: undefined` cannot clobber the default. This
+ * is the single seam both `requireGitContext` and `Git.findRepo` use, so the
+ * two cannot drift.
+ */
+export function contextFromExtensions(fs: FileSystem, cwd: string, ext: GitExtensions): GitContext {
+	const gitDir = ext.gitDir;
+	if (!ext.objectStore || !ext.refStore || !gitDir) {
+		throw new Error("contextFromExtensions requires objectStore, refStore, and gitDir");
+	}
+
+	return {
+		...ext,
+		fs,
+		gitDir,
+		commonDir: ext.commonDir ?? gitDir,
+		workTree: ext.workTree ?? cwd,
+		objectStore: ext.objectStore,
+		refStore: ext.refStore,
+	};
+}
+
+/**
+ * Resolve the git context for the current working directory, returning either
+ * a GitContext or a pre-built "not a git repository" error.
  *
- * When `ext` is provided, the returned GitContext carries operator-level
- * extensions (hooks, credential provider, identity override).
- *
- * When extensions carry pre-resolved `objectStore`, `refStore`, and
- * `gitDir`, filesystem discovery via `findRepo` is skipped entirely —
- * no `.git` directory needs to exist on the VFS.
+ * When `ext` carries pre-resolved `objectStore`, `refStore`, and `gitDir`,
+ * filesystem discovery is skipped and the context is built from the extensions;
+ * otherwise the repo is discovered and the operator-level extensions are merged
+ * onto it (without an undefined `commonDir` clobbering the discovered one).
  */
 export async function requireGitContext(
 	fs: FileSystem,
@@ -50,20 +72,13 @@ export async function requireGitContext(
 	ext?: GitExtensions,
 ): Promise<GitContext | CommandResult> {
 	if (ext?.objectStore && ext?.refStore && ext?.gitDir) {
-		return {
-			fs,
-			gitDir: ext.gitDir,
-			workTree: ext.workTree ?? cwd,
-			objectStore: ext.objectStore,
-			refStore: ext.refStore,
-			...ext,
-		};
+		return contextFromExtensions(fs, cwd, ext);
 	}
 
 	const ctx = await findRepo(fs, cwd);
 	if (!ctx) return NOT_A_GIT_REPO;
 	if (!ext) return ctx;
-	return { ...ctx, ...ext };
+	return { ...ctx, ...ext, commonDir: ext.commonDir ?? ctx.commonDir };
 }
 
 export function isCommandError<T>(result: T | CommandResult): result is CommandResult {
