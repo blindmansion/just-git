@@ -5,7 +5,7 @@
 
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
 	DEFAULT_FILE_GEN_CONFIG,
 	type FileGenConfig,
@@ -59,7 +59,13 @@ export class RealGitHarness implements WalkHarness {
 		options?: { withRemote?: boolean },
 	): Promise<RealGitHarness> {
 		const homeDir = await mkdtemp(join(tmpdir(), "oracle-home-"));
-		const repoDir = await mkdtemp(join(tmpdir(), "oracle-git-"));
+		// Nest the repo one level down so sibling paths (e.g. a worktree added
+		// at `../wt-x`) land inside this trace's private temp dir — isolated
+		// from other traces and removed by cleanup — rather than in the shared
+		// system temp root.
+		const repoParent = await mkdtemp(join(tmpdir(), "oracle-git-"));
+		const repoDir = join(repoParent, "repo");
+		await mkdir(repoDir, { recursive: true });
 		const env = buildRealGitEnv(homeDir);
 
 		let remoteBaseUrl: string | null = null;
@@ -212,12 +218,16 @@ export class RealGitHarness implements WalkHarness {
 		// string gets mangled by sh -c (parens are shell syntax).
 		const result = await this.git("branch");
 		if (result.exitCode !== 0 || !result.stdout.trim()) return [];
-		return result.stdout
-			.trim()
-			.split("\n")
-			.map((line) => line.replace(/^\*?\s*/, "").trim())
-			.filter((name) => name.length > 0 && !name.startsWith("("))
-			.sort();
+		return (
+			result.stdout
+				.trim()
+				.split("\n")
+				// `git branch` prefixes the current branch with "* " and a branch
+				// checked out in another worktree with "+ "; strip either marker.
+				.map((line) => line.replace(/^[*+]?\s*/, "").trim())
+				.filter((name) => name.length > 0 && !name.startsWith("("))
+				.sort()
+		);
 	}
 
 	async getCurrentBranch(): Promise<string | null> {
@@ -268,6 +278,15 @@ export class RealGitHarness implements WalkHarness {
 		return result.stdout.trim().split("\n").filter(Boolean);
 	}
 
+	async listWorktrees(): Promise<string[]> {
+		const worktreesDir = join(this.repoDir, ".git", "worktrees");
+		try {
+			return (await readdir(worktreesDir)).sort();
+		} catch {
+			return [];
+		}
+	}
+
 	// ── Cleanup ──────────────────────────────────────────────────
 
 	async cleanup(): Promise<void> {
@@ -279,7 +298,7 @@ export class RealGitHarness implements WalkHarness {
 			await this.server.close();
 			this.server = null;
 		}
-		await rm(this.repoDir, { recursive: true, force: true });
+		await rm(dirname(this.repoDir), { recursive: true, force: true });
 		await rm(this.homeDir, { recursive: true, force: true });
 	}
 }

@@ -591,6 +591,7 @@ Examples:
 		operation: snap.operation,
 		workTreeHash: snap.workTreeHash,
 		stashHashes: snap.stashHashes ?? [],
+		worktrees: snap.worktrees ?? [],
 	};
 	const divergences = compare(oracleState, implState);
 

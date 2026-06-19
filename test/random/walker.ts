@@ -63,6 +63,7 @@ export async function queryState(harness: WalkHarness): Promise<QueryState> {
 		inRebaseConflict,
 		stashCount,
 		remotes,
+		worktrees,
 	] = await Promise.all([
 		harness.listWorkTreeFiles(),
 		harness.listBranches(),
@@ -74,6 +75,7 @@ export async function queryState(harness: WalkHarness): Promise<QueryState> {
 		harness.isInRebaseConflict(),
 		harness.getStashCount(),
 		harness.listRemotes(),
+		harness.listWorktrees(),
 	]);
 	return {
 		files,
@@ -86,6 +88,7 @@ export async function queryState(harness: WalkHarness): Promise<QueryState> {
 		inRebaseConflict,
 		stashCount,
 		remotes,
+		worktrees,
 	};
 }
 

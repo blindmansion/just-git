@@ -24,6 +24,7 @@ function toOracleState(snap: GitSnapshot): OracleState {
 		operation: snap.operation,
 		workTreeHash: snap.workTreeHash,
 		stashHashes: snap.stashHashes,
+		worktrees: snap.worktrees,
 	};
 }
 
@@ -266,6 +267,7 @@ export class BatchChecker {
 	private static worktreePathStderrMatches(expected: string, actual: string): boolean {
 		const patterns: [RegExp, string][] = [
 			[/used by worktree at '[^']+'/g, "used by worktree at '<path>'"],
+			[/checked out at '[^']+'/g, "checked out at '<path>'"],
 			[/is being rebased at \S+/g, "is being rebased at <path>"],
 		];
 		const norm = (s: string) => {

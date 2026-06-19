@@ -16,6 +16,17 @@
  *             The test continues past warnings.
  */
 
+/**
+ * A linked worktree's private state, keyed by its admin-dir id (path-agnostic,
+ * so real-git temp paths and the in-memory VFS compare equal). Captures the
+ * HEAD each worktree points at — the per-worktree state the shared refs do not.
+ */
+export interface WorktreeSnapshot {
+	id: string;
+	headRef: string | null;
+	headSha: string | null;
+}
+
 export interface ImplState {
 	headRef: string | null;
 	headSha: string | null;
@@ -28,6 +39,8 @@ export interface ImplState {
 	operationStateHash: string | null;
 	/** Stash commit hashes in stack order (newest first). */
 	stashHashes: string[];
+	/** Linked worktrees, sorted by id. */
+	worktrees: WorktreeSnapshot[];
 }
 
 export interface OracleState {
@@ -38,6 +51,8 @@ export interface OracleState {
 	workTreeHash: string;
 	/** Stash commit hashes in stack order (newest first). */
 	stashHashes: string[];
+	/** Linked worktrees, sorted by id. */
+	worktrees: WorktreeSnapshot[];
 }
 
 export type DivergenceSeverity = "error" | "warn";
@@ -109,6 +124,10 @@ function classifySeverity(
 
 	// Stash differences are errors
 	if (field.startsWith("stash:")) return "error";
+
+	// A linked worktree pointing at the wrong branch/commit, or missing/extra,
+	// is a real behavioural difference.
+	if (field.startsWith("worktree:")) return "error";
 
 	return "error";
 }
@@ -229,6 +248,30 @@ export function compare(oracle: OracleState, impl: ImplState): Divergence[] {
 		}
 	}
 
+	// Linked worktrees — compare each one's private HEAD, keyed by admin id.
+	const oracleWt = new Map(oracle.worktrees.map((w) => [w.id, w]));
+	const implWt = new Map(impl.worktrees.map((w) => [w.id, w]));
+
+	for (const [id, w] of oracleWt) {
+		const iw = implWt.get(id);
+		if (iw === undefined) {
+			push(`worktree:${id}`, w.headRef ?? w.headSha, "<missing>");
+			continue;
+		}
+		if (w.headRef !== iw.headRef) {
+			push(`worktree:${id}:head_ref`, w.headRef, iw.headRef);
+		}
+		if (w.headSha !== iw.headSha) {
+			push(`worktree:${id}:head_sha`, w.headSha, iw.headSha);
+		}
+	}
+
+	for (const [id, w] of implWt) {
+		if (!oracleWt.has(id)) {
+			push(`worktree:${id}`, "<missing>", w.headRef ?? w.headSha);
+		}
+	}
+
 	return divergences;
 }
 
@@ -287,6 +330,14 @@ export function matches(oracle: OracleState, impl: ImplState): boolean {
 	if (oracle.stashHashes.length !== impl.stashHashes.length) return false;
 	for (let i = 0; i < oracle.stashHashes.length; i++) {
 		if (oracle.stashHashes[i] !== impl.stashHashes[i]) return false;
+	}
+
+	// Linked worktrees, keyed by admin id
+	if (oracle.worktrees.length !== impl.worktrees.length) return false;
+	const implWt = new Map(impl.worktrees.map((w) => [w.id, w]));
+	for (const w of oracle.worktrees) {
+		const iw = implWt.get(w.id);
+		if (!iw || iw.headRef !== w.headRef || iw.headSha !== w.headSha) return false;
 	}
 
 	return true;

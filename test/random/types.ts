@@ -20,7 +20,8 @@ export type ActionCategory =
 	| "config"
 	| "conflict-resolution"
 	| "diagnostic"
-	| "maintenance";
+	| "maintenance"
+	| "worktree";
 
 // ── Fuzz config ──────────────────────────────────────────────────────
 

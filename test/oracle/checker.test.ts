@@ -61,6 +61,7 @@ function implStateToSnapshot(state: ImplState): GitSnapshot {
 		},
 		workTreeHash: state.workTreeHash,
 		stashHashes: [...state.stashHashes],
+		worktrees: [...state.worktrees],
 	};
 }
 

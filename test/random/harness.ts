@@ -37,6 +37,8 @@ export interface QueryState {
 	stashCount: number;
 	/** Configured remote names (e.g. ["origin"]). */
 	remotes: string[];
+	/** Linked worktree ids (admin-dir names under .git/worktrees), sorted. */
+	worktrees: string[];
 }
 
 // ── WalkHarness interface ────────────────────────────────────────────
@@ -76,6 +78,8 @@ export interface WalkHarness {
 	hasCommits(): Promise<boolean>;
 	getStashCount(): Promise<number>;
 	listRemotes(): Promise<string[]>;
+	/** Linked worktree ids (admin-dir names under .git/worktrees), sorted. */
+	listWorktrees(): Promise<string[]>;
 }
 
 // ── Default environment ──────────────────────────────────────────────
@@ -314,5 +318,11 @@ export class VirtualHarness implements WalkHarness {
 		const result = await this.bash.exec("git remote");
 		if (result.exitCode !== 0 || !result.stdout.trim()) return [];
 		return result.stdout.trim().split("\n").filter(Boolean);
+	}
+
+	async listWorktrees(): Promise<string[]> {
+		const worktreesDir = `${this.vfsRoot}/.git/worktrees`;
+		if (!(await this.bash.fs.exists(worktreesDir))) return [];
+		return (await this.bash.fs.readdir(worktreesDir)).sort();
 	}
 }

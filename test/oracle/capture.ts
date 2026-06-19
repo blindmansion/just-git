@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { GitCommandError, RealGit } from "../real-git";
-import { normalizeRebaseField } from "./compare";
+import { normalizeRebaseField, type WorktreeSnapshot } from "./compare";
 
 /**
  * Run `git` with the given arguments in a repo directory under an isolated
@@ -16,7 +16,7 @@ import { normalizeRebaseField } from "./compare";
 async function run(
 	args: string[],
 	cwd: string,
-	env?: Record<string, string>,
+	env?: Record<string, string>
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
 	try {
 		return await RealGit.in(cwd, env ? { env } : undefined).execAsync(args);
@@ -35,7 +35,10 @@ export interface HeadState {
 	headSha: string | null;
 }
 
-async function captureHead(repoDir: string, env?: Record<string, string>): Promise<HeadState> {
+async function captureHead(
+	repoDir: string,
+	env?: Record<string, string>
+): Promise<HeadState> {
 	// Read raw HEAD to determine if symbolic or detached
 	const headContent = (await Bun.file(`${repoDir}/.git/HEAD`).text()).trim();
 
@@ -54,8 +57,15 @@ export interface RefEntry {
 	sha: string;
 }
 
-async function captureRefs(repoDir: string, env?: Record<string, string>): Promise<RefEntry[]> {
-	const result = await run(["for-each-ref", "--format=%(objectname) %(refname)"], repoDir, env);
+async function captureRefs(
+	repoDir: string,
+	env?: Record<string, string>
+): Promise<RefEntry[]> {
+	const result = await run(
+		["for-each-ref", "--format=%(objectname) %(refname)"],
+		repoDir,
+		env
+	);
 	if (result.exitCode !== 0 || !result.stdout.trim()) return [];
 
 	return result.stdout
@@ -82,7 +92,7 @@ export interface IndexEntry {
 
 export async function captureIndex(
 	repoDir: string,
-	env?: Record<string, string>,
+	env?: Record<string, string>
 ): Promise<IndexEntry[]> {
 	const result = await run(["ls-files", "--stage"], repoDir, env);
 	if (result.exitCode !== 0 || !result.stdout.trim()) return [];
@@ -225,7 +235,7 @@ async function hashWorkTree(repoDir: string): Promise<string> {
 async function walkDirHash(
 	dirPath: string,
 	prefix: string,
-	hash: ReturnType<typeof createHash>,
+	hash: ReturnType<typeof createHash>
 ): Promise<void> {
 	let entries: string[];
 	try {
@@ -253,7 +263,9 @@ async function walkDirHash(
  * Capture all working tree files with full content (excluding .git/).
  * Only needed on mismatch — call hashWorkTree for the fast path.
  */
-export async function captureWorkTree(repoDir: string): Promise<WorkTreeFile[]> {
+export async function captureWorkTree(
+	repoDir: string
+): Promise<WorkTreeFile[]> {
 	const files: WorkTreeFile[] = [];
 	await walkDirCollect(repoDir, "", files);
 	return files;
@@ -262,7 +274,7 @@ export async function captureWorkTree(repoDir: string): Promise<WorkTreeFile[]> 
 async function walkDirCollect(
 	dirPath: string,
 	prefix: string,
-	files: WorkTreeFile[],
+	files: WorkTreeFile[]
 ): Promise<void> {
 	let entries: string[];
 	try {
@@ -293,11 +305,51 @@ async function walkDirCollect(
  */
 async function captureStashHashes(
 	repoDir: string,
-	env?: Record<string, string>,
+	env?: Record<string, string>
 ): Promise<string[]> {
 	const result = await run(["stash", "list", "--format=%H"], repoDir, env);
 	if (result.exitCode !== 0 || !result.stdout.trim()) return [];
 	return result.stdout.trim().split("\n");
+}
+
+// ── Linked worktrees ─────────────────────────────────────────────
+
+/**
+ * Capture each linked worktree's private HEAD, keyed by its admin-dir id
+ * (the directory name under `.git/worktrees`). The id is path-agnostic, so a
+ * real-git temp checkout and the in-memory VFS produce comparable keys. A
+ * worktree on a branch resolves the (shared) branch tip; a detached one
+ * reports the commit its HEAD pins directly.
+ */
+async function captureWorktrees(
+	repoDir: string,
+	env?: Record<string, string>
+): Promise<WorktreeSnapshot[]> {
+	const worktreesDir = `${repoDir}/.git/worktrees`;
+	let ids: string[];
+	try {
+		ids = await readdir(worktreesDir);
+	} catch {
+		return [];
+	}
+
+	const snapshots: WorktreeSnapshot[] = [];
+	for (const id of ids.sort()) {
+		const raw = await safeReadFile(`${worktreesDir}/${id}/HEAD`);
+		if (raw === null) continue;
+		const head = raw.trim();
+
+		if (!head.startsWith("ref: ")) {
+			snapshots.push({ id, headRef: null, headSha: head });
+			continue;
+		}
+
+		const ref = head.slice("ref: ".length);
+		const resolved = await run(["rev-parse", ref], repoDir, env);
+		const headSha = resolved.exitCode === 0 ? resolved.stdout.trim() : null;
+		snapshots.push({ id, headRef: head, headSha });
+	}
+	return snapshots;
 }
 
 // ── Full snapshot capture ────────────────────────────────────────
@@ -311,6 +363,8 @@ export interface GitSnapshot {
 	workTreeHash: string;
 	/** Stash commit hashes in stack order (newest first). */
 	stashHashes: string[];
+	/** Linked worktrees' private HEADs, sorted by admin id. */
+	worktrees: WorktreeSnapshot[];
 }
 
 /**
@@ -323,15 +377,17 @@ export interface GitSnapshot {
  */
 export async function captureSnapshot(
 	repoDir: string,
-	env?: Record<string, string>,
+	env?: Record<string, string>
 ): Promise<GitSnapshot> {
-	const [head, refs, index, operation, workTreeHash, stashHashes] = await Promise.all([
-		captureHead(repoDir, env),
-		captureRefs(repoDir, env),
-		captureIndex(repoDir, env),
-		captureOperation(repoDir),
-		hashWorkTree(repoDir),
-		captureStashHashes(repoDir, env),
-	]);
-	return { head, refs, index, operation, workTreeHash, stashHashes };
+	const [head, refs, index, operation, workTreeHash, stashHashes, worktrees] =
+		await Promise.all([
+			captureHead(repoDir, env),
+			captureRefs(repoDir, env),
+			captureIndex(repoDir, env),
+			captureOperation(repoDir),
+			hashWorkTree(repoDir),
+			captureStashHashes(repoDir, env),
+			captureWorktrees(repoDir, env),
+		]);
+	return { head, refs, index, operation, workTreeHash, stashHashes, worktrees };
 }

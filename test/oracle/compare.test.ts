@@ -19,6 +19,7 @@ function baseOracleState(): OracleState {
 		},
 		workTreeHash: "tree-hash",
 		stashHashes: [],
+		worktrees: [],
 	};
 }
 
@@ -36,6 +37,7 @@ function baseImplState(): ImplState {
 		activeOperation: null,
 		operationStateHash: null,
 		stashHashes: [],
+		worktrees: [],
 	};
 }
 

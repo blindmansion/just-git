@@ -11,7 +11,7 @@
  * Custom configurations can import generateTraces() directly.
  */
 
-import { ALL_ACTIONS, NETWORK_ACTIONS } from "../random/actions/index";
+import { ALL_ACTIONS, NETWORK_ACTIONS, WORKTREE_ACTIONS } from "../random/actions/index";
 import {
 	DEFAULT_FILE_GEN_CONFIG,
 	DEFAULT_GITIGNORE_PATTERNS,
@@ -242,6 +242,9 @@ class RecordingHarness implements WalkHarness {
 	}
 	listRemotes() {
 		return this.inner.listRemotes();
+	}
+	listWorktrees() {
+		return this.inner.listWorktrees();
 	}
 }
 
@@ -568,6 +571,19 @@ export const PRESETS: Record<string, Preset> = {
 	/** Heavy on merge operations. */
 	"merge-heavy": {
 		actions: boostCategory(ALL_ACTIONS, "merge", 3),
+	},
+
+	/**
+	 * Worktree-focused: core daily-use commands plus worktree add/remove/prune,
+	 * with the worktree category boosted so linked worktrees are created and
+	 * operated on frequently. Exercises per-worktree HEAD state and the
+	 * cross-worktree porcelain guards (a branch checked out in a sibling
+	 * worktree refusing checkout/switch/delete in the main one).
+	 */
+	worktree: {
+		actions: boostCategory([...CORE_ACTIONS, ...WORKTREE_ACTIONS], "worktree", 4),
+		chaosRate: 0.05,
+		fuzz: FUZZ_LIGHT,
 	},
 
 	/** Cherry-pick focused. */
