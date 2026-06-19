@@ -14,6 +14,7 @@ import {
 	resolveAllFiles,
 } from "../random/file-gen";
 import { DEFAULT_TEST_ENV, type ExecResult, type WalkHarness } from "../random/harness";
+import { isolatedGitEnv } from "../real-git";
 import { isCommitCommand } from "./fileops";
 import { createServer, MemoryStorage, type GitServer } from "../../src/server/index";
 
@@ -28,20 +29,7 @@ export function buildRealGitEnv(
 	homeDir: string,
 	overrides?: Record<string, string>,
 ): Record<string, string> {
-	return {
-		PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/local/bin",
-		GIT_CONFIG_NOSYSTEM: "1",
-		GIT_CONFIG_GLOBAL: "/dev/null",
-		GIT_CONFIG_COUNT: "2",
-		GIT_CONFIG_KEY_0: "init.defaultBranch",
-		GIT_CONFIG_VALUE_0: "main",
-		GIT_CONFIG_KEY_1: "gc.auto",
-		GIT_CONFIG_VALUE_1: "0",
-		HOME: homeDir,
-		GIT_EDITOR: "true",
-		...DEFAULT_TEST_ENV,
-		...overrides,
-	};
+	return isolatedGitEnv(homeDir, { ...DEFAULT_TEST_ENV, ...overrides });
 }
 
 // ── RealGitHarness ───────────────────────────────────────────────

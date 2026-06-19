@@ -11,6 +11,7 @@ import { PackReader } from "../../src/lib/pack/pack-reader.ts";
 import { applyDelta, readPack } from "../../src/lib/pack/packfile.ts";
 import { deflate } from "../../src/lib/pack/zlib.ts";
 import { createHasher } from "../../src/lib/sha1.ts";
+import { isolatedGitEnv } from "../real-git.ts";
 
 const enc = new TextEncoder();
 
@@ -523,6 +524,7 @@ describe("delta interop", () => {
 				cwd: tmpDir,
 				stdout: "pipe",
 				stderr: "pipe",
+				env: isolatedGitEnv(tmpDir),
 			});
 			const exitCode = await proc.exited;
 			const stderr = await new Response(proc.stderr).text();

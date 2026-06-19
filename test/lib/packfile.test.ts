@@ -8,6 +8,7 @@ import {
 	writePack,
 } from "../../src/lib/pack/packfile.ts";
 import { deflate, inflate } from "../../src/lib/pack/zlib.ts";
+import { isolatedGitEnv } from "../real-git.ts";
 
 // ── zlib ─────────────────────────────────────────────────────────────
 
@@ -311,15 +312,12 @@ describe("readPackStreaming", () => {
 					cwd: tmpDir,
 					stdout: "pipe",
 					stderr: "pipe",
-					env: {
-						...process.env,
+					env: isolatedGitEnv(tmpDir, {
 						GIT_AUTHOR_NAME: "Test",
 						GIT_AUTHOR_EMAIL: "test@test.com",
 						GIT_COMMITTER_NAME: "Test",
 						GIT_COMMITTER_EMAIL: "test@test.com",
-						GIT_CONFIG_NOSYSTEM: "1",
-						GIT_CONFIG_GLOBAL: "/dev/null",
-					},
+					}),
 				});
 				await proc.exited;
 				return {
@@ -448,6 +446,7 @@ describe("real git interop", () => {
 				cwd: tmpDir,
 				stdout: "pipe",
 				stderr: "pipe",
+				env: isolatedGitEnv(tmpDir),
 			});
 			const exitCode = await proc.exited;
 			const stderr = await new Response(proc.stderr).text();
@@ -477,15 +476,12 @@ describe("real git interop", () => {
 					cwd: tmpDir,
 					stdout: "pipe",
 					stderr: "pipe",
-					env: {
-						...process.env,
+					env: isolatedGitEnv(tmpDir, {
 						GIT_AUTHOR_NAME: "Test",
 						GIT_AUTHOR_EMAIL: "test@test.com",
 						GIT_COMMITTER_NAME: "Test",
 						GIT_COMMITTER_EMAIL: "test@test.com",
-						GIT_CONFIG_NOSYSTEM: "1",
-						GIT_CONFIG_GLOBAL: "/dev/null",
-					},
+					}),
 				});
 				await proc.exited;
 				return {
@@ -550,15 +546,12 @@ describe("real git interop", () => {
 					cwd: tmpDir,
 					stdout: "pipe",
 					stderr: "pipe",
-					env: {
-						...process.env,
+					env: isolatedGitEnv(tmpDir, {
 						GIT_AUTHOR_NAME: "Test",
 						GIT_AUTHOR_EMAIL: "test@test.com",
 						GIT_COMMITTER_NAME: "Test",
 						GIT_COMMITTER_EMAIL: "test@test.com",
-						GIT_CONFIG_NOSYSTEM: "1",
-						GIT_CONFIG_GLOBAL: "/dev/null",
-					},
+					}),
 				});
 				await proc.exited;
 				return {

@@ -1,37 +1,20 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { RealGit } from "../real-git";
 import { normalizeRebaseField } from "./compare";
 
 /**
- * Run a git command in the given repo directory with an isolated environment.
- *
- * If `env` is provided, it's used directly (should already be the isolated env
- * from buildGitEnv). Otherwise falls back to a minimal isolated env — but callers
- * should prefer passing the pre-built env for consistency.
+ * Run `git` with the given arguments in a repo directory under an isolated
+ * environment. If `env` is provided (the harness's pre-built isolated env) it
+ * takes precedence; otherwise a fresh isolated environment is used.
  */
 async function run(
-	cmd: string[],
+	args: string[],
 	cwd: string,
 	env?: Record<string, string>,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-	const proc = Bun.spawn(cmd, {
-		cwd,
-		stdout: "pipe",
-		stderr: "pipe",
-		env: env ?? {
-			PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/local/bin",
-			GIT_CONFIG_NOSYSTEM: "1",
-			GIT_CONFIG_GLOBAL: "/dev/null",
-			HOME: cwd,
-		},
-	});
-	const [stdout, stderr] = await Promise.all([
-		new Response(proc.stdout).text(),
-		new Response(proc.stderr).text(),
-	]);
-	const exitCode = await proc.exited;
-	return { exitCode, stdout, stderr };
+	return RealGit.in(cwd, env ? { env } : undefined).execAsync(args);
 }
 
 // ── HEAD ──────────────────────────────────────────────────────────
@@ -49,7 +32,7 @@ async function captureHead(repoDir: string, env?: Record<string, string>): Promi
 
 	const headRef = headContent.startsWith("ref: ") ? headContent : null;
 
-	const resolved = await run(["git", "rev-parse", "HEAD"], repoDir, env);
+	const resolved = await run(["rev-parse", "HEAD"], repoDir, env);
 	const headSha = resolved.exitCode === 0 ? resolved.stdout.trim() : null;
 
 	return { headRef, headSha };
@@ -63,11 +46,7 @@ export interface RefEntry {
 }
 
 async function captureRefs(repoDir: string, env?: Record<string, string>): Promise<RefEntry[]> {
-	const result = await run(
-		["git", "for-each-ref", "--format=%(objectname) %(refname)"],
-		repoDir,
-		env,
-	);
+	const result = await run(["for-each-ref", "--format=%(objectname) %(refname)"], repoDir, env);
 	if (result.exitCode !== 0 || !result.stdout.trim()) return [];
 
 	return result.stdout
@@ -96,7 +75,7 @@ export async function captureIndex(
 	repoDir: string,
 	env?: Record<string, string>,
 ): Promise<IndexEntry[]> {
-	const result = await run(["git", "ls-files", "--stage"], repoDir, env);
+	const result = await run(["ls-files", "--stage"], repoDir, env);
 	if (result.exitCode !== 0 || !result.stdout.trim()) return [];
 
 	return result.stdout
@@ -307,7 +286,7 @@ async function captureStashHashes(
 	repoDir: string,
 	env?: Record<string, string>,
 ): Promise<string[]> {
-	const result = await run(["git", "stash", "list", "--format=%H"], repoDir, env);
+	const result = await run(["stash", "list", "--format=%H"], repoDir, env);
 	if (result.exitCode !== 0 || !result.stdout.trim()) return [];
 	return result.stdout.trim().split("\n");
 }
