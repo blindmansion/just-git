@@ -34,14 +34,13 @@ import {
 	readStateFile,
 	writeStateFile,
 } from "./operation-state.ts";
-import { computePatchId } from "./patch-id.ts";
 import {
 	advanceRebaseState,
 	cleanupRebaseState,
-	collectRebaseSymmetricPlan,
 	type RebaseState,
 	type RebaseTodoEntry,
 	readRebaseState,
+	selectRebaseCommits,
 	writeRebaseConflictMeta,
 	writeRebaseState,
 } from "./rebase.ts";
@@ -347,12 +346,13 @@ export async function performRebase(
 		return { stdout: "", stderr: preRebaseRej.message ?? "", exitCode: 1 };
 	}
 
-	// ── Compute commit range ─────────────────────────────────
-	const plan = await collectRebaseSymmetricPlan(gitCtx, upstreamHash, origHead);
-	const commits = plan.right;
+	// ── Compute commit range (+ cherry-pick dedup) ──────────
+	const selection = await selectRebaseCommits(gitCtx, upstreamHash, origHead, {
+		reapplyCherryPicks: options?.reapplyCherryPicks,
+	});
 
 	// ── Empty range: up-to-date or fast-forward ─────────────
-	if (commits.length === 0) {
+	if (selection.rawCount === 0) {
 		if (ontoHash !== origHead) {
 			const ffErr = await fastForwardTo(gitCtx, ontoHash, currentIndex, headName);
 			if (ffErr) return ffErr;
@@ -379,34 +379,10 @@ export async function performRebase(
 	}
 
 	// ── Cherry-pick skip detection ──────────────────────────
-	const skippedWarnings: string[] = [];
-	const filteredCommits: typeof commits = [];
-
-	if (options?.reapplyCherryPicks) {
-		filteredCommits.push(...commits);
-	} else {
-		const leftSideCommits = plan.left;
-		const leftPatchIds = new Set<string>();
-		for (const c of leftSideCommits) {
-			const pid = await computePatchId(gitCtx, c.hash);
-			if (pid) leftPatchIds.add(pid);
-		}
-
-		if (leftPatchIds.size > 0) {
-			for (const c of commits) {
-				const pid = await computePatchId(gitCtx, c.hash);
-				if (pid && leftPatchIds.has(pid)) {
-					skippedWarnings.push(
-						`warning: skipped previously applied commit ${abbreviateHash(c.hash)}`,
-					);
-				} else {
-					filteredCommits.push(c);
-				}
-			}
-		} else {
-			filteredCommits.push(...commits);
-		}
-	}
+	const skippedWarnings = selection.skipped.map(
+		(hash) => `warning: skipped previously applied commit ${abbreviateHash(hash)}`,
+	);
+	const filteredCommits = selection.commits;
 
 	let skipStderr = "";
 	if (skippedWarnings.length > 0) {

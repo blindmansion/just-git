@@ -3,15 +3,27 @@ import { isAncestor, type MergeConflict } from "../lib/merge.ts";
 import type { MergeDriver } from "../lib/merge-ort.ts";
 import { readCommit as _readCommit, writeObject } from "../lib/object-db.ts";
 import { serializeTree } from "../lib/objects/tree.ts";
+import { selectRebaseCommits } from "../lib/rebase.ts";
 import type { Commit, GitRepo, Identity } from "../lib/types.ts";
 import {
 	type ConflictedPath,
 	mergeTreesDetailed,
+	type MergeTreesDetailedResult,
+	mergeTreesDetailedFromTreeHashes,
 	mergeTreesFromTreeHashes,
 } from "./merging.ts";
 import { revParse } from "./reading.ts";
 import { createTreeAccessor, type TreeAccessor } from "./tree-accessor.ts";
-import { createCommit, type CommitIdentity, type TreeUpdate, updateTree } from "./writing.ts";
+import {
+	createCommit,
+	type CommitIdentity,
+	toIdentity,
+	type TreeUpdate,
+	updateTree,
+} from "./writing.ts";
+
+/** The well-known hash of the empty tree object. */
+const EMPTY_TREE_HASH = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 // ── Bisect ──────────────────────────────────────────────────────────
 
@@ -483,11 +495,7 @@ export type { ConflictedPath, BlobSide } from "./merging.ts";
  * - `{ content, mode? }` — set the path to explicit merged content. `mode`
  *   defaults to ours' mode, else theirs', else `"100644"`.
  */
-export type Resolution =
-	| "ours"
-	| "theirs"
-	| null
-	| { content: string | Uint8Array; mode?: string };
+export type Resolution = "ours" | "theirs" | null | { content: string | Uint8Array; mode?: string };
 
 /** Options for {@link merge}. */
 export interface MergeOptions {
@@ -603,45 +611,19 @@ export async function merge(repo: GitRepo, options: MergeOptions): Promise<Merge
 		mergeDriver: options.mergeDriver,
 	});
 
-	let finalTree = m.treeHash;
-
-	if (!m.clean) {
-		const resolutions = options.resolutions ?? {};
-		const conflictPaths = new Set(m.conflicts.map((c) => c.path));
-
-		// Guard against stale or misapplied resolution maps.
-		for (const path of Object.keys(resolutions)) {
-			if (!conflictPaths.has(path)) {
-				throw new Error(
-					`merge: resolution provided for '${path}', which is not a conflicted path`,
-				);
-			}
-		}
-
-		const updates: TreeUpdate[] = [];
-		const unresolved: string[] = [];
-		for (const c of m.conflicts) {
-			if (!Object.hasOwn(resolutions, c.path)) {
-				unresolved.push(c.path);
-				continue;
-			}
-			updates.push(await resolveConflict(repo, c, resolutions[c.path] as Resolution));
-		}
-
-		if (unresolved.length > 0) {
-			return {
-				status: "conflicts",
-				ours,
-				theirs,
-				treeHash: m.treeHash,
-				conflicts: m.conflicts,
-				messages: m.messages,
-				unresolved,
-			};
-		}
-
-		finalTree = await updateTree(repo, m.treeHash, updates);
+	const applied = await applyResolutions(repo, m, options.resolutions ?? {}, "merge");
+	if (applied.unresolved.length > 0) {
+		return {
+			status: "conflicts",
+			ours,
+			theirs,
+			treeHash: m.treeHash,
+			conflicts: m.conflicts,
+			messages: m.messages,
+			unresolved: applied.unresolved,
+		};
 	}
+	const finalTree = applied.treeHash;
 
 	const hash = await createCommit(repo, {
 		tree: finalTree,
@@ -686,6 +668,70 @@ async function resolveConflict(
 	return { path: conflict.path, hash, mode };
 }
 
+/** Outcome of applying a resolution map to a detailed merge result. */
+interface AppliedResolutions {
+	/**
+	 * Final tree hash. When every conflict is resolved (or the merge was clean),
+	 * this is the resolved tree. When some conflicts remain unresolved, this is
+	 * the conflicted result tree (with marker blobs) — i.e. `detailed.treeHash`.
+	 */
+	treeHash: string;
+	/** Conflicted paths with no resolution supplied. Empty when fully resolved. */
+	unresolved: string[];
+}
+
+/**
+ * Apply a post-hoc `resolutions` map to a detailed three-way merge result.
+ *
+ * Shared by {@link merge} and {@link rebase}: a clean merge passes through
+ * unchanged; for a conflicted merge, each resolved path is folded into the
+ * result tree and any conflicted path lacking a resolution is reported in
+ * `unresolved`. Throws when a resolution targets a path that isn't conflicted
+ * (guards against stale/misapplied maps). `label` prefixes that error.
+ */
+async function applyResolutions(
+	repo: GitRepo,
+	detailed: MergeTreesDetailedResult,
+	resolutions: Record<string, Resolution>,
+	label: string,
+): Promise<AppliedResolutions> {
+	if (detailed.clean) {
+		const stray = Object.keys(resolutions)[0];
+		if (stray !== undefined) {
+			throw new Error(
+				`${label}: resolution provided for '${stray}', which is not a conflicted path`,
+			);
+		}
+		return { treeHash: detailed.treeHash, unresolved: [] };
+	}
+
+	const conflictPaths = new Set(detailed.conflicts.map((c) => c.path));
+	for (const path of Object.keys(resolutions)) {
+		if (!conflictPaths.has(path)) {
+			throw new Error(
+				`${label}: resolution provided for '${path}', which is not a conflicted path`,
+			);
+		}
+	}
+
+	const updates: TreeUpdate[] = [];
+	const unresolved: string[] = [];
+	for (const c of detailed.conflicts) {
+		if (!Object.hasOwn(resolutions, c.path)) {
+			unresolved.push(c.path);
+			continue;
+		}
+		updates.push(await resolveConflict(repo, c, resolutions[c.path] as Resolution));
+	}
+
+	if (unresolved.length > 0) {
+		return { treeHash: detailed.treeHash, unresolved };
+	}
+
+	const finalTree = await updateTree(repo, detailed.treeHash, updates);
+	return { treeHash: finalTree, unresolved: [] };
+}
+
 /** Advance `refs/heads/<branch>` to `hash`, optionally guarded by CAS. */
 async function advanceBranchTo(
 	repo: GitRepo,
@@ -700,7 +746,7 @@ async function advanceBranchTo(
 			hash,
 		});
 		if (!ok) {
-			throw new Error(`merge: branch '${branch}' moved during merge (CAS failed)`);
+			throw new Error(`branch '${branch}' moved during operation (CAS failed)`);
 		}
 	} else {
 		await repo.refStore.writeRef(branchRef, { type: "direct", hash });
@@ -709,4 +755,301 @@ async function advanceBranchTo(
 	if (!head) {
 		await repo.refStore.writeRef("HEAD", { type: "symbolic", target: branchRef });
 	}
+}
+
+// ── Rebase ───────────────────────────────────────────────────────────
+
+/**
+ * Opaque, JSON-serializable continuation token returned with a conflicted
+ * rebase. Pass it back (with `resolutions`) to resume. The rebase layer keeps
+ * no on-repo state between calls — all replay progress lives in this token, so
+ * a conflicted rebase can be paused, serialized, and resumed in a later
+ * request/process.
+ */
+export interface RebaseContinuation {
+	/** Rebased tip built so far — the next commit replays onto this. */
+	head: string;
+	/** Original commit hashes still to replay; `remaining[0]` is the conflicted one. */
+	remaining: string[];
+	/** New commit hashes created so far, oldest first. */
+	rebased: string[];
+	/** Original hashes not reapplied (became empty after replay). */
+	dropped: string[];
+	/** Original hashes skipped as cherry-pick-equivalent during planning. */
+	skipped: string[];
+	/** Committer for every replayed commit, resolved once at rebase start. */
+	committer: Identity;
+	/** Branch ref to advance to the final tip on success. */
+	branch?: string;
+	/** CAS guard for the final branch advance. */
+	expectedOldHash?: string | null;
+	/** Conflict-marker labels. */
+	labels?: { ours?: string; theirs?: string };
+}
+
+/** Options for {@link rebase}. */
+export interface RebaseOptions {
+	/**
+	 * The branch/commit whose commits are replayed (hash, branch, tag, or
+	 * rev-parse expression). Required for a fresh rebase; ignored when resuming.
+	 */
+	rebase?: string;
+	/** Replay the commits in `upstream..rebase`. Required for a fresh rebase. */
+	upstream?: string;
+	/** Base to replay onto. Defaults to `upstream`. */
+	onto?: string;
+	/**
+	 * Committer for the replayed commits — the original author is preserved per
+	 * commit. Resolved once at the start, so every replayed commit (across
+	 * resumes) shares this committer. Required for a fresh rebase.
+	 */
+	committer?: CommitIdentity;
+	/** Branch ref to advance to the final tip on success. No ref update when omitted. */
+	branch?: string;
+	/** Skip patch-id cherry-pick dedup and replay every commit in the range. */
+	reapplyCherryPicks?: boolean;
+	/** Custom merge driver for content conflicts. Re-supply on every resume — it is not stored in the token. */
+	mergeDriver?: MergeDriver;
+	/** Conflict-marker labels for ours/theirs. */
+	labels?: { ours?: string; theirs?: string };
+	/** CAS guard for the final branch advance (see {@link MergeOptions.expectedOldHash}). */
+	expectedOldHash?: string | null;
+	/** Resume a conflicted rebase: the token from a prior `status: "conflicts"` result. */
+	continue?: RebaseContinuation;
+	/** Resolutions for the conflicted step, keyed by path. Only honored when resuming. */
+	resolutions?: Record<string, Resolution>;
+}
+
+/**
+ * Result of {@link rebase}.
+ *
+ * - `up-to-date` — nothing to replay and the branch already points at `onto`.
+ * - `ok` — all commits replayed; `head` is the new tip.
+ * - `conflicts` — a commit could not be applied cleanly; resolve and resume
+ *   with the returned `continuation`.
+ */
+export type RebaseResult =
+	| { status: "up-to-date"; head: string }
+	| {
+			status: "ok";
+			/** The final rebased tip. */
+			head: string;
+			/** New commit hashes, oldest first. */
+			rebased: string[];
+			/** Original hashes skipped as cherry-pick-equivalent. */
+			skipped: string[];
+			/** Original hashes dropped because they became empty after replay. */
+			dropped: string[];
+	  }
+	| {
+			status: "conflicts";
+			/** The original commit that conflicted. */
+			commit: string;
+			/** Conflicted result tree (marker blobs at conflicted paths). */
+			treeHash: string;
+			conflicts: ConflictedPath[];
+			messages: string[];
+			/** Conflicted paths with no resolution supplied. */
+			unresolved: string[];
+			/** Pass back (with `resolutions`) to resume. */
+			continuation: RebaseContinuation;
+	  };
+
+/** Mutable replay progress, shared by the fresh-start and resume paths. */
+interface RebaseReplayState {
+	head: string;
+	remaining: string[];
+	rebased: string[];
+	dropped: string[];
+	skipped: string[];
+	committer: Identity;
+	branch?: string;
+	expectedOldHash?: string | null;
+	labels?: { ours?: string; theirs?: string };
+}
+
+/**
+ * Replay a range of commits onto a new base, operating purely on the object
+ * store — no index, worktree, or on-disk state files.
+ *
+ * Range semantics match `git rebase` exactly: the commits in `upstream..rebase`
+ * are linearized oldest-first, merge commits are dropped, and commits already
+ * present on `upstream` (by patch-id) are skipped unless `reapplyCherryPicks`
+ * is set. Each commit is reapplied via a three-way merge (base = its parent,
+ * ours = the current rebased tip, theirs = the commit), preserving the original
+ * author. Commits that become empty after replay are dropped (unless they were
+ * already empty in the original history).
+ *
+ * Conflicts stop the rebase and are returned as data with a serializable
+ * `continuation`. Resolve them and call again with `{ continue, resolutions }`:
+ *
+ * ```ts
+ * let res = await rebase(repo, {
+ *   rebase: "feature", upstream: "main", branch: "feature",
+ *   committer: { name: "Bot", email: "bot@x.dev" },
+ * });
+ * while (res.status === "conflicts") {
+ *   const resolutions = Object.fromEntries(res.conflicts.map((c) => [c.path, "theirs" as const]));
+ *   res = await rebase(repo, { continue: res.continuation, resolutions });
+ * }
+ * ```
+ */
+export async function rebase(repo: GitRepo, options: RebaseOptions): Promise<RebaseResult> {
+	if (options.continue) {
+		const cont = options.continue;
+		const state: RebaseReplayState = {
+			head: cont.head,
+			remaining: [...cont.remaining],
+			rebased: [...cont.rebased],
+			dropped: [...cont.dropped],
+			skipped: [...cont.skipped],
+			committer: cont.committer,
+			branch: cont.branch,
+			expectedOldHash: cont.expectedOldHash,
+			labels: cont.labels,
+		};
+		return runRebaseReplay(repo, state, options.resolutions ?? {}, options.mergeDriver);
+	}
+
+	// ── Fresh rebase ─────────────────────────────────────────
+	if (!options.rebase || !options.upstream) {
+		throw new Error("rebase: `rebase` and `upstream` are required to start a rebase");
+	}
+	if (!options.committer) {
+		throw new Error("rebase: `committer` is required to start a rebase");
+	}
+
+	const headHash = await resolveToHash(repo, options.rebase);
+	const upstreamHash = await resolveToHash(repo, options.upstream);
+	const ontoHash = options.onto ? await resolveToHash(repo, options.onto) : upstreamHash;
+
+	const selection = await selectRebaseCommits(repo, upstreamHash, headHash, {
+		reapplyCherryPicks: options.reapplyCherryPicks,
+	});
+
+	const state: RebaseReplayState = {
+		head: ontoHash,
+		remaining: selection.commits.map((c) => c.hash),
+		rebased: [],
+		dropped: [],
+		skipped: selection.skipped,
+		committer: toIdentity(options.committer),
+		branch: options.branch,
+		expectedOldHash: options.expectedOldHash,
+		labels: options.labels,
+	};
+
+	if (state.remaining.length === 0) {
+		// Genuinely up-to-date: nothing to replay and nothing skipped, with the
+		// branch already at the target. Otherwise advance to `onto` (fast-forward).
+		if (ontoHash === headHash && state.skipped.length === 0) {
+			return { status: "up-to-date", head: headHash };
+		}
+		return finishRebaseReplay(repo, state);
+	}
+
+	return runRebaseReplay(repo, state, {}, options.mergeDriver);
+}
+
+/**
+ * Drive the replay loop from `state`. `firstResolutions` apply to the head of
+ * `remaining` (the conflicted commit when resuming); subsequent commits are
+ * replayed with no preset resolutions.
+ */
+async function runRebaseReplay(
+	repo: GitRepo,
+	state: RebaseReplayState,
+	firstResolutions: Record<string, Resolution>,
+	mergeDriver: MergeDriver | undefined,
+): Promise<RebaseResult> {
+	let isFirst = true;
+
+	while (state.remaining.length > 0) {
+		const commitHash = state.remaining[0] as string;
+		const commit = await _readCommit(repo, commitHash);
+		const parentTree =
+			commit.parents.length > 0
+				? (await _readCommit(repo, commit.parents[0] as string)).tree
+				: null;
+		const headTree = (await _readCommit(repo, state.head)).tree;
+
+		const detailed = await mergeTreesDetailedFromTreeHashes(
+			repo,
+			parentTree,
+			headTree,
+			commit.tree,
+			{
+				ours: state.labels?.ours,
+				theirs: state.labels?.theirs,
+				mergeDriver,
+			},
+		);
+
+		const resolutions = isFirst ? firstResolutions : {};
+		const applied = await applyResolutions(repo, detailed, resolutions, "rebase");
+
+		if (applied.unresolved.length > 0) {
+			return {
+				status: "conflicts",
+				commit: commitHash,
+				treeHash: detailed.treeHash,
+				conflicts: detailed.conflicts,
+				messages: detailed.messages,
+				unresolved: applied.unresolved,
+				continuation: snapshotContinuation(state),
+			};
+		}
+
+		// Drop commits that become empty after replay, unless they were
+		// already empty in the original history (those are preserved).
+		const originallyEmpty = commit.tree === (parentTree ?? EMPTY_TREE_HASH);
+		if (applied.treeHash === headTree && !originallyEmpty) {
+			state.dropped.push(commitHash);
+			state.remaining.shift();
+			isFirst = false;
+			continue;
+		}
+
+		const newHash = await createCommit(repo, {
+			tree: applied.treeHash,
+			parents: [state.head],
+			author: commit.author,
+			committer: state.committer,
+			message: commit.message,
+		});
+		state.rebased.push(newHash);
+		state.head = newHash;
+		state.remaining.shift();
+		isFirst = false;
+	}
+
+	return finishRebaseReplay(repo, state);
+}
+
+/** Advance the target branch (if any) to the final tip and return the result. */
+async function finishRebaseReplay(repo: GitRepo, state: RebaseReplayState): Promise<RebaseResult> {
+	if (state.branch) {
+		await advanceBranchTo(repo, state.branch, state.head, state.expectedOldHash);
+	}
+	return {
+		status: "ok",
+		head: state.head,
+		rebased: state.rebased,
+		skipped: state.skipped,
+		dropped: state.dropped,
+	};
+}
+
+function snapshotContinuation(state: RebaseReplayState): RebaseContinuation {
+	return {
+		head: state.head,
+		remaining: [...state.remaining],
+		rebased: [...state.rebased],
+		dropped: [...state.dropped],
+		skipped: [...state.skipped],
+		committer: state.committer,
+		branch: state.branch,
+		expectedOldHash: state.expectedOldHash,
+		labels: state.labels,
+	};
 }

@@ -31,7 +31,12 @@ function formatTimezone(offsetMinutes: number): string {
 	return `${sign}${hours}${mins}`;
 }
 
-function toIdentity(input: CommitIdentity): Identity {
+/**
+ * Resolve a {@link CommitIdentity} to a concrete {@link Identity}. A full
+ * `Identity` (with `timestamp`/`timezone`) passes through; the simplified
+ * `{ name, email, date? }` form is converted, defaulting `date` to now.
+ */
+export function toIdentity(input: CommitIdentity): Identity {
 	if ("timestamp" in input) return input as Identity;
 	const date = input.date ?? new Date();
 	return {

@@ -1,5 +1,6 @@
 import { readObject } from "./object-db.ts";
 import { parseCommit } from "./objects/commit.ts";
+import { computePatchId } from "./patch-id.ts";
 import { join } from "./path.ts";
 import type { Commit, GitContext, GitRepo, Identity, ObjectId } from "./types.ts";
 
@@ -170,7 +171,7 @@ function formatTodoList(entries: RebaseTodoEntry[]): string {
 
 // ── Planner ─────────────────────────────────────────────────────────
 
-interface PlannedCommit {
+export interface PlannedCommit {
 	hash: ObjectId;
 	commit: Commit;
 }
@@ -222,6 +223,66 @@ export async function collectRebaseSymmetricPlan(
 		right: await orderNonMergeSideFromStart(ctx, cache, head, rightOnly),
 		left: await orderNonMergeSideFromStart(ctx, cache, upstream, leftOnly),
 	};
+}
+
+/** Result of {@link selectRebaseCommits}. */
+export interface SelectedRebaseCommits {
+	/**
+	 * Non-merge commits to replay (the `upstream..head` "right" side), in
+	 * topological oldest-first order, with cherry-pick-equivalent commits
+	 * already removed unless `reapplyCherryPicks` was set.
+	 */
+	commits: PlannedCommit[];
+	/** Original hashes dropped because their patch-id matches a commit already on `upstream`. */
+	skipped: ObjectId[];
+	/** Size of the raw right side before cherry-pick dedup (0 means nothing to rebase). */
+	rawCount: number;
+}
+
+/**
+ * Plan a rebase: collect the commits in `upstream..head` to replay and detect
+ * which were already applied upstream (cherry-pick equivalence via patch-id).
+ *
+ * This is the shared front-end for both the CLI `git rebase` engine and the
+ * `just-git/repo` `rebase()` function, so the range semantics and dedup logic
+ * have a single source of truth. Merge commits are filtered by the planner;
+ * patch-id dedup is skipped entirely when `reapplyCherryPicks` is set.
+ */
+export async function selectRebaseCommits(
+	repo: GitRepo,
+	upstream: ObjectId,
+	head: ObjectId,
+	options?: { reapplyCherryPicks?: boolean },
+): Promise<SelectedRebaseCommits> {
+	const plan = await collectRebaseSymmetricPlan(repo, upstream, head);
+	const rawCount = plan.right.length;
+
+	if (options?.reapplyCherryPicks) {
+		return { commits: plan.right, skipped: [], rawCount };
+	}
+
+	const leftPatchIds = new Set<string>();
+	for (const c of plan.left) {
+		const pid = await computePatchId(repo, c.hash);
+		if (pid) leftPatchIds.add(pid);
+	}
+
+	if (leftPatchIds.size === 0) {
+		return { commits: plan.right, skipped: [], rawCount };
+	}
+
+	const commits: PlannedCommit[] = [];
+	const skipped: ObjectId[] = [];
+	for (const c of plan.right) {
+		const pid = await computePatchId(repo, c.hash);
+		if (pid && leftPatchIds.has(pid)) {
+			skipped.push(c.hash);
+		} else {
+			commits.push(c);
+		}
+	}
+
+	return { commits, skipped, rawCount };
 }
 
 async function collectReachable(

@@ -152,6 +152,46 @@ export async function mergeTreesDetailed(
 		options?.mergeDriver,
 	);
 
+	return toDetailedResult(result);
+}
+
+/**
+ * Like {@link mergeTreesFromTreeHashes}, but surfaces the per-side (stage
+ * 1/2/3) blob refs for each conflicted path — the from-tree-hashes counterpart
+ * to {@link mergeTreesDetailed}. Used by operations (cherry-pick-style replays
+ * such as `rebase`) that already have the base/ours/theirs trees and need
+ * resolvable conflict descriptors.
+ */
+export async function mergeTreesDetailedFromTreeHashes(
+	repo: GitRepo,
+	baseTree: string | null,
+	oursTree: string,
+	theirsTree: string,
+	options?: { ours?: string; theirs?: string; mergeDriver?: MergeDriver },
+): Promise<MergeTreesDetailedResult> {
+	const mergeLabels = options
+		? { a: options.ours ?? "ours", b: options.theirs ?? "theirs" }
+		: undefined;
+
+	const result = await mergeOrtNonRecursive(
+		repo,
+		baseTree,
+		oursTree,
+		theirsTree,
+		mergeLabels,
+		options?.mergeDriver,
+	);
+
+	return toDetailedResult(result);
+}
+
+/** Shape the raw merge-ort output into a {@link MergeTreesDetailedResult}. */
+function toDetailedResult(result: {
+	resultTree: string;
+	conflicts: MergeConflict[];
+	entries: IndexEntry[];
+	messages: string[];
+}): MergeTreesDetailedResult {
 	return {
 		treeHash: result.resultTree,
 		clean: result.conflicts.length === 0,
@@ -167,10 +207,7 @@ export async function mergeTreesDetailed(
  * supplies the human-readable reason (and may contribute structural conflicts
  * that carry no stage entries).
  */
-function buildConflictedPaths(
-	entries: IndexEntry[],
-	conflicts: MergeConflict[],
-): ConflictedPath[] {
+function buildConflictedPaths(entries: IndexEntry[], conflicts: MergeConflict[]): ConflictedPath[] {
 	const stagesByPath = new Map<
 		string,
 		{ base: BlobSide | null; ours: BlobSide | null; theirs: BlobSide | null }
