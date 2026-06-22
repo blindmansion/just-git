@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { InMemoryFs } from "just-bash";
-import { MemoryStorage } from "../../src/server/memory-storage.ts";
+import { MemoryStorage } from "../../src/storage/memory-storage.ts";
 import type { GitServer } from "../../src/server/types.ts";
 import {
 	envAt,

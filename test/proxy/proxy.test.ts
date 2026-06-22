@@ -857,7 +857,7 @@ describe("e2e with just-git server as upstream", () => {
 		const { Bash, InMemoryFs } = await import("just-bash");
 		const { createGit } = await import("../../src/index.ts");
 		const { createServer } = await import("../../src/server/handler.ts");
-		const { MemoryStorage } = await import("../../src/server/memory-storage.ts");
+		const { MemoryStorage } = await import("../../src/storage/memory-storage.ts");
 
 		// Set up a just-git server
 		const server = createServer({ storage: new MemoryStorage(), autoCreate: true });

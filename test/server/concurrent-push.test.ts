@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
-import { MemoryStorage } from "../../src/server/memory-storage.ts";
+import { BunSqliteStorage } from "../../src/storage/bun-sqlite-storage.ts";
+import { MemoryStorage } from "../../src/storage/memory-storage.ts";
 import type { GitServer } from "../../src/server/types.ts";
 import { envAt, createServerClient, startServer } from "./util.ts";
 

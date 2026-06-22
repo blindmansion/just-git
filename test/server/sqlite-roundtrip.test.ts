@@ -4,7 +4,7 @@ import { rm } from "node:fs/promises";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { InMemoryFs } from "just-bash";
-import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
+import { BunSqliteStorage } from "../../src/storage/bun-sqlite-storage.ts";
 import type { GitServer } from "../../src/server/types.ts";
 import {
 	envAt,

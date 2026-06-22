@@ -1,7 +1,13 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-	entry: ["src/index.ts", "src/server/index.ts", "src/repo/index.ts", "src/proxy/index.ts"],
+	entry: [
+		"src/index.ts",
+		"src/server/index.ts",
+		"src/storage/index.ts",
+		"src/repo/index.ts",
+		"src/proxy/index.ts",
+	],
 	format: ["esm"],
 	splitting: false,
 	dts: true,

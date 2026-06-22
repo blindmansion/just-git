@@ -36,9 +36,6 @@ export type {
 	V2LsRefsRef,
 } from "./protocol.ts";
 
-// GC
-export type { GcOptions, GcResult } from "./gc.ts";
-
 // Types
 export type {
 	AdvertiseRefsEvent,
@@ -69,10 +66,28 @@ export type {
 // Re-exported lib types used in Storage and hook signatures
 export type { GitRepo, RawObject, Ref } from "../lib/types.ts";
 
-// Storage
-export type { CreateRepoOptions, Storage, RefOps, RawRefEntry, MaybeAsync } from "./storage.ts";
-export { MemoryStorage } from "./memory-storage.ts";
-export { BunSqliteStorage, type BunSqliteDatabase } from "./bun-sqlite-storage.ts";
-export { BetterSqlite3Storage, type BetterSqlite3Database } from "./better-sqlite3-storage.ts";
-export { PgStorage, type PgPool } from "./pg-storage.ts";
-export { DurableObjectSqliteStorage, type DurableObjectStorageSql } from "./do-sqlite-storage.ts";
+// Storage / repo manager — re-exported from just-git/storage for back-compat.
+// The server is a consumer of this layer, not its owner.
+export {
+	createRepoStore,
+	gcRepo,
+	MemoryStorage,
+	BunSqliteStorage,
+	BetterSqlite3Storage,
+	PgStorage,
+	DurableObjectSqliteStorage,
+} from "../storage/index.ts";
+export type {
+	RepoStore,
+	CreateRepoOptions,
+	Storage,
+	RefOps,
+	RawRefEntry,
+	MaybeAsync,
+	GcOptions,
+	GcResult,
+	BunSqliteDatabase,
+	BetterSqlite3Database,
+	PgPool,
+	DurableObjectStorageSql,
+} from "../storage/index.ts";

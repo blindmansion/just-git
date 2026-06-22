@@ -3,13 +3,13 @@ import { describe, expect, test, beforeEach } from "bun:test";
 import {
 	DurableObjectSqliteStorage,
 	type DurableObjectStorageSql,
-} from "../../src/server/do-sqlite-storage.ts";
-import { createRepoStore } from "../../src/server/storage.ts";
+} from "../../src/storage/do-sqlite-storage.ts";
+import { createRepoStore } from "../../src/storage/repo-store.ts";
 import { envelope } from "../../src/lib/object-store.ts";
 import { sha1 } from "../../src/lib/sha1.ts";
 import { writePack } from "../../src/lib/pack/packfile.ts";
 import type { ObjectType } from "../../src/lib/types.ts";
-import type { RepoStore } from "../../src/server/storage.ts";
+import type { RepoStore } from "../../src/storage/repo-store.ts";
 
 // ── DO SQLite shim (backed by bun:sqlite) ──────────────────────────
 // Wraps a bun:sqlite Database to match the DurableObjectStorageSql

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
 import { createServer } from "../../src/server/handler.ts";
-import { MemoryStorage } from "../../src/server/memory-storage.ts";
+import { MemoryStorage } from "../../src/storage/memory-storage.ts";
 import type { GitServer } from "../../src/server/types.ts";
 import { writeBlob, writeTree, createCommit } from "../../src/repo/writing.ts";
 import { resolveRef, readFileAtCommit } from "../../src/repo/reading.ts";

@@ -4,8 +4,8 @@ import { parsePktLineStream, pktLineText } from "../../src/lib/transport/pkt-lin
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { collectRefs, PackCache } from "../../src/server/operations.ts";
 import { createServer } from "../../src/server/handler.ts";
-import { MemoryStorage } from "../../src/server/memory-storage.ts";
-import { createRepoStore } from "../../src/server/storage.ts";
+import { MemoryStorage } from "../../src/storage/memory-storage.ts";
+import { createRepoStore } from "../../src/storage/repo-store.ts";
 import type { NodeHttpRequest, NodeHttpResponse } from "../../src/server/types.ts";
 import { pathExists, readFile } from "../util.ts";
 import { envAt, createServerClient, startServer, defaultHttpAuth } from "./util.ts";

@@ -6,9 +6,9 @@ import { findRepo } from "../../src/lib/repo.ts";
 import { resolveRef } from "../../src/lib/refs.ts";
 import { readCommit } from "../../src/lib/object-db.ts";
 import { flattenTree } from "../../src/lib/tree-ops.ts";
-import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
-import { createRepoStore } from "../../src/server/storage.ts";
-import type { RepoStore } from "../../src/server/storage.ts";
+import { BunSqliteStorage } from "../../src/storage/bun-sqlite-storage.ts";
+import { createRepoStore } from "../../src/storage/repo-store.ts";
+import type { RepoStore } from "../../src/storage/repo-store.ts";
 import { createWorktree } from "../../src/repo/worktree.ts";
 import { readonlyRepo } from "../../src/repo/safety.ts";
 

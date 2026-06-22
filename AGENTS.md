@@ -180,19 +180,19 @@ Key behaviors:
 - **Worktree walk** (`walkWorkTree`) — uses `lstatSafe` to treat symlinks as leaf entries. Never recurses into symlinked directories (security/correctness).
 - **Merge** — symlinks cannot be textually merged. Conflicting symlink changes produce all-or-nothing conflicts; non-conflicting changes resolve by taking the modified side.
 
-### Storage backends (`server/`)
+### Storage backends (`storage/`)
 
 `createServer` accepts an optional `storage: Storage` config property (defaults to `MemoryStorage`) and builds the git-aware `Storage` adapter internally. Users only interact with `Storage` implementations — the `Storage` interface is an internal detail. `createRepo`, `repo`, `requireRepo`, and `deleteRepo` are exposed on the returned `GitServer` object. All backends partition multiple repos by ID in a single store.
 
 `Storage` (thin raw key-value CRUD) is the user-facing abstraction. Drivers implement raw object/ref I/O and an `atomicRefUpdate` primitive; the internal adapter handles object hashing, pack ingestion, symref resolution, and CAS semantics. All `Storage` methods use `MaybeAsync<T>` (`T | Promise<T>`) return types so sync (SQLite) and async (Pg) drivers both work. Three optional fork methods (`forkRepo?`, `getForkParent?`, `listForks?`) enable fork semantics — all built-in backends implement them. The adapter handles object fallback (fork reads from parent) and fork-of-fork flattening.
 
-| Backend                      | File                               | Construction                                  | Database interface                                                        |
-| ---------------------------- | ---------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------- |
-| `MemoryStorage`              | `server/memory-storage.ts`         | `new MemoryStorage()`                         | None                                                                      |
-| `BunSqliteStorage`           | `server/bun-sqlite-storage.ts`     | `new BunSqliteStorage(db)`                    | `BunSqliteDatabase` (native `bun:sqlite`)                                 |
-| `BetterSqlite3Storage`       | `server/better-sqlite3-storage.ts` | `new BetterSqlite3Storage(db)`                | `BetterSqlite3Database` (native `better-sqlite3`)                         |
-| `PgStorage`                  | `server/pg-storage.ts`             | `await PgStorage.create(pool)`                | `PgPool` (duck-typed, matches `pg.Pool`)                                  |
-| `DurableObjectSqliteStorage` | `server/do-sqlite-storage.ts`      | `new DurableObjectSqliteStorage(ctx.storage)` | `DurableObjectStorageSql` (duck-typed, matches CF `DurableObjectStorage`) |
+| Backend                      | File                                | Construction                                  | Database interface                                                        |
+| ---------------------------- | ----------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------- |
+| `MemoryStorage`              | `storage/memory-storage.ts`         | `new MemoryStorage()`                         | None                                                                      |
+| `BunSqliteStorage`           | `storage/bun-sqlite-storage.ts`     | `new BunSqliteStorage(db)`                    | `BunSqliteDatabase` (native `bun:sqlite`)                                 |
+| `BetterSqlite3Storage`       | `storage/better-sqlite3-storage.ts` | `new BetterSqlite3Storage(db)`                | `BetterSqlite3Database` (native `better-sqlite3`)                         |
+| `PgStorage`                  | `storage/pg-storage.ts`             | `await PgStorage.create(pool)`                | `PgPool` (duck-typed, matches `pg.Pool`)                                  |
+| `DurableObjectSqliteStorage` | `storage/do-sqlite-storage.ts`      | `new DurableObjectSqliteStorage(ctx.storage)` | `DurableObjectStorageSql` (duck-typed, matches CF `DurableObjectStorage`) |
 
 **Unified server (`createServer`):**
 

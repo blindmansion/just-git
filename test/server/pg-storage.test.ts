@@ -1,13 +1,13 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { execSync } from "node:child_process";
 import pg from "pg";
-import { PgStorage } from "../../src/server/pg-storage.ts";
-import { createRepoStore } from "../../src/server/storage.ts";
+import { PgStorage } from "../../src/storage/pg-storage.ts";
+import { createRepoStore } from "../../src/storage/repo-store.ts";
 import { envelope } from "../../src/lib/object-store.ts";
 import { sha1 } from "../../src/lib/sha1.ts";
 import { writePack } from "../../src/lib/pack/packfile.ts";
 import type { ObjectType } from "../../src/lib/types.ts";
-import type { RepoStore } from "../../src/server/storage.ts";
+import type { RepoStore } from "../../src/storage/repo-store.ts";
 
 const encoder = new TextEncoder();
 

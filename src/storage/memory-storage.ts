@@ -1,5 +1,5 @@
 import type { Ref, RawObject } from "../lib/types.ts";
-import type { Storage, RawRefEntry, RefOps } from "./storage.ts";
+import type { Storage, RawRefEntry, RefOps } from "./repo-store.ts";
 
 // ── MemoryStorage ───────────────────────────────────────────────────
 

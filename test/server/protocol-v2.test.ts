@@ -17,8 +17,8 @@ import {
 	responseEndPkt,
 } from "../../src/lib/transport/pkt-line.ts";
 import { createServer } from "../../src/server/handler.ts";
-import { MemoryStorage } from "../../src/server/memory-storage.ts";
-import { createRepoStore } from "../../src/server/storage.ts";
+import { MemoryStorage } from "../../src/storage/memory-storage.ts";
+import { createRepoStore } from "../../src/storage/repo-store.ts";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import {
 	buildV2CapabilityAdvertisementBytes,

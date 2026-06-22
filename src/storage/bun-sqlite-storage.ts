@@ -1,20 +1,20 @@
 import type { RawObject, Ref } from "../lib/types.ts";
-import type { Storage, RawRefEntry, RefOps } from "./storage.ts";
+import type { Storage, RawRefEntry, RefOps } from "./repo-store.ts";
 
-// ── better-sqlite3 types ────────────────────────────────────────────
+// ── bun:sqlite types ────────────────────────────────────────────────
 
-/** Minimal prepared statement interface matching `better-sqlite3`. */
-interface BetterSqlite3Statement {
-	run(...params: any[]): any;
+/** Minimal prepared statement interface matching `bun:sqlite`. */
+interface BunSqliteStatement {
+	run(...params: any[]): void;
 	get(...params: any[]): any;
 	all(...params: any[]): any[];
 }
 
-/** Minimal database interface matching the `better-sqlite3` `Database` class. */
-export interface BetterSqlite3Database {
-	exec(sql: string): any;
-	prepare(sql: string): BetterSqlite3Statement;
-	transaction(fn: (...args: any[]) => any): (...args: any[]) => any;
+/** Minimal database interface matching `bun:sqlite`'s `Database` class. */
+export interface BunSqliteDatabase {
+	run(sql: string): void;
+	prepare(sql: string): BunSqliteStatement;
+	transaction<F extends (...args: any[]) => any>(fn: F): (...args: Parameters<F>) => ReturnType<F>;
 }
 
 // ── Schema ──────────────────────────────────────────────────────────
@@ -47,122 +47,82 @@ CREATE TABLE IF NOT EXISTS git_forks (
 );
 `;
 
-// ── Normalized statement interface ──────────────────────────────────
-// better-sqlite3's .get() returns undefined for no match; we normalize
-// to null at preparation time so the driver code can stay uniform.
-
-interface Statement {
-	run(...params: any[]): void;
-	get(...params: any[]): any;
-	all(...params: any[]): any[];
-}
-
-function wrapStmt(raw: BetterSqlite3Statement): Statement {
-	return {
-		run: (...args) => {
-			raw.run(...args);
-		},
-		get: (...args) => raw.get(...args) ?? null,
-		all: (...args) => raw.all(...args),
-	};
-}
-
 // ── Prepared statement cache ────────────────────────────────────────
 
 interface Statements {
-	repoInsert: Statement;
-	repoExists: Statement;
-	repoDelete: Statement;
+	repoInsert: BunSqliteStatement;
+	repoExists: BunSqliteStatement;
+	repoDelete: BunSqliteStatement;
 
-	objInsert: Statement;
-	objInsertReturning: Statement;
-	objRead: Statement;
-	objExists: Statement;
-	objPrefix: Statement;
-	objDeleteAll: Statement;
-	objListHashes: Statement;
-	objDelete: Statement;
+	objInsert: BunSqliteStatement;
+	objRead: BunSqliteStatement;
+	objExists: BunSqliteStatement;
+	objPrefix: BunSqliteStatement;
+	objDeleteAll: BunSqliteStatement;
+	objListHashes: BunSqliteStatement;
+	objDelete: BunSqliteStatement;
 
-	refRead: Statement;
-	refWrite: Statement;
-	refDelete: Statement;
-	refList: Statement;
-	refListAll: Statement;
-	refDeleteAll: Statement;
+	refRead: BunSqliteStatement;
+	refWrite: BunSqliteStatement;
+	refDelete: BunSqliteStatement;
+	refList: BunSqliteStatement;
+	refListAll: BunSqliteStatement;
+	refDeleteAll: BunSqliteStatement;
 
-	forkInsert: Statement;
-	forkGetParent: Statement;
-	forkListChildren: Statement;
-	forkDelete: Statement;
+	forkInsert: BunSqliteStatement;
+	forkGetParent: BunSqliteStatement;
+	forkListChildren: BunSqliteStatement;
+	forkDelete: BunSqliteStatement;
 }
 
-function prepareStatements(db: BetterSqlite3Database): Statements {
+function prepareStatements(db: BunSqliteDatabase): Statements {
 	return {
-		repoInsert: wrapStmt(db.prepare("INSERT INTO git_repos (id) VALUES (?)")),
-		repoExists: wrapStmt(db.prepare("SELECT 1 FROM git_repos WHERE id = ? LIMIT 1")),
-		repoDelete: wrapStmt(db.prepare("DELETE FROM git_repos WHERE id = ?")),
+		repoInsert: db.prepare("INSERT INTO git_repos (id) VALUES (?)"),
+		repoExists: db.prepare("SELECT 1 FROM git_repos WHERE id = ? LIMIT 1"),
+		repoDelete: db.prepare("DELETE FROM git_repos WHERE id = ?"),
 
-		objInsert: wrapStmt(
-			db.prepare(
-				"INSERT OR IGNORE INTO git_objects (repo_id, hash, type, content) VALUES (?, ?, ?, ?)",
-			),
+		objInsert: db.prepare(
+			"INSERT OR IGNORE INTO git_objects (repo_id, hash, type, content) VALUES (?, ?, ?, ?) RETURNING hash",
 		),
-		objInsertReturning: wrapStmt(
-			db.prepare(
-				"INSERT OR IGNORE INTO git_objects (repo_id, hash, type, content) VALUES (?, ?, ?, ?) RETURNING hash",
-			),
-		),
-		objRead: wrapStmt(
-			db.prepare("SELECT type, content FROM git_objects WHERE repo_id = ? AND hash = ?"),
-		),
-		objExists: wrapStmt(
-			db.prepare("SELECT 1 FROM git_objects WHERE repo_id = ? AND hash = ? LIMIT 1"),
-		),
-		objPrefix: wrapStmt(
-			db.prepare("SELECT hash FROM git_objects WHERE repo_id = ? AND hash GLOB ?"),
-		),
-		objDeleteAll: wrapStmt(db.prepare("DELETE FROM git_objects WHERE repo_id = ?")),
-		objListHashes: wrapStmt(db.prepare("SELECT hash FROM git_objects WHERE repo_id = ?")),
-		objDelete: wrapStmt(db.prepare("DELETE FROM git_objects WHERE repo_id = ? AND hash = ?")),
+		objRead: db.prepare("SELECT type, content FROM git_objects WHERE repo_id = ? AND hash = ?"),
+		objExists: db.prepare("SELECT 1 FROM git_objects WHERE repo_id = ? AND hash = ? LIMIT 1"),
+		objPrefix: db.prepare("SELECT hash FROM git_objects WHERE repo_id = ? AND hash GLOB ?"),
+		objDeleteAll: db.prepare("DELETE FROM git_objects WHERE repo_id = ?"),
+		objListHashes: db.prepare("SELECT hash FROM git_objects WHERE repo_id = ?"),
+		objDelete: db.prepare("DELETE FROM git_objects WHERE repo_id = ? AND hash = ?"),
 
-		refRead: wrapStmt(
-			db.prepare("SELECT type, hash, target FROM git_refs WHERE repo_id = ? AND name = ?"),
+		refRead: db.prepare("SELECT type, hash, target FROM git_refs WHERE repo_id = ? AND name = ?"),
+		refWrite: db.prepare(
+			"INSERT OR REPLACE INTO git_refs (repo_id, name, type, hash, target) VALUES (?, ?, ?, ?, ?)",
 		),
-		refWrite: wrapStmt(
-			db.prepare(
-				"INSERT OR REPLACE INTO git_refs (repo_id, name, type, hash, target) VALUES (?, ?, ?, ?, ?)",
-			),
+		refDelete: db.prepare("DELETE FROM git_refs WHERE repo_id = ? AND name = ?"),
+		refList: db.prepare(
+			"SELECT name, type, hash, target FROM git_refs WHERE repo_id = ? AND name GLOB ?",
 		),
-		refDelete: wrapStmt(db.prepare("DELETE FROM git_refs WHERE repo_id = ? AND name = ?")),
-		refList: wrapStmt(
-			db.prepare("SELECT name, type, hash, target FROM git_refs WHERE repo_id = ? AND name GLOB ?"),
-		),
-		refListAll: wrapStmt(
-			db.prepare("SELECT name, type, hash, target FROM git_refs WHERE repo_id = ?"),
-		),
-		refDeleteAll: wrapStmt(db.prepare("DELETE FROM git_refs WHERE repo_id = ?")),
+		refListAll: db.prepare("SELECT name, type, hash, target FROM git_refs WHERE repo_id = ?"),
+		refDeleteAll: db.prepare("DELETE FROM git_refs WHERE repo_id = ?"),
 
-		forkInsert: wrapStmt(db.prepare("INSERT INTO git_forks (repo_id, parent_id) VALUES (?, ?)")),
-		forkGetParent: wrapStmt(db.prepare("SELECT parent_id FROM git_forks WHERE repo_id = ?")),
-		forkListChildren: wrapStmt(db.prepare("SELECT repo_id FROM git_forks WHERE parent_id = ?")),
-		forkDelete: wrapStmt(db.prepare("DELETE FROM git_forks WHERE repo_id = ?")),
+		forkInsert: db.prepare("INSERT INTO git_forks (repo_id, parent_id) VALUES (?, ?)"),
+		forkGetParent: db.prepare("SELECT parent_id FROM git_forks WHERE repo_id = ?"),
+		forkListChildren: db.prepare("SELECT repo_id FROM git_forks WHERE parent_id = ?"),
+		forkDelete: db.prepare("DELETE FROM git_forks WHERE repo_id = ?"),
 	};
 }
 
-// ── BetterSqlite3Storage ─────────────────────────────────────────────
+// ── BunSqliteStorage ─────────────────────────────────────────────────
 
 /**
- * SQLite-backed storage using `better-sqlite3`.
+ * SQLite-backed storage using `bun:sqlite`.
  *
  * ```ts
- * import Database from "better-sqlite3";
- * const storage = createRepoStore(new BetterSqlite3Storage(new Database("repos.db")));
+ * import { Database } from "bun:sqlite";
+ * const storage = createRepoStore(new BunSqliteStorage(new Database("repos.db")));
  * ```
  */
-export class BetterSqlite3Storage implements Storage {
+export class BunSqliteStorage implements Storage {
 	private stmts: Statements;
-	private objectReadManyStatements = new Map<number, Statement>();
-	private objectExistsManyStatements = new Map<number, Statement>();
+	private objectReadManyStatements = new Map<number, BunSqliteStatement>();
+	private objectExistsManyStatements = new Map<number, BunSqliteStatement>();
 	private batchInsertTx: (
 		rows: ReadonlyArray<{ repoId: string; hash: string; type: string; content: Uint8Array }>,
 	) => string[];
@@ -172,8 +132,8 @@ export class BetterSqlite3Storage implements Storage {
 		onCount: (n: number) => void,
 	) => void;
 
-	constructor(private db: BetterSqlite3Database) {
-		db.exec(SCHEMA);
+	constructor(private db: BunSqliteDatabase) {
+		db.run(SCHEMA);
 		this.stmts = prepareStatements(db);
 		this.batchInsertTx = db.transaction(
 			(
@@ -186,12 +146,7 @@ export class BetterSqlite3Storage implements Storage {
 			) => {
 				const inserted: string[] = [];
 				for (const row of rows) {
-					const result = this.stmts.objInsertReturning.get(
-						row.repoId,
-						row.hash,
-						row.type,
-						row.content,
-					);
+					const result = this.stmts.objInsert.get(row.repoId, row.hash, row.type, row.content);
 					if (result) inserted.push(result.hash);
 				}
 				return inserted;
@@ -308,7 +263,7 @@ export class BetterSqlite3Storage implements Storage {
 		return deleted;
 	}
 
-	private getObjectReadManyStatement(count: number): Statement {
+	private getObjectReadManyStatement(count: number): BunSqliteStatement {
 		return this.getCachedStatement(
 			this.objectReadManyStatements,
 			count,
@@ -316,7 +271,7 @@ export class BetterSqlite3Storage implements Storage {
 		);
 	}
 
-	private getObjectExistsManyStatement(count: number): Statement {
+	private getObjectExistsManyStatement(count: number): BunSqliteStatement {
 		return this.getCachedStatement(
 			this.objectExistsManyStatements,
 			count,
@@ -324,10 +279,14 @@ export class BetterSqlite3Storage implements Storage {
 		);
 	}
 
-	private getCachedStatement(cache: Map<number, Statement>, count: number, sql: string): Statement {
+	private getCachedStatement(
+		cache: Map<number, BunSqliteStatement>,
+		count: number,
+		sql: string,
+	): BunSqliteStatement {
 		let stmt = cache.get(count);
 		if (!stmt) {
-			stmt = wrapStmt(this.db.prepare(sql));
+			stmt = this.db.prepare(sql);
 			cache.set(count, stmt);
 		}
 		return stmt;

@@ -35,7 +35,7 @@ import {
 } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
+import { BunSqliteStorage } from "../../src/storage/bun-sqlite-storage.ts";
 import { createServer } from "../../src/server/handler.ts";
 
 const SOURCE_REPO = process.argv[2] || "https://github.com/DeabLabs/cannoli.git";

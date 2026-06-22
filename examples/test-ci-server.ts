@@ -7,7 +7,7 @@
 
 import { MemoryFileSystem } from "../src/memory-fs.ts";
 import { createGit } from "../src/git.ts";
-import { MemoryStorage } from "../src/server/memory-storage.ts";
+import { MemoryStorage } from "../src/storage/memory-storage.ts";
 import { createServer } from "../src/server/handler.ts";
 import { readFileAtCommit, grep, resolveRef } from "../src/repo";
 import { createSandboxWorktree } from "../src/repo/worktree.ts";

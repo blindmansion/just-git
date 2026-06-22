@@ -9,8 +9,8 @@ import { findMergeBases, getNewCommits } from "../../src/repo/diffing.ts";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { mergeTrees, mergeTreesFromTreeHashes } from "../../src/repo/merging.ts";
 import { extractTree } from "../../src/repo/worktree.ts";
-import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
-import { createRepoStore } from "../../src/server/storage.ts";
+import { BunSqliteStorage } from "../../src/storage/bun-sqlite-storage.ts";
+import { createRepoStore } from "../../src/storage/repo-store.ts";
 
 const TEST_ENV = {
 	GIT_AUTHOR_NAME: "Test",

@@ -1,6 +1,6 @@
 import type { GitRepo, RefEntry } from "../lib/types.ts";
 import { enumerateObjects } from "../lib/transport/object-walk.ts";
-import type { Storage } from "./storage.ts";
+import type { Storage } from "./repo-store.ts";
 
 /** Options for {@link gcRepo}. */
 export interface GcOptions {

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { InMemoryFs } from "just-bash";
-import { MemoryStorage } from "../../src/server/memory-storage.ts";
+import { MemoryStorage } from "../../src/storage/memory-storage.ts";
 import { createServer } from "../../src/server/handler.ts";
 import type { GitServer } from "../../src/server/types.ts";
 import { envAt, createServerClient, startServer } from "./util.ts";

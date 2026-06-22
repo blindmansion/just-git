@@ -12,8 +12,8 @@
  */
 
 import { MemoryFileSystem } from "../src/memory-fs";
-import { MemoryStorage } from "../src/server/memory-storage";
-import { createRepoStore } from "../src/server/storage";
+import { MemoryStorage } from "../src/storage/memory-storage";
+import { createRepoStore } from "../src/storage/repo-store";
 import { writeBlob, writeTree } from "../src/repo/writing.ts";
 import { TreeBackedFs } from "../src/tree-backed-fs";
 import type { TreeEntryInput } from "../src/repo/writing.ts";
