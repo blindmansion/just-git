@@ -158,6 +158,20 @@ describe("merge: clean / fast-forward / up-to-date", () => {
 		).rejects.toThrow("not a fast-forward");
 	});
 
+	test("author may be omitted for a fast-forward (no commit is created)", async () => {
+		const { repo, ahead } = await setupFastForward();
+		// No author supplied — a fast-forward creates no commit, so none is needed.
+		const res = await merge(repo, { ours: "main", theirs: "feature", branch: "main" });
+		expect(res.status).toBe("fast-forward");
+		if (res.status === "conflicts") throw new Error("unreachable");
+		expect(res.hash).toBe(ahead);
+	});
+
+	test("author is required when a merge commit must be created", async () => {
+		const { repo } = await setupCleanDivergent();
+		await expect(merge(repo, { ours: "main", theirs: "feature" })).rejects.toThrow("author");
+	});
+
 	test("merging an ancestor reports up-to-date and leaves the branch untouched", async () => {
 		const { repo, base, oursTip } = await setupCleanDivergent();
 

@@ -18,8 +18,13 @@ import type { RemoteRef, ShallowFetchOptions } from "../lib/transport/transport.
 import type { GitRepo, ObjectId, ObjectStore, RefStore, RemoteResolver } from "../lib/types.ts";
 import type { FetchFunction, NetworkPolicy } from "../hooks.ts";
 
-const DEFAULT_FETCH_REFSPEC = "+refs/heads/*:refs/remotes/origin/*";
+const DEFAULT_REMOTE = "origin";
 const NO_ENV = new Map<string, string>();
+
+/** Default mirror-all refspec for a remote name: `+refs/heads/*:refs/remotes/<name>/*`. */
+function defaultFetchRefspec(remote: string): string {
+	return `+refs/heads/*:refs/remotes/${remote}/*`;
+}
 
 // ── Public types ────────────────────────────────────────────────────
 
@@ -108,8 +113,10 @@ export interface CloneResult {
 	/** Branch HEAD was pointed at, or null for an empty remote. */
 	defaultBranch: string | null;
 	objectCount: number;
-	/** Refs written into the local repo. */
+	/** Local `refs/heads/*` written into the repo. */
 	fetchedRefs: Array<{ ref: string; hash: string }>;
+	/** Remote-tracking `refs/remotes/<remote>/*` written into the repo. */
+	trackingRefs: Array<{ ref: string; hash: string }>;
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────
@@ -165,24 +172,29 @@ export async function listRemoteRefs(url: string, ctx?: TransportContext): Promi
 /**
  * Fetch objects from a remote and update local tracking refs on `repo`.
  *
- * `refspecs` is optional; when omitted it defaults to
- * `+refs/heads/*:refs/remotes/origin/*` (mirror all branches into tracking
- * refs). Fires `repo.hooks.preFetch` / `postFetch`.
+ * `refspecs` is optional; when omitted it defaults to mirroring all branches
+ * into the remote's tracking namespace (`+refs/heads/*:refs/remotes/<name>/*`).
+ * `name` is the remote's short name (default `"origin"`); it drives that
+ * default tracking namespace and is reported to the `preFetch`/`postFetch`
+ * hooks as `remote`. Fires `repo.hooks.preFetch` / `postFetch`.
  */
 export async function fetch(
 	repo: GitRepo,
-	remote: { url: string; refspecs?: string[] },
+	remote: { url: string; name?: string; refspecs?: string[] },
 	ctx?: TransportContext,
 ): Promise<FetchResult> {
+	const remoteName = remote.name ?? DEFAULT_REMOTE;
 	const transport = await createTransportForUrl(withEnv(repo, ctx), remote.url, NO_ENV);
 
 	const specs = (
-		remote.refspecs && remote.refspecs.length > 0 ? remote.refspecs : [DEFAULT_FETCH_REFSPEC]
+		remote.refspecs && remote.refspecs.length > 0
+			? remote.refspecs
+			: [defaultFetchRefspec(remoteName)]
 	).map(parseRefspec);
 
 	const rej = await repo.hooks?.preFetch?.({
 		repo,
-		remote: remote.url,
+		remote: remoteName,
 		url: remote.url,
 		refspecs: specs.map((s) => `${s.src}:${s.dst}`),
 		prune: false,
@@ -229,7 +241,7 @@ export async function fetch(
 
 	await repo.hooks?.postFetch?.({
 		repo,
-		remote: remote.url,
+		remote: remoteName,
 		url: remote.url,
 		updatedRefCount: updated.length,
 	});
@@ -460,20 +472,24 @@ function resolveDefaultBranch(
 
 /**
  * Populate an already-created repo from a remote: fetch objects, write
- * `refs/heads/*` (+ `refs/tags/*`), and set HEAD to the default branch.
+ * `refs/heads/*` (+ `refs/tags/*`) and matching `refs/remotes/<remote>/*`
+ * tracking refs, and set HEAD to the default branch.
  *
- * Stops at objects + refs + HEAD (bare-style) — no worktree/config is written,
- * since a programmatic repo may have no filesystem. Pass `branch` to narrow to
- * a single branch (mirrors `git clone --branch`). Fires `repo.hooks.preClone` /
- * `postClone`.
+ * Stops at objects + refs + HEAD — no worktree/config is written, since a
+ * programmatic repo may have no filesystem. Unlike a bare clone, both local
+ * heads and remote-tracking refs are written, so ahead/behind vs the remote is
+ * answerable immediately (no initial fetch needed). `remote` sets the tracking
+ * namespace (default `"origin"`). Pass `branch` to narrow to a single branch
+ * (mirrors `git clone --branch`). Fires `repo.hooks.preClone` / `postClone`.
  */
 export async function cloneInto(
 	repo: GitRepo,
 	url: string,
-	ctx?: TransportContext & { branch?: string; depth?: number },
+	ctx?: TransportContext & { branch?: string; depth?: number; remote?: string },
 ): Promise<CloneResult> {
 	const branchOpt = ctx?.branch;
 	const depth = ctx?.depth;
+	const remoteName = ctx?.remote ?? DEFAULT_REMOTE;
 	const transport = await createTransportForUrl(withEnv(repo, ctx), url, NO_ENV);
 
 	const rej = await repo.hooks?.preClone?.({
@@ -495,7 +511,13 @@ export async function cloneInto(
 			bare: true,
 			branch: branchOpt ?? null,
 		});
-		return { remoteRefs, defaultBranch: null, objectCount: 0, fetchedRefs: [] };
+		return {
+			remoteRefs,
+			defaultBranch: null,
+			objectCount: 0,
+			fetchedRefs: [],
+			trackingRefs: [],
+		};
 	}
 
 	let defaultBranch: string | null = null;
@@ -535,17 +557,24 @@ export async function cloneInto(
 	}
 
 	const fetchedRefs: CloneResult["fetchedRefs"] = [];
+	const trackingRefs: CloneResult["trackingRefs"] = [];
 	for (const ref of remoteRefs) {
 		if (ref.name === "HEAD") continue;
 		if (ref.name.startsWith("refs/heads/")) {
 			if (singleBranch && ref.name !== `refs/heads/${defaultBranch}`) continue;
+			await repo.refStore.writeRef(ref.name, ref.hash);
+			fetchedRefs.push({ ref: ref.name, hash: ref.hash });
+			// Mirror the branch into the remote-tracking namespace.
+			const trackingRef = `refs/remotes/${remoteName}/${ref.name.slice("refs/heads/".length)}`;
+			await repo.refStore.writeRef(trackingRef, ref.hash);
+			trackingRefs.push({ ref: trackingRef, hash: ref.hash });
 		} else if (ref.name.startsWith("refs/tags/")) {
 			if (singleBranch) continue;
+			await repo.refStore.writeRef(ref.name, ref.hash);
+			fetchedRefs.push({ ref: ref.name, hash: ref.hash });
 		} else {
 			continue;
 		}
-		await repo.refStore.writeRef(ref.name, ref.hash);
-		fetchedRefs.push({ ref: ref.name, hash: ref.hash });
 	}
 
 	if (defaultBranch) {
@@ -563,5 +592,5 @@ export async function cloneInto(
 		branch: defaultBranch,
 	});
 
-	return { remoteRefs, defaultBranch, objectCount, fetchedRefs };
+	return { remoteRefs, defaultBranch, objectCount, fetchedRefs, trackingRefs };
 }

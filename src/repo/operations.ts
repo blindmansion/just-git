@@ -12,7 +12,8 @@ import {
 	mergeTreesDetailedFromTreeHashes,
 	mergeTreesFromTreeHashes,
 } from "./merging.ts";
-import { revParse } from "./reading.ts";
+import { fetch, type FetchResult, type TransportContext } from "./network.ts";
+import { readHead, revParse } from "./reading.ts";
 import { createTreeAccessor, type TreeAccessor } from "./tree-accessor.ts";
 import {
 	createCommit,
@@ -503,8 +504,13 @@ export interface MergeOptions {
 	ours: string;
 	/** Their side — the commit being merged in (hash, branch, tag, or rev-parse expression). */
 	theirs: string;
-	/** Author identity for the merge commit. */
-	author: CommitIdentity;
+	/**
+	 * Author identity for the merge commit. Required only when a merge commit is
+	 * actually created — an up-to-date or fast-forward result needs no author, so
+	 * an "integrate the remote" caller can omit it and only supply one if the
+	 * merge turns out to be non-trivial.
+	 */
+	author?: CommitIdentity;
 	/** Committer identity. Defaults to `author`. */
 	committer?: CommitIdentity;
 	/** Merge commit message. Defaults to `Merge <theirs> into <ours>`. */
@@ -625,10 +631,15 @@ export async function merge(repo: GitRepo, options: MergeOptions): Promise<Merge
 	}
 	const finalTree = applied.treeHash;
 
+	const author = options.author ?? options.committer;
+	if (!author) {
+		throw new Error("merge: `author` is required to create a merge commit");
+	}
+
 	const hash = await createCommit(repo, {
 		tree: finalTree,
 		parents: [ours, theirs],
-		author: options.author,
+		author,
 		committer: options.committer,
 		message: options.message ?? `Merge ${options.theirs} into ${options.ours}`,
 	});
@@ -1052,4 +1063,112 @@ function snapshotContinuation(state: RebaseReplayState): RebaseContinuation {
 		expectedOldHash: state.expectedOldHash,
 		labels: state.labels,
 	};
+}
+
+// ── Pull ─────────────────────────────────────────────────────────────
+
+/** Options for {@link pull}. */
+export interface PullOptions {
+	/** Remote URL (or custom scheme resolved via `ctx.resolveRemote`). */
+	url: string;
+	/** Remote short name driving the tracking namespace. Default `"origin"`. */
+	remote?: string;
+	/** Local branch to update. Defaults to the current HEAD branch. */
+	branch?: string;
+	/** Remote branch to integrate. Defaults to `branch`. */
+	remoteBranch?: string;
+	/** Integration strategy. Default `"merge"`. */
+	strategy?: "merge" | "rebase";
+	/**
+	 * Author for a merge commit (merge strategy). Required only if a merge commit
+	 * is actually created; falls back to `committer`. Unused by the rebase
+	 * strategy, which preserves each replayed commit's original author.
+	 */
+	author?: CommitIdentity;
+	/** Committer for merge/rebase commits. Required for the rebase strategy. */
+	committer?: CommitIdentity;
+	/** Merge commit message (merge strategy). */
+	message?: string;
+	/** Fast-forward policy (merge strategy). Default `"allow"`. */
+	fastForward?: "allow" | "only" | "never";
+	/** Custom content-merge driver. */
+	mergeDriver?: MergeDriver;
+	/** Conflict-marker labels for ours/theirs. */
+	labels?: { ours?: string; theirs?: string };
+	/** Skip patch-id cherry-pick dedup and replay every commit (rebase strategy). */
+	reapplyCherryPicks?: boolean;
+}
+
+/** Result of {@link pull}. */
+export interface PullResult {
+	/** The fetch that ran first, including which tracking refs moved. */
+	fetched: FetchResult;
+	/**
+	 * Integration outcome — switch on `integration.status`. A conflict result
+	 * carries the handles to resolve and complete the integration directly via
+	 * {@link merge} (its `ours`/`theirs`) or {@link rebase} (its `continuation`).
+	 */
+	integration: MergeResult | RebaseResult;
+}
+
+/**
+ * Fetch a remote branch and integrate it into a local branch in one call —
+ * the programmatic counterpart to `git pull` (or `git pull --rebase`).
+ *
+ * Fetches into the remote-tracking namespace, then runs the chosen strategy
+ * against the just-fetched tip: `merge` collapses up-to-date / fast-forward /
+ * merge-commit / conflict into one result; `rebase` replays the local-only
+ * commits onto the fetched tip. No state is persisted — a conflict is returned
+ * as data, not left in an in-progress state on the repo. To resolve, call
+ * {@link merge}/{@link rebase} directly with the handles the conflict result
+ * carries (`ours`/`theirs`, or `continuation`).
+ *
+ * ```ts
+ * const { integration } = await pull(repo, { url, branch: "main", author }, ctx);
+ * if (integration.status === "conflicts") {
+ *   // resolve via merge() with integration.ours / integration.theirs
+ * }
+ * ```
+ */
+export async function pull(
+	repo: GitRepo,
+	options: PullOptions,
+	ctx?: TransportContext,
+): Promise<PullResult> {
+	const remote = options.remote ?? "origin";
+	const branch = options.branch ?? (await readHead(repo)).branch;
+	if (!branch) {
+		throw new Error("pull: HEAD is detached or unborn — pass `branch` explicitly");
+	}
+	const remoteBranch = options.remoteBranch ?? branch;
+	const theirs = `${remote}/${remoteBranch}`;
+
+	const fetched = await fetch(repo, { url: options.url, name: remote }, ctx);
+
+	if ((options.strategy ?? "merge") === "rebase") {
+		const integration = await rebase(repo, {
+			rebase: branch,
+			upstream: theirs,
+			onto: theirs,
+			branch,
+			committer: options.committer,
+			reapplyCherryPicks: options.reapplyCherryPicks,
+			mergeDriver: options.mergeDriver,
+			labels: options.labels,
+		});
+		return { fetched, integration };
+	}
+
+	const integration = await merge(repo, {
+		ours: branch,
+		theirs,
+		branch,
+		author: options.author,
+		committer: options.committer,
+		message: options.message,
+		fastForward: options.fastForward,
+		mergeDriver: options.mergeDriver,
+		labels: options.labels,
+	});
+	return { fetched, integration };
 }

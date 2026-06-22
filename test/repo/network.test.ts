@@ -68,6 +68,30 @@ describe("network: cloneInto", () => {
 		expect(result.fetchedRefs).toHaveLength(0);
 	});
 
+	test("writes remote-tracking refs alongside local heads", async () => {
+		const { net } = await setupRemote();
+		const local = await localRepo();
+
+		const result = await cloneInto(local, `${BASE}/repo`, { networkPolicy: net });
+
+		// origin/main mirrors the local head right after clone — no fetch needed.
+		expect(await refHash(local, "refs/remotes/origin/main")).toBe(
+			await refHash(local, "refs/heads/main"),
+		);
+		expect(result.trackingRefs.map((r) => r.ref)).toContain("refs/remotes/origin/main");
+		expect(result.fetchedRefs.map((r) => r.ref)).toContain("refs/heads/main");
+	});
+
+	test("honors a custom remote name for the tracking namespace", async () => {
+		const { net } = await setupRemote();
+		const local = await localRepo();
+
+		await cloneInto(local, `${BASE}/repo`, { networkPolicy: net, remote: "upstream" });
+
+		expect(await refHash(local, "refs/remotes/upstream/main")).not.toBeNull();
+		expect(await refHash(local, "refs/remotes/origin/main")).toBeNull();
+	});
+
 	test("branch narrows to a single branch", async () => {
 		const { server, remote, net } = await setupRemote();
 		await commit(remote, {
@@ -135,6 +159,36 @@ describe("network: fetch", () => {
 		expect(result.objectCount).toBeGreaterThan(0);
 		expect(await refHash(local, "refs/remotes/origin/main")).toBe(second);
 		expect(result.updated.some((u) => u.ref === "refs/remotes/origin/main")).toBe(true);
+	});
+
+	test("honors a custom remote name for the tracking namespace and hook payload", async () => {
+		const { net, remote } = await setupRemote();
+		const local = await localRepo();
+		await cloneInto(local, `${BASE}/repo`, { networkPolicy: net, remote: "upstream" });
+
+		const second = await commit(remote, {
+			files: { "extra.txt": "more\n" },
+			message: "more",
+			author: AUTHOR,
+			branch: "main",
+		});
+
+		let seenRemote: string | undefined;
+		local.hooks = {
+			preFetch: (e) => {
+				seenRemote = e.remote;
+			},
+		};
+
+		const result = await fetch(
+			local,
+			{ url: `${BASE}/repo`, name: "upstream" },
+			{ networkPolicy: net },
+		);
+
+		expect(seenRemote).toBe("upstream");
+		expect(await refHash(local, "refs/remotes/upstream/main")).toBe(second);
+		expect(result.updated.some((u) => u.ref === "refs/remotes/upstream/main")).toBe(true);
 	});
 
 	test("fires postFetch and honors preFetch rejection", async () => {
