@@ -100,6 +100,22 @@ export {
 	type RevertResult,
 } from "./operations.ts";
 
+// Network operations (clone / fetch / push over a GitRepo + transport context)
+export {
+	cloneInto,
+	fetch,
+	listRemoteRefs,
+	push,
+	type CloneResult,
+	type FetchResult,
+	type PushRefResult,
+	type PushRefStatus,
+	type PushRemote,
+	type PushResult,
+	type RemoteRef,
+	type TransportContext,
+} from "./network.ts";
+
 export { createTreeAccessor, type TreeAccessor } from "./tree-accessor.ts";
 
 export type { MaterializeTarget } from "./materialize.ts";

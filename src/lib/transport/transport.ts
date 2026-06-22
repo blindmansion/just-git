@@ -7,7 +7,7 @@ import type { DeltaPackInput } from "../pack/packfile.ts";
 import { writePackDeltified } from "../pack/packfile.ts";
 import { listRefs, readHead, resolveRef } from "../refs.ts";
 import { computeShallowBoundary, type ShallowUpdate } from "../shallow.ts";
-import type { GitContext, GitRepo, ObjectId } from "../types.ts";
+import type { GitRepo, ObjectId } from "../types.ts";
 import { collectEnumeration, enumerateObjectsWithContent } from "./object-walk.ts";
 import {
 	discoverRefs,
@@ -106,7 +106,7 @@ export class LocalTransport implements Transport {
 	headTarget?: string;
 
 	constructor(
-		private local: GitContext,
+		private local: GitRepo,
 		private remote: GitRepo,
 	) {}
 
@@ -299,7 +299,7 @@ export class SmartHttpTransport implements Transport {
 	private cachedFetchRefs: RemoteRef[] | null = null;
 
 	constructor(
-		private local: GitContext,
+		private local: GitRepo,
 		private url: string,
 		private auth?: HttpAuth,
 		private fetchFn?: FetchFunction,

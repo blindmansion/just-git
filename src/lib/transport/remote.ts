@@ -1,10 +1,30 @@
 import { readConfig } from "../config.ts";
 import { findRepo } from "../repo.ts";
-import type { GitContext, GitRepo } from "../types.ts";
-import type { NetworkPolicy } from "../../hooks.ts";
+import type { GitContext, GitRepo, RemoteResolver } from "../types.ts";
+import type {
+	CredentialProvider,
+	FetchFunction,
+	NetworkPolicy,
+	ProgressCallback,
+} from "../../hooks.ts";
 import { type HttpAuth, LocalTransport, SmartHttpTransport, type Transport } from "./transport.ts";
 
 export type CredentialCache = Map<string, HttpAuth>;
+
+/**
+ * Transport-layer environment: the subset of {@link GitContext} needed to open
+ * a transport for a URL. A `GitContext` satisfies this structurally, and so
+ * does a plain `GitRepo` augmented with these fields — letting the programmatic
+ * network functions open transports without a filesystem-backed context.
+ */
+export interface TransportEnv {
+	credentialProvider?: CredentialProvider;
+	fetchFn?: FetchFunction;
+	networkPolicy?: NetworkPolicy | false;
+	resolveRemote?: RemoteResolver;
+	credentialCache?: CredentialCache;
+	onProgress?: ProgressCallback;
+}
 
 interface ParsedRemoteUrl {
 	url: string;
@@ -121,7 +141,7 @@ function resolveAuth(env: Map<string, string>): HttpAuth | undefined {
  * Resolve auth for a URL. Priority: credential provider > env vars > credential cache.
  */
 async function resolveAuthForUrl(
-	ctx: GitContext,
+	ctx: TransportEnv,
 	url: string,
 	env: Map<string, string>,
 ): Promise<HttpAuth | undefined> {
@@ -146,7 +166,7 @@ async function resolveAuthForUrl(
  * Strips embedded credentials from HTTP URLs, caching them for reuse.
  */
 export async function createTransportForUrl(
-	ctx: GitContext,
+	ctx: GitRepo & TransportEnv,
 	url: string,
 	env: Map<string, string>,
 	remoteRepo?: GitRepo,
