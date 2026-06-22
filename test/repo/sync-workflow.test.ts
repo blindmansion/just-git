@@ -116,8 +116,7 @@ async function edit(
 }
 
 const localTip = (ws: Workspace) => resolveRef(ws.repo, `refs/heads/${BRANCH}`);
-const trackedRemoteTip = (ws: Workspace) =>
-	resolveRef(ws.repo, `refs/remotes/origin/${BRANCH}`);
+const trackedRemoteTip = (ws: Workspace) => resolveRef(ws.repo, `refs/remotes/origin/${BRANCH}`);
 
 /** Read a file's content at the workspace's current local tip. */
 async function fileAt(ws: Workspace, path: string): Promise<string | null> {

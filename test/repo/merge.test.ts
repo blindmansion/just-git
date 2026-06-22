@@ -22,7 +22,11 @@ function readFileFromTree(repo: GitRepo, treeHash: string, path: string): Promis
 	return createTreeAccessor(repo, treeHash).readFile(path);
 }
 
-async function fileAtCommit(repo: GitRepo, commitHash: string, path: string): Promise<string | null> {
+async function fileAtCommit(
+	repo: GitRepo,
+	commitHash: string,
+	path: string,
+): Promise<string | null> {
 	const c = await readCommit(repo, commitHash);
 	return createTreeAccessor(repo, c.tree).readFile(path);
 }
@@ -348,14 +352,17 @@ describe("merge: two-call determinism", () => {
 	test("probe then commit with echoed hashes yields a clean merge commit", async () => {
 		const { repo, oursTip, theirsTip } = await setupConflict();
 
-		const probe = await merge(repo, { ours: "main", theirs: "feature", author: ID, branch: "main" });
+		const probe = await merge(repo, {
+			ours: "main",
+			theirs: "feature",
+			author: ID,
+			branch: "main",
+		});
 		expect(probe.status).toBe("conflicts");
 		if (probe.status !== "conflicts") throw new Error("unreachable");
 
 		// Resolve every conflict by taking theirs, re-using the resolved hashes.
-		const resolutions = Object.fromEntries(
-			probe.conflicts.map((c) => [c.path, "theirs" as const]),
-		);
+		const resolutions = Object.fromEntries(probe.conflicts.map((c) => [c.path, "theirs" as const]));
 		const committed = await merge(repo, {
 			ours: probe.ours,
 			theirs: probe.theirs,

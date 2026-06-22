@@ -135,9 +135,7 @@ describe("network: cloneInto", () => {
 		const local = await localRepo();
 		local.hooks = { preClone: () => ({ reject: true, message: "no clone" }) };
 
-		expect(cloneInto(local, `${BASE}/repo`, { networkPolicy: net })).rejects.toThrow(
-			"no clone",
-		);
+		expect(cloneInto(local, `${BASE}/repo`, { networkPolicy: net })).rejects.toThrow("no clone");
 	});
 });
 
@@ -569,9 +567,7 @@ describe("network: resolveRemote (LocalTransport)", () => {
 
 		expect(result.defaultBranch).toBe("main");
 		expect(result.objectCount).toBeGreaterThan(0);
-		expect(await refHash(local, "refs/heads/main")).toBe(
-			await refHash(remote, "refs/heads/main"),
-		);
+		expect(await refHash(local, "refs/heads/main")).toBe(await refHash(remote, "refs/heads/main"));
 		expect(await local.refStore.readRef("HEAD")).toEqual({
 			type: "symbolic",
 			target: "refs/heads/main",
