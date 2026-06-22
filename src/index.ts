@@ -1,6 +1,6 @@
-export type { FileStat, FileSystem } from "./fs";
-export type { ExecContext, GitCommandName, GitOptions } from "./git";
-export { createGit, Git } from "./git";
+export type { FileStat, FileSystem } from "./fs.ts";
+export type { ExecContext, GitCommandName, GitOptions } from "./git.ts";
+export { createGit, Git } from "./git.ts";
 export type {
 	AfterCommandEvent,
 	BeforeCommandEvent,
@@ -40,9 +40,9 @@ export type {
 	RefDeleteEvent,
 	RefUpdateEvent,
 	Rejection,
-} from "./hooks";
-export { composeGitHooks, isRejection } from "./hooks";
-export { MemoryFileSystem } from "./memory-fs";
+} from "./hooks.ts";
+export { composeGitHooks, isRejection } from "./hooks.ts";
+export { MemoryFileSystem } from "./memory-fs.ts";
 export type {
 	Commit,
 	DirectRef,
@@ -58,8 +58,8 @@ export type {
 	RefStore,
 	RemoteResolver,
 	SymbolicRef,
-} from "./lib/types";
-export type { MergeDriver, MergeDriverResult } from "./lib/merge-ort";
-export type { PackObject } from "./lib/pack/packfile";
-export type { HttpAuth } from "./lib/transport/transport";
-export { findRepo } from "./lib/repo";
+} from "./lib/types.ts";
+export type { MergeDriver, MergeDriverResult } from "./lib/merge-ort.ts";
+export type { PackObject } from "./lib/pack/packfile.ts";
+export type { HttpAuth } from "./lib/transport/transport.ts";
+export { findRepo } from "./lib/repo.ts";
