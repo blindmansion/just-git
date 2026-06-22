@@ -64,10 +64,14 @@ export {
 // Merging
 export {
 	mergeTrees,
+	mergeTreesDetailed,
 	mergeTreesFromTreeHashes,
+	type BlobSide,
+	type ConflictedPath,
 	type MergeConflict,
 	type MergeDriver,
 	type MergeDriverResult,
+	type MergeTreesDetailedResult,
 	type MergeTreesResult,
 } from "./merging.ts";
 
@@ -85,6 +89,7 @@ export {
 export {
 	bisect,
 	cherryPick,
+	merge,
 	revert,
 	type BisectOptions,
 	type BisectSearchResult,
@@ -93,9 +98,12 @@ export {
 	type CherryPickResult,
 	type CleanPickCommitted,
 	type CleanPickNoCommit,
+	type MergeOptions,
+	type MergeResult,
 	type NoCommitPickResult,
 	type NoCommitRevertResult,
 	type PickConflict,
+	type Resolution,
 	type RevertOptions,
 	type RevertResult,
 } from "./operations.ts";

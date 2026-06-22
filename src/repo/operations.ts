@@ -1,13 +1,17 @@
 import { findBisectionCommit } from "../lib/bisect.ts";
-import type { MergeConflict } from "../lib/merge.ts";
+import { isAncestor, type MergeConflict } from "../lib/merge.ts";
 import type { MergeDriver } from "../lib/merge-ort.ts";
 import { readCommit as _readCommit, writeObject } from "../lib/object-db.ts";
 import { serializeTree } from "../lib/objects/tree.ts";
 import type { Commit, GitRepo, Identity } from "../lib/types.ts";
-import { mergeTreesFromTreeHashes } from "./merging.ts";
+import {
+	type ConflictedPath,
+	mergeTreesDetailed,
+	mergeTreesFromTreeHashes,
+} from "./merging.ts";
 import { revParse } from "./reading.ts";
 import { createTreeAccessor, type TreeAccessor } from "./tree-accessor.ts";
-import { createCommit, type CommitIdentity } from "./writing.ts";
+import { createCommit, type CommitIdentity, type TreeUpdate, updateTree } from "./writing.ts";
 
 // ── Bisect ──────────────────────────────────────────────────────────
 
@@ -464,4 +468,245 @@ function appendCherryPickedFrom(message: string, hash: string): string {
 	const lastLine = lastNl === -1 ? trimmed : trimmed.slice(lastNl + 1);
 	const hasTrailer = /^\(cherry picked from commit [0-9a-f]+\)$/.test(lastLine);
 	return hasTrailer ? `${trimmed}\n${trailer}\n` : `${trimmed}\n\n${trailer}\n`;
+}
+
+// ── Merge ────────────────────────────────────────────────────────────
+
+export type { ConflictedPath, BlobSide } from "./merging.ts";
+
+/**
+ * How to resolve a single conflicted path in {@link MergeOptions.resolutions}.
+ *
+ * - `"ours"` — take our side (stage 2); if our side deleted the path, delete it.
+ * - `"theirs"` — take their side (stage 3); if their side deleted the path, delete it.
+ * - `null` — delete the path.
+ * - `{ content, mode? }` — set the path to explicit merged content. `mode`
+ *   defaults to ours' mode, else theirs', else `"100644"`.
+ */
+export type Resolution =
+	| "ours"
+	| "theirs"
+	| null
+	| { content: string | Uint8Array; mode?: string };
+
+/** Options for {@link merge}. */
+export interface MergeOptions {
+	/** Our side — the commit being merged into (hash, branch, tag, or rev-parse expression). */
+	ours: string;
+	/** Their side — the commit being merged in (hash, branch, tag, or rev-parse expression). */
+	theirs: string;
+	/** Author identity for the merge commit. */
+	author: CommitIdentity;
+	/** Committer identity. Defaults to `author`. */
+	committer?: CommitIdentity;
+	/** Merge commit message. Defaults to `Merge <theirs> into <ours>`. */
+	message?: string;
+	/** Branch to advance on a successful merge or fast-forward. No ref update when omitted. */
+	branch?: string;
+	/**
+	 * Fast-forward policy when `ours` is an ancestor of `theirs`:
+	 * - `"allow"` (default) — fast-forward (no merge commit).
+	 * - `"only"` — fast-forward or throw if not possible.
+	 * - `"never"` — always create a merge commit (`--no-ff`).
+	 */
+	fastForward?: "allow" | "only" | "never";
+	/** Inline content-merge driver, applied during the merge (auto-resolution). */
+	mergeDriver?: MergeDriver;
+	/**
+	 * Post-hoc resolutions, keyed by conflicted path. Derived from a prior
+	 * probe call's `conflicts`. When every conflicted path is resolved, the
+	 * merge commits; otherwise the unresolved paths are returned.
+	 */
+	resolutions?: Record<string, Resolution>;
+	/** Conflict-marker labels for ours/theirs. */
+	labels?: { ours?: string; theirs?: string };
+	/**
+	 * Optional CAS guard for the branch advance. When provided, the branch must
+	 * currently equal this value (or `null` to require the branch not exist),
+	 * else the advance throws. Use the resolved `ours` hash from a probe call to
+	 * guard against the branch moving between probe and commit.
+	 */
+	expectedOldHash?: string | null;
+}
+
+/**
+ * Result of {@link merge}. Every variant echoes the resolved `ours`/`theirs`
+ * commit hashes so a probe call's caller can pass them back verbatim to a
+ * commit call (guaranteeing the second merge is identical).
+ */
+export type MergeResult =
+	| { status: "up-to-date"; ours: string; theirs: string; hash: string }
+	| { status: "fast-forward"; ours: string; theirs: string; hash: string }
+	| { status: "merged"; ours: string; theirs: string; hash: string; treeHash: string }
+	| {
+			status: "conflicts";
+			ours: string;
+			theirs: string;
+			/** Conflicted result tree (marker blobs at conflicted paths). */
+			treeHash: string;
+			conflicts: ConflictedPath[];
+			messages: string[];
+			/** Conflicted paths with no resolution supplied. */
+			unresolved: string[];
+	  };
+
+/**
+ * Three-way merge of two commits, operating purely on the object store.
+ *
+ * Mirrors a CLI merge's outcomes — up-to-date, fast-forward, a two-parent
+ * merge commit, or conflicts — but with no index or worktree. Conflicts are
+ * returned as data rather than persisted as in-progress state.
+ *
+ * Two-phase resolution: a first ("probe") call returns `status: "conflicts"`
+ * with per-path stage blobs. The caller builds a `resolutions` map and calls
+ * again with the same `ours`/`theirs` (ideally the resolved hashes from the
+ * probe). Because merge-ort is deterministic, the second call recomputes the
+ * identical conflict set, applies the resolutions, and commits once every
+ * conflicted path is resolved — no state is persisted between calls.
+ *
+ * ```ts
+ * let res = await merge(repo, { ours: "main", theirs: "feature", author, branch: "main" });
+ * if (res.status === "conflicts") {
+ *   const resolutions = Object.fromEntries(
+ *     res.conflicts.map((c) => [c.path, "theirs" as const]),
+ *   );
+ *   res = await merge(repo, { ours: res.ours, theirs: res.theirs, author, branch: "main", resolutions });
+ * }
+ * ```
+ */
+export async function merge(repo: GitRepo, options: MergeOptions): Promise<MergeResult> {
+	const ours = await resolveToHash(repo, options.ours);
+	const theirs = await resolveToHash(repo, options.theirs);
+	const ff = options.fastForward ?? "allow";
+
+	// Already up to date: ours already contains theirs.
+	if (ours === theirs || (await isAncestor(repo, theirs, ours))) {
+		return { status: "up-to-date", ours, theirs, hash: ours };
+	}
+
+	// Fast-forward: ours is an ancestor of theirs.
+	if (ff !== "never" && (await isAncestor(repo, ours, theirs))) {
+		if (options.branch) {
+			await advanceBranchTo(repo, options.branch, theirs, options.expectedOldHash);
+		}
+		return { status: "fast-forward", ours, theirs, hash: theirs };
+	}
+	if (ff === "only") {
+		throw new Error(
+			'merge: not a fast-forward (set fastForward to "allow" or "never" to create a merge commit)',
+		);
+	}
+
+	const m = await mergeTreesDetailed(repo, ours, theirs, {
+		ours: options.labels?.ours,
+		theirs: options.labels?.theirs,
+		mergeDriver: options.mergeDriver,
+	});
+
+	let finalTree = m.treeHash;
+
+	if (!m.clean) {
+		const resolutions = options.resolutions ?? {};
+		const conflictPaths = new Set(m.conflicts.map((c) => c.path));
+
+		// Guard against stale or misapplied resolution maps.
+		for (const path of Object.keys(resolutions)) {
+			if (!conflictPaths.has(path)) {
+				throw new Error(
+					`merge: resolution provided for '${path}', which is not a conflicted path`,
+				);
+			}
+		}
+
+		const updates: TreeUpdate[] = [];
+		const unresolved: string[] = [];
+		for (const c of m.conflicts) {
+			if (!Object.hasOwn(resolutions, c.path)) {
+				unresolved.push(c.path);
+				continue;
+			}
+			updates.push(await resolveConflict(repo, c, resolutions[c.path] as Resolution));
+		}
+
+		if (unresolved.length > 0) {
+			return {
+				status: "conflicts",
+				ours,
+				theirs,
+				treeHash: m.treeHash,
+				conflicts: m.conflicts,
+				messages: m.messages,
+				unresolved,
+			};
+		}
+
+		finalTree = await updateTree(repo, m.treeHash, updates);
+	}
+
+	const hash = await createCommit(repo, {
+		tree: finalTree,
+		parents: [ours, theirs],
+		author: options.author,
+		committer: options.committer,
+		message: options.message ?? `Merge ${options.theirs} into ${options.ours}`,
+	});
+
+	if (options.branch) {
+		await advanceBranchTo(repo, options.branch, hash, options.expectedOldHash);
+	}
+
+	return { status: "merged", ours, theirs, hash, treeHash: finalTree };
+}
+
+/** Turn a {@link Resolution} into a tree update for the conflicted path. */
+async function resolveConflict(
+	repo: GitRepo,
+	conflict: ConflictedPath,
+	resolution: Resolution,
+): Promise<TreeUpdate> {
+	if (resolution === null) {
+		return { path: conflict.path, hash: null };
+	}
+	if (resolution === "ours") {
+		return conflict.ours
+			? { path: conflict.path, hash: conflict.ours.hash, mode: conflict.ours.mode }
+			: { path: conflict.path, hash: null };
+	}
+	if (resolution === "theirs") {
+		return conflict.theirs
+			? { path: conflict.path, hash: conflict.theirs.hash, mode: conflict.theirs.mode }
+			: { path: conflict.path, hash: null };
+	}
+	const bytes =
+		typeof resolution.content === "string"
+			? new TextEncoder().encode(resolution.content)
+			: resolution.content;
+	const hash = await writeObject(repo, "blob", bytes);
+	const mode = resolution.mode ?? conflict.ours?.mode ?? conflict.theirs?.mode ?? "100644";
+	return { path: conflict.path, hash, mode };
+}
+
+/** Advance `refs/heads/<branch>` to `hash`, optionally guarded by CAS. */
+async function advanceBranchTo(
+	repo: GitRepo,
+	branch: string,
+	hash: string,
+	expectedOldHash?: string | null,
+): Promise<void> {
+	const branchRef = `refs/heads/${branch}`;
+	if (expectedOldHash !== undefined) {
+		const ok = await repo.refStore.compareAndSwapRef(branchRef, expectedOldHash, {
+			type: "direct",
+			hash,
+		});
+		if (!ok) {
+			throw new Error(`merge: branch '${branch}' moved during merge (CAS failed)`);
+		}
+	} else {
+		await repo.refStore.writeRef(branchRef, { type: "direct", hash });
+	}
+	const head = await repo.refStore.readRef("HEAD");
+	if (!head) {
+		await repo.refStore.writeRef("HEAD", { type: "symbolic", target: branchRef });
+	}
 }
