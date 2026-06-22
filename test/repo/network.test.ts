@@ -111,7 +111,7 @@ describe("network: cloneInto", () => {
 		const local = await localRepo();
 		local.hooks = { preClone: () => ({ reject: true, message: "no clone" }) };
 
-		await expect(cloneInto(local, `${BASE}/repo`, { networkPolicy: net })).rejects.toThrow(
+		expect(cloneInto(local, `${BASE}/repo`, { networkPolicy: net })).rejects.toThrow(
 			"no clone",
 		);
 	});
@@ -274,7 +274,7 @@ describe("network: push", () => {
 	test("rejects mixing refspecs and sugar fields", async () => {
 		const { net } = await setupRemote();
 		const local = await localRepo();
-		await expect(
+		expect(
 			push(
 				local,
 				{ url: `${BASE}/repo`, branch: "main", refspecs: ["refs/heads/main"] },
@@ -297,7 +297,7 @@ describe("network: push", () => {
 		const hooks: GitHooks = { prePush: () => ({ reject: true, message: "blocked" }) };
 		local.hooks = hooks;
 
-		await expect(
+		expect(
 			push(local, { url: `${BASE}/repo`, branch: "main" }, { networkPolicy: net }),
 		).rejects.toThrow("blocked");
 	});
