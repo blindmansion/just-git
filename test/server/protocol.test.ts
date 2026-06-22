@@ -15,7 +15,7 @@ import {
 } from "../../src/lib/transport/pkt-line.ts";
 import { createServer } from "../../src/server/handler.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
-import { createStorageAdapter } from "../../src/server/storage.ts";
+import { createRepoStore } from "../../src/server/storage.ts";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { createGit, MemoryFileSystem } from "../../src/index.ts";
 
@@ -290,7 +290,7 @@ describe("handler HTTP conformance", () => {
 
 	const setup = async () => {
 		const driver = new MemoryStorage();
-		const storage = createStorageAdapter(driver);
+		const storage = createRepoStore(driver);
 		const repo = await storage.createRepo("repo");
 		const blob = await writeBlob(repo, "# test");
 		const tree = await writeTree(repo, [{ name: "README.md", hash: blob }]);
@@ -444,7 +444,7 @@ describe("handler HTTP conformance", () => {
 
 	test("denied advertiseRefs also blocks direct POST /git-upload-pack", async () => {
 		const driver = new MemoryStorage();
-		const storage = createStorageAdapter(driver);
+		const storage = createRepoStore(driver);
 		const repo = await storage.createRepo("repo");
 		const blob = await writeBlob(repo, "classified");
 		const tree = await writeTree(repo, [{ name: "secret.txt", hash: blob }]);
@@ -516,7 +516,7 @@ describe("handler HTTP conformance", () => {
 
 	test("filtered hidden refs cannot be fetched by hash over v1 upload-pack", async () => {
 		const driver = new MemoryStorage();
-		const storage = createStorageAdapter(driver);
+		const storage = createRepoStore(driver);
 		const repo = await storage.createRepo("repo");
 
 		const publicBlob = await writeBlob(repo, "public");
@@ -576,7 +576,7 @@ describe("handler HTTP conformance", () => {
 
 	test("filtered refs do not leak HEAD symref target", async () => {
 		const driver = new MemoryStorage();
-		const storage = createStorageAdapter(driver);
+		const storage = createRepoStore(driver);
 		const repo = await storage.createRepo("repo", { defaultBranch: "secret" });
 
 		const blob = await writeBlob(repo, "classified");
@@ -631,7 +631,7 @@ describe("handler HTTP conformance", () => {
 
 	test("basePath stripping works correctly", async () => {
 		const driver = new MemoryStorage();
-		const storage = createStorageAdapter(driver);
+		const storage = createRepoStore(driver);
 		const repo = await storage.createRepo("repo");
 		const blob = await writeBlob(repo, "# test");
 		const tree = await writeTree(repo, [{ name: "README.md", hash: blob }]);

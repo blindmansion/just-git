@@ -4,12 +4,12 @@ import {
 	DurableObjectSqliteStorage,
 	type DurableObjectStorageSql,
 } from "../../src/server/do-sqlite-storage.ts";
-import { createStorageAdapter } from "../../src/server/storage.ts";
+import { createRepoStore } from "../../src/server/storage.ts";
 import { envelope } from "../../src/lib/object-store.ts";
 import { sha1 } from "../../src/lib/sha1.ts";
 import { writePack } from "../../src/lib/pack/packfile.ts";
 import type { ObjectType } from "../../src/lib/types.ts";
-import type { StorageAdapter } from "../../src/server/storage.ts";
+import type { RepoStore } from "../../src/server/storage.ts";
 
 // ── DO SQLite shim (backed by bun:sqlite) ──────────────────────────
 // Wraps a bun:sqlite Database to match the DurableObjectStorageSql
@@ -78,12 +78,12 @@ async function makeHash(type: ObjectType, content: Uint8Array): Promise<string> 
 describe("DurableObjectSqliteStorage", () => {
 	let db: Database;
 	let doStorage: DurableObjectStorageSql;
-	let storage: StorageAdapter;
+	let storage: RepoStore;
 
 	beforeEach(() => {
 		db = new Database(":memory:");
 		doStorage = createDOStorageShim(db);
-		storage = createStorageAdapter(new DurableObjectSqliteStorage(doStorage));
+		storage = createRepoStore(new DurableObjectSqliteStorage(doStorage));
 	});
 
 	// ── ObjectStore ──────────────────────────────────────────────
@@ -580,7 +580,7 @@ describe("DurableObjectSqliteStorage", () => {
 		test("fork with adapter — object fallback works", async () => {
 			const doStorage = createDOStorageShim(db);
 			const driver = new DurableObjectSqliteStorage(doStorage);
-			const adapter = createStorageAdapter(driver);
+			const adapter = createRepoStore(driver);
 
 			const upstream = await adapter.createRepo("upstream");
 			const blobContent = encoder.encode("hello from upstream");

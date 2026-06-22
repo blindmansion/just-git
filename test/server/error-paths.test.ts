@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { createServer, isValidRepoId } from "../../src/server/handler.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
-import { createStorageAdapter } from "../../src/server/storage.ts";
+import { createRepoStore } from "../../src/server/storage.ts";
 import {
 	encodePktLine,
 	flushPkt,
@@ -22,7 +22,7 @@ const TEST_IDENTITY = {
 
 async function setupRepo() {
 	const driver = new MemoryStorage();
-	const storage = createStorageAdapter(driver);
+	const storage = createRepoStore(driver);
 	const repo = await storage.createRepo("repo");
 	const blob = await writeBlob(repo, "# test");
 	const tree = await writeTree(repo, [{ name: "README.md", hash: blob }]);

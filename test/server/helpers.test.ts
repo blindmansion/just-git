@@ -10,7 +10,7 @@ import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { mergeTrees, mergeTreesFromTreeHashes } from "../../src/repo/merging.ts";
 import { extractTree } from "../../src/repo/worktree.ts";
 import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
-import { createStorageAdapter } from "../../src/server/storage.ts";
+import { createRepoStore } from "../../src/server/storage.ts";
 
 const TEST_ENV = {
 	GIT_AUTHOR_NAME: "Test",
@@ -493,7 +493,7 @@ describe("extractTree", () => {
 
 	test("works with BunSqliteStorage-backed repos", async () => {
 		const db = new Database(":memory:");
-		const storage = createStorageAdapter(new BunSqliteStorage(db));
+		const storage = createRepoStore(new BunSqliteStorage(db));
 		const repo = await storage.createRepo("test-repo");
 
 		const readmeBlob = await writeBlob(repo, "# My Project\n");

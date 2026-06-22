@@ -5,7 +5,7 @@ import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { collectRefs, PackCache } from "../../src/server/operations.ts";
 import { createServer } from "../../src/server/handler.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
-import { createStorageAdapter } from "../../src/server/storage.ts";
+import { createRepoStore } from "../../src/server/storage.ts";
 import type { NodeHttpRequest, NodeHttpResponse } from "../../src/server/types.ts";
 import { pathExists, readFile } from "../util.ts";
 import { envAt, createServerClient, startServer, defaultHttpAuth } from "./util.ts";
@@ -22,7 +22,7 @@ const TEST_IDENTITY: Identity = {
 describe("ref advertisement sorting", () => {
 	test("collectRefs returns refs sorted by name (C locale)", async () => {
 		const driver = new MemoryStorage();
-		const storage = createStorageAdapter(driver);
+		const storage = createRepoStore(driver);
 		const repo = await storage.createRepo("repo");
 		const blob = await writeBlob(repo, "content");
 		const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);
@@ -51,7 +51,7 @@ describe("ref advertisement sorting", () => {
 
 	test("refs in info/refs response are sorted by name", async () => {
 		const driver = new MemoryStorage();
-		const storage = createStorageAdapter(driver);
+		const storage = createRepoStore(driver);
 		const repo = await storage.createRepo("repo");
 		const blob = await writeBlob(repo, "content");
 		const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);
@@ -94,7 +94,7 @@ describe("ref advertisement sorting", () => {
 
 	test("peeled tags follow immediately after their tag ref in sorted order", async () => {
 		const driver = new MemoryStorage();
-		const storage = createStorageAdapter(driver);
+		const storage = createRepoStore(driver);
 		const repo = await storage.createRepo("repo");
 		const blob = await writeBlob(repo, "content");
 		const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);
@@ -135,7 +135,7 @@ describe("ref advertisement sorting", () => {
 describe("include-tag via server", () => {
 	test("annotated tag objects are included when their target is in the pack", async () => {
 		const driver = new MemoryStorage();
-		const storage = createStorageAdapter(driver);
+		const storage = createRepoStore(driver);
 		const repo = await storage.createRepo("repo");
 		const blob = await writeBlob(repo, "content");
 		const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);
@@ -174,7 +174,7 @@ describe("include-tag via server", () => {
 
 	test("lightweight tags don't generate extra tag objects", async () => {
 		const driver = new MemoryStorage();
-		const storage = createStorageAdapter(driver);
+		const storage = createRepoStore(driver);
 		const repo = await storage.createRepo("repo");
 		const blob = await writeBlob(repo, "content");
 		const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);
@@ -209,7 +209,7 @@ describe("include-tag via server", () => {
 describe("upload-pack capabilities", () => {
 	test("stricter auth model does not advertise allow-reachable-sha1-in-want", async () => {
 		const driver = new MemoryStorage();
-		const storage = createStorageAdapter(driver);
+		const storage = createRepoStore(driver);
 		const repo = await storage.createRepo("repo");
 		const blob = await writeBlob(repo, "content");
 		const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);
@@ -340,7 +340,7 @@ describe("PackCache", () => {
 describe("streaming upload-pack (noDelta)", () => {
 	test("clone succeeds with noDelta pack option", async () => {
 		const driver = new MemoryStorage();
-		const storage = createStorageAdapter(driver);
+		const storage = createRepoStore(driver);
 		const repo = await storage.createRepo("repo");
 		const fileBlob = await writeBlob(repo, "content");
 		const mainBlob = await writeBlob(repo, 'console.log("hello");');
@@ -398,7 +398,7 @@ describe("streaming upload-pack (noDelta)", () => {
 
 	test("incremental fetch works with noDelta", async () => {
 		const driver = new MemoryStorage();
-		const storage = createStorageAdapter(driver);
+		const storage = createRepoStore(driver);
 		const repo = await storage.createRepo("repo");
 		const blob = await writeBlob(repo, "content");
 		const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);
@@ -510,7 +510,7 @@ describe("nodeHandler", () => {
 
 	test("converts GET request and returns correct status and headers", async () => {
 		const driver = new MemoryStorage();
-		const storage = createStorageAdapter(driver);
+		const storage = createRepoStore(driver);
 		const repo = await storage.createRepo("repo");
 		const blob = await writeBlob(repo, "content");
 		const tree = await writeTree(repo, [{ name: "file.txt", hash: blob }]);

@@ -1,12 +1,12 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test, beforeEach } from "bun:test";
 import { BunSqliteStorage } from "../../src/server/bun-sqlite-storage.ts";
-import { createStorageAdapter } from "../../src/server/storage.ts";
+import { createRepoStore } from "../../src/server/storage.ts";
 import { envelope } from "../../src/lib/object-store.ts";
 import { sha1 } from "../../src/lib/sha1.ts";
 import { writePack } from "../../src/lib/pack/packfile.ts";
 import type { ObjectType } from "../../src/lib/types.ts";
-import type { StorageAdapter } from "../../src/server/storage.ts";
+import type { RepoStore } from "../../src/server/storage.ts";
 
 const encoder = new TextEncoder();
 
@@ -16,11 +16,11 @@ async function makeHash(type: ObjectType, content: Uint8Array): Promise<string> 
 
 describe("BunSqliteStorage", () => {
 	let db: Database;
-	let storage: StorageAdapter;
+	let storage: RepoStore;
 
 	beforeEach(() => {
 		db = new Database(":memory:");
-		storage = createStorageAdapter(new BunSqliteStorage(db));
+		storage = createRepoStore(new BunSqliteStorage(db));
 	});
 
 	// ── ObjectStore ──────────────────────────────────────────────
@@ -510,7 +510,7 @@ describe("BunSqliteStorage", () => {
 
 		test("fork with adapter — object fallback works", async () => {
 			const driver = new BunSqliteStorage(db);
-			const adapter = createStorageAdapter(driver);
+			const adapter = createRepoStore(driver);
 
 			const upstream = await adapter.createRepo("upstream");
 			const blobContent = encoder.encode("hello from upstream");

@@ -156,7 +156,7 @@ function prepareStatements(db: BetterSqlite3Database): Statements {
  *
  * ```ts
  * import Database from "better-sqlite3";
- * const storage = createStorageAdapter(new BetterSqlite3Storage(new Database("repos.db")));
+ * const storage = createRepoStore(new BetterSqlite3Storage(new Database("repos.db")));
  * ```
  */
 export class BetterSqlite3Storage implements Storage {

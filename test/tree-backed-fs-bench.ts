@@ -13,7 +13,7 @@
 
 import { MemoryFileSystem } from "../src/memory-fs";
 import { MemoryStorage } from "../src/server/memory-storage";
-import { createStorageAdapter } from "../src/server/storage";
+import { createRepoStore } from "../src/server/storage";
 import { writeBlob, writeTree } from "../src/repo/writing.ts";
 import { TreeBackedFs } from "../src/tree-backed-fs";
 import type { TreeEntryInput } from "../src/repo/writing.ts";
@@ -81,7 +81,7 @@ function filePath(i: number, totalFiles: number): string {
 }
 
 async function buildFixture(size: number): Promise<TreeFixture> {
-	const storage = createStorageAdapter(new MemoryStorage());
+	const storage = createRepoStore(new MemoryStorage());
 	const repo = await storage.createRepo(`bench-${size}`);
 	const files: Record<string, string> = {};
 	const paths: string[] = [];

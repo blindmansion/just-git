@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { GitRepo } from "../../src/lib/types.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
-import { createStorageAdapter } from "../../src/server/storage.ts";
+import { createRepoStore } from "../../src/server/storage.ts";
 import { readTree } from "../../src/repo/reading.ts";
 import { readCommit, resolveRef } from "../../src/repo/reading.ts";
 import { flattenTree } from "../../src/repo/diffing.ts";
 import { commit, updateTree, writeBlob, writeTree } from "../../src/repo/writing.ts";
 
 async function freshRepo(): Promise<GitRepo> {
-	return createStorageAdapter(new MemoryStorage()).createRepo("test");
+	return createRepoStore(new MemoryStorage()).createRepo("test");
 }
 
 // ── readTree ────────────────────────────────────────────────────────

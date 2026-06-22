@@ -116,7 +116,7 @@ function prepareStatements(db: BunSqliteDatabase): Statements {
  *
  * ```ts
  * import { Database } from "bun:sqlite";
- * const storage = createStorageAdapter(new BunSqliteStorage(new Database("repos.db")));
+ * const storage = createRepoStore(new BunSqliteStorage(new Database("repos.db")));
  * ```
  */
 export class BunSqliteStorage implements Storage {

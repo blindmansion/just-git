@@ -125,7 +125,7 @@ Declarative push rules on `GitServerConfig.policy`: branch protection, force-pus
 
 **Storage** (`storage.ts`, `bun-sqlite-storage.ts`, `better-sqlite3-storage.ts`, `memory-storage.ts`, `pg-storage.ts`)
 
-Two-layer architecture: `Storage` implementations (`BunSqliteStorage`, `BetterSqlite3Storage`, `PgStorage`, `MemoryStorage`) provide raw key-value CRUD. `createStorageAdapter(driver)` is called internally by `createServer` to wrap any driver with shared git-aware logic (object hashing, pack ingestion, symref resolution, CAS). Multiple repos partitioned by ID in a single store.
+Two-layer architecture: `Storage` implementations (`BunSqliteStorage`, `BetterSqlite3Storage`, `PgStorage`, `MemoryStorage`) provide raw key-value CRUD. `createRepoStore(driver)` is called internally by `createServer` to wrap any driver with shared git-aware logic (object hashing, pack ingestion, symref resolution, CAS). Multiple repos partitioned by ID in a single store.
 
 Repos require explicit creation via `server.createRepo(id)`, or set `autoCreate: true` in the server config for automatic creation on first access. `server.repo(id)` returns `null` for unregistered repos — unknown paths get 404 responses.
 

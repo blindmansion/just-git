@@ -198,7 +198,7 @@ Key behaviors:
 
 `createServer<A = Auth>(config?)` returns a `GitServer` with both `fetch` (HTTP) and `handleSession` (SSH) methods, plus repo management (`createRepo`, `repo`, `requireRepo`, `deleteRepo`, `forkRepo`). One server object handles both protocols with shared config:
 
-- `storage?: Storage` — the storage driver for git object and ref persistence. Defaults to `MemoryStorage`. `createStorageAdapter()` is called internally.
+- `storage?: Storage` — the storage driver for git object and ref persistence. Defaults to `MemoryStorage`. `createRepoStore()` is called internally.
 - `resolve?: (path: string) => string | null` — maps request path to repo ID. Default: identity (URL path = repo ID).
 - `autoCreate?: boolean | { defaultBranch?: string }` — automatically create repos on first access.
 - `server.fetch(request)` — web-standard HTTP handler (Bun.serve, Hono, CF Workers, etc.).

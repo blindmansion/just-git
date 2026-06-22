@@ -132,9 +132,9 @@ export interface GitServerConfig<A = Auth> {
 	/**
 	 * Storage backend for git object and ref persistence.
 	 *
-	 * The server calls `createStorageAdapter(storage)` internally to build the
+	 * The server calls `createRepoStore(storage)` internally to build the
 	 * git-aware adapter. Users provide the storage backend; they never see
-	 * the `StorageAdapter` interface.
+	 * the `RepoStore` interface.
 	 *
 	 * Defaults to {@link MemoryStorage} when omitted.
 	 */

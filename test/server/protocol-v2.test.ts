@@ -18,7 +18,7 @@ import {
 } from "../../src/lib/transport/pkt-line.ts";
 import { createServer } from "../../src/server/handler.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
-import { createStorageAdapter } from "../../src/server/storage.ts";
+import { createRepoStore } from "../../src/server/storage.ts";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import {
 	buildV2CapabilityAdvertisementBytes,
@@ -360,7 +360,7 @@ describe("HTTP protocol v2", () => {
 
 	beforeAll(async () => {
 		const driver = new MemoryStorage();
-		const storage = createStorageAdapter(driver);
+		const storage = createRepoStore(driver);
 		const repo = await storage.createRepo("repo");
 
 		const blob = await writeBlob(repo, "# test");
@@ -480,7 +480,7 @@ describe("HTTP protocol v2", () => {
 
 	test("hidden refs cannot be fetched via want-ref or direct want", async () => {
 		const driver = new MemoryStorage();
-		const storage = createStorageAdapter(driver);
+		const storage = createRepoStore(driver);
 		const repo = await storage.createRepo("repo");
 
 		const publicBlob = await writeBlob(repo, "public");
@@ -615,7 +615,7 @@ describe("handleLsRefs", () => {
 
 	beforeAll(async () => {
 		const driver = new MemoryStorage();
-		const storage = createStorageAdapter(driver);
+		const storage = createRepoStore(driver);
 		repo = await storage.createRepo("test");
 
 		const blob = await writeBlob(repo, "content");
@@ -674,7 +674,7 @@ describe("handleV2Fetch", () => {
 
 	beforeAll(async () => {
 		const driver = new MemoryStorage();
-		const storage = createStorageAdapter(driver);
+		const storage = createRepoStore(driver);
 		repo = await storage.createRepo("test");
 
 		const blob1 = await writeBlob(repo, "content1");

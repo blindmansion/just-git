@@ -2,12 +2,12 @@ import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { execSync } from "node:child_process";
 import pg from "pg";
 import { PgStorage } from "../../src/server/pg-storage.ts";
-import { createStorageAdapter } from "../../src/server/storage.ts";
+import { createRepoStore } from "../../src/server/storage.ts";
 import { envelope } from "../../src/lib/object-store.ts";
 import { sha1 } from "../../src/lib/sha1.ts";
 import { writePack } from "../../src/lib/pack/packfile.ts";
 import type { ObjectType } from "../../src/lib/types.ts";
-import type { StorageAdapter } from "../../src/server/storage.ts";
+import type { RepoStore } from "../../src/server/storage.ts";
 
 const encoder = new TextEncoder();
 
@@ -57,7 +57,7 @@ if (!canRun) {
 
 let pool: pg.Pool | null = null;
 let driver: PgStorage | null = null;
-let storage: StorageAdapter | null = null;
+let storage: RepoStore | null = null;
 
 async function waitForReady(url: string, maxMs = 20_000): Promise<boolean> {
 	const start = Date.now();
@@ -83,7 +83,7 @@ describe.skipIf(!canRun)("PgStorage", () => {
 		if (!ready) throw new Error("Postgres not ready after 20s");
 		pool = new pg.Pool({ connectionString: connectionUrl! });
 		driver = await PgStorage.create(pool);
-		storage = createStorageAdapter(driver);
+		storage = createRepoStore(driver);
 	});
 
 	afterAll(async () => {

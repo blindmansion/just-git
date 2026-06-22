@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach } from "bun:test";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
-import { createStorageAdapter } from "../../src/server/storage.ts";
-import type { StorageAdapter } from "../../src/server/storage.ts";
+import { createRepoStore } from "../../src/server/storage.ts";
+import type { RepoStore } from "../../src/server/storage.ts";
 import { envelope } from "../../src/lib/object-store.ts";
 import { sha1 } from "../../src/lib/sha1.ts";
 import { writePack } from "../../src/lib/pack/packfile.ts";
@@ -15,11 +15,11 @@ async function makeHash(type: ObjectType, content: Uint8Array): Promise<string> 
 
 describe("MemoryStorage", () => {
 	let driver: MemoryStorage;
-	let storage: StorageAdapter;
+	let storage: RepoStore;
 
 	beforeEach(() => {
 		driver = new MemoryStorage();
-		storage = createStorageAdapter(driver);
+		storage = createRepoStore(driver);
 	});
 
 	// ── ObjectStore ──────────────────────────────────────────────

@@ -38,7 +38,7 @@ import {
 import { buildReportStatus, parseV2CommandRequest } from "./protocol.ts";
 import { handleSshSession } from "./ssh-session.ts";
 import { gcRepo } from "./gc.ts";
-import { createStorageAdapter, type CreateRepoOptions } from "./storage.ts";
+import { createRepoStore, type CreateRepoOptions } from "./storage.ts";
 import { MemoryStorage } from "./memory-storage.ts";
 import { RequestLimitError } from "./errors.ts";
 import type {
@@ -102,7 +102,7 @@ export function createServer<A = Auth>(
 	config: GitServerConfig<A> = {} as GitServerConfig<A>,
 ): GitServer<A> {
 	const rawStorage = config.storage ?? new MemoryStorage();
-	const storage = createStorageAdapter(rawStorage);
+	const storage = createRepoStore(rawStorage);
 	const resolve = config.resolve ?? ((path: string) => path);
 	const autoCreate = config.autoCreate;
 	const { basePath } = config;

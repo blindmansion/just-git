@@ -35,15 +35,15 @@ export interface CreateRepoOptions {
 /**
  * Abstract storage backend for multi-repo git object and ref storage.
  *
- * Repos must be explicitly created via {@link StorageAdapter.createRepo}
- * before they can be accessed with {@link StorageAdapter.repo}. This keeps
+ * Repos must be explicitly created via {@link RepoStore.createRepo}
+ * before they can be accessed with {@link RepoStore.repo}. This keeps
  * repo creation explicit and avoids accidental creation when a resolved path
  * is passed through server code.
  *
- * Construct a `StorageAdapter` with {@link createStorageAdapter}. The adapter
+ * Construct a `RepoStore` with {@link createRepoStore}. The adapter
  * adds all git-aware behavior on top of a raw {@link Storage} backend.
  */
-export interface StorageAdapter {
+export interface RepoStore {
 	/**
 	 * Create a new repo and initialize HEAD.
 	 *
@@ -258,16 +258,16 @@ export interface Storage {
 	listForks?(repoId: string): MaybeAsync<string[]>;
 }
 
-// ── createStorageAdapter ───────────────────────────────────────────────────
+// ── createRepoStore ───────────────────────────────────────────────────
 
 /**
- * Build a {@link StorageAdapter} from a {@link Storage} backend.
+ * Build a {@link RepoStore} from a {@link Storage} backend.
  *
  * The returned adapter handles all git-aware logic (object hashing,
  * pack ingestion, batch object lookup fallback, symref resolution, and CAS
  * on top of the backend's raw I/O.
  */
-export function createStorageAdapter(driver: Storage): StorageAdapter {
+export function createRepoStore(driver: Storage): RepoStore {
 	async function buildRepo(repoId: string): Promise<GitRepo> {
 		const parentId = driver.getForkParent ? await driver.getForkParent(repoId) : null;
 		return {
