@@ -161,9 +161,16 @@ interface RefsData {
  * Collect the structured ref list from a repo (no wire encoding).
  * The handler can pass this through an advertiseRefs hook to filter,
  * then call `buildRefAdvertisementBytes` to produce the wire format.
+ *
+ * When `prefixes` is provided (v2 ls-refs `ref-prefix`), the refs/* query is
+ * narrowed at the storage layer instead of listing every ref. Backends match
+ * prefixes via GLOB/LIKE (a superset of the literal `startsWith` semantics for
+ * any pattern metacharacters), so callers must still apply the exact literal
+ * prefix filter to the result — this only reduces how many rows the backend
+ * returns, never the final visible set.
  */
-export async function collectRefs(repo: GitRepo): Promise<RefsData> {
-	const refEntries = await repo.refStore.listRefs("refs");
+export async function collectRefs(repo: GitRepo, prefixes?: readonly string[]): Promise<RefsData> {
+	const refEntries = await listRefEntries(repo, prefixes);
 	const headRef = await repo.refStore.readRef("HEAD");
 
 	const refs: RefAdvertisement[] = [];
@@ -193,7 +200,15 @@ export async function collectRefs(repo: GitRepo): Promise<RefsData> {
 	// and shallow clones silently produce empty repos. Synthesize HEAD from
 	// the first branch ref when the store doesn't provide one.
 	if (!headHash && sortedEntries.length > 0) {
-		const defaultBranch = inferDefaultBranch(sortedEntries);
+		// Infer from the full branch list, not the (possibly prefix-narrowed)
+		// subset, so a synthesized HEAD is identical regardless of ref-prefix.
+		const branchEntries =
+			prefixes && prefixes.length > 0
+				? (await repo.refStore.listRefs("refs/heads")).sort((a, b) =>
+						a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+					)
+				: sortedEntries;
+		const defaultBranch = inferDefaultBranch(branchEntries);
 		if (defaultBranch) {
 			headHash = defaultBranch.hash;
 			headTarget = defaultBranch.name;
@@ -221,6 +236,28 @@ export async function collectRefs(repo: GitRepo): Promise<RefsData> {
 	}
 
 	return { refs, headTarget };
+}
+
+/**
+ * List `refs/*` entries, optionally narrowed to a set of `ref-prefix` values.
+ * Each prefix is queried independently and unioned (deduped by name). Backend
+ * prefix matching is a superset of literal `startsWith`, so the caller must
+ * re-apply the exact filter; this only trims rows fetched from the backend.
+ */
+async function listRefEntries(
+	repo: GitRepo,
+	prefixes?: readonly string[],
+): Promise<RefAdvertisement[]> {
+	if (!prefixes || prefixes.length === 0) {
+		return repo.refStore.listRefs("refs");
+	}
+	const seen = new Map<string, RefAdvertisement>();
+	for (const prefix of prefixes) {
+		for (const entry of await repo.refStore.listRefs(prefix)) {
+			seen.set(entry.name, entry);
+		}
+	}
+	return Array.from(seen.values());
 }
 
 const DEFAULT_BRANCH_PRIORITY = ["refs/heads/main", "refs/heads/master"];
@@ -1032,10 +1069,22 @@ export async function handleLsRefs<A>(
 	const wantUnborn = args.includes("unborn");
 	const prefixes = args.filter((a) => a.startsWith("ref-prefix ")).map((a) => a.slice(11));
 
-	const adv = await advertiseRefsWithHooks(repo, repoId, "git-upload-pack", hooks, auth);
-	if (isRejection(adv)) return adv;
-
-	const { refs: allRefs, headTarget } = adv;
+	let allRefs: RefAdvertisement[];
+	let headTarget: string | undefined;
+	if (prefixes.length > 0 && !hooks?.advertiseRefs) {
+		// Fast path: no ref-visibility hook, so push the prefix filter down to
+		// the storage layer rather than listing every ref. The exact literal
+		// prefix filter below still runs over the result, so output is identical
+		// to the full-list path (backend GLOB/LIKE only ever returns a superset).
+		const collected = await collectRefs(repo, prefixes);
+		allRefs = collected.refs;
+		headTarget = collected.headTarget;
+	} else {
+		const adv = await advertiseRefsWithHooks(repo, repoId, "git-upload-pack", hooks, auth);
+		if (isRejection(adv)) return adv;
+		allRefs = adv.refs;
+		headTarget = adv.headTarget;
+	}
 	const result: V2LsRefsRef[] = [];
 
 	for (const ref of allRefs) {

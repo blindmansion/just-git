@@ -20,9 +20,9 @@ export type {
 	MaybeAsync,
 } from "./repo-store.ts";
 
-// Maintenance — free functions over (GitRepo, Storage)
-export { gcRepo, repackRepo } from "./gc.ts";
-export type { GcOptions, GcResult, RepackOptions, RepackResult } from "./gc.ts";
+// Maintenance — run via `RepoStore.gc` (fork-safe). The underlying free
+// function is intentionally not exported; go through the manager.
+export type { GcOptions, GcResult } from "./gc.ts";
 
 // Backends
 export { MemoryStorage } from "./memory-storage.ts";

@@ -37,7 +37,6 @@ import {
 } from "./operations.ts";
 import { buildReportStatus, parseV2CommandRequest } from "./protocol.ts";
 import { handleSshSession } from "./ssh-session.ts";
-import { gcRepo, repackRepo } from "../storage/gc.ts";
 import { createRepoStore, type CreateRepoOptions } from "../storage/repo-store.ts";
 import { MemoryStorage } from "../storage/memory-storage.ts";
 import { RequestLimitError } from "./errors.ts";
@@ -52,6 +51,7 @@ import type {
 	ServerPolicy,
 	Auth,
 	AuthProvider,
+	RefUpdate,
 	SshChannel,
 	SshSessionInfo,
 	UpdateEvent,
@@ -164,24 +164,22 @@ export function createServer<A = Auth>(
 	}
 
 	/**
-	 * Collect ref tips of all forks of a root repo, so maintenance (gc /
-	 * repack) treats fork-reachable objects as live. Returns undefined for
-	 * non-root repos or backends without fork support.
+	 * Fire the low-level ref-change notification. Fire-and-forget: a throwing
+	 * listener never affects the operation that produced the change.
 	 */
-	async function collectForkTips(repoId: string): Promise<string[] | undefined> {
-		if (!rawStorage.listForks || !rawStorage.getForkParent) return undefined;
-		const parentId = await rawStorage.getForkParent(repoId);
-		if (parentId) return undefined; // forks are compacted/gc'd as themselves
-		const forkIds = await rawStorage.listForks(repoId);
-		if (forkIds.length === 0) return undefined;
-		const extraTips: string[] = [];
-		for (const forkId of forkIds) {
-			const forkRepo = await storage.repo(forkId);
-			if (!forkRepo) continue;
-			const refs = await forkRepo.refStore.listRefs();
-			for (const ref of refs) extraTips.push(ref.hash);
+	function emitRefChange(
+		repoId: string,
+		repo: GitRepo,
+		applied: readonly RefUpdate[],
+		source: "push" | "commit" | "update-refs",
+		auth?: A,
+	): void {
+		if (!config.onRefUpdate || applied.length === 0) return;
+		try {
+			config.onRefUpdate({ repoId, repo, updates: applied, source, auth });
+		} catch {
+			// Observation channel — swallow listener errors.
 		}
-		return extraTips.length > 0 ? extraTips : undefined;
 	}
 
 	const server: GitServer<A> = {
@@ -376,13 +374,14 @@ export function createServer<A = Auth>(
 						});
 					}
 
-					const { refResults } = await applyReceivePack({
+					const { refResults, applied } = await applyReceivePack({
 						repo: resolved.repo,
 						repoId: resolved.repoId,
 						ingestResult,
 						hooks,
 						auth,
 					});
+					emitRefChange(resolved.repoId, resolved.repo, applied, "push", auth);
 
 					if (useReportStatus) {
 						const reportResults = refResults.map((r) => ({
@@ -437,6 +436,8 @@ export function createServer<A = Auth>(
 					receiveLimits,
 					fetchLimits,
 					auth,
+					onRefApplied: (repoId, repo, applied) =>
+						emitRefChange(repoId, repo, applied, "push", auth),
 					onError: onError ? (err) => onError(err, auth) : undefined,
 				});
 			} finally {
@@ -449,7 +450,9 @@ export function createServer<A = Auth>(
 			try {
 				const repo = await server.requireRepo(repoId);
 				const updates = await resolveRefUpdates(repo, refs);
-				return applyCasRefUpdates(repo, updates);
+				const result = await applyCasRefUpdates(repo, updates);
+				emitRefChange(repoId, repo, result.applied, "update-refs");
+				return result;
 			} finally {
 				leave();
 			}
@@ -471,6 +474,7 @@ export function createServer<A = Auth>(
 				if (!refResult?.ok) {
 					throw new Error(refResult?.error ?? "ref update failed");
 				}
+				emitRefChange(repoId, repo, result.applied, "commit");
 				return commitResult;
 			} finally {
 				leave();
@@ -544,20 +548,9 @@ export function createServer<A = Auth>(
 		async gc(repoId, options?) {
 			if (!enter()) throw new Error("Server is shutting down");
 			try {
-				const repo = await server.requireRepo(repoId);
-				const extraTips = await collectForkTips(repoId);
-				return gcRepo(repo, rawStorage, repoId, options, extraTips);
-			} finally {
-				leave();
-			}
-		},
-
-		async repack(repoId, options?) {
-			if (!enter()) throw new Error("Server is shutting down");
-			try {
-				const repo = await server.requireRepo(repoId);
-				const extraTips = await collectForkTips(repoId);
-				return repackRepo(repo, rawStorage, repoId, options, extraTips);
+				// requireRepo validates existence; storage.gc handles fork-tip safety.
+				await server.requireRepo(repoId);
+				return storage.gc(repoId, options);
 			} finally {
 				leave();
 			}

@@ -3,7 +3,7 @@ import type { NetworkPolicy, Rejection } from "../hooks.ts";
 import type { NodeHttpRequest, NodeHttpResponse } from "../node-http.ts";
 import type { CommitOptions, CommitResult } from "../repo/writing.ts";
 import type { Storage, CreateRepoOptions } from "../storage/repo-store.ts";
-import type { GcOptions, GcResult, RepackOptions, RepackResult } from "../storage/gc.ts";
+import type { GcOptions, GcResult } from "../storage/gc.ts";
 export type { NodeHttpRequest, NodeHttpResponse } from "../node-http.ts";
 
 // ── Auth ─────────────────────────────────────────────────────────────
@@ -255,6 +255,23 @@ export interface GitServerConfig<A = Auth> {
 	 * suppress all error output.
 	 */
 	onError?: false | ((err: unknown, auth?: A) => void);
+
+	/**
+	 * Low-level notification fired after **any** successful ref change —
+	 * pushes (HTTP/SSH), {@link GitServer.commit}, and
+	 * {@link GitServer.updateRefs} alike.
+	 *
+	 * Unlike the {@link ServerHooks} (`preReceive`/`update`/`postReceive`),
+	 * this is a pure observation channel: it cannot reject, carries no policy
+	 * semantics, and fires for in-process writes too (which deliberately
+	 * bypass the transport hooks). It mirrors git's `reference-transaction` /
+	 * `post-update` hooks, which also fire on local commits.
+	 *
+	 * The primary use case is push/event-driven sync: maintain a "latest ref
+	 * state" cache or fan out to SSE/websockets so clients can be notified of
+	 * updates instead of polling. Fire-and-forget — errors are swallowed.
+	 */
+	onRefUpdate?: (event: RefChangeEvent<A>) => void;
 }
 
 /**
@@ -430,19 +447,6 @@ export interface GitServer<A = Auth> {
 	gc(repoId: string, options?: GcOptions): Promise<GcResult>;
 
 	/**
-	 * Delta-compress a repo's reachable history without pruning unreachable
-	 * objects — the "compress only" counterpart to {@link gc}.
-	 *
-	 * Bounds disk usage of live, near-duplicate history (the dominant cost
-	 * for high-commit-volume sync workloads) by rewriting reachable objects
-	 * as deltas. Like {@link gc}, this includes fork-reachable tips when run
-	 * on a root repo so shared objects are not left uncompacted or at risk.
-	 *
-	 * @throws If the repo does not exist or the server is shutting down.
-	 */
-	repack(repoId: string, options?: RepackOptions): Promise<RepackResult>;
-
-	/**
 	 * Graceful shutdown. After calling, new HTTP requests receive 503
 	 * and new SSH sessions get exit 128. Resolves when all in-flight
 	 * operations complete and the pack cache is released.
@@ -602,6 +606,26 @@ export interface PostReceiveEvent<A = Auth> {
 	updates: readonly RefUpdate[];
 	/** Auth context from the transport's auth provider. Always present — hooks only fire from HTTP/SSH transport. */
 	auth: A;
+}
+
+/**
+ * Fired after any successful ref change, regardless of origin. Delivered to
+ * the {@link GitServerConfig.onRefUpdate} callback.
+ */
+export interface RefChangeEvent<A = Auth> {
+	repo: GitRepo;
+	/** Resolved repo ID. */
+	repoId: string;
+	/** The successfully applied ref updates. */
+	updates: readonly RefUpdate[];
+	/** What triggered the change. */
+	source: "push" | "commit" | "update-refs";
+	/**
+	 * Auth context for transport-originated changes (`push`). Absent for
+	 * in-process writes (`commit` / `update-refs`), which have no transport
+	 * and therefore no auth context.
+	 */
+	auth?: A;
 }
 
 /** Fired during ref advertisement (info/refs). */

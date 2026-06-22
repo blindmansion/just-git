@@ -665,6 +665,34 @@ describe("handleLsRefs", () => {
 		);
 		expect(result).toHaveProperty("reject", true);
 	});
+
+	test("ref-prefix push-down matches literally (underscore is not a wildcard)", async () => {
+		// `_` is a LIKE wildcard for the pg backend and a legal ref-name char,
+		// so the pushed-down query can return a superset; the literal filter
+		// must still narrow it exactly.
+		const driver = new MemoryStorage();
+		const storage = createRepoStore(driver);
+		const r = await storage.createRepo("u");
+		const blob = await writeBlob(r, "x");
+		const tree = await writeTree(r, [{ name: "f", hash: blob }]);
+		const c = await createCommit(r, {
+			tree,
+			parents: [],
+			author: TEST_IDENTITY,
+			committer: TEST_IDENTITY,
+			message: "c\n",
+		});
+		await r.refStore.writeRef("refs/heads/my_branch", { type: "direct", hash: c });
+		await r.refStore.writeRef("refs/heads/myXbranch", { type: "direct", hash: c });
+
+		const result = await handleLsRefs(r, "u", ["ref-prefix refs/heads/my_branch"], undefined, null);
+		const texts = parsePktLineStream(result as Uint8Array)
+			.filter((l) => l.type === "data")
+			.map((l) => pktLineText(l));
+
+		expect(texts.some((t) => t.includes("refs/heads/my_branch"))).toBe(true);
+		expect(texts.some((t) => t.includes("refs/heads/myXbranch"))).toBe(false);
+	});
 });
 
 describe("handleV2Fetch", () => {

@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { BunSqliteStorage } from "../../src/storage/bun-sqlite-storage.ts";
 import { MemoryStorage } from "../../src/storage/memory-storage.ts";
 import { createRepoStore, type Storage } from "../../src/storage/repo-store.ts";
-import { gcRepo, repackRepo } from "../../src/storage/gc.ts";
 import { commit, createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { resolveRef } from "../../src/repo/reading.ts";
 import type { GitRepo, Identity } from "../../src/lib/types.ts";
@@ -83,12 +82,18 @@ for (const backend of BACKENDS) {
 			return repo;
 		}
 
+		// Compress-only maintenance is now `gc({ compact: true, prune: false })`.
+		const repack = (
+			id: string,
+			opts?: { window?: number; depth?: number; dryRun?: boolean; compress?: boolean },
+		) => store.gc(id, { compact: true, prune: false, ...opts });
+
 		test("repack preserves every object's reconstructed bytes", async () => {
 			await syncRepo("r", 20);
 			const before = await captureAll(store, "r", driver);
 
-			const result = await repackRepo((await store.repo("r"))!, driver, "r");
-			expect(result.repacked).toBe(before.size);
+			const result = await repack("r");
+			expect(result.retained).toBe(before.size);
 
 			// Fresh handle → empty cache → forces decode of the stored rows.
 			const after = await captureAll(store, "r", driver);
@@ -105,10 +110,7 @@ for (const backend of BACKENDS) {
 			await syncRepo("r", 40);
 			const before = driver.repoByteSize ? await driver.repoByteSize("r") : 0;
 
-			const result = await repackRepo((await store.repo("r"))!, driver, "r", {
-				window: 250,
-				depth: 250,
-			});
+			const result = await repack("r", { window: 250, depth: 250 });
 
 			expect(result.deltified).toBeGreaterThan(0);
 			if (driver.repoByteSize) {
@@ -123,7 +125,7 @@ for (const backend of BACKENDS) {
 			const repo = await syncRepo("r", 15);
 			const head = await resolveRef(repo, "refs/heads/main");
 
-			await repackRepo(repo, driver, "r", { window: 250, depth: 250 });
+			await repack("r", { window: 250, depth: 250 });
 
 			const fresh = (await store.repo("r"))!;
 			expect(await resolveRef(fresh, "refs/heads/main")).toBe(head);
@@ -131,14 +133,11 @@ for (const backend of BACKENDS) {
 
 		test("re-compaction is stable (decodes from raw, not delta-of-delta)", async () => {
 			await syncRepo("r", 25);
-			await repackRepo((await store.repo("r"))!, driver, "r", { window: 250, depth: 250 });
+			await repack("r", { window: 250, depth: 250 });
 			const once = await captureAll(store, "r", driver);
 
-			const second = await repackRepo((await store.repo("r"))!, driver, "r", {
-				window: 250,
-				depth: 250,
-			});
-			expect(second.repacked).toBe(once.size);
+			const second = await repack("r", { window: 250, depth: 250 });
+			expect(second.retained).toBe(once.size);
 
 			const twice = await captureAll(store, "r", driver);
 			for (const [hash, orig] of once) {
@@ -146,20 +145,22 @@ for (const backend of BACKENDS) {
 			}
 		});
 
-		test("dryRun repack writes nothing", async () => {
+		test("dryRun writes nothing", async () => {
 			await syncRepo("r", 10);
 			const before = driver.repoByteSize ? await driver.repoByteSize("r") : 0;
 
-			const result = await repackRepo((await store.repo("r"))!, driver, "r", { dryRun: true });
-			expect(result.repacked).toBeGreaterThan(0);
-			expect(result.deltified).toBe(0);
+			const result = await repack("r", { dryRun: true });
+			// dryRun skips compaction entirely (no rewrites), and prune:false
+			// deletes nothing — storage is untouched.
+			expect(result.retained).toBeGreaterThan(0);
+			expect(result.deltified).toBeUndefined();
 
 			if (driver.repoByteSize) {
 				expect(await driver.repoByteSize("r")).toBe(before);
 			}
 		});
 
-		test("gcRepo({ compact }) prunes unreachable and compresses reachable", async () => {
+		test("gc({ compact }) prunes unreachable and compresses reachable", async () => {
 			const repo = await store.createRepo("r");
 
 			const blob = await writeBlob(repo, "hello");
@@ -197,7 +198,7 @@ for (const backend of BACKENDS) {
 			await repo.refStore.deleteRef("refs/heads/side");
 
 			const sizeBefore = driver.repoByteSize ? await driver.repoByteSize("r") : 0;
-			const result = await gcRepo(repo, driver, "r", { compact: true, window: 250, depth: 250 });
+			const result = await store.gc("r", { compact: true, window: 250, depth: 250 });
 
 			expect(result.deleted).toBeGreaterThan(0);
 			expect(result.deltified).toBeGreaterThan(0);
@@ -218,6 +219,44 @@ for (const backend of BACKENDS) {
 			}
 		});
 
+		test("repack with compress:false skips zlib but still delta-encodes", async () => {
+			await syncRepo("r", 20);
+			const before = await captureAll(store, "r", driver);
+
+			const result = await repack("r", { window: 250, depth: 250, compress: false });
+			expect(result.deltified).toBeGreaterThan(0);
+
+			// No stored row is zlib-encoded; only raw / delta.
+			for (const hash of await driver.listObjectHashes("r")) {
+				const stored = await driver.getObject("r", hash);
+				expect(stored).not.toBeNull();
+				expect(stored!.encoding === "raw" || stored!.encoding === "delta").toBe(true);
+			}
+
+			// Still reconstructs byte-for-byte from a fresh handle.
+			const after = await captureAll(store, "r", driver);
+			for (const [hash, orig] of before) {
+				expect(bytesEqual(after.get(hash)!.content, orig.content)).toBe(true);
+			}
+		});
+
+		test("repoStore.gc is fork-safe and honors prune", async () => {
+			await syncRepo("r", 20);
+
+			// compress-only (prune: false): compresses, prunes nothing.
+			const danglingRepo = (await store.repo("r"))!;
+			const dangling = await writeBlob(danglingRepo, "dangling-not-reachable");
+			const repacked = await store.gc("r", { compact: true, prune: false, window: 250, depth: 250 });
+			expect(repacked.deltified).toBeGreaterThan(0);
+			expect(repacked.deleted).toBe(0);
+			expect(new Set(driver.listObjectHashes("r") as string[]).has(dangling)).toBe(true);
+
+			// compact + prune: drops the dangling blob and compresses.
+			const gced = await store.gc("r", { compact: true, window: 250, depth: 250 });
+			expect(gced.deleted).toBeGreaterThan(0);
+			expect(new Set(driver.listObjectHashes("r") as string[]).has(dangling)).toBe(false);
+		});
+
 		test("repack does not delete unreachable objects", async () => {
 			const repo = await store.createRepo("r");
 			const blob = await writeBlob(repo, "hello");
@@ -233,7 +272,7 @@ for (const backend of BACKENDS) {
 			// Dangling blob (never referenced by a tree/commit).
 			const dangling = await writeBlob(repo, "dangling-unreachable-content");
 
-			await repackRepo(repo, driver, "r", { window: 250, depth: 250 });
+			await repack("r", { window: 250, depth: 250 });
 
 			const hashes = new Set(driver.listObjectHashes("r") as string[]);
 			expect(hashes.has(dangling)).toBe(true);
@@ -270,7 +309,7 @@ describe("repack — forks (MemoryStorage)", () => {
 
 		// Compact the root partition — fork-reachable root objects must survive
 		// (delta bases stay in the root partition the fork falls through to).
-		await repackRepo(root, driver, "root", { window: 250, depth: 250 });
+		await store.gc("root", { compact: true, prune: false, window: 250, depth: 250 });
 
 		// Fork can still reconstruct everything (its deltas/bases reachable via
 		// parent fallthrough) from a fresh handle.

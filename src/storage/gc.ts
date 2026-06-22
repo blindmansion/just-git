@@ -26,6 +26,25 @@ export interface GcOptions {
 	 * Ignored when {@link dryRun} is set.
 	 */
 	compact?: boolean;
+	/**
+	 * Delete unreachable objects. Default: true.
+	 *
+	 * Set to `false` (with `compact: true`) to compact reachable history
+	 * without pruning — the "compress only" mode — leaving recently-orphaned
+	 * objects in place.
+	 */
+	prune?: boolean;
+	/**
+	 * zlib-compress stored object bytes during compaction. Default: true.
+	 *
+	 * Only relevant when {@link compact} is set. When `false`, objects are
+	 * stored as `raw`/`delta` (delta-encoding still applies — it is the main
+	 * spatial win for near-duplicate history); this skips the zlib CPU cost,
+	 * an escape hatch for CPU-constrained (e.g. browser/`fflate`) clients or
+	 * already-compressed payloads. Incompressible objects never grow even when
+	 * `true` — the smaller of raw vs zlib is stored.
+	 */
+	compress?: boolean;
 	/** Delta search window when compacting (default {@link DEFAULT_WINDOW}). */
 	window?: number;
 	/** Max delta chain depth when compacting (default {@link DEFAULT_DEPTH}). */
@@ -45,28 +64,6 @@ export interface GcResult {
 	/** Object-partition byte size before compaction (only when `compact` and the backend reports size). */
 	bytesBefore?: number;
 	/** Object-partition byte size after compaction (only when `compact` and the backend reports size). */
-	bytesAfter?: number;
-}
-
-/** Options for {@link repackRepo}. */
-export interface RepackOptions {
-	/** Delta search window (default {@link DEFAULT_WINDOW}). */
-	window?: number;
-	/** Max delta chain depth (default {@link DEFAULT_DEPTH}). */
-	depth?: number;
-	/** Report projected work without writing anything. Default: false. */
-	dryRun?: boolean;
-}
-
-/** Result of a {@link repackRepo} call. */
-export interface RepackResult {
-	/** Number of reachable objects considered for compaction. */
-	repacked: number;
-	/** Number of objects stored as deltas. */
-	deltified: number;
-	/** Object-partition byte size before (when the backend reports size). */
-	bytesBefore?: number;
-	/** Object-partition byte size after (when the backend reports size). */
 	bytesAfter?: number;
 }
 
@@ -91,32 +88,42 @@ export interface RepackResult {
  * @param driver - The raw Storage backend (for listObjectHashes / deleteObjects / putDeltaObjects).
  * @param repoId - The repo ID in the storage backend.
  * @param options - GC options.
- * @param extraTips - Additional object hashes to treat as reachable (e.g. fork ref tips).
+ * @param forkRepos - Handles for any forks of this repo. Each fork's reachable
+ *   closure (walked through its own handle, so fork-partition objects resolve)
+ *   is unioned into the reachable set — this keeps shared bases the fork relies
+ *   on (in this root's partition) from being pruned. Forks must be walked via
+ *   their own handle because the root handle cannot read a fork's partition.
  */
 export async function gcRepo(
 	repo: GitRepo,
 	driver: Storage,
 	repoId: string,
 	options?: GcOptions,
-	extraTips?: string[],
+	forkRepos?: ReadonlyArray<GitRepo>,
 ): Promise<GcResult> {
 	const dryRun = options?.dryRun ?? false;
 	const compact = (options?.compact ?? false) && !dryRun;
+	const prune = options?.prune ?? true;
+	const compress = options?.compress ?? true;
 	const window = options?.window ?? DEFAULT_WINDOW;
 	const depth = options?.depth ?? DEFAULT_DEPTH;
 
 	const beforeRefs = await snapshotRefs(repo);
 	const tips = refTips(beforeRefs);
 
-	if (extraTips) {
-		for (const tip of extraTips) tips.push(tip);
-	}
-
 	if (tips.length === 0) {
 		return { deleted: 0, retained: 0 };
 	}
 
 	const reachable = await computeReachable(repo, tips);
+	if (forkRepos) {
+		for (const forkRepo of forkRepos) {
+			const forkTips = refTips(await snapshotRefs(forkRepo));
+			if (forkTips.length === 0) continue;
+			const forkReachable = await computeReachable(forkRepo, forkTips);
+			for (const hash of forkReachable) reachable.add(hash);
+		}
+	}
 
 	const allHashes = await driver.listObjectHashes(repoId);
 	const unreachable: string[] = [];
@@ -132,7 +139,16 @@ export async function gcRepo(
 	let bytesAfter: number | undefined;
 	if (compact) {
 		bytesBefore = await maybeByteSize(driver, repoId);
-		const stats = await compactReachable(repo, driver, repoId, allHashes, reachable, window, depth);
+		const stats = await compactReachable(
+			repo,
+			driver,
+			repoId,
+			allHashes,
+			reachable,
+			window,
+			depth,
+			compress,
+		);
 		deltified = stats.deltified;
 		bytesAfter = await maybeByteSize(driver, repoId);
 	}
@@ -149,9 +165,10 @@ export async function gcRepo(
 		};
 	}
 
-	if (dryRun || unreachable.length === 0) {
+	if (dryRun || !prune || unreachable.length === 0) {
+		// dryRun previews the would-be count; a no-prune or empty pass deletes nothing.
 		return {
-			deleted: unreachable.length,
+			deleted: dryRun ? unreachable.length : 0,
 			retained: reachable.size,
 			deltified,
 			bytesBefore,
@@ -162,52 +179,6 @@ export async function gcRepo(
 	const deleted = await driver.deleteObjects(repoId, unreachable);
 	if (compact) bytesAfter = await maybeByteSize(driver, repoId);
 	return { deleted, retained: reachable.size, deltified, bytesBefore, bytesAfter };
-}
-
-// ── repackRepo ──────────────────────────────────────────────────────
-
-/**
- * Delta-compress a repo's reachable history without pruning unreachable
- * objects — the "compress only" counterpart to {@link gcRepo}.
- *
- * Equivalent to the compaction phase of `gcRepo({ compact: true })` with
- * the reachability-deletion phase skipped. Use this when you want to bound
- * disk usage of live history but keep recently-orphaned objects around
- * (e.g. before deciding to prune separately).
- *
- * @param extraTips - Additional reachable tips (e.g. fork ref tips) so a
- *   root repo also compacts objects reachable only from its forks.
- */
-export async function repackRepo(
-	repo: GitRepo,
-	driver: Storage,
-	repoId: string,
-	options?: RepackOptions,
-	extraTips?: string[],
-): Promise<RepackResult> {
-	const window = options?.window ?? DEFAULT_WINDOW;
-	const depth = options?.depth ?? DEFAULT_DEPTH;
-	const dryRun = options?.dryRun ?? false;
-
-	const tips = refTips(await snapshotRefs(repo));
-	if (extraTips) {
-		for (const tip of extraTips) tips.push(tip);
-	}
-	if (tips.length === 0) return { repacked: 0, deltified: 0 };
-
-	const reachable = await computeReachable(repo, tips);
-	const allHashes = await driver.listObjectHashes(repoId);
-
-	const candidates = allHashes.filter((h) => reachable.has(h));
-	if (dryRun) {
-		return { repacked: candidates.length, deltified: 0 };
-	}
-
-	const bytesBefore = await maybeByteSize(driver, repoId);
-	const stats = await compactReachable(repo, driver, repoId, allHashes, reachable, window, depth);
-	const bytesAfter = await maybeByteSize(driver, repoId);
-
-	return { repacked: stats.repacked, deltified: stats.deltified, bytesBefore, bytesAfter };
 }
 
 // ── Compaction core ─────────────────────────────────────────────────
@@ -229,12 +200,13 @@ async function compactReachable(
 	reachable: ReadonlySet<string>,
 	window: number,
 	depth: number,
-): Promise<{ repacked: number; deltified: number }> {
+	compress: boolean,
+): Promise<{ deltified: number }> {
 	const candidates: string[] = [];
 	for (const hash of allHashes) {
 		if (reachable.has(hash)) candidates.push(hash);
 	}
-	if (candidates.length === 0) return { repacked: 0, deltified: 0 };
+	if (candidates.length === 0) return { deltified: 0 };
 
 	// Read reconstructed (raw) bodies. readMany decodes any existing delta/zlib
 	// rows, so re-compaction always re-deltas from raw — no delta-of-delta
@@ -257,23 +229,26 @@ async function compactReachable(
 			rows.push({
 				hash: r.hash,
 				type: r.type,
-				encoding: "delta-zlib",
+				encoding: compress ? "delta-zlib" : "delta",
 				baseHash: r.deltaBase,
-				content: await deflate(r.delta),
+				content: compress ? await deflate(r.delta) : r.delta,
 			});
 			deltified++;
-		} else {
+		} else if (compress) {
+			// Store whichever is smaller — incompressible objects stay raw.
 			const deflated = await deflate(r.content);
 			if (deflated.byteLength < r.content.byteLength) {
 				rows.push({ hash: r.hash, type: r.type, encoding: "raw-zlib", content: deflated });
 			} else {
 				rows.push({ hash: r.hash, type: r.type, encoding: "raw", content: r.content });
 			}
+		} else {
+			rows.push({ hash: r.hash, type: r.type, encoding: "raw", content: r.content });
 		}
 	}
 
 	await driver.putDeltaObjects(repoId, rows);
-	return { repacked: rows.length, deltified };
+	return { deltified };
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────

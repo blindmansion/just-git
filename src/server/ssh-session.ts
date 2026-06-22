@@ -23,7 +23,7 @@ import {
 	type ReceivePackLimitOptions,
 } from "./operations.ts";
 import { buildReportStatus, type PushCommand } from "./protocol.ts";
-import type { ServerHooks, Auth, SshChannel, Rejection } from "./types.ts";
+import type { ServerHooks, Auth, RefUpdate, SshChannel, Rejection } from "./types.ts";
 import { RequestLimitError } from "./errors.ts";
 
 // ── Command parser ──────────────────────────────────────────────────
@@ -71,6 +71,8 @@ interface HandleSessionOptions<A = Auth> {
 	receiveLimits?: ReceivePackLimitOptions;
 	fetchLimits?: FetchLimitOptions;
 	auth: A;
+	/** Notified with the applied ref updates after a successful push. */
+	onRefApplied?: (repoId: string, repo: GitRepo, applied: readonly RefUpdate[]) => void;
 	onError?: (err: unknown) => void;
 }
 
@@ -84,6 +86,7 @@ export async function handleSshSession<A = Auth>(
 	options: HandleSessionOptions<A>,
 ): Promise<number> {
 	const { resolveRepo, hooks, packCache, packOptions, receiveLimits, fetchLimits, auth } = options;
+	const onRefApplied = options.onRefApplied;
 	const writer = channel.writable.getWriter();
 	try {
 		const parsed = parseGitSshCommand(command);
@@ -155,6 +158,7 @@ export async function handleSshSession<A = Auth>(
 					hooks,
 					receiveLimits,
 					auth,
+					onRefApplied,
 				});
 			}
 		} finally {
@@ -191,6 +195,7 @@ interface ServeReceivePackOptions<A> {
 	hooks?: ServerHooks<A>;
 	receiveLimits?: ReceivePackLimitOptions;
 	auth: A;
+	onRefApplied?: (repoId: string, repo: GitRepo, applied: readonly RefUpdate[]) => void;
 }
 
 async function serveReceivePackStreaming<A>(options: ServeReceivePackOptions<A>): Promise<void> {
@@ -221,13 +226,14 @@ async function serveReceivePackStreaming<A>(options: ServeReceivePackOptions<A>)
 		return;
 	}
 
-	const { refResults } = await applyReceivePack({
+	const { refResults, applied } = await applyReceivePack({
 		repo,
 		repoId,
 		ingestResult,
 		hooks,
 		auth,
 	});
+	options.onRefApplied?.(repoId, repo, applied);
 
 	if (useReportStatus) {
 		const reportResults = refResults.map((r) => ({

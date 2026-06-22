@@ -5,6 +5,8 @@ import { applyDelta, readPack } from "../lib/pack/packfile.ts";
 import { inflate } from "../lib/pack/zlib.ts";
 import { sha1 } from "../lib/sha1.ts";
 import { normalizeRef } from "../lib/types.ts";
+import { gcRepo } from "./gc.ts";
+import type { GcOptions, GcResult } from "./gc.ts";
 import { MemoryStorage } from "./memory-storage.ts";
 import type {
 	GitRepo,
@@ -129,6 +131,19 @@ export interface RepoStore {
 	 * optional fork methods.
 	 */
 	forkRepo(sourceId: string, targetId: string, options?: CreateRepoOptions): Promise<GitRepo>;
+
+	/**
+	 * Garbage-collect a repo: prune unreachable objects and (optionally)
+	 * delta-compress reachable history. Fork-safe — when run on a root repo,
+	 * objects reachable from any of its forks are treated as live, so a fork's
+	 * delta bases in the shared root partition are never pruned.
+	 *
+	 * Use `gc(id, { compact: true, prune: false })` for compress-only
+	 * maintenance (compact live history without dropping orphaned objects).
+	 *
+	 * @throws If the repo does not exist.
+	 */
+	gc(repoId: string, options?: GcOptions): Promise<GcResult>;
 }
 
 // ── Storage interface ─────────────────────────────────────────
@@ -244,8 +259,8 @@ export interface Storage {
 	/**
 	 * Rewrite objects in their compacted ({@link DeltaObjectRow}) form.
 	 *
-	 * Called by the compaction pass (`repackRepo` / `gcRepo({ compact })`) to
-	 * replace existing raw rows with delta/zlib-encoded ones. Unlike
+	 * Called by the compaction pass (`gc({ compact: true })`) to replace
+	 * existing raw rows with delta/zlib-encoded ones. Unlike
 	 * `putObjects` (insert-or-ignore on the ingest path), this **replaces** any
 	 * existing row for the same hash — the reconstructed body is identical, so
 	 * the hash is unchanged; only the stored encoding differs.
@@ -283,7 +298,7 @@ export interface Storage {
 	 * Approximate on-disk size, in bytes, of a repo's object partition.
 	 *
 	 * Used by consumers to drive disk-pressure-based maintenance (e.g. run
-	 * `repackRepo` once a repo crosses a threshold). The value is a cheap
+	 * `gc({ compact: true })` once a repo crosses a threshold). The value is a cheap
 	 * estimate — the sum of stored `content` lengths is a reasonable choice;
 	 * backends need not account for index/page overhead. Optional: consumers
 	 * fall back to `listObjectHashes(repoId).length` as a coarser signal.
@@ -374,6 +389,33 @@ export function createRepoStore(driver: Storage = new MemoryStorage()): RepoStor
 		};
 	}
 
+	async function requireRepo(repoId: string): Promise<GitRepo> {
+		if (!(await driver.hasRepo(repoId))) throw new Error(`repo '${repoId}' not found`);
+		return buildRepo(repoId);
+	}
+
+	/**
+	 * Collect handles for all forks of a root repo, so maintenance can treat
+	 * fork-reachable objects (whose delta bases live in the shared root
+	 * partition) as live. Handles are returned (rather than ref tips) because a
+	 * fork's reachability walk must run through its own handle — the root handle
+	 * cannot read a fork's partition. Returns undefined for non-root repos or
+	 * backends without fork support — forks are gc'd as themselves.
+	 */
+	async function collectForkRepos(repoId: string): Promise<GitRepo[] | undefined> {
+		if (!driver.listForks || !driver.getForkParent) return undefined;
+		const parentId = await driver.getForkParent(repoId);
+		if (parentId) return undefined;
+		const forkIds = await driver.listForks(repoId);
+		if (forkIds.length === 0) return undefined;
+		const forks: GitRepo[] = [];
+		for (const forkId of forkIds) {
+			if (!(await driver.hasRepo(forkId))) continue;
+			forks.push(await buildRepo(forkId));
+		}
+		return forks.length > 0 ? forks : undefined;
+	}
+
 	return {
 		async createRepo(repoId: string, options?: CreateRepoOptions): Promise<GitRepo> {
 			const exists = await driver.hasRepo(repoId);
@@ -443,6 +485,12 @@ export function createRepoStore(driver: Storage = new MemoryStorage()): RepoStor
 			}
 
 			return buildRepo(targetId);
+		},
+
+		async gc(repoId: string, options?: GcOptions): Promise<GcResult> {
+			const repo = await requireRepo(repoId);
+			const forkRepos = await collectForkRepos(repoId);
+			return gcRepo(repo, driver, repoId, options, forkRepos);
 		},
 	};
 }

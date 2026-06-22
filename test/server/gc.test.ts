@@ -219,7 +219,7 @@ describe("server.gc", () => {
 		expect(result.retained).toBe(beforeCount);
 	});
 
-	test("server.repack compresses reachable history without pruning", async () => {
+	test("server.gc({ compact, prune: false }) compresses without pruning", async () => {
 		const driver = new MemoryStorage();
 		const server = createServer({ storage: driver });
 		const repo = await server.createRepo("sync");
@@ -245,11 +245,12 @@ describe("server.gc", () => {
 		const before = driver.repoByteSize("sync");
 		const countBefore = driver.listObjectHashes("sync").length;
 
-		const result = await server.repack("sync");
+		const result = await server.gc("sync", { compact: true, prune: false });
 		expect(result.deltified).toBeGreaterThan(0);
 		expect(result.bytesAfter).toBeLessThan(before);
+		expect(result.deleted).toBe(0);
 
-		// Repack never deletes — object count is unchanged.
+		// prune: false never deletes — object count is unchanged.
 		expect(driver.listObjectHashes("sync").length).toBe(countBefore);
 
 		// HEAD still resolves on a fresh handle.
@@ -280,10 +281,10 @@ describe("server.gc", () => {
 		expect(await resolveRef(fresh, "refs/heads/main")).toBe(initialHash);
 	});
 
-	test("server.repack throws when closed", async () => {
+	test("server.gc throws when closed", async () => {
 		const { server } = await setupServer();
 		await server.close();
-		expect(server.repack("test")).rejects.toThrow("Server is shutting down");
+		expect(server.gc("test")).rejects.toThrow("Server is shutting down");
 	});
 
 	test("tags keep objects reachable", async () => {

@@ -66,12 +66,12 @@ export type {
 // Re-exported lib types used in Storage and hook signatures
 export type { GitRepo, RawObject, Ref } from "../lib/types.ts";
 
-// Storage / repo manager — re-exported from just-git/storage for back-compat.
-// The server is a consumer of this layer, not its owner.
+// Storage backends — re-exported from just-git/storage for back-compat. The
+// server is a consumer of this layer, not its owner; this surface is the
+// legacy baseline. New storage machinery (createRepoStore, the compaction
+// types, etc.) is intentionally NOT re-exported here — import it from
+// `just-git/storage` instead.
 export {
-	createRepoStore,
-	gcRepo,
-	repackRepo,
 	MemoryStorage,
 	BunSqliteStorage,
 	BetterSqlite3Storage,
@@ -79,19 +79,13 @@ export {
 	DurableObjectSqliteStorage,
 } from "../storage/index.ts";
 export type {
-	RepoStore,
 	CreateRepoOptions,
 	Storage,
-	StoredObject,
-	ObjectEncoding,
-	DeltaObjectRow,
 	RefOps,
 	RawRefEntry,
 	MaybeAsync,
 	GcOptions,
 	GcResult,
-	RepackOptions,
-	RepackResult,
 	BunSqliteDatabase,
 	BetterSqlite3Database,
 	PgPool,
