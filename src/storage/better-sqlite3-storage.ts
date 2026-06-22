@@ -1,5 +1,5 @@
-import type { RawObject, Ref } from "../lib/types.ts";
-import type { Storage, RawRefEntry, RefOps } from "./repo-store.ts";
+import type { Ref } from "../lib/types.ts";
+import type { DeltaObjectRow, Storage, StoredObject, RawRefEntry, RefOps } from "./repo-store.ts";
 
 // ── better-sqlite3 types ────────────────────────────────────────────
 
@@ -25,10 +25,12 @@ CREATE TABLE IF NOT EXISTS git_repos (
 );
 
 CREATE TABLE IF NOT EXISTS git_objects (
-  repo_id TEXT NOT NULL,
-  hash    TEXT NOT NULL,
-  type    TEXT NOT NULL,
-  content BLOB NOT NULL,
+  repo_id   TEXT NOT NULL,
+  hash      TEXT NOT NULL,
+  type      TEXT NOT NULL,
+  content   BLOB NOT NULL,
+  encoding  TEXT NOT NULL DEFAULT 'raw',
+  base_hash TEXT,
   PRIMARY KEY (repo_id, hash)
 ) WITHOUT ROWID;
 
@@ -76,11 +78,13 @@ interface Statements {
 
 	objInsert: Statement;
 	objInsertReturning: Statement;
+	objReplace: Statement;
 	objRead: Statement;
 	objExists: Statement;
 	objPrefix: Statement;
 	objDeleteAll: Statement;
 	objListHashes: Statement;
+	objByteSize: Statement;
 	objDelete: Statement;
 
 	refRead: Statement;
@@ -112,8 +116,15 @@ function prepareStatements(db: BetterSqlite3Database): Statements {
 				"INSERT OR IGNORE INTO git_objects (repo_id, hash, type, content) VALUES (?, ?, ?, ?) RETURNING hash",
 			),
 		),
+		objReplace: wrapStmt(
+			db.prepare(
+				"INSERT OR REPLACE INTO git_objects (repo_id, hash, type, content, encoding, base_hash) VALUES (?, ?, ?, ?, ?, ?)",
+			),
+		),
 		objRead: wrapStmt(
-			db.prepare("SELECT type, content FROM git_objects WHERE repo_id = ? AND hash = ?"),
+			db.prepare(
+				"SELECT type, content, encoding, base_hash FROM git_objects WHERE repo_id = ? AND hash = ?",
+			),
 		),
 		objExists: wrapStmt(
 			db.prepare("SELECT 1 FROM git_objects WHERE repo_id = ? AND hash = ? LIMIT 1"),
@@ -123,6 +134,11 @@ function prepareStatements(db: BetterSqlite3Database): Statements {
 		),
 		objDeleteAll: wrapStmt(db.prepare("DELETE FROM git_objects WHERE repo_id = ?")),
 		objListHashes: wrapStmt(db.prepare("SELECT hash FROM git_objects WHERE repo_id = ?")),
+		objByteSize: wrapStmt(
+			db.prepare(
+				"SELECT COALESCE(SUM(LENGTH(content)), 0) AS size FROM git_objects WHERE repo_id = ?",
+			),
+		),
 		objDelete: wrapStmt(db.prepare("DELETE FROM git_objects WHERE repo_id = ? AND hash = ?")),
 
 		refRead: wrapStmt(
@@ -166,6 +182,7 @@ export class BetterSqlite3Storage implements Storage {
 	private batchInsertTx: (
 		rows: ReadonlyArray<{ repoId: string; hash: string; type: string; content: Uint8Array }>,
 	) => string[];
+	private batchReplaceTx: (repoId: string, rows: ReadonlyArray<DeltaObjectRow>) => void;
 	private batchDeleteTx: (
 		repoId: string,
 		hashes: ReadonlyArray<string>,
@@ -197,6 +214,12 @@ export class BetterSqlite3Storage implements Storage {
 				return inserted;
 			},
 		);
+		this.batchReplaceTx = db.transaction((repoId: string, rows: ReadonlyArray<DeltaObjectRow>) => {
+			for (const row of rows) {
+				const baseHash = "baseHash" in row ? row.baseHash : null;
+				this.stmts.objReplace.run(repoId, row.hash, row.type, row.content, row.encoding, baseHash);
+			}
+		});
 		this.batchDeleteTx = db.transaction(
 			(repoId: string, hashes: ReadonlyArray<string>, onCount: (n: number) => void) => {
 				let count = 0;
@@ -228,16 +251,11 @@ export class BetterSqlite3Storage implements Storage {
 
 	// ── Objects ─────────────────────────────────────────────────
 
-	getObject(repoId: string, hash: string): RawObject | null {
-		const row = this.stmts.objRead.get(repoId, hash) as {
-			type: string;
-			content: Uint8Array;
-		} | null;
-		if (!row) return null;
-		return { type: row.type as RawObject["type"], content: new Uint8Array(row.content) };
+	getObject(repoId: string, hash: string): StoredObject | null {
+		return rowToStored(this.stmts.objRead.get(repoId, hash) as ObjectRow | null);
 	}
 
-	getObjects(repoId: string, hashes: ReadonlyArray<string>): Map<string, RawObject> {
+	getObjects(repoId: string, hashes: ReadonlyArray<string>): Map<string, StoredObject> {
 		const uniqueHashes = Array.from(new Set(hashes));
 		if (uniqueHashes.length === 0) return new Map();
 		if (uniqueHashes.length === 1) {
@@ -245,17 +263,11 @@ export class BetterSqlite3Storage implements Storage {
 			return obj ? new Map([[uniqueHashes[0]!, obj]]) : new Map();
 		}
 		const stmt = this.getObjectReadManyStatement(uniqueHashes.length);
-		const rows = stmt.all(repoId, ...uniqueHashes) as Array<{
-			hash: string;
-			type: string;
-			content: Uint8Array;
-		}>;
-		const result = new Map<string, RawObject>();
+		const rows = stmt.all(repoId, ...uniqueHashes) as ObjectRow[];
+		const result = new Map<string, StoredObject>();
 		for (const row of rows) {
-			result.set(row.hash, {
-				type: row.type as RawObject["type"],
-				content: new Uint8Array(row.content),
-			});
+			const stored = rowToStored(row);
+			if (stored) result.set(row.hash!, stored);
 		}
 		return result;
 	}
@@ -269,6 +281,11 @@ export class BetterSqlite3Storage implements Storage {
 		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
 	): string[] {
 		return this.batchInsertTx(objects.map((o) => ({ repoId, ...o })));
+	}
+
+	putDeltaObjects(repoId: string, rows: ReadonlyArray<DeltaObjectRow>): void {
+		if (rows.length === 0) return;
+		this.batchReplaceTx(repoId, rows);
 	}
 
 	hasObject(repoId: string, hash: string): boolean {
@@ -296,6 +313,11 @@ export class BetterSqlite3Storage implements Storage {
 		return rows.map((r) => r.hash);
 	}
 
+	repoByteSize(repoId: string): number {
+		const row = this.stmts.objByteSize.get(repoId) as { size: number } | null;
+		return row ? Number(row.size) : 0;
+	}
+
 	deleteObjects(repoId: string, hashes: ReadonlyArray<string>): number {
 		if (hashes.length === 0) return 0;
 		const uniqueHashes = Array.from(new Set(hashes));
@@ -312,7 +334,7 @@ export class BetterSqlite3Storage implements Storage {
 		return this.getCachedStatement(
 			this.objectReadManyStatements,
 			count,
-			`SELECT hash, type, content FROM git_objects WHERE repo_id = ? AND hash IN (${placeholders(count)})`,
+			`SELECT hash, type, content, encoding, base_hash FROM git_objects WHERE repo_id = ? AND hash IN (${placeholders(count)})`,
 		);
 	}
 
@@ -400,6 +422,24 @@ export class BetterSqlite3Storage implements Storage {
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────
+
+type ObjectRow = {
+	hash?: string;
+	type: string;
+	content: Uint8Array;
+	encoding: string;
+	base_hash: string | null;
+};
+
+function rowToStored(row: ObjectRow | null): StoredObject | null {
+	if (!row) return null;
+	return {
+		type: row.type as StoredObject["type"],
+		encoding: row.encoding as StoredObject["encoding"],
+		baseHash: row.base_hash,
+		content: new Uint8Array(row.content),
+	};
+}
 
 type RefRow = { name: string; type: string; hash: string | null; target: string | null };
 

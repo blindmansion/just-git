@@ -1,5 +1,5 @@
-import type { RawObject, Ref } from "../lib/types.ts";
-import type { Storage, RawRefEntry, RefOps } from "./repo-store.ts";
+import type { Ref } from "../lib/types.ts";
+import type { DeltaObjectRow, Storage, StoredObject, RawRefEntry, RefOps } from "./repo-store.ts";
 
 // ── Postgres pool interface ────────────────────────────────────────
 
@@ -22,10 +22,12 @@ CREATE TABLE IF NOT EXISTS git_repos (
 );
 
 CREATE TABLE IF NOT EXISTS git_objects (
-  repo_id TEXT NOT NULL,
-  hash    TEXT NOT NULL,
-  type    TEXT NOT NULL,
-  content BYTEA NOT NULL,
+  repo_id   TEXT NOT NULL,
+  hash      TEXT NOT NULL,
+  type      TEXT NOT NULL,
+  content   BYTEA NOT NULL,
+  encoding  TEXT NOT NULL DEFAULT 'raw',
+  base_hash TEXT,
   PRIMARY KEY (repo_id, hash)
 );
 
@@ -53,14 +55,17 @@ const SQL = {
 
 	objInsert:
 		"INSERT INTO git_objects (repo_id, hash, type, content) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING hash",
-	objRead: "SELECT type, content FROM git_objects WHERE repo_id = $1 AND hash = $2",
+	objRead:
+		"SELECT type, content, encoding, base_hash FROM git_objects WHERE repo_id = $1 AND hash = $2",
 	objReadMany:
-		"SELECT hash, type, content FROM git_objects WHERE repo_id = $1 AND hash = ANY($2::text[])",
+		"SELECT hash, type, content, encoding, base_hash FROM git_objects WHERE repo_id = $1 AND hash = ANY($2::text[])",
 	objExists: "SELECT 1 FROM git_objects WHERE repo_id = $1 AND hash = $2 LIMIT 1",
 	objExistsMany: "SELECT hash FROM git_objects WHERE repo_id = $1 AND hash = ANY($2::text[])",
 	objPrefix: "SELECT hash FROM git_objects WHERE repo_id = $1 AND hash LIKE $2",
 	objDeleteAll: "DELETE FROM git_objects WHERE repo_id = $1",
 	objListHashes: "SELECT hash FROM git_objects WHERE repo_id = $1",
+	objByteSize:
+		"SELECT COALESCE(SUM(LENGTH(content)), 0) AS size FROM git_objects WHERE repo_id = $1",
 
 	refRead: "SELECT type, hash, target FROM git_refs WHERE repo_id = $1 AND name = $2",
 	refReadForUpdate:
@@ -136,28 +141,24 @@ export class PgStorage implements Storage {
 
 	// ── Objects ─────────────────────────────────────────────────
 
-	async getObject(repoId: string, hash: string): Promise<RawObject | null> {
-		const { rows } = await this.pool.query<{ type: string; content: Uint8Array }>(SQL.objRead, [
-			repoId,
-			hash,
-		]);
-		const row = rows[0];
-		if (!row) return null;
-		return { type: row.type as RawObject["type"], content: new Uint8Array(row.content) };
+	async getObject(repoId: string, hash: string): Promise<StoredObject | null> {
+		const { rows } = await this.pool.query<ObjectRow>(SQL.objRead, [repoId, hash]);
+		return rowToStored(rows[0] ?? null);
 	}
 
-	async getObjects(repoId: string, hashes: ReadonlyArray<string>): Promise<Map<string, RawObject>> {
+	async getObjects(
+		repoId: string,
+		hashes: ReadonlyArray<string>,
+	): Promise<Map<string, StoredObject>> {
 		if (hashes.length === 0) return new Map();
-		const { rows } = await this.pool.query<{ hash: string; type: string; content: Uint8Array }>(
-			SQL.objReadMany,
-			[repoId, Array.from(new Set(hashes))],
-		);
-		const result = new Map<string, RawObject>();
+		const { rows } = await this.pool.query<ObjectRow>(SQL.objReadMany, [
+			repoId,
+			Array.from(new Set(hashes)),
+		]);
+		const result = new Map<string, StoredObject>();
 		for (const row of rows) {
-			result.set(row.hash, {
-				type: row.type as RawObject["type"],
-				content: new Uint8Array(row.content),
-			});
+			const stored = rowToStored(row);
+			if (stored) result.set(row.hash!, stored);
 		}
 		return result;
 	}
@@ -184,6 +185,16 @@ export class PgStorage implements Storage {
 		});
 	}
 
+	async putDeltaObjects(repoId: string, rows: ReadonlyArray<DeltaObjectRow>): Promise<void> {
+		if (rows.length === 0) return;
+		await this.transaction(async (query) => {
+			for (const batch of chunkArray(rows, OBJECT_INSERT_BATCH_SIZE)) {
+				const { text, values } = buildBulkDeltaUpsert(repoId, batch);
+				await query(text, values);
+			}
+		});
+	}
+
 	async hasObject(repoId: string, hash: string): Promise<boolean> {
 		const { rows } = await this.pool.query(SQL.objExists, [repoId, hash]);
 		return rows.length > 0;
@@ -206,6 +217,11 @@ export class PgStorage implements Storage {
 	async listObjectHashes(repoId: string): Promise<string[]> {
 		const { rows } = await this.pool.query<{ hash: string }>(SQL.objListHashes, [repoId]);
 		return rows.map((r) => r.hash);
+	}
+
+	async repoByteSize(repoId: string): Promise<number> {
+		const { rows } = await this.pool.query<{ size: string | number }>(SQL.objByteSize, [repoId]);
+		return rows[0] ? Number(rows[0].size) : 0;
 	}
 
 	async deleteObjects(repoId: string, hashes: ReadonlyArray<string>): Promise<number> {
@@ -290,6 +306,48 @@ export class PgStorage implements Storage {
 // ── Shared helpers ──────────────────────────────────────────────────
 
 type QueryFn = <T = any>(text: string, values?: any[]) => Promise<{ rows: T[] }>;
+
+type ObjectRow = {
+	hash?: string;
+	type: string;
+	content: Uint8Array;
+	encoding: string;
+	base_hash: string | null;
+};
+
+function rowToStored(row: ObjectRow | null): StoredObject | null {
+	if (!row) return null;
+	return {
+		type: row.type as StoredObject["type"],
+		encoding: row.encoding as StoredObject["encoding"],
+		baseHash: row.base_hash,
+		content: new Uint8Array(row.content),
+	};
+}
+
+function buildBulkDeltaUpsert(
+	repoId: string,
+	rows: ReadonlyArray<DeltaObjectRow>,
+): { text: string; values: any[] } {
+	const values: any[] = [];
+	const tuples: string[] = [];
+
+	for (let i = 0; i < rows.length; i++) {
+		const base = i * 6;
+		const row = rows[i]!;
+		const baseHash = "baseHash" in row ? row.baseHash : null;
+		values.push(repoId, row.hash, row.type, row.content, row.encoding, baseHash);
+		tuples.push(
+			`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`,
+		);
+	}
+
+	return {
+		text: `INSERT INTO git_objects (repo_id, hash, type, content, encoding, base_hash) VALUES ${tuples.join(", ")}
+			ON CONFLICT (repo_id, hash) DO UPDATE SET type = EXCLUDED.type, content = EXCLUDED.content, encoding = EXCLUDED.encoding, base_hash = EXCLUDED.base_hash`,
+		values,
+	};
+}
 
 type RefRow = { name: string; type: string; hash: string | null; target: string | null };
 

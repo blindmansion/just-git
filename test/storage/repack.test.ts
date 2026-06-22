@@ -1,0 +1,288 @@
+import { Database } from "bun:sqlite";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { BunSqliteStorage } from "../../src/storage/bun-sqlite-storage.ts";
+import { MemoryStorage } from "../../src/storage/memory-storage.ts";
+import { createRepoStore, type Storage } from "../../src/storage/repo-store.ts";
+import { gcRepo, repackRepo } from "../../src/storage/gc.ts";
+import { commit, createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
+import { resolveRef } from "../../src/repo/reading.ts";
+import type { GitRepo, Identity } from "../../src/lib/types.ts";
+import type { RepoStore } from "../../src/storage/repo-store.ts";
+
+const ID: Identity = {
+	name: "Test",
+	email: "test@test.com",
+	timestamp: 1000000000,
+	timezone: "+0000",
+};
+
+function idAt(ts: number): Identity {
+	return { ...ID, timestamp: ts };
+}
+
+/** Build a deterministic ~200-line document, mutating a few lines by seed. */
+function makeDoc(seed: number): string {
+	const lines: string[] = [];
+	for (let i = 0; i < 200; i++) {
+		// Most lines stay identical across seeds; a few change — the shape of
+		// a sync workload (small edits to a large doc).
+		const churn = i % 40 === seed % 40 ? `edited@${seed}` : "stable";
+		lines.push(`line ${i}: lorem ipsum dolor sit amet ${churn} consectetur`);
+	}
+	return lines.join("\n");
+}
+
+/** Capture every stored object's reconstructed body via a *fresh* repo handle. */
+async function captureAll(store: RepoStore, repoId: string, driver: Storage) {
+	const hashes = await driver.listObjectHashes(repoId);
+	const repo = (await store.repo(repoId))!;
+	const map = new Map<string, { type: string; content: Uint8Array }>();
+	for (const hash of hashes) {
+		const obj = await repo.objectStore.read(hash);
+		map.set(hash, { type: obj.type, content: new Uint8Array(obj.content) });
+	}
+	return map;
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+	if (a.byteLength !== b.byteLength) return false;
+	for (let i = 0; i < a.byteLength; i++) if (a[i] !== b[i]) return false;
+	return true;
+}
+
+interface BackendCase {
+	name: string;
+	make: () => Storage;
+}
+
+const BACKENDS: BackendCase[] = [
+	{ name: "MemoryStorage", make: () => new MemoryStorage() },
+	{ name: "BunSqliteStorage", make: () => new BunSqliteStorage(new Database(":memory:")) },
+];
+
+for (const backend of BACKENDS) {
+	describe(`repack/compaction — ${backend.name}`, () => {
+		let driver: Storage;
+		let store: RepoStore;
+
+		beforeEach(() => {
+			driver = backend.make();
+			store = createRepoStore(driver);
+		});
+
+		async function syncRepo(repoId: string, commits: number): Promise<GitRepo> {
+			const repo = await store.createRepo(repoId);
+			for (let i = 0; i < commits; i++) {
+				await commit(repo, {
+					files: { "doc.md": makeDoc(i) },
+					message: `edit ${i}`,
+					author: idAt(1000000000 + i),
+					branch: "main",
+				});
+			}
+			return repo;
+		}
+
+		test("repack preserves every object's reconstructed bytes", async () => {
+			await syncRepo("r", 20);
+			const before = await captureAll(store, "r", driver);
+
+			const result = await repackRepo((await store.repo("r"))!, driver, "r");
+			expect(result.repacked).toBe(before.size);
+
+			// Fresh handle → empty cache → forces decode of the stored rows.
+			const after = await captureAll(store, "r", driver);
+			expect(after.size).toBe(before.size);
+			for (const [hash, orig] of before) {
+				const got = after.get(hash);
+				expect(got).toBeDefined();
+				expect(got!.type).toBe(orig.type);
+				expect(bytesEqual(got!.content, orig.content)).toBe(true);
+			}
+		});
+
+		test("repack delta-compresses near-duplicate history", async () => {
+			await syncRepo("r", 40);
+			const before = driver.repoByteSize ? await driver.repoByteSize("r") : 0;
+
+			const result = await repackRepo((await store.repo("r"))!, driver, "r", {
+				window: 250,
+				depth: 250,
+			});
+
+			expect(result.deltified).toBeGreaterThan(0);
+			if (driver.repoByteSize) {
+				const after = await driver.repoByteSize("r");
+				expect(after).toBeLessThan(before);
+				// Sync workload over a large doc should compress dramatically.
+				expect(after).toBeLessThan(before / 2);
+			}
+		});
+
+		test("HEAD still resolves and content reads after repack", async () => {
+			const repo = await syncRepo("r", 15);
+			const head = await resolveRef(repo, "refs/heads/main");
+
+			await repackRepo(repo, driver, "r", { window: 250, depth: 250 });
+
+			const fresh = (await store.repo("r"))!;
+			expect(await resolveRef(fresh, "refs/heads/main")).toBe(head);
+		});
+
+		test("re-compaction is stable (decodes from raw, not delta-of-delta)", async () => {
+			await syncRepo("r", 25);
+			await repackRepo((await store.repo("r"))!, driver, "r", { window: 250, depth: 250 });
+			const once = await captureAll(store, "r", driver);
+
+			const second = await repackRepo((await store.repo("r"))!, driver, "r", {
+				window: 250,
+				depth: 250,
+			});
+			expect(second.repacked).toBe(once.size);
+
+			const twice = await captureAll(store, "r", driver);
+			for (const [hash, orig] of once) {
+				expect(bytesEqual(twice.get(hash)!.content, orig.content)).toBe(true);
+			}
+		});
+
+		test("dryRun repack writes nothing", async () => {
+			await syncRepo("r", 10);
+			const before = driver.repoByteSize ? await driver.repoByteSize("r") : 0;
+
+			const result = await repackRepo((await store.repo("r"))!, driver, "r", { dryRun: true });
+			expect(result.repacked).toBeGreaterThan(0);
+			expect(result.deltified).toBe(0);
+
+			if (driver.repoByteSize) {
+				expect(await driver.repoByteSize("r")).toBe(before);
+			}
+		});
+
+		test("gcRepo({ compact }) prunes unreachable and compresses reachable", async () => {
+			const repo = await store.createRepo("r");
+
+			const blob = await writeBlob(repo, "hello");
+			const tree = await writeTree(repo, [{ name: "README.md", hash: blob }]);
+			const initial = await createCommit(repo, {
+				tree,
+				parents: [],
+				message: "init",
+				author: ID,
+				committer: ID,
+				branch: "main",
+			});
+
+			// Build sync-style history on top.
+			for (let i = 0; i < 20; i++) {
+				await commit(repo, {
+					files: { "doc.md": makeDoc(i) },
+					message: `edit ${i}`,
+					author: idAt(1000000001 + i),
+					branch: "main",
+				});
+			}
+
+			// Orphan a commit via force-reset to initial.
+			const orphanBlob = await writeBlob(repo, "orphan");
+			const orphanTree = await writeTree(repo, [{ name: "x", hash: orphanBlob }]);
+			await createCommit(repo, {
+				tree: orphanTree,
+				parents: [initial],
+				message: "orphan",
+				author: idAt(2000000000),
+				committer: idAt(2000000000),
+				branch: "side",
+			});
+			await repo.refStore.deleteRef("refs/heads/side");
+
+			const sizeBefore = driver.repoByteSize ? await driver.repoByteSize("r") : 0;
+			const result = await gcRepo(repo, driver, "r", { compact: true, window: 250, depth: 250 });
+
+			expect(result.deleted).toBeGreaterThan(0);
+			expect(result.deltified).toBeGreaterThan(0);
+
+			// Orphan blob is gone.
+			const hashes = new Set(driver.listObjectHashes("r") as string[]);
+			expect(hashes.has(orphanBlob)).toBe(false);
+
+			// Reachable content reads correctly from a fresh handle.
+			const fresh = (await store.repo("r"))!;
+			expect(await resolveRef(fresh, "refs/heads/main")).toBeTruthy();
+			const after = await captureAll(store, "r", driver);
+			expect(after.size).toBeGreaterThan(0);
+
+			if (driver.repoByteSize) {
+				expect(result.bytesBefore).toBe(sizeBefore);
+				expect(result.bytesAfter).toBeLessThan(sizeBefore);
+			}
+		});
+
+		test("repack does not delete unreachable objects", async () => {
+			const repo = await store.createRepo("r");
+			const blob = await writeBlob(repo, "hello");
+			const tree = await writeTree(repo, [{ name: "README.md", hash: blob }]);
+			await createCommit(repo, {
+				tree,
+				parents: [],
+				message: "init",
+				author: ID,
+				committer: ID,
+				branch: "main",
+			});
+			// Dangling blob (never referenced by a tree/commit).
+			const dangling = await writeBlob(repo, "dangling-unreachable-content");
+
+			await repackRepo(repo, driver, "r", { window: 250, depth: 250 });
+
+			const hashes = new Set(driver.listObjectHashes("r") as string[]);
+			expect(hashes.has(dangling)).toBe(true);
+		});
+	});
+}
+
+describe("repack — forks (MemoryStorage)", () => {
+	test("fork reads still work after compacting the root partition", async () => {
+		const driver = new MemoryStorage();
+		const store = createRepoStore(driver);
+
+		const root = await store.createRepo("root");
+		for (let i = 0; i < 15; i++) {
+			await commit(root, {
+				files: { "doc.md": makeDoc(i) },
+				message: `edit ${i}`,
+				author: idAt(1000000000 + i),
+				branch: "main",
+			});
+		}
+
+		const fork = await store.forkRepo("root", "fork");
+		// Fork adds its own commits (written to the fork partition).
+		for (let i = 15; i < 20; i++) {
+			await commit(fork, {
+				files: { "doc.md": makeDoc(i) },
+				message: `fork edit ${i}`,
+				author: idAt(1000000000 + i),
+				branch: "main",
+			});
+		}
+		const forkHead = await resolveRef(fork, "refs/heads/main");
+
+		// Compact the root partition — fork-reachable root objects must survive
+		// (delta bases stay in the root partition the fork falls through to).
+		await repackRepo(root, driver, "root", { window: 250, depth: 250 });
+
+		// Fork can still reconstruct everything (its deltas/bases reachable via
+		// parent fallthrough) from a fresh handle.
+		const freshFork = (await store.repo("fork"))!;
+		expect(await resolveRef(freshFork, "refs/heads/main")).toBe(forkHead);
+
+		const hashes = await driver.listObjectHashes("fork");
+		for (const hash of hashes) {
+			await freshFork.objectStore.read(hash); // must not throw
+		}
+		// Also read a root-partition object through the fork (fallthrough).
+		const rootHead = await resolveRef((await store.repo("root"))!, "refs/heads/main");
+		expect(await freshFork.objectStore.read(rootHead!)).toBeTruthy();
+	});
+});

@@ -1,5 +1,5 @@
-import type { Ref, RawObject } from "../lib/types.ts";
-import type { Storage, RawRefEntry, RefOps } from "./repo-store.ts";
+import type { Ref } from "../lib/types.ts";
+import type { DeltaObjectRow, Storage, StoredObject, RawRefEntry, RefOps } from "./repo-store.ts";
 
 // ── MemoryStorage ───────────────────────────────────────────────────
 
@@ -17,7 +17,7 @@ import type { Storage, RawRefEntry, RefOps } from "./repo-store.ts";
  */
 export class MemoryStorage implements Storage {
 	private repos = new Set<string>();
-	private objects = new Map<string, Map<string, RawObject>>();
+	private objects = new Map<string, Map<string, StoredObject>>();
 	private refs = new Map<string, Map<string, Ref>>();
 	private forks = new Map<string, string>(); // targetId → rootId
 
@@ -38,19 +38,19 @@ export class MemoryStorage implements Storage {
 		this.forks.delete(repoId);
 	}
 
-	getObject(repoId: string, hash: string): RawObject | null {
+	getObject(repoId: string, hash: string): StoredObject | null {
 		const obj = this.getObjMap(repoId).get(hash);
 		if (!obj) return null;
-		return { type: obj.type, content: new Uint8Array(obj.content) };
+		return cloneStored(obj);
 	}
 
-	getObjects(repoId: string, hashes: ReadonlyArray<string>): Map<string, RawObject> {
+	getObjects(repoId: string, hashes: ReadonlyArray<string>): Map<string, StoredObject> {
 		const map = this.getObjMap(repoId);
-		const result = new Map<string, RawObject>();
+		const result = new Map<string, StoredObject>();
 		for (const hash of new Set(hashes)) {
 			const obj = map.get(hash);
 			if (!obj) continue;
-			result.set(hash, { type: obj.type, content: new Uint8Array(obj.content) });
+			result.set(hash, cloneStored(obj));
 		}
 		return result;
 	}
@@ -58,7 +58,11 @@ export class MemoryStorage implements Storage {
 	putObject(repoId: string, hash: string, type: string, content: Uint8Array): void {
 		const map = this.getObjMap(repoId);
 		if (!map.has(hash)) {
-			map.set(hash, { type: type as RawObject["type"], content: new Uint8Array(content) });
+			map.set(hash, {
+				type: type as StoredObject["type"],
+				encoding: "raw",
+				content: new Uint8Array(content),
+			});
 		}
 	}
 
@@ -71,13 +75,26 @@ export class MemoryStorage implements Storage {
 		for (const obj of objects) {
 			if (!map.has(obj.hash)) {
 				map.set(obj.hash, {
-					type: obj.type as RawObject["type"],
+					type: obj.type as StoredObject["type"],
+					encoding: "raw",
 					content: new Uint8Array(obj.content),
 				});
 				inserted.push(obj.hash);
 			}
 		}
 		return inserted;
+	}
+
+	putDeltaObjects(repoId: string, rows: ReadonlyArray<DeltaObjectRow>): void {
+		const map = this.getObjMap(repoId);
+		for (const row of rows) {
+			map.set(row.hash, {
+				type: row.type as StoredObject["type"],
+				encoding: row.encoding,
+				baseHash: "baseHash" in row ? row.baseHash : null,
+				content: new Uint8Array(row.content),
+			});
+		}
 	}
 
 	hasObject(repoId: string, hash: string): boolean {
@@ -103,6 +120,14 @@ export class MemoryStorage implements Storage {
 
 	listObjectHashes(repoId: string): string[] {
 		return Array.from(this.getObjMap(repoId).keys());
+	}
+
+	repoByteSize(repoId: string): number {
+		let total = 0;
+		for (const obj of this.getObjMap(repoId).values()) {
+			total += obj.content.byteLength;
+		}
+		return total;
 	}
 
 	deleteObjects(repoId: string, hashes: ReadonlyArray<string>): number {
@@ -176,7 +201,7 @@ export class MemoryStorage implements Storage {
 
 	// ── Internal helpers ────────────────────────────────────────
 
-	private getObjMap(repoId: string): Map<string, RawObject> {
+	private getObjMap(repoId: string): Map<string, StoredObject> {
 		let map = this.objects.get(repoId);
 		if (!map) {
 			map = new Map();
@@ -193,4 +218,15 @@ export class MemoryStorage implements Storage {
 		}
 		return map;
 	}
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+function cloneStored(obj: StoredObject): StoredObject {
+	return {
+		type: obj.type,
+		encoding: obj.encoding,
+		baseHash: obj.baseHash ?? null,
+		content: new Uint8Array(obj.content),
+	};
 }

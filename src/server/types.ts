@@ -3,7 +3,7 @@ import type { NetworkPolicy, Rejection } from "../hooks.ts";
 import type { NodeHttpRequest, NodeHttpResponse } from "../node-http.ts";
 import type { CommitOptions, CommitResult } from "../repo/writing.ts";
 import type { Storage, CreateRepoOptions } from "../storage/repo-store.ts";
-import type { GcOptions, GcResult } from "../storage/gc.ts";
+import type { GcOptions, GcResult, RepackOptions, RepackResult } from "../storage/gc.ts";
 export type { NodeHttpRequest, NodeHttpResponse } from "../node-http.ts";
 
 // ── Auth ─────────────────────────────────────────────────────────────
@@ -428,6 +428,19 @@ export interface GitServer<A = Auth> {
 	 * @throws If the repo does not exist or the server is shutting down.
 	 */
 	gc(repoId: string, options?: GcOptions): Promise<GcResult>;
+
+	/**
+	 * Delta-compress a repo's reachable history without pruning unreachable
+	 * objects — the "compress only" counterpart to {@link gc}.
+	 *
+	 * Bounds disk usage of live, near-duplicate history (the dominant cost
+	 * for high-commit-volume sync workloads) by rewriting reachable objects
+	 * as deltas. Like {@link gc}, this includes fork-reachable tips when run
+	 * on a root repo so shared objects are not left uncompacted or at risk.
+	 *
+	 * @throws If the repo does not exist or the server is shutting down.
+	 */
+	repack(repoId: string, options?: RepackOptions): Promise<RepackResult>;
 
 	/**
 	 * Graceful shutdown. After calling, new HTTP requests receive 503

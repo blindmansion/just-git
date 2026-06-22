@@ -37,7 +37,7 @@ import {
 } from "./operations.ts";
 import { buildReportStatus, parseV2CommandRequest } from "./protocol.ts";
 import { handleSshSession } from "./ssh-session.ts";
-import { gcRepo } from "../storage/gc.ts";
+import { gcRepo, repackRepo } from "../storage/gc.ts";
 import { createRepoStore, type CreateRepoOptions } from "../storage/repo-store.ts";
 import { MemoryStorage } from "../storage/memory-storage.ts";
 import { RequestLimitError } from "./errors.ts";
@@ -161,6 +161,27 @@ export function createServer<A = Auth>(
 	function leave(): void {
 		inflight--;
 		if (closed && inflight === 0) drainResolve?.();
+	}
+
+	/**
+	 * Collect ref tips of all forks of a root repo, so maintenance (gc /
+	 * repack) treats fork-reachable objects as live. Returns undefined for
+	 * non-root repos or backends without fork support.
+	 */
+	async function collectForkTips(repoId: string): Promise<string[] | undefined> {
+		if (!rawStorage.listForks || !rawStorage.getForkParent) return undefined;
+		const parentId = await rawStorage.getForkParent(repoId);
+		if (parentId) return undefined; // forks are compacted/gc'd as themselves
+		const forkIds = await rawStorage.listForks(repoId);
+		if (forkIds.length === 0) return undefined;
+		const extraTips: string[] = [];
+		for (const forkId of forkIds) {
+			const forkRepo = await storage.repo(forkId);
+			if (!forkRepo) continue;
+			const refs = await forkRepo.refStore.listRefs();
+			for (const ref of refs) extraTips.push(ref.hash);
+		}
+		return extraTips.length > 0 ? extraTips : undefined;
 	}
 
 	const server: GitServer<A> = {
@@ -524,26 +545,19 @@ export function createServer<A = Auth>(
 			if (!enter()) throw new Error("Server is shutting down");
 			try {
 				const repo = await server.requireRepo(repoId);
-
-				let extraTips: string[] | undefined;
-				if (rawStorage.listForks && rawStorage.getForkParent) {
-					const parentId = await rawStorage.getForkParent(repoId);
-					if (!parentId) {
-						// This is a root repo — include fork ref tips
-						const forkIds = await rawStorage.listForks(repoId);
-						if (forkIds.length > 0) {
-							extraTips = [];
-							for (const forkId of forkIds) {
-								const forkRepo = await storage.repo(forkId);
-								if (!forkRepo) continue;
-								const refs = await forkRepo.refStore.listRefs();
-								for (const ref of refs) extraTips.push(ref.hash);
-							}
-						}
-					}
-				}
-
+				const extraTips = await collectForkTips(repoId);
 				return gcRepo(repo, rawStorage, repoId, options, extraTips);
+			} finally {
+				leave();
+			}
+		},
+
+		async repack(repoId, options?) {
+			if (!enter()) throw new Error("Server is shutting down");
+			try {
+				const repo = await server.requireRepo(repoId);
+				const extraTips = await collectForkTips(repoId);
+				return repackRepo(repo, rawStorage, repoId, options, extraTips);
 			} finally {
 				leave();
 			}

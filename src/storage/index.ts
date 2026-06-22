@@ -11,15 +11,18 @@ export { createRepoStore } from "./repo-store.ts";
 export type {
 	RepoStore,
 	Storage,
+	StoredObject,
+	ObjectEncoding,
+	DeltaObjectRow,
 	CreateRepoOptions,
 	RefOps,
 	RawRefEntry,
 	MaybeAsync,
 } from "./repo-store.ts";
 
-// Maintenance — free function over (GitRepo, Storage)
-export { gcRepo } from "./gc.ts";
-export type { GcOptions, GcResult } from "./gc.ts";
+// Maintenance — free functions over (GitRepo, Storage)
+export { gcRepo, repackRepo } from "./gc.ts";
+export type { GcOptions, GcResult, RepackOptions, RepackResult } from "./gc.ts";
 
 // Backends
 export { MemoryStorage } from "./memory-storage.ts";

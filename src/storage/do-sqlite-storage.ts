@@ -1,5 +1,5 @@
-import type { RawObject, Ref } from "../lib/types.ts";
-import type { Storage, RawRefEntry, RefOps } from "./repo-store.ts";
+import type { Ref } from "../lib/types.ts";
+import type { DeltaObjectRow, Storage, StoredObject, RawRefEntry, RefOps } from "./repo-store.ts";
 
 // ── Durable Object SQLite types ─────────────────────────────────────
 
@@ -34,10 +34,12 @@ CREATE TABLE IF NOT EXISTS git_repos (
 );
 
 CREATE TABLE IF NOT EXISTS git_objects (
-  repo_id TEXT NOT NULL,
-  hash    TEXT NOT NULL,
-  type    TEXT NOT NULL,
-  content BLOB NOT NULL,
+  repo_id   TEXT NOT NULL,
+  hash      TEXT NOT NULL,
+  type      TEXT NOT NULL,
+  content   BLOB NOT NULL,
+  encoding  TEXT NOT NULL DEFAULT 'raw',
+  base_hash TEXT,
   PRIMARY KEY (repo_id, hash)
 ) WITHOUT ROWID;
 
@@ -65,11 +67,16 @@ const SQL = {
 
 	objInsert:
 		"INSERT OR IGNORE INTO git_objects (repo_id, hash, type, content) VALUES (?, ?, ?, ?) RETURNING hash",
-	objRead: "SELECT type, content FROM git_objects WHERE repo_id = ? AND hash = ?",
+	objReplace:
+		"INSERT OR REPLACE INTO git_objects (repo_id, hash, type, content, encoding, base_hash) VALUES (?, ?, ?, ?, ?, ?)",
+	objRead:
+		"SELECT type, content, encoding, base_hash FROM git_objects WHERE repo_id = ? AND hash = ?",
 	objExists: "SELECT 1 FROM git_objects WHERE repo_id = ? AND hash = ? LIMIT 1",
 	objPrefix: "SELECT hash FROM git_objects WHERE repo_id = ? AND hash GLOB ?",
 	objDeleteAll: "DELETE FROM git_objects WHERE repo_id = ?",
 	objListHashes: "SELECT hash FROM git_objects WHERE repo_id = ?",
+	objByteSize:
+		"SELECT COALESCE(SUM(LENGTH(content)), 0) AS size FROM git_objects WHERE repo_id = ?",
 	objDelete: "DELETE FROM git_objects WHERE repo_id = ? AND hash = ?",
 
 	refRead: "SELECT type, hash, target FROM git_refs WHERE repo_id = ? AND name = ?",
@@ -141,13 +148,11 @@ export class DurableObjectSqliteStorage implements Storage {
 
 	// ── Objects ─────────────────────────────────────────────────
 
-	getObject(repoId: string, hash: string): RawObject | null {
-		const row = first(this.sql.exec(SQL.objRead, repoId, hash));
-		if (!row) return null;
-		return { type: row.type as RawObject["type"], content: new Uint8Array(row.content) };
+	getObject(repoId: string, hash: string): StoredObject | null {
+		return rowToStored(first(this.sql.exec(SQL.objRead, repoId, hash)));
 	}
 
-	getObjects(repoId: string, hashes: ReadonlyArray<string>): Map<string, RawObject> {
+	getObjects(repoId: string, hashes: ReadonlyArray<string>): Map<string, StoredObject> {
 		const uniqueHashes = Array.from(new Set(hashes));
 		if (uniqueHashes.length === 0) return new Map();
 		if (uniqueHashes.length === 1) {
@@ -156,17 +161,15 @@ export class DurableObjectSqliteStorage implements Storage {
 		}
 		const rows = this.sql
 			.exec(
-				`SELECT hash, type, content FROM git_objects WHERE repo_id = ? AND hash IN (${placeholders(uniqueHashes.length)})`,
+				`SELECT hash, type, content, encoding, base_hash FROM git_objects WHERE repo_id = ? AND hash IN (${placeholders(uniqueHashes.length)})`,
 				repoId,
 				...uniqueHashes,
 			)
-			.toArray() as Array<{ hash: string; type: string; content: Uint8Array }>;
-		const result = new Map<string, RawObject>();
+			.toArray() as ObjectRow[];
+		const result = new Map<string, StoredObject>();
 		for (const row of rows) {
-			result.set(row.hash, {
-				type: row.type as RawObject["type"],
-				content: new Uint8Array(row.content),
-			});
+			const stored = rowToStored(row);
+			if (stored) result.set(row.hash!, stored);
 		}
 		return result;
 	}
@@ -187,6 +190,24 @@ export class DurableObjectSqliteStorage implements Storage {
 			}
 		});
 		return inserted;
+	}
+
+	putDeltaObjects(repoId: string, rows: ReadonlyArray<DeltaObjectRow>): void {
+		if (rows.length === 0) return;
+		this.storage.transactionSync(() => {
+			for (const row of rows) {
+				const baseHash = "baseHash" in row ? row.baseHash : null;
+				this.sql.exec(
+					SQL.objReplace,
+					repoId,
+					row.hash,
+					row.type,
+					row.content,
+					row.encoding,
+					baseHash,
+				);
+			}
+		});
 	}
 
 	hasObject(repoId: string, hash: string): boolean {
@@ -221,6 +242,11 @@ export class DurableObjectSqliteStorage implements Storage {
 			.exec(SQL.objListHashes, repoId)
 			.toArray()
 			.map((r) => r.hash);
+	}
+
+	repoByteSize(repoId: string): number {
+		const row = first(this.sql.exec(SQL.objByteSize, repoId));
+		return row ? Number(row.size) : 0;
 	}
 
 	deleteObjects(repoId: string, hashes: ReadonlyArray<string>): number {
@@ -304,6 +330,24 @@ export class DurableObjectSqliteStorage implements Storage {
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────
+
+type ObjectRow = {
+	hash?: string;
+	type: string;
+	content: Uint8Array;
+	encoding: string;
+	base_hash: string | null;
+};
+
+function rowToStored(row: ObjectRow | null): StoredObject | null {
+	if (!row) return null;
+	return {
+		type: row.type as StoredObject["type"],
+		encoding: row.encoding as StoredObject["encoding"],
+		baseHash: row.base_hash,
+		content: new Uint8Array(row.content),
+	};
+}
 
 type RefRow = { name: string; type: string; hash: string | null; target: string | null };
 

@@ -1,7 +1,8 @@
 import { ObjectCache } from "../lib/object-cache.ts";
 import { envelope } from "../lib/object-store.ts";
 import type { PackObject } from "../lib/pack/packfile.ts";
-import { readPack } from "../lib/pack/packfile.ts";
+import { applyDelta, readPack } from "../lib/pack/packfile.ts";
+import { inflate } from "../lib/pack/zlib.ts";
 import { sha1 } from "../lib/sha1.ts";
 import { normalizeRef } from "../lib/types.ts";
 import { MemoryStorage } from "./memory-storage.ts";
@@ -26,6 +27,63 @@ import type {
  * (e.g. PostgreSQL) return promises naturally.
  */
 export type MaybeAsync<T> = T | Promise<T>;
+
+/**
+ * How an object row's `content` bytes are encoded at rest.
+ *
+ * - `raw` — the raw git object body (no header/envelope, no compression).
+ *   This is the default for the ingest hot path (`putObject`/`putObjects`).
+ * - `raw-zlib` — the raw body, zlib-compressed (RFC 1950). Produced by
+ *   compaction when a delta base wasn't worthwhile but compression was.
+ * - `delta` — a binary delta (git delta format, as produced by `createDelta`
+ *   and consumed by `applyDelta`) against {@link StoredObject.baseHash}.
+ * - `delta-zlib` — a delta, zlib-compressed. The common compaction output.
+ *
+ * The object's content hash is **always** of the reconstructed raw body
+ * (`sha1(envelope(type, rawBody))`), never of the stored bytes — so
+ * addressing and integrity are independent of the encoding.
+ */
+export type ObjectEncoding = "raw" | "raw-zlib" | "delta" | "delta-zlib";
+
+/**
+ * The stored representation of a git object as returned by a backend's
+ * {@link Storage.getObject} / {@link Storage.getObjects}.
+ *
+ * Backends persist objects verbatim and report how the `content` bytes are
+ * encoded; the adapter (`createRepoStore`) reconstructs the raw object body
+ * (inflating zlib, applying deltas against `baseHash`). Backends never need
+ * to understand the encoding beyond storing and returning these fields.
+ */
+export interface StoredObject {
+	/** The object's real git type (of the reconstructed raw body). */
+	type: ObjectType;
+	/** How `content` is encoded. */
+	encoding: ObjectEncoding;
+	/**
+	 * For `delta`/`delta-zlib`, the hash of the base object this deltas
+	 * against. Omitted (or null) for `raw`/`raw-zlib`.
+	 */
+	baseHash?: string | null;
+	/** The stored bytes (raw body, zlib body, delta, or zlib'd delta). */
+	content: Uint8Array;
+}
+
+/**
+ * A row written by {@link Storage.putDeltaObjects} during compaction.
+ *
+ * A row is either a self-contained object (`raw`/`raw-zlib`) or a delta
+ * (`delta`/`delta-zlib`) that names its `baseHash`. The hash is always of
+ * the reconstructed raw body.
+ */
+export type DeltaObjectRow =
+	| { hash: string; type: string; encoding: "raw" | "raw-zlib"; content: Uint8Array }
+	| {
+			hash: string;
+			type: string;
+			encoding: "delta" | "delta-zlib";
+			baseHash: string;
+			content: Uint8Array;
+	  };
 
 /** Options for creating a new repo via `GitServer.createRepo`. */
 export interface CreateRepoOptions {
@@ -137,26 +195,34 @@ export interface Storage {
 	// ── Objects ─────────────────────────────────────────────────────
 
 	/**
-	 * Read a raw git object by hash.
+	 * Read a git object by hash.
 	 * Returns `null` when the object does not exist.
+	 *
+	 * Returns the **stored representation** ({@link StoredObject}): `type`,
+	 * the on-disk `content` bytes, and how they are `encoding`-ed (plus
+	 * `baseHash` for deltas). The adapter reconstructs the raw object body.
+	 * For the ingest hot path (objects written via `putObject`/`putObjects`)
+	 * this is always `{ encoding: "raw" }`, i.e. `content` is the raw body.
 	 */
-	getObject(repoId: string, hash: string): MaybeAsync<RawObject | null>;
+	getObject(repoId: string, hash: string): MaybeAsync<StoredObject | null>;
 
 	/**
-	 * Batch-read raw git objects by hash.
-	 * Returns only objects that exist for `repoId`, keyed by full hash.
+	 * Batch-read git objects by hash.
+	 * Returns only objects that exist for `repoId`, keyed by full hash, in
+	 * their {@link StoredObject} stored representation (see {@link getObject}).
 	 * Missing hashes must simply be omitted from the returned map.
 	 * Backends should keep the singleton case cheap as well — callers may
 	 * sometimes probe one hash at a time, so avoid batch-only overhead such as
 	 * per-call query preparation or heavy intermediate allocation.
 	 */
-	getObjects?(repoId: string, hashes: ReadonlyArray<string>): MaybeAsync<Map<string, RawObject>>;
+	getObjects?(repoId: string, hashes: ReadonlyArray<string>): MaybeAsync<Map<string, StoredObject>>;
 
 	/**
 	 * Store a single git object.
 	 *
-	 * `content` is the raw object body (no git header / envelope). Because
-	 * git objects are immutable, duplicate writes may be ignored.
+	 * `content` is the raw object body (no git header / envelope). The row is
+	 * persisted with `encoding = "raw"`. Because git objects are immutable,
+	 * duplicate writes may be ignored.
 	 */
 	putObject(repoId: string, hash: string, type: string, content: Uint8Array): MaybeAsync<void>;
 
@@ -174,6 +240,22 @@ export interface Storage {
 		repoId: string,
 		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
 	): MaybeAsync<string[]>;
+
+	/**
+	 * Rewrite objects in their compacted ({@link DeltaObjectRow}) form.
+	 *
+	 * Called by the compaction pass (`repackRepo` / `gcRepo({ compact })`) to
+	 * replace existing raw rows with delta/zlib-encoded ones. Unlike
+	 * `putObjects` (insert-or-ignore on the ingest path), this **replaces** any
+	 * existing row for the same hash — the reconstructed body is identical, so
+	 * the hash is unchanged; only the stored encoding differs.
+	 *
+	 * Implementations must apply the whole batch atomically (a single
+	 * transaction), so a `delta` row is never observable before its `baseHash`
+	 * row is present. The compaction pass guarantees every `baseHash` lives in
+	 * the same repo partition as the delta that references it.
+	 */
+	putDeltaObjects(repoId: string, rows: ReadonlyArray<DeltaObjectRow>): MaybeAsync<void>;
 
 	/** Check whether an object exists without reading its content. */
 	hasObject(repoId: string, hash: string): MaybeAsync<boolean>;
@@ -196,6 +278,17 @@ export interface Storage {
 
 	/** Return all object hashes stored for a repo. */
 	listObjectHashes(repoId: string): MaybeAsync<string[]>;
+
+	/**
+	 * Approximate on-disk size, in bytes, of a repo's object partition.
+	 *
+	 * Used by consumers to drive disk-pressure-based maintenance (e.g. run
+	 * `repackRepo` once a repo crosses a threshold). The value is a cheap
+	 * estimate — the sum of stored `content` lengths is a reasonable choice;
+	 * backends need not account for index/page overhead. Optional: consumers
+	 * fall back to `listObjectHashes(repoId).length` as a coarser signal.
+	 */
+	repoByteSize?(repoId: string): MaybeAsync<number>;
 
 	/**
 	 * Delete specific objects by hash.
@@ -393,6 +486,13 @@ export function isDeferrableObjectStore(store: unknown): store is DeferrableObje
 
 // ── AdaptedObjectStore (private) ────────────────────────────────────
 
+/**
+ * Hard cap on delta-base recursion depth when reading. Compaction bounds
+ * real chains by its `depth` option (default 50); this much larger limit
+ * only exists to fail fast on cyclic/corrupt stored data.
+ */
+const MAX_DELTA_CHAIN = 1000;
+
 class AdaptedObjectStore implements ObjectStore, DeferrableObjectStore {
 	private cache = new ObjectCache();
 
@@ -410,16 +510,54 @@ class AdaptedObjectStore implements ObjectStore, DeferrableObjectStore {
 	}
 
 	async read(hash: ObjectId): Promise<RawObject> {
+		return this.readDecoded(hash, 0);
+	}
+
+	/**
+	 * Read and reconstruct a single object, resolving zlib/delta encodings.
+	 * `depth` bounds delta-base recursion to guard against cyclic/corrupt data.
+	 */
+	private async readDecoded(hash: ObjectId, depth: number): Promise<RawObject> {
 		const cached = this.cache.get(hash);
 		if (cached) return cached;
 
+		const stored = await this.fetchStored(hash);
+		if (!stored) throw new Error(`object ${hash} not found`);
+		const raw = await this.decode(stored, depth);
+		this.cache.set(hash, raw);
+		return raw;
+	}
+
+	/** Fetch a stored row from the own partition, falling through to parent. */
+	private async fetchStored(hash: ObjectId): Promise<StoredObject | null> {
 		let obj = await this.driver.getObject(this.repoId, hash);
 		if (!obj && this.parentId) {
 			obj = await this.driver.getObject(this.parentId, hash);
 		}
-		if (!obj) throw new Error(`object ${hash} not found`);
-		this.cache.set(hash, obj);
 		return obj;
+	}
+
+	/** Reconstruct the raw object body from its stored representation. */
+	private async decode(stored: StoredObject, depth: number): Promise<RawObject> {
+		switch (stored.encoding) {
+			case "raw":
+				return { type: stored.type, content: stored.content };
+			case "raw-zlib":
+				return { type: stored.type, content: await inflate(stored.content) };
+			case "delta":
+			case "delta-zlib": {
+				if (depth > MAX_DELTA_CHAIN) {
+					throw new Error("delta chain too deep (possible cycle in stored objects)");
+				}
+				if (!stored.baseHash) {
+					throw new Error("delta object missing base hash");
+				}
+				const deltaBytes =
+					stored.encoding === "delta-zlib" ? await inflate(stored.content) : stored.content;
+				const base = await this.readDecoded(stored.baseHash, depth + 1);
+				return { type: stored.type, content: applyDelta(base.content, deltaBytes) };
+			}
+		}
 	}
 
 	async readMany(hashes: ReadonlyArray<ObjectId>): Promise<Map<ObjectId, RawObject>> {
@@ -437,25 +575,32 @@ class AdaptedObjectStore implements ObjectStore, DeferrableObjectStore {
 		}
 
 		if (missingOwn.length > 0) {
-			const ownObjects = await this.loadObjects(this.repoId, missingOwn);
-			for (const [hash, obj] of ownObjects) {
-				this.cache.set(hash, obj);
-				result.set(hash, obj);
-			}
+			const ownStored = await this.loadStored(this.repoId, missingOwn);
+			await this.decodeInto(ownStored, result);
 		}
 
 		if (this.parentId) {
 			const missingParent = missingOwn.filter((hash) => !result.has(hash));
 			if (missingParent.length > 0) {
-				const parentObjects = await this.loadObjects(this.parentId, missingParent);
-				for (const [hash, obj] of parentObjects) {
-					this.cache.set(hash, obj);
-					result.set(hash, obj);
-				}
+				const parentStored = await this.loadStored(this.parentId, missingParent);
+				await this.decodeInto(parentStored, result);
 			}
 		}
 
 		return result;
+	}
+
+	/** Decode a batch of stored rows into raw objects, populating the cache. */
+	private async decodeInto(
+		stored: Map<ObjectId, StoredObject>,
+		out: Map<ObjectId, RawObject>,
+	): Promise<void> {
+		for (const [hash, row] of stored) {
+			if (out.has(hash)) continue;
+			const raw = await this.decode(row, 0);
+			this.cache.set(hash, raw);
+			out.set(hash, raw);
+		}
 	}
 
 	async exists(hash: ObjectId): Promise<boolean> {
@@ -511,15 +656,13 @@ class AdaptedObjectStore implements ObjectStore, DeferrableObjectStore {
 		const numObjects = view.getUint32(8);
 		if (numObjects === 0) return [];
 
-		const driver = this.driver;
-		const repoId = this.repoId;
-		const parentId = this.parentId;
-
 		const entries = await readPack(packData, async (hash) => {
-			let obj = await driver.getObject(repoId, hash);
-			if (!obj && parentId) obj = await driver.getObject(parentId, hash);
-			if (!obj) return null;
-			return { type: obj.type, content: new Uint8Array(obj.content) };
+			try {
+				const raw = await this.readDecoded(hash, 0);
+				return { type: raw.type, content: new Uint8Array(raw.content) };
+			} catch {
+				return null;
+			}
 		});
 
 		return entries.map((e) => ({ hash: e.hash, type: e.type, content: e.content }));
@@ -569,17 +712,16 @@ class AdaptedObjectStore implements ObjectStore, DeferrableObjectStore {
 		return Array.from(set);
 	}
 
-	private async loadObjects(
+	private async loadStored(
 		repoId: string,
 		hashes: ReadonlyArray<ObjectId>,
-	): Promise<Map<ObjectId, RawObject>> {
+	): Promise<Map<ObjectId, StoredObject>> {
 		if (hashes.length === 0) return new Map();
 		if (this.driver.getObjects) {
-			const rows = await this.driver.getObjects(repoId, hashes);
-			return new Map(rows as Map<ObjectId, RawObject>);
+			return await this.driver.getObjects(repoId, hashes);
 		}
 
-		const result = new Map<ObjectId, RawObject>();
+		const result = new Map<ObjectId, StoredObject>();
 		for (const hash of hashes) {
 			const obj = await this.driver.getObject(repoId, hash);
 			if (obj) result.set(hash, obj);

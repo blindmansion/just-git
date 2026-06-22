@@ -219,6 +219,73 @@ describe("server.gc", () => {
 		expect(result.retained).toBe(beforeCount);
 	});
 
+	test("server.repack compresses reachable history without pruning", async () => {
+		const driver = new MemoryStorage();
+		const server = createServer({ storage: driver });
+		const repo = await server.createRepo("sync");
+
+		for (let i = 0; i < 30; i++) {
+			const lines: string[] = [];
+			for (let n = 0; n < 150; n++) {
+				lines.push(`line ${n}: stable text ${n % 30 === i % 30 ? `e${i}` : "x"} tail`);
+			}
+			const blob = await writeBlob(repo, lines.join("\n"));
+			const tree = await writeTree(repo, [{ name: "doc.md", hash: blob }]);
+			const parent = await resolveRef(repo, "refs/heads/main");
+			await createCommit(repo, {
+				tree,
+				parents: parent ? [parent] : [],
+				message: `edit ${i}`,
+				author: idAt(1000000000 + i),
+				committer: idAt(1000000000 + i),
+				branch: "main",
+			});
+		}
+
+		const before = driver.repoByteSize("sync");
+		const countBefore = driver.listObjectHashes("sync").length;
+
+		const result = await server.repack("sync");
+		expect(result.deltified).toBeGreaterThan(0);
+		expect(result.bytesAfter).toBeLessThan(before);
+
+		// Repack never deletes — object count is unchanged.
+		expect(driver.listObjectHashes("sync").length).toBe(countBefore);
+
+		// HEAD still resolves on a fresh handle.
+		const fresh = await server.requireRepo("sync");
+		expect(await resolveRef(fresh, "refs/heads/main")).toBeTruthy();
+	});
+
+	test("server.gc({ compact }) prunes and compresses in one pass", async () => {
+		const { server, driver, repo, initialHash } = await setupServer();
+
+		const blob2 = await writeBlob(repo, "orphaned");
+		const tree2 = await writeTree(repo, [{ name: "file.txt", hash: blob2 }]);
+		await createCommit(repo, {
+			tree: tree2,
+			parents: [initialHash],
+			message: "orphan",
+			author: idAt(1000000001),
+			committer: idAt(1000000001),
+			branch: "main",
+		});
+		await server.updateRefs("test", [{ ref: "refs/heads/main", newHash: initialHash }]);
+
+		const result = await server.gc("test", { compact: true });
+		expect(result.deleted).toBeGreaterThan(0);
+		expect(new Set(driver.listObjectHashes("test")).has(blob2)).toBe(false);
+
+		const fresh = await server.requireRepo("test");
+		expect(await resolveRef(fresh, "refs/heads/main")).toBe(initialHash);
+	});
+
+	test("server.repack throws when closed", async () => {
+		const { server } = await setupServer();
+		await server.close();
+		expect(server.repack("test")).rejects.toThrow("Server is shutting down");
+	});
+
 	test("tags keep objects reachable", async () => {
 		const { server, driver, repo, initialHash } = await setupServer();
 
