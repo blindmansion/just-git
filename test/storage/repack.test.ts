@@ -246,7 +246,12 @@ for (const backend of BACKENDS) {
 			// compress-only (prune: false): compresses, prunes nothing.
 			const danglingRepo = (await store.repo("r"))!;
 			const dangling = await writeBlob(danglingRepo, "dangling-not-reachable");
-			const repacked = await store.gc("r", { compact: true, prune: false, window: 250, depth: 250 });
+			const repacked = await store.gc("r", {
+				compact: true,
+				prune: false,
+				window: 250,
+				depth: 250,
+			});
 			expect(repacked.deltified).toBeGreaterThan(0);
 			expect(repacked.deleted).toBe(0);
 			expect(new Set(driver.listObjectHashes("r") as string[]).has(dangling)).toBe(true);
