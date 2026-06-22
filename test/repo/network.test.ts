@@ -301,4 +301,260 @@ describe("network: push", () => {
 			push(local, { url: `${BASE}/repo`, branch: "main" }, { networkPolicy: net }),
 		).rejects.toThrow("blocked");
 	});
+
+	test("pushes a new branch to the remote (ref creation)", async () => {
+		const { net, remote } = await setupRemote();
+		const local = await localRepo();
+		await cloneInto(local, `${BASE}/repo`, { networkPolicy: net });
+
+		const featureHash = await commit(local, {
+			files: { "feature.txt": "feat\n" },
+			message: "feature root",
+			author: AUTHOR,
+			branch: "feature",
+		});
+		expect(await refHash(remote, "refs/heads/feature")).toBeNull();
+
+		const result = await push(
+			local,
+			{ url: `${BASE}/repo`, branch: "feature" },
+			{ networkPolicy: net },
+		);
+		expect(result.ok).toBe(true);
+		expect(result.refs[0]!.oldHash).toBeNull();
+		expect(result.refs[0]!.status).toBe("ok");
+		expect(await refHash(remote, "refs/heads/feature")).toBe(featureHash);
+	});
+
+	test("rejected-non-fast-forward when the remote object is present locally", async () => {
+		const { net, remote } = await setupRemote();
+		const local = await localRepo();
+		await cloneInto(local, `${BASE}/repo`, { networkPolicy: net });
+
+		// Remote advances; the client fetches the new object but doesn't merge it.
+		await commit(remote, {
+			files: { "server.txt": "server side\n" },
+			message: "server edit",
+			author: AUTHOR,
+			branch: "main",
+		});
+		await fetch(local, { url: `${BASE}/repo` }, { networkPolicy: net });
+
+		// Client commits on its own (stale) main, diverging from the remote tip.
+		await commit(local, {
+			files: { "client.txt": "client side\n" },
+			message: "client edit",
+			author: AUTHOR,
+			branch: "main",
+		});
+
+		const result = await push(
+			local,
+			{ url: `${BASE}/repo`, branch: "main" },
+			{ networkPolicy: net },
+		);
+		expect(result.ok).toBe(false);
+		// Distinct from "rejected-fetch-first": the client already has the remote
+		// object, so the rejection is a plain non-fast-forward.
+		expect(result.refs[0]!.status).toBe("rejected-non-fast-forward");
+	});
+
+	test("fires postPush on a successful push", async () => {
+		const { net } = await setupRemote();
+		const local = await localRepo();
+		await cloneInto(local, `${BASE}/repo`, { networkPolicy: net });
+		await commit(local, {
+			files: { "p.txt": "p\n" },
+			message: "edit",
+			author: AUTHOR,
+			branch: "main",
+		});
+
+		let postCount = 0;
+		local.hooks = { postPush: () => void postCount++ };
+
+		const result = await push(
+			local,
+			{ url: `${BASE}/repo`, branch: "main" },
+			{ networkPolicy: net },
+		);
+		expect(result.ok).toBe(true);
+		expect(postCount).toBe(1);
+	});
+});
+
+describe("network: push (refspecs + src/dst sugar)", () => {
+	test("pushes via an explicit src:dst refspec", async () => {
+		const { net, remote } = await setupRemote();
+		const local = await localRepo();
+		await cloneInto(local, `${BASE}/repo`, { networkPolicy: net });
+		const advanced = await commit(local, {
+			files: { "a.txt": "a\n" },
+			message: "edit",
+			author: AUTHOR,
+			branch: "main",
+		});
+
+		const result = await push(
+			local,
+			{ url: `${BASE}/repo`, refspecs: ["main:main"] },
+			{ networkPolicy: net },
+		);
+		expect(result.ok).toBe(true);
+		expect(result.refs[0]!.ref).toBe("refs/heads/main");
+		expect(await refHash(remote, "refs/heads/main")).toBe(advanced);
+	});
+
+	test("src/dst sugar pushes a source ref to a differently named remote ref", async () => {
+		const { net, remote } = await setupRemote();
+		const local = await localRepo();
+		await cloneInto(local, `${BASE}/repo`, { networkPolicy: net });
+		const hash = await commit(local, {
+			files: { "x.txt": "x\n" },
+			message: "edit",
+			author: AUTHOR,
+			branch: "main",
+		});
+
+		const result = await push(
+			local,
+			{ url: `${BASE}/repo`, src: "main", dst: "released" },
+			{ networkPolicy: net },
+		);
+		expect(result.ok).toBe(true);
+		expect(result.refs[0]!.ref).toBe("refs/heads/released");
+		expect(await refHash(remote, "refs/heads/released")).toBe(hash);
+		// The source name is untouched on the remote.
+		expect(await refHash(remote, "refs/heads/main")).not.toBe(hash);
+	});
+
+	test("force via the '+' refspec prefix overrides a non-fast-forward", async () => {
+		const { net, remote } = await setupRemote();
+		const local = await localRepo();
+		await cloneInto(local, `${BASE}/repo`, { networkPolicy: net });
+
+		await commit(remote, {
+			files: { "server.txt": "server side\n" },
+			message: "server edit",
+			author: AUTHOR,
+			branch: "main",
+		});
+		const clientHash = await commit(local, {
+			files: { "client.txt": "client side\n" },
+			message: "client edit",
+			author: AUTHOR,
+			branch: "main",
+		});
+
+		const result = await push(
+			local,
+			{ url: `${BASE}/repo`, refspecs: ["+main:main"] },
+			{ networkPolicy: net },
+		);
+		expect(result.ok).toBe(true);
+		expect(result.refs[0]!.forced).toBe(true);
+		expect(await refHash(remote, "refs/heads/main")).toBe(clientHash);
+	});
+
+	test("pushes a tag and rejects a non-fast-forward tag rewrite", async () => {
+		const { net, remote } = await setupRemote();
+		const local = await localRepo();
+		await cloneInto(local, `${BASE}/repo`, { networkPolicy: net });
+		const base = await refHash(local, "refs/heads/main");
+
+		// Lightweight tag pointing at the cloned tip.
+		await local.refStore.writeRef("refs/tags/v1", base!);
+		const tagPush = await push(
+			local,
+			{ url: `${BASE}/repo`, refspecs: ["refs/tags/v1:refs/tags/v1"] },
+			{ networkPolicy: net },
+		);
+		expect(tagPush.ok).toBe(true);
+		expect(await refHash(remote, "refs/tags/v1")).toBe(base);
+
+		// Move the tag forward and try to push again without force — tags must
+		// not move, even on a fast-forward.
+		const moved = await commit(local, {
+			files: { "t.txt": "t\n" },
+			message: "tag move",
+			author: AUTHOR,
+			branch: "main",
+		});
+		await local.refStore.writeRef("refs/tags/v1", moved);
+		const rewrite = await push(
+			local,
+			{ url: `${BASE}/repo`, refspecs: ["refs/tags/v1:refs/tags/v1"] },
+			{ networkPolicy: net },
+		);
+		expect(rewrite.ok).toBe(false);
+		expect(rewrite.refs[0]!.status).toBe("rejected-already-exists");
+		expect(await refHash(remote, "refs/tags/v1")).toBe(base);
+	});
+});
+
+/** A bare storage-backed repo, server-free, seeded on main. */
+async function bareRemoteRepo(): Promise<GitRepo> {
+	const repos = createRepoStore(new MemoryStorage());
+	const remote = await repos.createRepo("remote");
+	await commit(remote, {
+		files: { "README.md": "# Hello\n" },
+		message: "init",
+		author: AUTHOR,
+		branch: "main",
+	});
+	return remote;
+}
+
+describe("network: resolveRemote (LocalTransport)", () => {
+	test("clones a non-HTTP remote resolved to a GitRepo", async () => {
+		const remote = await bareRemoteRepo();
+		const local = await localRepo();
+		const resolveRemote = (url: string) => (url === "repo://remote" ? remote : null);
+
+		const result = await cloneInto(local, "repo://remote", { resolveRemote });
+
+		expect(result.defaultBranch).toBe("main");
+		expect(result.objectCount).toBeGreaterThan(0);
+		expect(await refHash(local, "refs/heads/main")).toBe(
+			await refHash(remote, "refs/heads/main"),
+		);
+		expect(await local.refStore.readRef("HEAD")).toEqual({
+			type: "symbolic",
+			target: "refs/heads/main",
+		});
+	});
+
+	test("fetch and push round-trip over the local transport", async () => {
+		const remote = await bareRemoteRepo();
+		const resolveRemote = (url: string) => (url === "repo://remote" ? remote : null);
+		const local = await localRepo();
+		await cloneInto(local, "repo://remote", { resolveRemote });
+
+		// Local edit, pushed back over the local transport.
+		const advanced = await commit(local, {
+			files: { "local.txt": "from client\n" },
+			message: "client edit",
+			author: AUTHOR,
+			branch: "main",
+		});
+		const pushResult = await push(
+			local,
+			{ url: "repo://remote", branch: "main" },
+			{ resolveRemote },
+		);
+		expect(pushResult.ok).toBe(true);
+		expect(await refHash(remote, "refs/heads/main")).toBe(advanced);
+
+		// Remote advances; fetch it back over the local transport.
+		const second = await commit(remote, {
+			files: { "remote.txt": "from server\n" },
+			message: "server edit",
+			author: AUTHOR,
+			branch: "main",
+		});
+		const fetchResult = await fetch(local, { url: "repo://remote" }, { resolveRemote });
+		expect(fetchResult.objectCount).toBeGreaterThan(0);
+		expect(await refHash(local, "refs/remotes/origin/main")).toBe(second);
+		expect(fetchResult.updated.some((u) => u.ref === "refs/remotes/origin/main")).toBe(true);
+	});
 });
