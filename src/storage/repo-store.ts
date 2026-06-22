@@ -4,6 +4,7 @@ import type { PackObject } from "../lib/pack/packfile.ts";
 import { readPack } from "../lib/pack/packfile.ts";
 import { sha1 } from "../lib/sha1.ts";
 import { normalizeRef } from "../lib/types.ts";
+import { MemoryStorage } from "./memory-storage.ts";
 import type {
 	GitRepo,
 	ObjectId,
@@ -266,8 +267,12 @@ export interface Storage {
  * The returned adapter handles all git-aware logic (object hashing,
  * pack ingestion, batch object lookup fallback, symref resolution, and CAS
  * on top of the backend's raw I/O.
+ *
+ * Defaults to {@link MemoryStorage} when no driver is supplied, mirroring
+ * `createServer`. In-memory data is lost when the process exits — pass an
+ * explicit backend for persistence.
  */
-export function createRepoStore(driver: Storage): RepoStore {
+export function createRepoStore(driver: Storage = new MemoryStorage()): RepoStore {
 	async function buildRepo(repoId: string): Promise<GitRepo> {
 		const parentId = driver.getForkParent ? await driver.getForkParent(repoId) : null;
 		return {
