@@ -1,20 +1,29 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { RealGit } from "../real-git";
+import { GitCommandError, RealGit } from "../real-git";
 import { normalizeRebaseField } from "./compare";
 
 /**
  * Run `git` with the given arguments in a repo directory under an isolated
  * environment. If `env` is provided (the harness's pre-built isolated env) it
  * takes precedence; otherwise a fresh isolated environment is used.
+ *
+ * Capture intentionally tolerates non-zero exits — e.g. `rev-parse HEAD` on an
+ * unborn branch exits 128, and callers branch on `exitCode`. `execAsync` throws
+ * on failure, so recover the captured result instead of propagating.
  */
 async function run(
 	args: string[],
 	cwd: string,
 	env?: Record<string, string>,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-	return RealGit.in(cwd, env ? { env } : undefined).execAsync(args);
+	try {
+		return await RealGit.in(cwd, env ? { env } : undefined).execAsync(args);
+	} catch (error) {
+		if (error instanceof GitCommandError) return error.result;
+		throw error;
+	}
 }
 
 // ── HEAD ──────────────────────────────────────────────────────────
