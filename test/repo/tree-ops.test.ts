@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { GitRepo } from "../../src/lib/types.ts";
-import { MemoryStorage } from "../../src/storage/memory-storage.ts";
-import { createRepoStore } from "../../src/storage/repo-store.ts";
+import { MemoryStorage } from "../../src/store/memory-storage.ts";
+import { createRepoStore } from "../../src/store/repo-store.ts";
 import { readTree } from "../../src/repo/reading.ts";
 import { readCommit, resolveRef } from "../../src/repo/reading.ts";
 import { flattenTree } from "../../src/repo/diffing.ts";

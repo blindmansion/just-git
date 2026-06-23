@@ -28,7 +28,7 @@ import {
 	walkCommitHistory,
 } from "../../src/repo/index.ts";
 import { createServer } from "../../src/server/handler.ts";
-import { createRepoStore, MemoryStorage } from "../../src/storage/index.ts";
+import { createRepoStore, MemoryStorage } from "../../src/store/index.ts";
 
 const BASE = "http://git";
 const BRANCH = "main";

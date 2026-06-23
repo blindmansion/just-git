@@ -4,7 +4,7 @@ import { cloneInto, merge, pull, rebase } from "../../src/repo/index.ts";
 import { readFileAtCommit, resolveRef } from "../../src/repo/reading.ts";
 import { commit } from "../../src/repo/writing.ts";
 import { createServer } from "../../src/server/handler.ts";
-import { createRepoStore, MemoryStorage } from "../../src/storage/index.ts";
+import { createRepoStore, MemoryStorage } from "../../src/store/index.ts";
 
 const BASE = "http://git";
 const AUTHOR: Identity = {

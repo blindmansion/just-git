@@ -1,12 +1,12 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test, beforeEach } from "bun:test";
-import { BunSqliteStorage } from "../../src/storage/bun-sqlite-storage.ts";
-import { createRepoStore } from "../../src/storage/repo-store.ts";
+import { BunSqliteStorage } from "../../src/store/bun-sqlite-storage.ts";
+import { createRepoStore } from "../../src/store/repo-store.ts";
 import { envelope } from "../../src/lib/object-store.ts";
 import { sha1 } from "../../src/lib/sha1.ts";
 import { writePack } from "../../src/lib/pack/packfile.ts";
 import type { ObjectType } from "../../src/lib/types.ts";
-import type { RepoStore } from "../../src/storage/repo-store.ts";
+import type { RepoStore } from "../../src/store/repo-store.ts";
 
 const encoder = new TextEncoder();
 

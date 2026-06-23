@@ -1,12 +1,12 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { BunSqliteStorage } from "../../src/storage/bun-sqlite-storage.ts";
-import { MemoryStorage } from "../../src/storage/memory-storage.ts";
-import { createRepoStore, type Storage } from "../../src/storage/repo-store.ts";
+import { BunSqliteStorage } from "../../src/store/bun-sqlite-storage.ts";
+import { MemoryStorage } from "../../src/store/memory-storage.ts";
+import { createRepoStore, type Storage } from "../../src/store/repo-store.ts";
 import { commit, createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { resolveRef } from "../../src/repo/reading.ts";
 import type { GitRepo, Identity } from "../../src/lib/types.ts";
-import type { RepoStore } from "../../src/storage/repo-store.ts";
+import type { RepoStore } from "../../src/store/repo-store.ts";
 
 const ID: Identity = {
 	name: "Test",

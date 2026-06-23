@@ -1,7 +1,7 @@
 import { describe, expect, test, beforeEach } from "bun:test";
-import { MemoryStorage } from "../../src/storage/memory-storage.ts";
-import { createRepoStore } from "../../src/storage/repo-store.ts";
-import type { RepoStore } from "../../src/storage/repo-store.ts";
+import { MemoryStorage } from "../../src/store/memory-storage.ts";
+import { createRepoStore } from "../../src/store/repo-store.ts";
+import type { RepoStore } from "../../src/store/repo-store.ts";
 import { envelope } from "../../src/lib/object-store.ts";
 import { sha1 } from "../../src/lib/sha1.ts";
 import { writePack } from "../../src/lib/pack/packfile.ts";

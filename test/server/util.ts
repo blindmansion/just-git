@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createGit } from "../../src/index.ts";
 import { createServer } from "../../src/server/handler.ts";
-import { MemoryStorage } from "../../src/storage/memory-storage.ts";
+import { MemoryStorage } from "../../src/store/memory-storage.ts";
 import type { Auth, GitServerConfig } from "../../src/server/types.ts";
 
 // ── Test env ────────────────────────────────────────────────────────

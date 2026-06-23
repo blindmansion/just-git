@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Identity, GitRepo } from "../../src/lib/types.ts";
-import { MemoryStorage } from "../../src/storage/memory-storage.ts";
-import { createRepoStore } from "../../src/storage/repo-store.ts";
+import { MemoryStorage } from "../../src/store/memory-storage.ts";
+import { createRepoStore } from "../../src/store/repo-store.ts";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { bisect, type BisectStepInfo } from "../../src/repo/operations.ts";
 import { MemoryFileSystem } from "../../src/memory-fs.ts";

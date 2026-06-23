@@ -2,8 +2,8 @@ import type { GitRepo } from "../lib/types.ts";
 import type { NetworkPolicy, Rejection } from "../hooks.ts";
 import type { NodeHttpRequest, NodeHttpResponse } from "../node-http.ts";
 import type { CommitOptions, CommitResult } from "../repo/writing.ts";
-import type { Storage, CreateRepoOptions } from "../storage/repo-store.ts";
-import type { GcOptions, GcResult } from "../storage/gc.ts";
+import type { Storage, CreateRepoOptions } from "../store/repo-store.ts";
+import type { GcOptions, GcResult } from "../store/gc.ts";
 export type { NodeHttpRequest, NodeHttpResponse } from "../node-http.ts";
 
 // ── Auth ─────────────────────────────────────────────────────────────

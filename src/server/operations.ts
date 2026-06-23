@@ -57,7 +57,7 @@ import {
 	isDeferrableObjectStore,
 	type DeferrableObjectStore,
 	type PendingObjectBatch,
-} from "../storage/repo-store.ts";
+} from "../store/repo-store.ts";
 
 // ── Pack cache ──────────────────────────────────────────────────────
 

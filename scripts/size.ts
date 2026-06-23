@@ -23,7 +23,7 @@ const modules: Target[] = [
 	{ label: "just-git (client)", source: `${ROOT}dist/index.js` },
 	{ label: "just-git/server", source: `${ROOT}dist/server/index.js` },
 	{ label: "just-git/repo", source: `${ROOT}dist/repo/index.js` },
-	{ label: "just-git/storage", source: `${ROOT}dist/storage/index.js` },
+	{ label: "just-git/store", source: `${ROOT}dist/store/index.js` },
 	{ label: "just-git/proxy", source: `${ROOT}dist/proxy/index.js` },
 ];
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createServer } from "../../src/server/handler.ts";
-import { MemoryStorage } from "../../src/storage/memory-storage.ts";
+import { MemoryStorage } from "../../src/store/memory-storage.ts";
 import type { RefChangeEvent } from "../../src/server/types.ts";
 import { createServerClient, envAt, startServer } from "./util.ts";
 

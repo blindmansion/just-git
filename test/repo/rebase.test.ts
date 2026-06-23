@@ -5,8 +5,8 @@ import { merge, rebase } from "../../src/repo/operations.ts";
 import { readCommit, resolveRef } from "../../src/repo/reading.ts";
 import { createTreeAccessor } from "../../src/repo/tree-accessor.ts";
 import { commit } from "../../src/repo/writing.ts";
-import { MemoryStorage } from "../../src/storage/memory-storage.ts";
-import { createRepoStore } from "../../src/storage/repo-store.ts";
+import { MemoryStorage } from "../../src/store/memory-storage.ts";
+import { createRepoStore } from "../../src/store/repo-store.ts";
 
 /** Original author of the feature commits — must survive the replay. */
 const AUTHOR: Identity = {

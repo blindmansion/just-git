@@ -1,5 +1,5 @@
 import type { GitRepo, Identity } from "../lib/types.ts";
-import type { BunSqliteDatabase } from "../storage/bun-sqlite-storage.ts";
+import type { BunSqliteDatabase } from "../store/bun-sqlite-storage.ts";
 import type { Rejection } from "../hooks.ts";
 
 export type { Rejection };

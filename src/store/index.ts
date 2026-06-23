@@ -1,4 +1,4 @@
-// just-git/storage — multi-repo manager, gc, and storage backends.
+// just-git/store — multi-repo manager, gc, and storage backends.
 //
 // Neutral layer with no dependency on the HTTP/SSH server. The server is a
 // consumer of this module, not its owner. Import from here to run a

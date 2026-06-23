@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createServer } from "../../src/server/handler.ts";
-import { createRepoStore, MemoryStorage } from "../../src/storage/index.ts";
+import { createRepoStore, MemoryStorage } from "../../src/store/index.ts";
 import { cloneInto, fetch, listRemoteRefs, push } from "../../src/repo/network.ts";
 import { commit } from "../../src/repo/writing.ts";
 import type { GitHooks } from "../../src/hooks.ts";

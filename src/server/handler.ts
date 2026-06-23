@@ -37,8 +37,8 @@ import {
 } from "./operations.ts";
 import { buildReportStatus, parseV2CommandRequest } from "./protocol.ts";
 import { handleSshSession } from "./ssh-session.ts";
-import { createRepoStore, type CreateRepoOptions } from "../storage/repo-store.ts";
-import { MemoryStorage } from "../storage/memory-storage.ts";
+import { createRepoStore, type CreateRepoOptions } from "../store/repo-store.ts";
+import { MemoryStorage } from "../store/memory-storage.ts";
 import { RequestLimitError } from "./errors.ts";
 import type {
 	GitServerConfig,

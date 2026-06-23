@@ -39,9 +39,9 @@
 			"types": "./dist/server/index.d.ts",
 			"import": "./dist/server/index.js"
 		},
-		"./storage": {
-			"types": "./dist/storage/index.d.ts",
-			"import": "./dist/storage/index.js"
+		"./store": {
+			"types": "./dist/store/index.d.ts",
+			"import": "./dist/store/index.js"
 		},
 		"./repo": {
 			"types": "./dist/repo/index.d.ts",

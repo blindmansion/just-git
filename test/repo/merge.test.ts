@@ -4,8 +4,8 @@ import { merge } from "../../src/repo/operations.ts";
 import { readCommit, resolveRef } from "../../src/repo/reading.ts";
 import { createTreeAccessor } from "../../src/repo/tree-accessor.ts";
 import { commit, writeBlob } from "../../src/repo/writing.ts";
-import { MemoryStorage } from "../../src/storage/memory-storage.ts";
-import { createRepoStore } from "../../src/storage/repo-store.ts";
+import { MemoryStorage } from "../../src/store/memory-storage.ts";
+import { createRepoStore } from "../../src/store/repo-store.ts";
 
 const ID: Identity = {
 	name: "Test",
