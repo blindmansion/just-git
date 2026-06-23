@@ -1,24 +1,23 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
-import { $ } from "bun";
-import { createSandbox, jg, justBash, realGit, removeSandbox, writeToSandbox } from "./util";
+import { createSandbox, jg, justBash, realGitIn, removeSandbox, writeToSandbox } from "./util";
 
 // ── Packfiles ───────────────────────────────────────────────────────
 
 describe("interop: real git gc → just-git reads", () => {
 	let sandbox: string;
+	let git: ReturnType<typeof realGitIn>;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
+		git = realGitIn(sandbox);
+		await git.execAsync(["init"]);
 		for (let i = 0; i < 10; i++) {
 			writeFileSync(join(sandbox, "file.txt"), `version ${i}\n`);
-			await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-			await $`git -c user.name="R" -c user.email="r@t" commit -m ${"commit " + i}`
-				.cwd(sandbox)
-				.quiet();
+			await git.execAsync(["add", "."]);
+			await git.execAsync(["commit", "-m", "commit " + i]);
 		}
-		await $`git gc --aggressive`.cwd(sandbox).quiet();
+		await git.execAsync(["gc", "--aggressive"]);
 	});
 	afterAll(() => removeSandbox(sandbox));
 
@@ -54,20 +53,22 @@ describe("interop: real git gc → just-git reads", () => {
 		const r = await jg(b, 'git commit -m "just-git on packed repo"');
 		expect(r.exitCode).toBe(0);
 
-		const r2 = await realGit(sandbox, "log --oneline -3");
+		const r2 = await git.execAsync(["log", "--oneline", "-3"]);
 		expect(r2.stdout).toContain("just-git on packed repo");
 	});
 
 	test("real git fsck after just-git commit on packed repo", async () => {
-		const r = await realGit(sandbox, "fsck --full");
+		const r = await git.execAsync(["fsck", "--full"]);
 		expect(r.exitCode).toBe(0);
 	});
 });
 
 describe("interop: just-git gc → real git reads", () => {
 	let sandbox: string;
+	let git: ReturnType<typeof realGitIn>;
 	beforeAll(async () => {
 		sandbox = createSandbox();
+		git = realGitIn(sandbox);
 		const b = justBash(sandbox);
 		await jg(b, "git init");
 		for (let i = 0; i < 10; i++) {
@@ -80,18 +81,18 @@ describe("interop: just-git gc → real git reads", () => {
 	afterAll(() => removeSandbox(sandbox));
 
 	test("real git log after just-git gc", async () => {
-		const r = await realGit(sandbox, "log --oneline");
+		const r = await git.execAsync(["log", "--oneline"]);
 		expect(r.exitCode).toBe(0);
 		expect(r.stdout.trim().split("\n").length).toBeGreaterThanOrEqual(10);
 	});
 
 	test("real git fsck after just-git gc", async () => {
-		const r = await realGit(sandbox, "fsck --full");
+		const r = await git.execAsync(["fsck", "--full"]);
 		expect(r.exitCode).toBe(0);
 	});
 
 	test("real git show after just-git gc", async () => {
-		const r = await realGit(sandbox, "show HEAD");
+		const r = await git.execAsync(["show", "HEAD"]);
 		expect(r.exitCode).toBe(0);
 	});
 });
@@ -100,19 +101,17 @@ describe("interop: just-git gc → real git reads", () => {
 
 describe("interop: reflog", () => {
 	let sandbox: string;
+	let git: ReturnType<typeof realGitIn>;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
+		git = realGitIn(sandbox);
+		await git.execAsync(["init"]);
 		writeToSandbox(sandbox, "f.txt", "a\n");
-		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" commit -m "real commit 1"`
-			.cwd(sandbox)
-			.quiet();
+		await git.execAsync(["add", "."]);
+		await git.execAsync(["commit", "-m", "real commit 1"]);
 		writeToSandbox(sandbox, "f.txt", "b\n");
-		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" commit -m "real commit 2"`
-			.cwd(sandbox)
-			.quiet();
+		await git.execAsync(["add", "."]);
+		await git.execAsync(["commit", "-m", "real commit 2"]);
 	});
 	afterAll(() => removeSandbox(sandbox));
 
@@ -129,7 +128,7 @@ describe("interop: reflog", () => {
 		await jg(b, "git add .");
 		await jg(b, 'git commit -m "jg reflog commit"');
 
-		const r = await realGit(sandbox, "reflog");
+		const r = await git.execAsync(["reflog"]);
 		expect(r.exitCode).toBe(0);
 		expect(r.stdout).toContain("jg reflog commit");
 	});
@@ -139,11 +138,13 @@ describe("interop: reflog", () => {
 
 describe("interop: index format compatibility", () => {
 	let sandbox: string;
+	let git: ReturnType<typeof realGitIn>;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
-		await $`bash -c 'echo a > a.txt && echo b > b.txt && echo c > c.txt'`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
+		git = realGitIn(sandbox);
+		await git.execAsync(["init"]);
+		git.execShell("echo a > a.txt && echo b > b.txt && echo c > c.txt");
+		await git.execAsync(["add", "."]);
 	});
 	afterAll(() => removeSandbox(sandbox));
 
@@ -161,14 +162,14 @@ describe("interop: index format compatibility", () => {
 	});
 
 	test("just-git add + commit, real git status clean", async () => {
-		await $`git -c user.name="R" -c user.email="r@t" commit -m "index test"`.cwd(sandbox).quiet();
+		await git.execAsync(["commit", "-m", "index test"]);
 
 		const b = justBash(sandbox);
 		await jg(b, 'echo "new" > new.txt');
 		await jg(b, "git add new.txt");
 		await jg(b, 'git commit -m "jg index commit"');
 
-		const r = await realGit(sandbox, "status --porcelain");
+		const r = await git.execAsync(["status", "--porcelain"]);
 		expect(r.exitCode).toBe(0);
 		expect(r.stdout.trim()).toBe("");
 	});
@@ -178,7 +179,7 @@ describe("interop: index format compatibility", () => {
 		await jg(b, 'echo "staged" > staged.txt');
 		await jg(b, "git add staged.txt");
 
-		const r = await realGit(sandbox, "status --porcelain");
+		const r = await git.execAsync(["status", "--porcelain"]);
 		expect(r.exitCode).toBe(0);
 		expect(r.stdout).toContain("staged.txt");
 	});
@@ -188,14 +189,16 @@ describe("interop: index format compatibility", () => {
 
 describe("interop: binary files", () => {
 	let sandbox: string;
+	let git: ReturnType<typeof realGitIn>;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
+		git = realGitIn(sandbox);
+		await git.execAsync(["init"]);
 		const binaryData = new Uint8Array(1024);
 		for (let i = 0; i < binaryData.length; i++) binaryData[i] = i % 256;
 		writeFileSync(join(sandbox, "binary.bin"), binaryData);
-		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" commit -m "add binary"`.cwd(sandbox).quiet();
+		await git.execAsync(["add", "."]);
+		await git.execAsync(["commit", "-m", "add binary"]);
 	});
 	afterAll(() => removeSandbox(sandbox));
 
@@ -226,24 +229,24 @@ describe("interop: binary files", () => {
 
 describe("interop: cross-tool merge conflict", () => {
 	let sandbox: string;
+	let git: ReturnType<typeof realGitIn>;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
+		git = realGitIn(sandbox);
+		await git.execAsync(["init"]);
 		writeToSandbox(sandbox, "conflict.txt", "base\n");
-		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" commit -m "base"`.cwd(sandbox).quiet();
+		await git.execAsync(["add", "."]);
+		await git.execAsync(["commit", "-m", "base"]);
 
-		await $`git checkout -b branch-a`.cwd(sandbox).quiet();
+		await git.execAsync(["checkout", "-b", "branch-a"]);
 		writeToSandbox(sandbox, "conflict.txt", "from branch a\n");
-		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" commit -m "branch a change"`
-			.cwd(sandbox)
-			.quiet();
+		await git.execAsync(["add", "."]);
+		await git.execAsync(["commit", "-m", "branch a change"]);
 
-		await $`git checkout main`.cwd(sandbox).quiet();
+		await git.execAsync(["checkout", "main"]);
 		writeToSandbox(sandbox, "conflict.txt", "from main\n");
-		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" commit -m "main change"`.cwd(sandbox).quiet();
+		await git.execAsync(["add", "."]);
+		await git.execAsync(["commit", "-m", "main change"]);
 	});
 	afterAll(() => removeSandbox(sandbox));
 
@@ -262,7 +265,7 @@ describe("interop: cross-tool merge conflict", () => {
 		const r = await jg(b, "git merge --continue");
 		expect(r.exitCode).toBe(0);
 
-		const fsck = await realGit(sandbox, "fsck --full");
+		const fsck = await git.execAsync(["fsck", "--full"]);
 		expect(fsck.exitCode).toBe(0);
 	});
 });
@@ -271,24 +274,26 @@ describe("interop: cross-tool merge conflict", () => {
 
 describe("interop: rebase", () => {
 	let sandbox: string;
+	let git: ReturnType<typeof realGitIn>;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
+		git = realGitIn(sandbox);
+		await git.execAsync(["init"]);
 		writeToSandbox(sandbox, "f.txt", "base\n");
-		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" commit -m "base"`.cwd(sandbox).quiet();
-		await $`git checkout -b topic`.cwd(sandbox).quiet();
+		await git.execAsync(["add", "."]);
+		await git.execAsync(["commit", "-m", "base"]);
+		await git.execAsync(["checkout", "-b", "topic"]);
 		writeToSandbox(sandbox, "t.txt", "topic1\n");
-		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" commit -m "topic 1"`.cwd(sandbox).quiet();
-		await $`bash -c 'echo "topic2" >> t.txt'`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" commit -m "topic 2"`.cwd(sandbox).quiet();
-		await $`git checkout main`.cwd(sandbox).quiet();
-		await $`bash -c 'echo "main2" >> f.txt'`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" commit -m "main advance"`.cwd(sandbox).quiet();
-		await $`git checkout topic`.cwd(sandbox).quiet();
+		await git.execAsync(["add", "."]);
+		await git.execAsync(["commit", "-m", "topic 1"]);
+		git.execShell('echo "topic2" >> t.txt');
+		await git.execAsync(["add", "."]);
+		await git.execAsync(["commit", "-m", "topic 2"]);
+		await git.execAsync(["checkout", "main"]);
+		git.execShell('echo "main2" >> f.txt');
+		await git.execAsync(["add", "."]);
+		await git.execAsync(["commit", "-m", "main advance"]);
+		await git.execAsync(["checkout", "topic"]);
 	});
 	afterAll(() => removeSandbox(sandbox));
 
@@ -303,12 +308,12 @@ describe("interop: rebase", () => {
 	});
 
 	test("real git fsck after just-git rebase", async () => {
-		const r = await realGit(sandbox, "fsck --full");
+		const r = await git.execAsync(["fsck", "--full"]);
 		expect(r.exitCode).toBe(0);
 	});
 
 	test("real git log after just-git rebase", async () => {
-		const r = await realGit(sandbox, "log --oneline --all");
+		const r = await git.execAsync(["log", "--oneline", "--all"]);
 		expect(r.exitCode).toBe(0);
 	});
 });
@@ -318,25 +323,24 @@ describe("interop: rebase", () => {
 describe("interop: cherry-pick", () => {
 	test("just-git cherry-picks from real git branch, fsck passes", async () => {
 		const sandbox = createSandbox();
+		const git = realGitIn(sandbox);
 		try {
-			await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
+			await git.execAsync(["init"]);
 			writeToSandbox(sandbox, "f.txt", "base\n");
-			await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-			await $`git -c user.name="R" -c user.email="r@t" commit -m "base"`.cwd(sandbox).quiet();
-			await $`git checkout -b pick-src`.cwd(sandbox).quiet();
+			await git.execAsync(["add", "."]);
+			await git.execAsync(["commit", "-m", "base"]);
+			await git.execAsync(["checkout", "-b", "pick-src"]);
 			writeToSandbox(sandbox, "cherry.txt", "cherry\n");
-			await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-			await $`git -c user.name="R" -c user.email="r@t" commit -m "the cherry"`.cwd(sandbox).quiet();
-			const cherryHash = (await $`git rev-parse HEAD`.cwd(sandbox).quiet()).stdout
-				.toString()
-				.trim();
-			await $`git checkout main`.cwd(sandbox).quiet();
+			await git.execAsync(["add", "."]);
+			await git.execAsync(["commit", "-m", "the cherry"]);
+			const cherryHash = (await git.execAsync(["rev-parse", "HEAD"])).stdout.trim();
+			await git.execAsync(["checkout", "main"]);
 
 			const b = justBash(sandbox);
 			const r = await jg(b, `git cherry-pick ${cherryHash}`);
 			expect(r.exitCode).toBe(0);
 
-			const fsck = await realGit(sandbox, "fsck --full");
+			const fsck = await git.execAsync(["fsck", "--full"]);
 			expect(fsck.exitCode).toBe(0);
 		} finally {
 			removeSandbox(sandbox);
@@ -348,20 +352,20 @@ describe("interop: cherry-pick", () => {
 
 describe("interop: stash — both directions", () => {
 	let sandbox: string;
+	let git: ReturnType<typeof realGitIn>;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
+		git = realGitIn(sandbox);
+		await git.execAsync(["init"]);
 		writeToSandbox(sandbox, "f.txt", "base\n");
-		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" commit -m "base"`.cwd(sandbox).quiet();
+		await git.execAsync(["add", "."]);
+		await git.execAsync(["commit", "-m", "base"]);
 	});
 	afterAll(() => removeSandbox(sandbox));
 
 	test("real git stash, just-git stash list sees it", async () => {
-		await $`bash -c 'echo "dirty" >> f.txt'`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" stash push -m "real stash"`
-			.cwd(sandbox)
-			.quiet();
+		git.execShell('echo "dirty" >> f.txt');
+		await git.execAsync(["stash", "push", "-m", "real stash"]);
 
 		const b = justBash(sandbox);
 		const r = await jg(b, "git stash list");
@@ -380,13 +384,13 @@ describe("interop: stash — both directions", () => {
 		await jg(b, 'echo "jg dirty" >> f.txt');
 		await jg(b, "git stash push -m 'jg stash'");
 
-		const r = await realGit(sandbox, "stash list");
+		const r = await git.execAsync(["stash", "list"]);
 		expect(r.exitCode).toBe(0);
 		expect(r.stdout).toContain("jg stash");
 	});
 
 	test("real git stash pop from just-git stash", async () => {
-		const r = await realGit(sandbox, "stash pop");
+		const r = await git.execAsync(["stash", "pop"]);
 		expect(r.exitCode).toBe(0);
 	});
 });
@@ -396,15 +400,14 @@ describe("interop: stash — both directions", () => {
 describe("interop: .gitignore", () => {
 	test("just-git respects .gitignore from real repo", async () => {
 		const sandbox = createSandbox();
+		const git = realGitIn(sandbox);
 		try {
-			await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
+			await git.execAsync(["init"]);
 			writeToSandbox(sandbox, ".gitignore", "node_modules/\n");
 			writeToSandbox(sandbox, "node_modules/pkg.js", "pkg\n");
 			writeToSandbox(sandbox, "app.js", "app\n");
-			await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-			await $`git -c user.name="R" -c user.email="r@t" commit -m "with gitignore"`
-				.cwd(sandbox)
-				.quiet();
+			await git.execAsync(["add", "."]);
+			await git.execAsync(["commit", "-m", "with gitignore"]);
 
 			const b = justBash(sandbox);
 			await jg(b, 'echo "new" > new.js');
@@ -423,17 +426,19 @@ describe("interop: .gitignore", () => {
 
 describe("interop: detached HEAD", () => {
 	let sandbox: string;
+	let git: ReturnType<typeof realGitIn>;
 	let v1Hash: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
+		git = realGitIn(sandbox);
+		await git.execAsync(["init"]);
 		writeToSandbox(sandbox, "f.txt", "v1\n");
-		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" commit -m "v1"`.cwd(sandbox).quiet();
+		await git.execAsync(["add", "."]);
+		await git.execAsync(["commit", "-m", "v1"]);
 		writeToSandbox(sandbox, "f.txt", "v2\n");
-		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" commit -m "v2"`.cwd(sandbox).quiet();
-		v1Hash = (await $`git rev-parse HEAD~1`.cwd(sandbox).quiet()).stdout.toString().trim();
+		await git.execAsync(["add", "."]);
+		await git.execAsync(["commit", "-m", "v2"]);
+		v1Hash = (await git.execAsync(["rev-parse", "HEAD~1"])).stdout.trim();
 	});
 	afterAll(() => removeSandbox(sandbox));
 
@@ -447,7 +452,7 @@ describe("interop: detached HEAD", () => {
 	});
 
 	test("real git confirms detached state", async () => {
-		const r = await realGit(sandbox, "status");
+		const r = await git.execAsync(["status"]);
 		expect(r.exitCode).toBe(0);
 		expect(r.stdout).toContain("detached");
 	});
@@ -457,16 +462,18 @@ describe("interop: detached HEAD", () => {
 
 describe("interop: many files / deep paths", () => {
 	let sandbox: string;
+	let git: ReturnType<typeof realGitIn>;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
+		git = realGitIn(sandbox);
+		await git.execAsync(["init"]);
 		for (let i = 0; i < 50; i++) {
 			const dir = `src/pkg${Math.floor(i / 10)}`;
-			await $`mkdir -p ${dir}`.cwd(sandbox).quiet();
+			mkdirSync(join(sandbox, dir), { recursive: true });
 			writeFileSync(join(sandbox, dir, `file${i}.ts`), `export const x${i} = ${i};\n`);
 		}
-		await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="R" -c user.email="r@t" commit -m "50 files"`.cwd(sandbox).quiet();
+		await git.execAsync(["add", "."]);
+		await git.execAsync(["commit", "-m", "50 files"]);
 	});
 	afterAll(() => removeSandbox(sandbox));
 
@@ -486,7 +493,7 @@ describe("interop: many files / deep paths", () => {
 		const r = await jg(b, 'git commit -m "add 5 more"');
 		expect(r.exitCode).toBe(0);
 
-		const fsck = await realGit(sandbox, "fsck --full");
+		const fsck = await git.execAsync(["fsck", "--full"]);
 		expect(fsck.exitCode).toBe(0);
 	});
 });
@@ -496,14 +503,15 @@ describe("interop: many files / deep paths", () => {
 describe("interop: reset", () => {
 	test("reset --soft HEAD~1, both tools agree on staged state", async () => {
 		const sandbox = createSandbox();
+		const git = realGitIn(sandbox);
 		try {
-			await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
+			await git.execAsync(["init"]);
 			writeToSandbox(sandbox, "a.txt", "a\n");
-			await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-			await $`git -c user.name="R" -c user.email="r@t" commit -m "commit a"`.cwd(sandbox).quiet();
+			await git.execAsync(["add", "."]);
+			await git.execAsync(["commit", "-m", "commit a"]);
 			writeToSandbox(sandbox, "b.txt", "b\n");
-			await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-			await $`git -c user.name="R" -c user.email="r@t" commit -m "commit b"`.cwd(sandbox).quiet();
+			await git.execAsync(["add", "."]);
+			await git.execAsync(["commit", "-m", "commit b"]);
 
 			const b = justBash(sandbox);
 			const r = await jg(b, "git reset --soft HEAD~1");
@@ -512,7 +520,7 @@ describe("interop: reset", () => {
 			const st = await jg(b, "git status -s");
 			expect(st.stdout).toContain("b.txt");
 
-			const realSt = await realGit(sandbox, "status --porcelain");
+			const realSt = await git.execAsync(["status", "--porcelain"]);
 			expect(realSt.stdout).toContain("b.txt");
 		} finally {
 			removeSandbox(sandbox);
@@ -521,23 +529,24 @@ describe("interop: reset", () => {
 
 	test("reset --hard HEAD~1, real git validates", async () => {
 		const sandbox = createSandbox();
+		const git = realGitIn(sandbox);
 		try {
-			await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
+			await git.execAsync(["init"]);
 			writeToSandbox(sandbox, "a.txt", "a\n");
-			await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-			await $`git -c user.name="R" -c user.email="r@t" commit -m "commit a"`.cwd(sandbox).quiet();
+			await git.execAsync(["add", "."]);
+			await git.execAsync(["commit", "-m", "commit a"]);
 			writeToSandbox(sandbox, "b.txt", "b\n");
-			await $`git -c user.name="R" -c user.email="r@t" add .`.cwd(sandbox).quiet();
-			await $`git -c user.name="R" -c user.email="r@t" commit -m "commit b"`.cwd(sandbox).quiet();
+			await git.execAsync(["add", "."]);
+			await git.execAsync(["commit", "-m", "commit b"]);
 
 			const b = justBash(sandbox);
 			const r = await jg(b, "git reset --hard HEAD~1");
 			expect(r.exitCode).toBe(0);
 
-			const realLog = await realGit(sandbox, "log --oneline");
+			const realLog = await git.execAsync(["log", "--oneline"]);
 			expect(realLog.stdout).not.toContain("commit b");
 
-			const realSt = await realGit(sandbox, "status --porcelain");
+			const realSt = await git.execAsync(["status", "--porcelain"]);
 			expect(realSt.stdout.trim()).toBe("");
 		} finally {
 			removeSandbox(sandbox);

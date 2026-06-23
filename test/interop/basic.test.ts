@@ -1,6 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { $ } from "bun";
-import { createSandbox, jg, justBash, realGit, removeSandbox, writeToSandbox } from "./util";
+import {
+	createSandbox,
+	jg,
+	justBash,
+	realGit,
+	realGitIn,
+	removeSandbox,
+	writeToSandbox,
+} from "./util";
 
 describe("interop: just-git creates → real git reads", () => {
 	let sandbox: string;
@@ -97,15 +104,12 @@ describe("interop: real git creates → just-git reads", () => {
 	let sandbox: string;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
-		await $`git -c user.name="Real Git" -c user.email="real@test.com" commit --allow-empty -m "empty init"`
-			.cwd(sandbox)
-			.quiet();
+		const git = realGitIn(sandbox);
+		await git.execAsync(["init"]);
+		await git.execAsync(["commit", "--allow-empty", "-m", "empty init"]);
 		writeToSandbox(sandbox, "hello.txt", "hello from real git\n");
-		await $`git -c user.name="Real Git" -c user.email="real@test.com" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="Real Git" -c user.email="real@test.com" commit -m "add hello.txt"`
-			.cwd(sandbox)
-			.quiet();
+		await git.execAsync(["add", "."]);
+		await git.execAsync(["commit", "-m", "add hello.txt"]);
 	});
 	afterAll(() => removeSandbox(sandbox));
 
@@ -151,14 +155,14 @@ describe("interop: real git creates → just-git reads", () => {
 
 describe("interop: mixed interleaved operations", () => {
 	let sandbox: string;
+	let git: ReturnType<typeof realGitIn>;
 	beforeAll(async () => {
 		sandbox = createSandbox();
-		await $`git -c init.defaultBranch=main init`.cwd(sandbox).quiet();
+		git = realGitIn(sandbox);
+		await git.execAsync(["init"]);
 		writeToSandbox(sandbox, "shared.txt", "line 1\n");
-		await $`git -c user.name="Real Git" -c user.email="real@test.com" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="Real Git" -c user.email="real@test.com" commit -m "real: line 1"`
-			.cwd(sandbox)
-			.quiet();
+		await git.execAsync(["add", "."]);
+		await git.execAsync(["commit", "-m", "real: line 1"]);
 	});
 	afterAll(() => removeSandbox(sandbox));
 
@@ -174,11 +178,9 @@ describe("interop: mixed interleaved operations", () => {
 	});
 
 	test("real git adds line, just-git reads", async () => {
-		await $`bash -c 'echo "line 3" >> shared.txt'`.cwd(sandbox).quiet();
-		await $`git -c user.name="Real Git" -c user.email="real@test.com" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="Real Git" -c user.email="real@test.com" commit -m "real: line 3"`
-			.cwd(sandbox)
-			.quiet();
+		git.execShell('echo "line 3" >> shared.txt');
+		await git.execAsync(["add", "."]);
+		await git.execAsync(["commit", "-m", "real: line 3"]);
 
 		const bash = justBash(sandbox);
 		const r = await jg(bash, "git log --oneline");
@@ -187,15 +189,11 @@ describe("interop: mixed interleaved operations", () => {
 	});
 
 	test("real git branch, just-git sees it", async () => {
-		await $`git -c user.name="Real Git" -c user.email="real@test.com" checkout -b real-branch`
-			.cwd(sandbox)
-			.quiet();
+		await git.execAsync(["checkout", "-b", "real-branch"]);
 		writeToSandbox(sandbox, "branch-file.txt", "from real branch\n");
-		await $`git -c user.name="Real Git" -c user.email="real@test.com" add .`.cwd(sandbox).quiet();
-		await $`git -c user.name="Real Git" -c user.email="real@test.com" commit -m "real: branch commit"`
-			.cwd(sandbox)
-			.quiet();
-		await $`git checkout main`.cwd(sandbox).quiet();
+		await git.execAsync(["add", "."]);
+		await git.execAsync(["commit", "-m", "real: branch commit"]);
+		await git.execAsync(["checkout", "main"]);
 
 		const bash = justBash(sandbox);
 		const r = await jg(bash, "git branch -a");

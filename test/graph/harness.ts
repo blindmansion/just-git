@@ -1,8 +1,7 @@
-import { execSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createTestBash } from "../util";
+import { RealGit } from "../real-git";
 import type { GraphScenario } from "./types";
 
 const COMMIT_COMMANDS = ["commit", "merge", "cherry-pick", "rebase --continue", "revert"];
@@ -66,56 +65,40 @@ export async function buildVirtual(
 export function buildReal(
 	scenario: GraphScenario,
 ): Map<string, { stdout: string; stderr: string; exitCode: number }> {
-	const dir = mkdtempSync(join(tmpdir(), "graph-cmp-"));
+	const git = RealGit.create({ env: { TZ: "UTC", ...makeEnv(0) }, prefix: "graph-cmp-" });
 	const files = scenario.files ?? { "/repo/README.md": "# Hello" };
 
 	for (const [vpath, content] of Object.entries(files)) {
 		const rel = vpath.replace(/^\/repo\/?/, "");
 		if (!rel) continue;
-		const full = join(dir, rel);
+		const full = join(git.cwd, rel);
 		mkdirSync(dirname(full), { recursive: true });
 		writeFileSync(full, content);
 	}
 
 	let ts = 0;
-	const baseEnv = makeEnv(0);
 
-	const exec = (cmd: string, env?: Record<string, string>, capture = false) => {
-		const merged = { ...baseEnv, ...env, TZ: "UTC" };
-		try {
-			const out = execSync(cmd, {
-				cwd: dir,
-				env: { ...process.env, ...merged },
-				encoding: "utf-8",
-				stdio: capture ? ["pipe", "pipe", "pipe"] : ["pipe", "ignore", "ignore"],
-				timeout: 10000,
-			});
-			return { stdout: capture ? out : "", stderr: "", exitCode: 0 };
-		} catch (e: any) {
-			return {
-				stdout: capture ? (e.stdout ?? "") : "",
-				stderr: capture ? (e.stderr ?? e.message) : "",
-				exitCode: e.status ?? 1,
-			};
-		}
-	};
-
-	exec("git init -b main");
-	exec("git config user.name Test");
-	exec("git config user.email test@test.com");
+	const setup = [
+		["init", "-b", "main"],
+		["config", "user.name", "Test"],
+		["config", "user.email", "test@test.com"],
+	];
+	for (const args of setup) {
+		git.exec(args);
+	}
 
 	for (const step of scenario.steps) {
 		if (typeof step === "string") {
 			const env = isCommitProducing(step) ? makeEnv(++ts) : undefined;
-			exec(step, env);
+			git.execShell(step, env);
 		} else if ("write" in step) {
 			const rel = step.write.startsWith("/") ? step.write.replace(/^\/repo\/?/, "") : step.write;
-			const full = join(dir, rel);
+			const full = join(git.cwd, rel);
 			mkdirSync(dirname(full), { recursive: true });
 			writeFileSync(full, step.content);
 		} else {
 			const env = step.env ?? (isCommitProducing(step.cmd) ? makeEnv(++ts) : undefined);
-			exec(step.cmd, env);
+			git.execShell(step.cmd, env);
 		}
 	}
 
@@ -123,10 +106,11 @@ export function buildReal(
 	const results = new Map<string, { stdout: string; stderr: string; exitCode: number }>();
 
 	for (const cmd of logCommands) {
-		results.set(cmd, exec(cmd, undefined, true));
+		const r = git.execShell(cmd);
+		results.set(cmd, { stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode });
 	}
 
-	rmSync(dir, { recursive: true, force: true });
+	git.cleanup();
 	return results;
 }
 
