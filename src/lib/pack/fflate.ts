@@ -478,9 +478,9 @@ const lc = (c: Uint8Array) => {
 					cls = 0;
 				}
 			} else if (cls > 3) {
-				w(cln), --cls;
+				(w(cln), --cls);
 				for (; cls > 6; cls -= 6) w(8304);
-				if (cls > 2) w(((cls - 3) << 5) | 8208), (cls = 0);
+				if (cls > 2) (w(((cls - 3) << 5) | 8208), (cls = 0));
 			}
 			while (cls--) w(cln);
 			cls = 1;
@@ -549,9 +549,9 @@ const wblk = (
 		7 * lcfreq[18];
 	if (bs >= 0 && flen <= ftlen && flen <= dtlen) return wfblk(out, p, dat.subarray(bs, bs + bl));
 	let lm: Uint16Array, ll: Uint8Array, dm: Uint16Array, dl: Uint8Array;
-	wbits(out, p, 1 + ((dtlen < ftlen) as unknown as number)), (p += 2);
+	(wbits(out, p, 1 + ((dtlen < ftlen) as unknown as number)), (p += 2));
 	if (dtlen < ftlen) {
-		(lm = hMap(dlt, mlb, 0)), (ll = dlt), (dm = hMap(ddt, mdb, 0)), (dl = ddt);
+		((lm = hMap(dlt, mlb, 0)), (ll = dlt), (dm = hMap(ddt, mdb, 0)), (dl = ddt));
 		const llm = hMap(lct, mlcb, 0);
 		wbits(out, p, nlc - 257);
 		wbits(out, p + 5, ndc - 1);
@@ -569,7 +569,7 @@ const wblk = (
 			}
 		}
 	} else {
-		(lm = flm), (ll = flt), (dm = fdm), (dl = fdt);
+		((lm = flm), (ll = flt), (dm = fdm), (dl = fdt));
 	}
 	for (let i = 0; i < li; ++i) {
 		const sym = syms[i];
@@ -648,7 +648,7 @@ const dflt = (
 				const rem = s - i;
 				if ((lc > 7000 || li > 24576) && (rem > 423 || !lst)) {
 					pos = wblk(dat, w, 0, syms, lf, df, eb, li, bs, i - bs, pos);
-					(li = lc = eb = 0), (bs = i);
+					((li = lc = eb = 0), (bs = i));
 					for (let j = 0; j < 286; ++j) lf[j] = 0;
 					for (let j = 0; j < 30; ++j) df[j] = 0;
 				}
@@ -665,7 +665,7 @@ const dflt = (
 							let nl = 0;
 							for (; nl < ml && dat[i + nl] == dat[i + nl - dif]; ++nl);
 							if (nl > l) {
-								(l = nl), (d = dif);
+								((l = nl), (d = dif));
 								if (nl > maxn) break;
 								const mmd = Math.min(dif, nl - 2);
 								let md = 0;
@@ -673,11 +673,11 @@ const dflt = (
 									const ti = (i - dif + j) & 32767;
 									const pti = prev[ti];
 									const cd = (ti - pti) & 32767;
-									if (cd > md) (md = cd), (pimod = ti);
+									if (cd > md) ((md = cd), (pimod = ti));
 								}
 							}
 						}
-						(imod = pimod), (pimod = prev[imod]);
+						((imod = pimod), (pimod = prev[imod]));
 						dif += (imod - pimod) & 32767;
 					}
 				}
@@ -704,7 +704,7 @@ const dflt = (
 		if (!lst) {
 			st.r = (pos & 7) | (w[(pos / 8) | 0] << 3);
 			pos -= 7;
-			(st.h = head), (st.p = prev), (st.i = i), (st.w = wi);
+			((st.h = head), (st.p = prev), (st.i = i), (st.w = wi));
 		}
 	} else {
 		for (let i = st.w || 0; i < s + lst; i += 65535) {
@@ -732,12 +732,12 @@ const adler = () => {
 			for (let i = 0; i != l; ) {
 				const e = Math.min(i + 2655, l);
 				for (; i < e; ++i) m += n += d[i];
-				(n = (n & 65535) + 15 * (n >> 16)), (m = (m & 65535) + 15 * (m >> 16));
+				((n = (n & 65535) + 15 * (n >> 16)), (m = (m & 65535) + 15 * (m >> 16)));
 			}
-			(a = n), (b = m);
+			((a = n), (b = m));
 		},
 		d() {
-			(a %= 65521), (b %= 65521);
+			((a %= 65521), (b %= 65521));
 			return (((a & 255) << 24) | ((a & 0xff00) << 8) | ((b & 255) << 8) | (b >> 8)) >>> 0;
 		},
 	};
@@ -752,13 +752,13 @@ const dopt = (dat: Uint8Array, lvl: number, pre: number, post: number) => {
 
 // write a number to a buffer little-endian
 const wbytes = (d: Uint8Array, b: number, v: number) => {
-	for (; v; ++b) (d[b] = v), (v >>>= 8);
+	for (; v; ++b) ((d[b] = v), (v >>>= 8));
 };
 
 // zlib header
 const zlh = (c: Uint8Array, lvl: number) => {
 	const fl = lvl == 0 ? 0 : lvl < 6 ? 1 : lvl == 9 ? 3 : 2;
-	(c[0] = 120), (c[1] = fl << 6);
+	((c[0] = 120), (c[1] = fl << 6));
 	c[1] |= 31 - ((((c[0] << 8) | c[1]) % 31) | 0);
 };
 

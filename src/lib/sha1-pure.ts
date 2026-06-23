@@ -56,7 +56,7 @@ export class PureSha1Hasher {
 					blocks[13] =
 					blocks[14] =
 					blocks[15] =
-					0;
+						0;
 			}
 
 			let i: number;
@@ -112,7 +112,7 @@ export class PureSha1Hasher {
 				blocks[13] =
 				blocks[14] =
 				blocks[15] =
-				0;
+					0;
 		}
 
 		blocks[14] = (this.hBytes << 3) | (this.bytes >>> 29);

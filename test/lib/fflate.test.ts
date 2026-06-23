@@ -250,21 +250,15 @@ describe("pureDeflate", () => {
 				Array.from({ length: 2000 }, (_, i) => `line ${i}: ${"x".repeat(i % 50)}`).join("\n"),
 			),
 		],
-		[
-			"low compressibility (4 KB)",
-			new Uint8Array(4096).map((_, i) => (i * 31 + 97) & 0xff),
-		],
-		[
-			"multi-block (70 KB)",
-			new Uint8Array(70000).map((_, i) => (i * 131 + 7) & 0xff),
-		],
+		["low compressibility (4 KB)", new Uint8Array(4096).map((_, i) => (i * 31 + 97) & 0xff)],
+		["multi-block (70 KB)", new Uint8Array(70000).map((_, i) => (i * 131 + 7) & 0xff)],
 	];
 
 	test("output is valid zlib that native can decompress", () => {
 		for (const [name, data] of samples) {
 			const compressed = pureDeflate(data);
-			const roundTrip = new Uint8Array(zlib.inflateSync(compressed));
-			expect(roundTrip, name).toEqual(data);
+			const roundTrip = Uint8Array.from(zlib.inflateSync(compressed));
+			expect(roundTrip, name).toEqual(Uint8Array.from(data));
 		}
 	});
 
