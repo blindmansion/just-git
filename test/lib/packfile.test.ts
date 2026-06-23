@@ -7,7 +7,7 @@ import {
 	readPackStreaming,
 	writePack,
 } from "../../src/lib/pack/packfile.ts";
-import { deflate, inflate } from "../../src/lib/pack/zlib.ts";
+import { deflate, inflate, inflateObject } from "../../src/lib/pack/zlib.ts";
 
 // ── zlib ─────────────────────────────────────────────────────────────
 
@@ -33,6 +33,36 @@ describe("zlib", () => {
 		const data = new Uint8Array(1000).fill(0x42);
 		const compressed = await deflate(data);
 		expect(compressed.byteLength).toBeLessThan(data.byteLength);
+	});
+});
+
+// ── inflateObject — output-size bounding (anti-bomb) ──────────────────
+// Exercises whichever provider is active (node:zlib on Bun). The declared
+// object size must bound decompressor output so a stream cannot inflate
+// beyond what its pack header claims.
+
+describe("inflateObject output bounding", () => {
+	test("inflates an object whose size matches the declaration", async () => {
+		const original = new Uint8Array(5000).map((_, i) => (i * 7) & 0xff);
+		const compressed = await deflate(original);
+		const { result } = await inflateObject(compressed, original.length);
+		expect(result).toEqual(original);
+	});
+
+	test("rejects a stream that inflates beyond its declared size", async () => {
+		// Declares 100 bytes but actually inflates to 50 KB — the bound must
+		// stop it (node throws ERR_BUFFER_TOO_LARGE; the pure path overruns
+		// the sentinel and fails the length check). Either way: throw, not a
+		// silent 50 KB allocation.
+		const bomb = new Uint8Array(50_000).fill(0x41);
+		const compressed = await deflate(bomb);
+		await expect(inflateObject(compressed, 100)).rejects.toThrow();
+	});
+
+	test("rejects when actual size is just one byte over the declaration", async () => {
+		const original = new Uint8Array(4096).fill(0x42);
+		const compressed = await deflate(original);
+		await expect(inflateObject(compressed, original.length - 1)).rejects.toThrow();
 	});
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import zlib from "node:zlib";
-import { pureInflate, pureInflateWithConsumed } from "../../src/lib/pack/fflate.ts";
+import { pureDeflate, pureInflate, pureInflateWithConsumed } from "../../src/lib/pack/fflate.ts";
 import { type PackInput, readPack, writePack } from "../../src/lib/pack/packfile.ts";
 
 const enc = new TextEncoder();
@@ -202,6 +202,102 @@ describe("pureInflateWithConsumed", () => {
 	});
 });
 
+// ── pureInflateWithConsumed — output-size bounding (anti-bomb) ────────
+
+describe("pureInflateWithConsumed output bounding", () => {
+	test("exact expectedSize inflates correctly", () => {
+		const original = enc.encode("x".repeat(5000));
+		const compressed = nativeDeflate(original);
+		const { result, bytesConsumed } = pureInflateWithConsumed(compressed, original.length);
+		expect(result).toEqual(original);
+		expect(bytesConsumed).toBe(compressed.byteLength);
+	});
+
+	test("bounds allocation and flags over-production when actual exceeds expectedSize", () => {
+		// A stream that inflates to 50 KB, but we claim it should be 100 bytes
+		// (as a malformed/hostile object header would). The pure path must not
+		// grow its buffer to 50 KB; it caps at expectedSize (+1 sentinel) and
+		// the resulting length differs from expectedSize so callers reject it.
+		const original = new Uint8Array(50_000).fill(0x41);
+		const compressed = nativeDeflate(original);
+		const claimed = 100;
+		const { result } = pureInflateWithConsumed(compressed, claimed);
+		expect(result.byteLength).toBeLessThanOrEqual(claimed + 1);
+		expect(result.byteLength).not.toBe(claimed); // over-production observable
+	});
+
+	test("without expectedSize, behaves as before (grows to fit)", () => {
+		const original = enc.encode("y".repeat(8000));
+		const compressed = nativeDeflate(original);
+		const { result } = pureInflateWithConsumed(compressed);
+		expect(result).toEqual(original);
+	});
+});
+
+// ── pureDeflate — compression, cross-checked against native zlib ─────
+
+describe("pureDeflate", () => {
+	const samples: [string, Uint8Array][] = [
+		["empty", new Uint8Array(0)],
+		["single byte", enc.encode("a")],
+		["small text", enc.encode("Hello, world!")],
+		["repeated text", enc.encode("x".repeat(1000))],
+		["all zeros (10 KB)", new Uint8Array(10000)],
+		["repeated byte (1 KB)", new Uint8Array(1024).fill(0x42)],
+		[
+			"structured (100 KB)",
+			enc.encode(
+				Array.from({ length: 2000 }, (_, i) => `line ${i}: ${"x".repeat(i % 50)}`).join("\n"),
+			),
+		],
+		[
+			"low compressibility (4 KB)",
+			new Uint8Array(4096).map((_, i) => (i * 31 + 97) & 0xff),
+		],
+		[
+			"multi-block (70 KB)",
+			new Uint8Array(70000).map((_, i) => (i * 131 + 7) & 0xff),
+		],
+	];
+
+	test("output is valid zlib that native can decompress", () => {
+		for (const [name, data] of samples) {
+			const compressed = pureDeflate(data);
+			const roundTrip = new Uint8Array(zlib.inflateSync(compressed));
+			expect(roundTrip, name).toEqual(data);
+		}
+	});
+
+	test("output is readable by our own pure inflate (full pure round-trip)", () => {
+		for (const [name, data] of samples) {
+			const roundTrip = pureInflate(pureDeflate(data));
+			expect(roundTrip, name).toEqual(data);
+		}
+	});
+
+	test("can read native-deflated output (inflate cross-check)", () => {
+		for (const [name, data] of samples) {
+			const compressed = new Uint8Array(zlib.deflateSync(data));
+			expect(pureInflate(compressed), name).toEqual(data);
+		}
+	});
+
+	test("respects compression level argument", () => {
+		const data = enc.encode("compress me ".repeat(500));
+		for (const level of [1, 6, 9] as const) {
+			const compressed = pureDeflate(data, level);
+			expect(new Uint8Array(zlib.inflateSync(compressed))).toEqual(data);
+		}
+	});
+
+	test("emits a well-formed zlib header (CMF/FLG checksum)", () => {
+		const compressed = pureDeflate(enc.encode("header check"));
+		expect(compressed[0] & 0x0f).toBe(8); // deflate compression method
+		expect(((compressed[0] << 8) | compressed[1]) % 31).toBe(0); // FCHECK
+		expect(compressed[1] & 0x20).toBe(0); // no preset dictionary
+	});
+});
+
 // ── Packfile round-trip via pure inflate ─────────────────────────────
 // Verifies the vendored path works for actual packfile parsing by
 // replacing the native zlib provider.
@@ -322,5 +418,30 @@ describe("fflate error handling", () => {
 
 	test("inflateWithConsumed throws on invalid header", () => {
 		expect(() => pureInflateWithConsumed(new Uint8Array([0xff, 0xff]))).toThrow(/invalid zlib/);
+	});
+
+	// Regression: a streaming caller feeds a growing buffer and relies on
+	// inflateWithConsumed throwing until the *entire* stream (DEFLATE body
+	// + adler32 trailer) is present. If the body decodes fully but the 4
+	// adler bytes haven't arrived, bytesConsumed must not exceed the input
+	// (which would over-advance and desync a back-to-back entry walk).
+	test("inflateWithConsumed throws when adler32 trailer is truncated", () => {
+		const compressed = nativeDeflate(enc.encode("world!"));
+		// Drop the trailing adler32 bytes: the DEFLATE body is complete but
+		// the zlib envelope is not.
+		for (let drop = 1; drop <= 4; drop++) {
+			const truncated = compressed.subarray(0, compressed.length - drop);
+			expect(() => pureInflateWithConsumed(truncated), `drop=${drop}`).toThrow();
+		}
+		// Full buffer still reports the exact consumed length.
+		const { result, bytesConsumed } = pureInflateWithConsumed(compressed);
+		expect(dec.decode(result)).toBe("world!");
+		expect(bytesConsumed).toBe(compressed.byteLength);
+	});
+
+	test("inflateWithConsumed throws on header-only input", () => {
+		// Only the 2-byte zlib header, no DEFLATE body or trailer.
+		const compressed = nativeDeflate(enc.encode("anything"));
+		expect(() => pureInflateWithConsumed(compressed.subarray(0, 2))).toThrow();
 	});
 });

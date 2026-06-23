@@ -4,10 +4,11 @@
 // inside packfiles and loose objects.
 //
 // Primary: node:zlib (Bun, Node, Deno) — fastest, synchronous.
-// Fallback: vendored fflate inflate (pure JS, works everywhere) +
-//           CompressionStream for deflation.
+// Fallback: vendored fflate (pure JS, works everywhere) for inflation;
+//           CompressionStream for deflation, falling back to vendored
+//           fflate pure-JS deflate when CompressionStream is absent.
 
-import { pureInflate, pureInflateWithConsumed } from "./fflate.ts";
+import { pureDeflate, pureInflate, pureInflateWithConsumed } from "./fflate.ts";
 
 interface InflateResult {
 	result: Uint8Array;
@@ -17,7 +18,9 @@ interface InflateResult {
 interface ZlibProvider {
 	deflateSync(data: Uint8Array): Uint8Array | Promise<Uint8Array>;
 	inflateSync(data: Uint8Array): Uint8Array | Promise<Uint8Array>;
-	inflateWithConsumed(data: Uint8Array): InflateResult;
+	// `maxOutputBytes`, when set, bounds the decompressed output so a single
+	// stream cannot inflate beyond the size its object header declares.
+	inflateWithConsumed(data: Uint8Array, maxOutputBytes?: number): InflateResult;
 }
 
 async function detect(): Promise<ZlibProvider> {
@@ -38,14 +41,29 @@ async function detect(): Promise<ZlibProvider> {
 	}
 
 	if (zlib && typeof zlib.deflateSync === "function" && typeof zlib.inflateSync === "function") {
-		let iwc: ((data: Uint8Array) => InflateResult) | null = null;
+		let iwc: ((data: Uint8Array, maxOutputBytes?: number) => InflateResult) | null = null;
 		try {
-			const probe = zlib.inflateSync(zlib.deflateSync(Buffer.from("x")), {
+			// The packfile walk relies on `{ info: true }` (a) not erroring on
+			// trailing data after the stream ends and (b) reporting only the
+			// consumed compressed bytes. Probe with a trailing junk byte and
+			// require bytesWritten to equal the clean stream length — a polyfill
+			// that errors or counts the trailing byte fails this and falls back
+			// to the pure consumed-tracking path.
+			const clean = zlib.deflateSync(Buffer.from("x")) as Uint8Array;
+			const probeInput = new Uint8Array(clean.length + 1);
+			probeInput.set(clean);
+			const probe = zlib.inflateSync(probeInput, {
 				info: true,
 			}) as unknown as { engine?: { bytesWritten: number } } | undefined;
-			if (probe?.engine && typeof probe.engine.bytesWritten === "number") {
-				iwc = (data) => {
-					const r = zlib.inflateSync(data, { info: true }) as unknown as {
+			if (probe?.engine && probe.engine.bytesWritten === clean.length) {
+				iwc = (data, maxOutputBytes) => {
+					// node rejects maxOutputLength <= 0; a 0-byte object can't
+					// bomb, so only apply the cap for positive declared sizes.
+					const opts =
+						maxOutputBytes != null && maxOutputBytes > 0
+							? { info: true, maxOutputLength: maxOutputBytes }
+							: { info: true };
+					const r = zlib.inflateSync(data, opts) as unknown as {
 						buffer: Buffer;
 						engine: { bytesWritten: number };
 					};
@@ -65,23 +83,28 @@ async function detect(): Promise<ZlibProvider> {
 		};
 	}
 
-	// No node:zlib — use vendored inflate (pure JS) and CompressionStream
-	// for deflation. inflateWithConsumed is always available via fflate.
+	// No node:zlib — use vendored inflate (pure JS) for decompression.
+	// For deflation, prefer the native CompressionStream (faster, no JS
+	// cost), falling back to the vendored pure-JS deflate so compression
+	// works on runtimes that lack both node:zlib and CompressionStream.
+	// inflateWithConsumed is always available via fflate.
 	let deflateFn: ZlibProvider["deflateSync"];
 	if (typeof globalThis.CompressionStream === "function") {
 		deflateFn = async (data) => {
 			const cs = new CompressionStream("deflate");
 			const writer = cs.writable.getWriter();
-			writer.write(data as Uint8Array<ArrayBuffer>);
-			writer.close();
-			return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+			// Start draining the readable before awaiting the writes: a
+			// backpressured write() may not resolve until the output is being
+			// consumed, so awaiting it first could deadlock on large inputs.
+			// Reading concurrently lets us still await write/close (surfacing
+			// errors instead of leaking an unhandled rejection) without that risk.
+			const output = new Response(cs.readable).arrayBuffer();
+			await writer.write(data as Uint8Array<ArrayBuffer>);
+			await writer.close();
+			return new Uint8Array(await output);
 		};
 	} else {
-		deflateFn = () => {
-			throw new Error(
-				"No deflate implementation available. Requires node:zlib or CompressionStream.",
-			);
-		};
+		deflateFn = pureDeflate;
 	}
 
 	return {
@@ -120,7 +143,11 @@ export async function inflateObject(
 	expectedSize: number,
 ): Promise<InflateResult> {
 	const p = await provider();
-	const { result, bytesConsumed } = p.inflateWithConsumed(data);
+	// Bound the output to the declared size: the node path throws
+	// (ERR_BUFFER_TOO_LARGE) and the pure path caps its allocation, so a
+	// stream that inflates past its header's declared size is rejected here
+	// rather than being allowed to expand unboundedly in memory.
+	const { result, bytesConsumed } = p.inflateWithConsumed(data, expectedSize);
 	if (result.byteLength !== expectedSize) {
 		throw new Error(`Inflate size mismatch: got ${result.byteLength}, expected ${expectedSize}`);
 	}

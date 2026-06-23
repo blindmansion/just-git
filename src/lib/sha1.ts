@@ -1,4 +1,5 @@
 import { bytesToHex } from "./hex.ts";
+import { PureSha1Hasher } from "./sha1-pure.ts";
 import type { ObjectId } from "./types.ts";
 
 // ── Hasher interface ────────────────────────────────────────────────
@@ -82,9 +83,18 @@ function detectHasher(): HasherFactory {
 		};
 	}
 
-	throw new Error(
-		"No SHA-1 implementation available. Requires Bun, Node.js, Deno, or a browser with Web Crypto.",
-	);
+	// Final fallback: pure JS (works everywhere, no platform crypto needed)
+	return () => {
+		const inner = new PureSha1Hasher();
+		const hasher: Sha1Hasher = {
+			update(data) {
+				inner.update(toBytes(data));
+				return hasher;
+			},
+			hex: () => Promise.resolve(inner.hex() as ObjectId),
+		};
+		return hasher;
+	};
 }
 
 const _createHasher = detectHasher();

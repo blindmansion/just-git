@@ -2,7 +2,7 @@ import { hexAt } from "../hex.ts";
 import type { ObjectId, ObjectType, RawObject } from "../types.ts";
 import { PackIndex } from "./pack-index.ts";
 import { applyDelta } from "./packfile.ts";
-import { inflate } from "./zlib.ts";
+import { inflateObject } from "./zlib.ts";
 
 const OBJ_OFS_DELTA = 6;
 const OBJ_REF_DELTA = 7;
@@ -74,7 +74,7 @@ export class PackReader {
 				c = d[pos++]!;
 				baseOff = (baseOff << 7) + (c & 0x7f);
 			}
-			const inflated = await inflate(d.subarray(pos));
+			const { result: inflated } = await inflateObject(d.subarray(pos), size);
 			const base = await this.readAt(offset - baseOff, depth + 1);
 			return {
 				type: base.type,
@@ -85,7 +85,7 @@ export class PackReader {
 		if (typeNum === OBJ_REF_DELTA) {
 			const baseHash = hexAt(d, pos);
 			pos += 20;
-			const inflated = await inflate(d.subarray(pos));
+			const { result: inflated } = await inflateObject(d.subarray(pos), size);
 			const baseOffset = this.index.lookup(baseHash);
 			if (baseOffset === null) {
 				throw new Error(`REF_DELTA base ${baseHash} not found in pack`);
@@ -99,12 +99,9 @@ export class PackReader {
 
 		const type = TYPE_BY_NUM[typeNum];
 		if (!type) throw new Error(`Unknown pack object type: ${typeNum}`);
-		const content = await inflate(d.subarray(pos));
-		if (content.byteLength !== size) {
-			throw new Error(
-				`Pack inflate size mismatch at offset ${offset}: got ${content.byteLength}, expected ${size}`,
-			);
-		}
+		// inflateObject bounds output to the declared size and rejects a
+		// stream that inflates past it (size mismatch / over-production).
+		const { result: content } = await inflateObject(d.subarray(pos), size);
 		return { type, content };
 	}
 }
