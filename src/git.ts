@@ -13,7 +13,7 @@ import {
 } from "./hooks.ts";
 import type { MergeDriver } from "./lib/merge-ort.ts";
 import { findRepo as findRepoOnFs } from "./lib/repo.ts";
-import type { Signer, Verifier } from "./lib/signing.ts";
+import type { SigningCapability } from "./lib/signing.ts";
 import type { CredentialCache } from "./lib/transport/remote.ts";
 import type { GitContext, ObjectStore, RefStore, RemoteResolver } from "./lib/types.ts";
 
@@ -176,8 +176,16 @@ export interface GitOptions {
 	 * Whether signing/verification actually happens is gated by git config
 	 * (`commit.gpgsign`, `tag.gpgsign`, `merge.verifysignatures`, ...) and
 	 * per-command flags — the same policy/mechanism split git uses.
+	 *
+	 * Note the deliberate asymmetry between layers: an ambient `signer` set
+	 * here does NOT make the bare repo SDK writers (`createCommit`,
+	 * `buildCommit`, `commit`, `createAnnotatedTag`) sign by default — those
+	 * sign only when given an explicit `sign: true` or per-call `signer`. The
+	 * config-gated "sign because policy says so" behavior lives at the command
+	 * layer (`git commit`, `git merge`, ...), keeping the object-writing SDK
+	 * explicit rather than implicitly signing off ambient state.
 	 */
-	signing?: { signer?: Signer; verifier?: Verifier };
+	signing?: SigningCapability;
 }
 
 /**
@@ -208,10 +216,8 @@ export interface GitExtensions {
 	onProgress?: ProgressCallback;
 	/** Custom merge driver for content conflicts. */
 	mergeDriver?: MergeDriver;
-	/** Commit/tag signer (write side). */
-	signer?: Signer;
-	/** Commit/tag signature verifier (read side). */
-	verifier?: Verifier;
+	/** Commit/tag signing and verification capability (write + read sides). */
+	signing?: SigningCapability;
 }
 
 /** Simplified context for {@link Git.exec}. */
@@ -310,8 +316,7 @@ export class Git {
 			credentialCache: new Map(),
 			onProgress: options?.onProgress,
 			mergeDriver: options?.mergeDriver,
-			signer: options?.signing?.signer,
-			verifier: options?.signing?.verifier,
+			signing: options?.signing,
 			...(options?.objectStore ? { objectStore: options.objectStore } : {}),
 			...(options?.refStore ? { refStore: options.refStore } : {}),
 			...gitDirExt,

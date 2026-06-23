@@ -16,6 +16,7 @@ import { resolveRevisionRepo } from "../lib/rev-parse.ts";
 import {
 	type Verifier,
 	type VerificationResult,
+	VerificationError,
 	commitSigningPayload,
 	getRepoVerifier,
 	tagSigningPayload,
@@ -161,7 +162,7 @@ export async function verifyCommit(
 	const commit = await _readCommit(repo, hash);
 	if (commit.gpgsig === undefined) return null;
 	const v = verifier ?? getRepoVerifier(repo);
-	if (!v) throw new Error("no signature verifier configured");
+	if (!v) throw new VerificationError();
 	return v(commitSigningPayload(commit), commit.gpgsig);
 }
 
@@ -186,7 +187,7 @@ export async function verifyTag(
 	const tag = await _readTag(repo, hash);
 	if (tag.gpgsig === undefined) return null;
 	const v = verifier ?? getRepoVerifier(repo);
-	if (!v) throw new Error("no signature verifier configured");
+	if (!v) throw new VerificationError();
 	return v(tagSigningPayload(tag), tag.gpgsig);
 }
 

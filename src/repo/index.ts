@@ -27,8 +27,12 @@ export {
 // Signing & verification (the byte-for-byte sign/verify contract)
 export {
 	commitSigningPayload,
+	SigningError,
 	tagSigningPayload,
+	VerificationError,
+	type SignatureFormat,
 	type Signer,
+	type SigningCapability,
 	type Verifier,
 } from "../lib/signing.ts";
 

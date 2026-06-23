@@ -9,7 +9,7 @@ import type {
 	ProgressCallback,
 } from "../hooks.ts";
 import type { PackObject } from "./pack/packfile.ts";
-import type { Signer, Verifier } from "./signing.ts";
+import type { SigningCapability } from "./signing.ts";
 import type { CredentialCache } from "./transport/remote.ts";
 
 // ── Object identifiers ──────────────────────────────────────────────
@@ -246,6 +246,17 @@ export interface GitRepo {
 	refStore: RefStore;
 	/** Hook callbacks for operation hooks and low-level events. */
 	hooks?: GitHooks;
+	/**
+	 * Operator-provided commit/tag signing and verification, set via
+	 * `createGit({ signing })`. The `signer` is the ambient default for SDK
+	 * writers (`createCommit`, `buildCommit`, `commit`, `createAnnotatedTag`)
+	 * and the fallback the command layer signs with when policy
+	 * (`commit.gpgsign` / `tag.gpgsign` / `-S`) requires a signature; the
+	 * `verifier` backs `verifyCommit` / `verifyTag` and `--verify-signatures`.
+	 * Grouped so the handle mirrors the `createGit` input and stays stable as
+	 * the capability set grows.
+	 */
+	signing?: SigningCapability;
 }
 
 /**
@@ -285,17 +296,6 @@ export interface GitContext extends GitRepo {
 	credentialCache?: CredentialCache;
 	/** Callback for server progress messages (sideband band-2). */
 	onProgress?: ProgressCallback;
-	/**
-	 * Operator-provided commit/tag signer (write side). Ambient default for
-	 * SDK writers and the fallback the command layer signs with when policy
-	 * (`commit.gpgsign` / `tag.gpgsign` / `-S`) requires a signature.
-	 */
-	signer?: Signer;
-	/**
-	 * Operator-provided signature verifier (read side). Used by
-	 * `verifyCommit` / `verifyTag` and the `--verify-signatures` paths.
-	 */
-	verifier?: Verifier;
 }
 
 // ── Diff result types ───────────────────────────────────────────────

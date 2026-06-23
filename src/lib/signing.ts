@@ -20,8 +20,17 @@ import type { Commit, GitRepo, Tag } from "./types.ts";
  */
 export type Signer = (
 	payload: Uint8Array,
-	opts?: { keyId?: string; format?: string },
+	opts?: { keyId?: string; format?: SignatureFormat },
 ) => string | Promise<string>;
+
+/**
+ * Signature backend, mirroring git's `gpg.format` values. Shared by the
+ * write side ({@link Signer} `opts.format`) and the read side
+ * ({@link VerificationResult.format}) so both halves speak one closed
+ * vocabulary — narrowing a free-form `string` to this set later would be a
+ * breaking change, so it is fixed up front.
+ */
+export type SignatureFormat = "openpgp" | "ssh" | "x509";
 
 /**
  * Verifies an armored signature against its canonical payload, returning a
@@ -50,11 +59,29 @@ export interface VerificationResult {
 	 * - `cannot-check` — verification could not be performed (missing key, etc.)
 	 */
 	status: "good" | "bad" | "unknown" | "expired" | "revoked" | "cannot-check";
-	format: "openpgp" | "ssh" | "x509";
+	format: SignatureFormat;
 	signer?: { name?: string; email?: string };
 	/** Key fingerprint or identifier, when known. */
 	keyId?: string;
 	signedAt?: Date;
+}
+
+/**
+ * The signing/verification capability pair, injected via
+ * `createGit({ signing })` and carried ambiently on a {@link GitRepo} (and
+ * thus every {@link GitContext}). Grouping the two halves under one member
+ * keeps the repo handle's top-level surface stable: the handle mirrors the
+ * `createGit` input shape instead of spreading into loose fields.
+ *
+ * Both halves are independent and optional — a locked-down consumer can
+ * supply only a {@link Verifier} (verify without the authority to sign), or
+ * only a {@link Signer}.
+ */
+export interface SigningCapability {
+	/** Write side: turns a canonical payload into an armored signature block. */
+	signer?: Signer;
+	/** Read side: turns a payload + signature into a trust verdict. */
+	verifier?: Verifier;
 }
 
 // ── Canonicalization (the byte-for-byte sign/verify contract) ───────
@@ -86,14 +113,14 @@ export function tagSigningPayload(tag: Tag): Uint8Array {
 
 // ── Resolution helpers ──────────────────────────────────────────────
 
-/** Read an ambient {@link Signer} off a repo handle (set on `GitContext`). */
+/** Read an ambient {@link Signer} off a repo handle (set on `GitRepo`). */
 export function getRepoSigner(repo: GitRepo): Signer | undefined {
-	return (repo as { signer?: Signer }).signer;
+	return repo.signing?.signer;
 }
 
-/** Read an ambient {@link Verifier} off a repo handle (set on `GitContext`). */
+/** Read an ambient {@link Verifier} off a repo handle (set on `GitRepo`). */
 export function getRepoVerifier(repo: GitRepo): Verifier | undefined {
-	return (repo as { verifier?: Verifier }).verifier;
+	return repo.signing?.verifier;
 }
 
 /**
@@ -108,16 +135,29 @@ export class SigningError extends Error {
 }
 
 /**
+ * Error thrown when verification is requested but cannot be performed —
+ * most commonly because no {@link Verifier} is available. Counterpart to
+ * {@link SigningError}, giving the read side a typed failure that consumers
+ * can catch with `instanceof` instead of string-matching a message.
+ */
+export class VerificationError extends Error {
+	constructor(message = "no signature verifier configured") {
+		super(message);
+		this.name = "VerificationError";
+	}
+}
+
+/**
  * Resolve the SDK-level signing decision for a writer (`createCommit`,
  * `buildCommit`, `commit`, `createAnnotatedTag`).
  *
  * Policy (`sign`) and mechanism (`signer`) are independent:
  * - `sign === false` → never sign.
- * - `sign === true` → must sign; resolves `signer ?? ctx.signer` and throws
- *   {@link SigningError} if neither is present (no silent unsigned commit).
+ * - `sign === true` → must sign; resolves `signer ?? ctx.signing?.signer` and
+ *   throws {@link SigningError} if neither is present (no silent unsigned commit).
  * - `sign === undefined` → a concrete per-call `signer` implies signing;
- *   an ambient `ctx.signer` alone does NOT (that is gated by config at the
- *   command layer, not the bare SDK).
+ *   an ambient `ctx.signing?.signer` alone does NOT (that is gated by config at
+ *   the command layer, not the bare SDK).
  */
 export function resolveSdkSigning(
 	repo: GitRepo,

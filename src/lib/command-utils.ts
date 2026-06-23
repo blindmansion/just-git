@@ -380,7 +380,7 @@ export async function writeCommitAndAdvance(
  * Layers CLI flag over config over default (mirroring how `merge.ff` /
  * `pull.rebase` resolve): `cliSign ?? configBool(<configKey>) ?? false`.
  * When signing is required, resolves the operator-injected signer
- * (`ext.signer`); if none is configured, returns a {@link CommandResult}
+ * (`ext.signing.signer`); if none is configured, returns a {@link CommandResult}
  * error (`gpg failed to sign the data`) rather than silently emitting an
  * unsigned object — matching git, and keeping a locked `commit.gpgsign=true`
  * sandbox honest.
@@ -398,7 +398,7 @@ export async function resolveCommandSigner(
 ): Promise<Signer | CommandResult | undefined> {
 	const shouldSign = cliSign ?? configBool(await getConfigValue(gitCtx, configKey)) ?? false;
 	if (!shouldSign) return undefined;
-	const signer = ext?.signer ?? gitCtx.signer;
+	const signer = ext?.signing?.signer ?? gitCtx.signing?.signer;
 	if (!signer) return err("error: gpg failed to sign the data\n", 128);
 	return signer;
 }
@@ -423,7 +423,7 @@ export async function requireVerifiedCommit(
 ): Promise<CommandResult | null> {
 	const verify = cliVerify ?? configBool(await getConfigValue(gitCtx, configKey)) ?? false;
 	if (!verify) return null;
-	const verifier = ext?.verifier ?? gitCtx.verifier;
+	const verifier = ext?.signing?.verifier ?? gitCtx.signing?.verifier;
 	if (!verifier) return fatal("no signature verifier configured");
 	const commit = await readCommit(gitCtx, commitHash);
 	// git identifies the commit by its abbreviated (7-char) hash in these messages.
