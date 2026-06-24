@@ -18,6 +18,7 @@ import {
 	VerificationError,
 	commitSigningPayload,
 	getRepoVerifier,
+	resolveVerifierOpts,
 	tagSigningPayload,
 } from "../lib/signing.ts";
 import { flattenTree as _flattenTree } from "../lib/tree-ops.ts";
@@ -157,7 +158,7 @@ export async function verifyCommit(repo: GitRepo, ref: string): Promise<Verifica
 	if (commit.gpgsig === undefined) return null;
 	const v = getRepoVerifier(repo);
 	if (!v) throw new VerificationError();
-	return v(commitSigningPayload(commit), commit.gpgsig);
+	return v(commitSigningPayload(commit), commit.gpgsig, await resolveVerifierOpts(repo));
 }
 
 /**
@@ -178,7 +179,7 @@ export async function verifyTag(repo: GitRepo, ref: string): Promise<Verificatio
 	if (tag.gpgsig === undefined) return null;
 	const v = getRepoVerifier(repo);
 	if (!v) throw new VerificationError();
-	return v(tagSigningPayload(tag), tag.gpgsig);
+	return v(tagSigningPayload(tag), tag.gpgsig, await resolveVerifierOpts(repo));
 }
 
 /**

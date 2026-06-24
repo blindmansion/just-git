@@ -597,6 +597,20 @@ export async function readConfigMulti(ctx: GitContext): Promise<GitConfigMulti> 
 }
 
 /**
+ * Build a {@link ConfigView} for any handle: reads `.git/config` when the
+ * handle is filesystem-backed and layers operator overrides either way. The
+ * async, handle-shaped counterpart to {@link makeConfigView} — the config half
+ * of {@link buildCapabilityContext}, exposed for resolvers that need an
+ * effective config view without a full {@link CapabilityContext} (and that must
+ * tolerate a bare, store-backed handle without an fs).
+ */
+export async function readConfigView(handle: GitRepo | GitContext): Promise<ConfigView> {
+	const overrides = handle.capabilities?.config;
+	const disk = isGitContext(handle) ? await readConfigMulti(handle) : {};
+	return makeConfigView(disk, overrides);
+}
+
+/**
  * Snapshot a handle into a {@link CapabilityContext} for the function-shaped
  * capabilities. Reads `.git/config` once (when the handle is filesystem-backed)
  * to back a synchronous {@link ConfigView}; a bare store-backed handle gets an

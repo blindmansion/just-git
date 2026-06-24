@@ -1154,12 +1154,13 @@ Arguments:
   commit  Commit to tag (defaults to HEAD)
 
 Options:
-  -a, --annotate          Make an annotated tag object
-  -s, --sign              Make a GPG-signed, annotated tag
-  --no-sign               Override tag.gpgSign and do not sign the tag
-  -m, --message <string>  Tag message
-  -d, --delete            Delete a tag
-  -f, --force             Replace an existing tag
-  -l, --list              List tags matching pattern
-  --sort <string>         Sort order (e.g. creatordate, -creatordate, refname, -refname, version:refname, -version:refname)
+  -a, --annotate             Make an annotated tag object
+  -s, --sign                 Make a GPG-signed, annotated tag
+  -u, --local-user <string>  Make a GPG-signed tag, using the given key id
+  --no-sign                  Override tag.gpgSign and do not sign the tag
+  -m, --message <string>     Tag message
+  -d, --delete               Delete a tag
+  -f, --force                Replace an existing tag
+  -l, --list                 List tags matching pattern
+  --sort <string>            Sort order (e.g. creatordate, -creatordate, refname, -refname, version:refname, -version:refname)
 ```

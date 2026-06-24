@@ -57,6 +57,9 @@ export function parseCommit(content: Uint8Array): Commit {
 	let author: Identity | undefined;
 	let committer: Identity | undefined;
 	let gpgsig: string | undefined;
+	// Headers we don't model individually (encoding, mergetag, …). Preserved
+	// in order so the object re-serializes byte-for-byte (and keeps its hash).
+	const extraHeaders: [string, string][] = [];
 
 	for (const [key, value] of parseFoldedHeaders(headerSection)) {
 		switch (key) {
@@ -75,6 +78,9 @@ export function parseCommit(content: Uint8Array): Commit {
 			case "gpgsig":
 				gpgsig = value;
 				break;
+			default:
+				extraHeaders.push([key, value]);
+				break;
 		}
 	}
 
@@ -84,7 +90,22 @@ export function parseCommit(content: Uint8Array): Commit {
 
 	const commit: Commit = { type: "commit", tree, parents, author, committer, message };
 	if (gpgsig !== undefined) commit.gpgsig = gpgsig;
+	if (extraHeaders.length > 0) commit.extraHeaders = extraHeaders;
 	return commit;
+}
+
+/**
+ * Push a (possibly multi-line) header in git's folded form: `key value` for
+ * the first line, then each subsequent line re-indented by a single leading
+ * space. The inverse of {@link parseFoldedHeaders}. A blank line inside the
+ * value becomes a bare single space, matching how git stores armor blank lines.
+ */
+function pushFoldedHeader(lines: string[], key: string, value: string): void {
+	const valueLines = value.split("\n");
+	lines.push(`${key} ${valueLines[0] ?? ""}`);
+	for (let i = 1; i < valueLines.length; i++) {
+		lines.push(` ${valueLines[i]}`);
+	}
 }
 
 /** Serialize a Commit to raw bytes. */
@@ -97,14 +118,19 @@ export function serializeCommit(commit: Commit): Uint8Array {
 	}
 	lines.push(`author ${serializeIdentity(commit.author)}`);
 	lines.push(`committer ${serializeIdentity(commit.committer)}`);
-	if (commit.gpgsig !== undefined) {
-		// Emit after `committer`, re-indenting continuation lines with a
-		// single leading space (matching git's folded-header framing).
-		const sigLines = commit.gpgsig.split("\n");
-		lines.push(`gpgsig ${sigLines[0] ?? ""}`);
-		for (let i = 1; i < sigLines.length; i++) {
-			lines.push(` ${sigLines[i]}`);
+	// Unmodeled headers (encoding, mergetag, …) sit after `committer` in their
+	// original order, before `gpgsig` (git appends the signature last).
+	if (commit.extraHeaders) {
+		for (const [key, value] of commit.extraHeaders) {
+			pushFoldedHeader(lines, key, value);
 		}
+	}
+	if (commit.gpgsig !== undefined) {
+		// The core owns this framing, so it also normalizes the signer's block
+		// to git's on-disk form: a trailing newline would split into a stray
+		// bare-space continuation line and change the object hash, so strip it
+		// here once rather than relying on every backend to do it.
+		pushFoldedHeader(lines, "gpgsig", commit.gpgsig.replace(/\n+$/, ""));
 	}
 	lines.push(""); // blank line before message
 	lines.push(commit.message);

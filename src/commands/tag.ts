@@ -36,6 +36,7 @@ export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 		options: {
 			annotate: f().alias("a").describe("Make an annotated tag object"),
 			sign: f().alias("s").describe("Make a GPG-signed, annotated tag"),
+			localUser: o.string().alias("u").describe("Make a GPG-signed tag, using the given key id"),
 			noSign: f().describe("Override tag.gpgSign and do not sign the tag"),
 			message: o.string().alias("m").describe("Tag message"),
 			delete: f().alias("d").describe("Delete a tag"),
@@ -106,7 +107,8 @@ export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 					return fatal(`tag '${args.name}' already exists`);
 				}
 
-				const isAnnotated = args.annotate || args.message || args.sign;
+				const isAnnotated =
+					args.annotate || args.message || args.sign || args.localUser !== undefined;
 
 				let newRefHash: string;
 				if (isAnnotated) {
@@ -119,17 +121,21 @@ export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 
 					const message = ensureTrailingNewline(args.message);
 
-					// Resolve signing: -s / --no-sign override config. tag.gpgSign
-					// (the config gate inside resolveCommandSigner) signs every
-					// annotated tag. tag.forceSignAnnotated signs only *implicitly*
-					// annotated tags (-m / -F without -a) — an explicit --annotate
-					// takes precedence over it, matching git's documented behavior.
-					let signPolicy = args.sign ? true : args.noSign ? false : undefined;
+					// Resolve signing: -s / -u <keyid> / --no-sign override config.
+					// `-u` selects a key and implies signing. tag.gpgSign (the config
+					// gate inside resolveCommandSigner) signs every annotated tag.
+					// tag.forceSignAnnotated signs only *implicitly* annotated tags
+					// (-m / -F without -a) — an explicit --annotate takes precedence
+					// over it, matching git's documented behavior.
+					let signPolicy =
+						args.sign || args.localUser !== undefined ? true : args.noSign ? false : undefined;
 					if (signPolicy === undefined && !args.annotate) {
 						const force = configBool(await getConfigValue(gitCtx, "tag.forcesignannotated"));
 						if (force) signPolicy = true;
 					}
-					const signer = await resolveCommandSigner(gitCtx, signPolicy, "tag.gpgsign");
+					const signer = await resolveCommandSigner(gitCtx, signPolicy, "tag.gpgsign", {
+						keyId: args.localUser,
+					});
 					if (isCommandError(signer)) return signer;
 
 					const tagObject = {

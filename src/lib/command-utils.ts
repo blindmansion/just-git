@@ -11,7 +11,12 @@ import { withCapabilities } from "./capabilities.ts";
 import { advanceBranchRef, readHead, resolveHead, resolveRef } from "./refs.ts";
 import { findRepo } from "./repo.ts";
 import { resolveRevision } from "./rev-parse.ts";
-import { type Signer, commitSigningPayload } from "./signing.ts";
+import {
+	type Signer,
+	asSignatureFormat,
+	commitSigningPayload,
+	resolveVerifierOpts,
+} from "./signing.ts";
 import { flattenTreeToMap } from "./tree-ops.ts";
 import type { Commit, GitContext, GitRepo, Identity, Index, ObjectId } from "./types.ts";
 import { applyWorktreeOps, mergeAbort } from "./unpack-trees.ts";
@@ -399,21 +404,36 @@ export async function writeCommitAndAdvance(
  * unsigned object — matching git, and keeping a locked `commit.gpgsign=true`
  * sandbox honest.
  *
+ * When signing is on, the key selection git would use is resolved (explicit
+ * `keyId` — e.g. `tag -u <keyid>` — falling back to `user.signingkey`) along
+ * with `gpg.format`, and both are bound onto the returned signer's `opts` so a
+ * multi-key / multi-format backend can act on them. This is policy resolution
+ * only: the secret never leaves the backend.
+ *
  * Returns:
  * - `undefined` — do not sign.
- * - a {@link Signer} — sign with it.
+ * - a {@link Signer} — sign with it (pre-bound with the resolved key/format).
  * - a {@link CommandResult} — error (use {@link isCommandError} to detect).
  */
 export async function resolveCommandSigner(
 	gitCtx: GitContext,
 	cliSign: boolean | undefined,
 	configKey = "commit.gpgsign",
+	opts?: { keyId?: string },
 ): Promise<Signer | CommandResult | undefined> {
 	const shouldSign = cliSign ?? configBool(await getConfigValue(gitCtx, configKey)) ?? false;
 	if (!shouldSign) return undefined;
 	const signer = gitCtx.capabilities?.signing?.signer;
 	if (!signer) return err("error: gpg failed to sign the data\n", 128);
-	return signer;
+
+	const keyId = opts?.keyId ?? (await getConfigValue(gitCtx, "user.signingkey"));
+	const format = asSignatureFormat(await getConfigValue(gitCtx, "gpg.format"));
+	if (keyId === undefined && format === undefined) return signer;
+
+	// Bind the resolved selection as defaults so every existing call site
+	// (`commit`, `tag`, and the `writeCommitAndAdvance` callers) forwards it
+	// without threading extra arguments through each one.
+	return (payload, callOpts) => signer(payload, { keyId, format, ...callOpts });
 }
 
 /**
@@ -443,7 +463,11 @@ export async function requireVerifiedCommit(
 	if (commit.gpgsig === undefined) {
 		return fatal(`Commit ${short} does not have a GPG signature.`);
 	}
-	const result = await verifier(commitSigningPayload(commit), commit.gpgsig);
+	const result = await verifier(
+		commitSigningPayload(commit),
+		commit.gpgsig,
+		await resolveVerifierOpts(gitCtx),
+	);
 	if (result.status !== "good" && result.status !== "unknown") {
 		return fatal(`Commit ${short} has a ${result.status} GPG signature.`);
 	}

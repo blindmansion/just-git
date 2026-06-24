@@ -67,6 +67,18 @@ export interface Commit {
 	 * removed).
 	 */
 	gpgsig?: string;
+	/**
+	 * Commit headers just-git does not model individually (`encoding`,
+	 * `mergetag`, and any future or third-party headers such as `HG:rename`),
+	 * captured as ordered `[key, value]` pairs so an object read from real git
+	 * re-serializes byte-for-byte — preserving its hash. Excludes the modeled
+	 * headers (`tree`, `parent`, `author`, `committer`, `gpgsig`). Values are
+	 * stored verbatim with continuation-line indentation stripped (multi-line
+	 * values like `mergetag` keep their internal newlines), and are emitted
+	 * after `committer` in their original order, before `gpgsig`. Present only
+	 * when the object carried such headers.
+	 */
+	extraHeaders?: [string, string][];
 }
 
 export interface Tag {

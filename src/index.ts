@@ -88,6 +88,7 @@ export type {
 	Signer,
 	SigningCapability,
 	Verifier,
+	VerifierOptions,
 	VerificationResult,
 } from "./lib/signing.ts";
 export type { HttpAuth } from "./lib/transport/transport.ts";

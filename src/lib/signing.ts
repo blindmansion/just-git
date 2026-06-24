@@ -1,3 +1,4 @@
+import { readConfigView } from "./config.ts";
 import { serializeCommit } from "./objects/commit.ts";
 import { serializeTag } from "./objects/tag.ts";
 import type { Commit, GitRepo, Tag } from "./types.ts";
@@ -14,9 +15,11 @@ import type { Commit, GitRepo, Tag } from "./types.ts";
  * block is self-describing, so the same signer covers commits, annotated
  * tags, and (future) push certificates.
  *
- * In the first cut just-git only ever passes `payload`; the host signer
- * picks its own key. The optional second parameter is a non-breaking seam
- * for future `-S <keyid>` / `user.signingkey` dispatch.
+ * The command layer resolves git's key selection and forwards it via `opts`:
+ * `keyId` is the explicit key (`tag -u <keyid>`) or `user.signingkey`, and
+ * `format` is `gpg.format`. A single-key backend can ignore both and pick its
+ * own key; a multi-key / multi-format backend acts on them. The values are
+ * policy only — just-git never sees the secret itself.
  */
 export type Signer = (
 	payload: Uint8Array,
@@ -36,13 +39,36 @@ export type SignatureFormat = "openpgp" | "ssh" | "x509";
  * Verifies an armored signature against its canonical payload, returning a
  * trust verdict. Deterministic and often implementable in pure TypeScript
  * (e.g. ed25519 via WebCrypto), so a locked-down consumer can verify even
- * when it could never sign. Trust/keyring configuration lives entirely
- * inside the implementation.
+ * when it could never sign.
+ *
+ * The command layer forwards git's resolved verify policy via `opts`,
+ * symmetric with {@link Signer}: `format` is `gpg.format`, and
+ * `allowedSigners` is the `gpg.ssh.allowedSignersFile` selector. Both are
+ * policy only — a path or inline text, opaque to just-git exactly like the
+ * signer's `keyId` (the trust material itself is loaded by the backend, never
+ * read by the core). A backend with its own fixed trust set can ignore both.
  */
 export type Verifier = (
 	payload: Uint8Array,
 	signature: string,
+	opts?: VerifierOptions,
 ) => VerificationResult | Promise<VerificationResult>;
+
+/**
+ * Git's resolved verify policy, forwarded to a {@link Verifier}. The read-side
+ * counterpart to the {@link Signer} `opts`; see {@link Verifier} for how the
+ * values are sourced.
+ */
+export interface VerifierOptions {
+	/** `gpg.format`, when set. A hint only — the armor is self-describing. */
+	format?: SignatureFormat;
+	/**
+	 * The `gpg.ssh.allowedSignersFile` trust-root selector (a VFS path or
+	 * inline `allowed_signers` text). Opaque to just-git — the backend decides
+	 * how to load and interpret it.
+	 */
+	allowedSigners?: string;
+}
 
 /**
  * Outcome of a {@link Verifier} call. The `status` vocabulary mirrors git's
@@ -121,6 +147,33 @@ export function getRepoSigner(repo: GitRepo): Signer | undefined {
 /** Read the ambient {@link Verifier} off a handle's capabilities. */
 export function getRepoVerifier(repo: GitRepo): Verifier | undefined {
 	return repo.capabilities?.signing?.verifier;
+}
+
+/** Narrow a raw `gpg.format` config value to the known backend set. */
+export function asSignatureFormat(value: string | undefined): SignatureFormat | undefined {
+	return value === "openpgp" || value === "ssh" || value === "x509" ? value : undefined;
+}
+
+/**
+ * Resolve the verify policy git would apply, for forwarding to a
+ * {@link Verifier} via its `opts`. The read-side mirror of the signer
+ * resolution in `resolveCommandSigner`: core reads the *selectors* from config
+ * and hands them over, never the trust material itself.
+ *
+ * Reads `gpg.format` and `gpg.ssh.allowedSignersFile`, layering operator
+ * overrides over `.git/config` (the on-disk tier only for a filesystem-backed
+ * handle). Returns `undefined` when neither is set, so callers can invoke the
+ * verifier with no `opts` exactly as before.
+ */
+export async function resolveVerifierOpts(repo: GitRepo): Promise<VerifierOptions | undefined> {
+	const view = await readConfigView(repo);
+	const format = asSignatureFormat(view.get("gpg.format"));
+	const allowedSigners = view.get("gpg.ssh.allowedSignersFile");
+	if (format === undefined && allowedSigners === undefined) return undefined;
+	const opts: VerifierOptions = {};
+	if (format !== undefined) opts.format = format;
+	if (allowedSigners !== undefined) opts.allowedSigners = allowedSigners;
+	return opts;
 }
 
 /**

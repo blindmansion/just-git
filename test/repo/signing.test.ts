@@ -8,8 +8,10 @@ import { parseCommit, serializeCommit } from "../../src/lib/objects/commit.ts";
 import { parseTag, serializeTag } from "../../src/lib/objects/tag.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import {
+	type SignatureFormat,
 	type Signer,
 	type Verifier,
+	type VerifierOptions,
 	commitSigningPayload,
 	tagSigningPayload,
 } from "../../src/lib/signing.ts";
@@ -102,6 +104,30 @@ describe("commit gpgsig round-trip", () => {
 		expect(serializeCommit(parsed)).toEqual(bytes);
 	});
 
+	test("serializeCommit normalizes a trailing newline in gpgsig", () => {
+		// A signer that returns its library's natural output (trailing newline)
+		// must still produce a byte-correct commit: the core strips it so it
+		// doesn't split into a stray bare-space continuation line.
+		const commit: Commit = {
+			type: "commit",
+			tree: "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+			parents: [],
+			author: IDENT,
+			committer: IDENT,
+			message: "subject\n",
+			gpgsig: `${FAKE_PGP_SIG}\n\n`,
+		};
+		const raw = decoder.decode(serializeCommit(commit));
+		// No stray " " continuation line after the END marker.
+		expect(raw).not.toContain("-----END PGP SIGNATURE-----\n \n");
+		// Header ends cleanly, then the blank line and message.
+		expect(raw).toContain("-----END PGP SIGNATURE-----\n\nsubject\n");
+		// Round-trips to the trimmed form, identical to the no-trailing-newline input.
+		const parsed = parseCommit(serializeCommit(commit));
+		expect(parsed.gpgsig).toBe(FAKE_PGP_SIG);
+		expect(serializeCommit(parsed)).toEqual(serializeCommit({ ...commit, gpgsig: FAKE_PGP_SIG }));
+	});
+
 	test("unsigned commits have no gpgsig and no header", () => {
 		const commit: Commit = {
 			type: "commit",
@@ -129,6 +155,138 @@ describe("commit gpgsig round-trip", () => {
 		const payload = decoder.decode(commitSigningPayload(signed));
 		expect(payload).not.toContain("gpgsig");
 		expect(payload).toBe(decoder.decode(serializeCommit({ ...signed, gpgsig: undefined })));
+	});
+});
+
+// ── Layer 1: round-trip fidelity for unmodelled headers ─────────────
+//
+// just-git only models tree/parent/author/committer/gpgsig. Any other
+// header git writes (encoding, mergetag, third-party HG:* …) must survive
+// parse + re-serialize byte-for-byte, or the object's hash changes and
+// rebase/amend/cherry-pick (and the oracle) corrupt history.
+
+const encoder = new TextEncoder();
+
+describe("commit extraHeaders round-trip", () => {
+	test("an `encoding` header is preserved and re-serializes byte-for-byte", () => {
+		const raw = [
+			"tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+			"author A U Thor <author@example.com> 1000000000 +0000",
+			"committer C O Mitter <committer@example.com> 1000000000 +0000",
+			"encoding ISO-8859-1",
+			"",
+			"subject\n",
+		].join("\n");
+		const bytes = encoder.encode(raw);
+
+		const parsed = parseCommit(bytes);
+		expect(parsed.extraHeaders).toEqual([["encoding", "ISO-8859-1"]]);
+		expect(parsed.gpgsig).toBeUndefined();
+		expect(serializeCommit(parsed)).toEqual(bytes);
+	});
+
+	test("a multi-line `mergetag` followed by `gpgsig` round-trips byte-for-byte", () => {
+		// What real git writes for a signed merge of a signed tag: a multi-line
+		// mergetag (internal blank lines stored as bare " " continuations),
+		// then gpgsig last, then the message.
+		const raw = [
+			"tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+			"parent 1111111111111111111111111111111111111111",
+			"parent 2222222222222222222222222222222222222222",
+			"author A U Thor <author@example.com> 1000000000 +0000",
+			"committer C O Mitter <committer@example.com> 1000000000 +0000",
+			"mergetag object 3333333333333333333333333333333333333333",
+			" type commit",
+			" tag v1",
+			" tagger T Agger <tagger@example.com> 1000000000 +0000",
+			" ",
+			" signed tag message",
+			" -----BEGIN PGP SIGNATURE-----",
+			" ",
+			" iHUEABYKAAAA",
+			" -----END PGP SIGNATURE-----",
+			"gpgsig -----BEGIN PGP SIGNATURE-----",
+			" ",
+			" iHUEZZZZZZZZ",
+			" -----END PGP SIGNATURE-----",
+			"",
+			"Merge tag 'v1'\n",
+		].join("\n");
+		const bytes = encoder.encode(raw);
+
+		const parsed = parseCommit(bytes);
+		// mergetag captured as a single multi-line extra header (newlines kept).
+		expect(parsed.extraHeaders).toEqual([
+			[
+				"mergetag",
+				[
+					"object 3333333333333333333333333333333333333333",
+					"type commit",
+					"tag v1",
+					"tagger T Agger <tagger@example.com> 1000000000 +0000",
+					"",
+					"signed tag message",
+					"-----BEGIN PGP SIGNATURE-----",
+					"",
+					"iHUEABYKAAAA",
+					"-----END PGP SIGNATURE-----",
+				].join("\n"),
+			],
+		]);
+		expect(parsed.gpgsig).toContain("iHUEZZZZZZZZ");
+		expect(parsed.message).toBe("Merge tag 'v1'\n");
+		// The whole object round-trips identically — hash preserved.
+		expect(serializeCommit(parsed)).toEqual(bytes);
+	});
+
+	test("commitSigningPayload covers extraHeaders but still strips gpgsig", () => {
+		// The signature must cover encoding/mergetag, so they stay in the
+		// payload; only gpgsig is removed.
+		const commit: Commit = {
+			type: "commit",
+			tree: "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+			parents: [],
+			author: IDENT,
+			committer: IDENT,
+			message: "m\n",
+			extraHeaders: [["encoding", "ISO-8859-1"]],
+			gpgsig: FAKE_PGP_SIG,
+		};
+		const payload = decoder.decode(commitSigningPayload(commit));
+		expect(payload).toContain("encoding ISO-8859-1");
+		expect(payload).not.toContain("gpgsig");
+	});
+
+	test("extra headers sit after committer and before gpgsig", () => {
+		const raw = decoder.decode(
+			serializeCommit({
+				type: "commit",
+				tree: "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+				parents: [],
+				author: IDENT,
+				committer: IDENT,
+				message: "m\n",
+				extraHeaders: [["encoding", "ISO-8859-1"]],
+				gpgsig: FAKE_PGP_SIG,
+			}),
+		);
+		const committerIdx = raw.indexOf("committer ");
+		const encodingIdx = raw.indexOf("encoding ");
+		const gpgsigIdx = raw.indexOf("gpgsig ");
+		expect(committerIdx).toBeLessThan(encodingIdx);
+		expect(encodingIdx).toBeLessThan(gpgsigIdx);
+	});
+
+	test("an ordinary commit has no extraHeaders", () => {
+		const commit: Commit = {
+			type: "commit",
+			tree: "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+			parents: [],
+			author: IDENT,
+			committer: IDENT,
+			message: "m\n",
+		};
+		expect(parseCommit(serializeCommit(commit)).extraHeaders).toBeUndefined();
 	});
 });
 
@@ -400,6 +558,186 @@ describe("git tag signing", () => {
 		const repo = (await findRepo(fs, "/repo"))!;
 		const tagHash = ((await repo.refStore.readRef("refs/tags/v-gpgsign")) as { hash: string }).hash;
 		expect((await readTag(repo, tagHash)).gpgsig).toBe(FAKE_PGP_SIG);
+	});
+});
+
+// ── key / format passthrough (Signer opts) ─────────────────────────
+
+/** A signer that records the opts it was called with. */
+function recordingSigner(): {
+	signer: Signer;
+	calls: Array<{ keyId?: string; format?: SignatureFormat }>;
+} {
+	const calls: Array<{ keyId?: string; format?: SignatureFormat }> = [];
+	const signer: Signer = (_payload, opts) => {
+		calls.push({ keyId: opts?.keyId, format: opts?.format });
+		return FAKE_PGP_SIG;
+	};
+	return { signer, calls };
+}
+
+/** A verifier that always says "good" and records the `opts` it was handed. */
+function recordingVerifier(): {
+	verifier: Verifier;
+	calls: Array<VerifierOptions | undefined>;
+} {
+	const calls: Array<VerifierOptions | undefined> = [];
+	const verifier: Verifier = (_payload, _signature, opts) => {
+		calls.push(opts);
+		return { status: "good", format: "openpgp" };
+	};
+	return { verifier, calls };
+}
+
+describe("signer opts passthrough", () => {
+	test("commit forwards user.signingkey as keyId and gpg.format as format", async () => {
+		const { signer, calls } = recordingSigner();
+		const fs = new InMemoryFs();
+		const git = createGit({ signing: { signer } });
+		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		await bash.writeFile("/repo/a.txt", "a\n");
+		await bash.exec("git init", { env: TEST_ENV });
+		await bash.exec("git config set user.signingkey ABC123", { env: TEST_ENV });
+		await bash.exec("git config set gpg.format ssh", { env: TEST_ENV });
+		await bash.exec("git add .", { env: TEST_ENV });
+		await bash.exec('git commit -S -m "x"', { env: envAt(1000000000) });
+		expect(calls).toEqual([{ keyId: "ABC123", format: "ssh" }]);
+	});
+
+	test("commit passes no opts when neither user.signingkey nor gpg.format is set", async () => {
+		const { signer, calls } = recordingSigner();
+		const fs = new InMemoryFs();
+		const git = createGit({ signing: { signer } });
+		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		await bash.writeFile("/repo/a.txt", "a\n");
+		await bash.exec("git init", { env: TEST_ENV });
+		await bash.exec("git add .", { env: TEST_ENV });
+		await bash.exec('git commit -S -m "x"', { env: envAt(1000000000) });
+		expect(calls).toEqual([{ keyId: undefined, format: undefined }]);
+	});
+
+	test("an unrecognized gpg.format is not forwarded", async () => {
+		const { signer, calls } = recordingSigner();
+		const fs = new InMemoryFs();
+		const git = createGit({ signing: { signer } });
+		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		await bash.writeFile("/repo/a.txt", "a\n");
+		await bash.exec("git init", { env: TEST_ENV });
+		await bash.exec("git config set gpg.format bogus", { env: TEST_ENV });
+		await bash.exec("git add .", { env: TEST_ENV });
+		await bash.exec('git commit -S -m "x"', { env: envAt(1000000000) });
+		expect(calls).toEqual([{ keyId: undefined, format: undefined }]);
+	});
+
+	test("tag -u <keyid> signs and forwards the key id (overriding user.signingkey)", async () => {
+		const { signer, calls } = recordingSigner();
+		const fs = new InMemoryFs();
+		const git = createGit({ signing: { signer } });
+		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		await bash.writeFile("/repo/a.txt", "a\n");
+		await bash.exec("git init", { env: TEST_ENV });
+		await bash.exec("git config set user.signingkey FALLBACK", { env: TEST_ENV });
+		await bash.exec("git add .", { env: TEST_ENV });
+		await bash.exec('git commit -m "x"', { env: envAt(1000000000) });
+		// `-u` implies signing even without `-s`.
+		const res = await bash.exec('git tag -u KEYID -m "rel" v1', { env: envAt(1000000000) });
+		expect(res.exitCode).toBe(0);
+		expect(calls).toEqual([{ keyId: "KEYID", format: undefined }]);
+		const repo = (await findRepo(fs, "/repo"))!;
+		const tagHash = ((await repo.refStore.readRef("refs/tags/v1")) as { hash: string }).hash;
+		expect((await readTag(repo, tagHash)).gpgsig).toBe(FAKE_PGP_SIG);
+	});
+});
+
+describe("verifier opts passthrough", () => {
+	/** Init a repo with a single signed commit, returning the bash + fs. */
+	async function repoWithSignedCommit(
+		verifier: Verifier,
+		config: Record<string, string> = {},
+	): Promise<{ bash: Bash; fs: InMemoryFs }> {
+		const { signer } = stubSigner();
+		const fs = new InMemoryFs();
+		const git = createGit({ signing: { signer, verifier } });
+		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		await bash.writeFile("/repo/a.txt", "a\n");
+		await bash.exec("git init", { env: TEST_ENV });
+		for (const [key, value] of Object.entries(config)) {
+			await bash.exec(`git config set ${key} ${value}`, { env: TEST_ENV });
+		}
+		await bash.exec("git add .", { env: TEST_ENV });
+		await bash.exec('git commit -S -m "x"', { env: envAt(1000000000) });
+		return { bash, fs };
+	}
+
+	test("verifyCommit forwards gpg.format and gpg.ssh.allowedSignersFile", async () => {
+		const { verifier, calls } = recordingVerifier();
+		const { fs } = await repoWithSignedCommit(verifier, {
+			"gpg.format": "ssh",
+			"gpg.ssh.allowedSignersFile": "/trust/allowed_signers",
+		});
+		const git = createGit({ signing: { verifier } });
+		const repo = (await git.findRepo({ fs, cwd: "/repo" }))!;
+		expect((await verifyCommit(repo, "HEAD"))?.status).toBe("good");
+		expect(calls).toEqual([{ format: "ssh", allowedSigners: "/trust/allowed_signers" }]);
+	});
+
+	test("verifyTag forwards the same resolved verify policy", async () => {
+		const { verifier, calls } = recordingVerifier();
+		const { bash, fs } = await repoWithSignedCommit(verifier, {
+			"gpg.format": "ssh",
+			"gpg.ssh.allowedSignersFile": "/trust/allowed_signers",
+		});
+		await bash.exec('git tag -s -m "rel" v1', { env: envAt(1000000000) });
+		const git = createGit({ signing: { verifier } });
+		const repo = (await git.findRepo({ fs, cwd: "/repo" }))!;
+		calls.length = 0; // ignore the commit-time verify, if any
+		expect((await verifyTag(repo, "v1"))?.status).toBe("good");
+		expect(calls).toEqual([{ format: "ssh", allowedSigners: "/trust/allowed_signers" }]);
+	});
+
+	test("passes no opts when neither gpg.format nor allowedSignersFile is set", async () => {
+		const { verifier, calls } = recordingVerifier();
+		const { fs } = await repoWithSignedCommit(verifier);
+		const git = createGit({ signing: { verifier } });
+		const repo = (await git.findRepo({ fs, cwd: "/repo" }))!;
+		expect((await verifyCommit(repo, "HEAD"))?.status).toBe("good");
+		expect(calls).toEqual([undefined]);
+	});
+
+	test("an unrecognized gpg.format is dropped but allowedSignersFile still flows", async () => {
+		const { verifier, calls } = recordingVerifier();
+		const { fs } = await repoWithSignedCommit(verifier, {
+			"gpg.format": "bogus",
+			"gpg.ssh.allowedSignersFile": "/trust/allowed_signers",
+		});
+		const git = createGit({ signing: { verifier } });
+		const repo = (await git.findRepo({ fs, cwd: "/repo" }))!;
+		expect((await verifyCommit(repo, "HEAD"))?.status).toBe("good");
+		expect(calls).toEqual([{ allowedSigners: "/trust/allowed_signers" }]);
+	});
+
+	test("the command path (merge --verify-signatures) forwards opts too", async () => {
+		const { verifier, calls } = recordingVerifier();
+		const { signer } = stubSigner();
+		const fs = new InMemoryFs();
+		const git = createGit({ signing: { signer, verifier } });
+		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		await bash.writeFile("/repo/a.txt", "a\n");
+		await bash.exec("git init", { env: TEST_ENV });
+		await bash.exec("git config set gpg.format ssh", { env: TEST_ENV });
+		await bash.exec("git config set gpg.ssh.allowedSignersFile /trust/as", { env: TEST_ENV });
+		await bash.exec("git add .", { env: TEST_ENV });
+		await bash.exec('git commit -m "base"', { env: envAt(1000000000) });
+		await bash.exec("git checkout -b feature", { env: TEST_ENV });
+		await bash.writeFile("/repo/b.txt", "b\n");
+		await bash.exec("git add .", { env: TEST_ENV });
+		await bash.exec('git commit -S -m "feat"', { env: envAt(1000000002) });
+		await bash.exec("git checkout main", { env: TEST_ENV });
+		const res = await bash.exec("git merge --verify-signatures --no-ff -m m feature", {
+			env: envAt(1000000004),
+		});
+		expect(res.exitCode).toBe(0);
+		expect(calls).toEqual([{ format: "ssh", allowedSigners: "/trust/as" }]);
 	});
 });
 
