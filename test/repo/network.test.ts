@@ -3,6 +3,7 @@ import { createServer } from "../../src/server/handler.ts";
 import { createRepoStore, MemoryStorage } from "../../src/store/index.ts";
 import { cloneInto, fetch, listRemoteRefs, push } from "../../src/repo/network.ts";
 import { withCapabilities } from "../../src/lib/capabilities.ts";
+import { httpTransport } from "../../src/transport.ts";
 import { commit } from "../../src/repo/writing.ts";
 import type { GitHooks } from "../../src/hooks.ts";
 import type { GitRepo, ObjectId } from "../../src/lib/types.ts";
@@ -25,7 +26,7 @@ async function setupRemote() {
 		author: AUTHOR,
 		branch: "main",
 	});
-	return { server, remote, net: server.asNetwork(BASE), firstHash };
+	return { server, remote, net: server.asTransport(BASE), firstHash };
 }
 
 /** A fresh storage-backed local repo (server-free client). */
@@ -37,7 +38,7 @@ async function localRepo(): Promise<GitRepo> {
 describe("network: listRemoteRefs", () => {
 	test("enumerates remote refs without fetching objects", async () => {
 		const { net } = await setupRemote();
-		const refs = await listRemoteRefs(`${BASE}/repo`, { network: net });
+		const refs = await listRemoteRefs(`${BASE}/repo`, { transport: net });
 		expect(refs.some((r) => r.name === "refs/heads/main")).toBe(true);
 	});
 });
@@ -47,7 +48,7 @@ describe("network: cloneInto", () => {
 		const { net, remote } = await setupRemote();
 		const local = await localRepo();
 
-		const result = await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
+		const result = await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`);
 
 		expect(result.defaultBranch).toBe("main");
 		expect(result.objectCount).toBeGreaterThan(0);
@@ -63,7 +64,7 @@ describe("network: cloneInto", () => {
 		const local = await localRepo();
 
 		const result = await cloneInto(
-			withCapabilities(local, { network: server.asNetwork(BASE) }),
+			withCapabilities(local, { transport: server.asTransport(BASE) }),
 			`${BASE}/empty`,
 		);
 		expect(result.defaultBranch).toBeNull();
@@ -74,7 +75,7 @@ describe("network: cloneInto", () => {
 		const { net } = await setupRemote();
 		const local = await localRepo();
 
-		const result = await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
+		const result = await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`);
 
 		// origin/main mirrors the local head right after clone — no fetch needed.
 		expect(await refHash(local, "refs/remotes/origin/main")).toBe(
@@ -88,7 +89,7 @@ describe("network: cloneInto", () => {
 		const { net } = await setupRemote();
 		const local = await localRepo();
 
-		await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`, {
+		await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`, {
 			remote: "upstream",
 		});
 
@@ -107,7 +108,7 @@ describe("network: cloneInto", () => {
 		void server;
 
 		const local = await localRepo();
-		const result = await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`, {
+		const result = await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`, {
 			branch: "feature",
 		});
 
@@ -129,7 +130,7 @@ describe("network: cloneInto", () => {
 			},
 		};
 
-		await cloneInto(withCapabilities(local, { network: net, hooks }), `${BASE}/repo`);
+		await cloneInto(withCapabilities(local, { transport: net, hooks }), `${BASE}/repo`);
 		expect(events).toEqual(["pre", "post"]);
 	});
 
@@ -139,7 +140,7 @@ describe("network: cloneInto", () => {
 		const hooks: GitHooks = { preClone: () => ({ reject: true, message: "no clone" }) };
 
 		expect(
-			cloneInto(withCapabilities(local, { network: net, hooks }), `${BASE}/repo`),
+			cloneInto(withCapabilities(local, { transport: net, hooks }), `${BASE}/repo`),
 		).rejects.toThrow("no clone");
 	});
 });
@@ -148,7 +149,7 @@ describe("network: fetch", () => {
 	test("updates tracking refs and reports updates", async () => {
 		const { net, remote } = await setupRemote();
 		const local = await localRepo();
-		await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
+		await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`);
 
 		const second = await commit(remote, {
 			files: { "extra.txt": "more\n" },
@@ -157,7 +158,9 @@ describe("network: fetch", () => {
 			branch: "main",
 		});
 
-		const result = await fetch(withCapabilities(local, { network: net }), { url: `${BASE}/repo` });
+		const result = await fetch(withCapabilities(local, { transport: net }), {
+			url: `${BASE}/repo`,
+		});
 
 		expect(result.objectCount).toBeGreaterThan(0);
 		expect(await refHash(local, "refs/remotes/origin/main")).toBe(second);
@@ -167,7 +170,7 @@ describe("network: fetch", () => {
 	test("honors a custom remote name for the tracking namespace and hook payload", async () => {
 		const { net, remote } = await setupRemote();
 		const local = await localRepo();
-		await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`, {
+		await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`, {
 			remote: "upstream",
 		});
 
@@ -185,7 +188,7 @@ describe("network: fetch", () => {
 			},
 		};
 
-		const result = await fetch(withCapabilities(local, { network: net, hooks }), {
+		const result = await fetch(withCapabilities(local, { transport: net, hooks }), {
 			url: `${BASE}/repo`,
 			name: "upstream",
 		});
@@ -198,18 +201,18 @@ describe("network: fetch", () => {
 	test("fires postFetch and honors preFetch rejection", async () => {
 		const { net } = await setupRemote();
 		const local = await localRepo();
-		await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
+		await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`);
 
 		let postCount = 0;
 		const postHooks: GitHooks = { postFetch: () => void postCount++ };
-		await fetch(withCapabilities(local, { network: net, hooks: postHooks }), {
+		await fetch(withCapabilities(local, { transport: net, hooks: postHooks }), {
 			url: `${BASE}/repo`,
 		});
 		expect(postCount).toBe(1);
 
 		const rejectHooks: GitHooks = { preFetch: () => ({ reject: true, message: "no fetch" }) };
 		await expect(
-			fetch(withCapabilities(local, { network: net, hooks: rejectHooks }), {
+			fetch(withCapabilities(local, { transport: net, hooks: rejectHooks }), {
 				url: `${BASE}/repo`,
 			}),
 		).rejects.toThrow("no fetch");
@@ -220,7 +223,7 @@ describe("network: push", () => {
 	test("pushes a branch (sugar form) and advances the remote", async () => {
 		const { net, remote } = await setupRemote();
 		const local = await localRepo();
-		await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
+		await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`);
 
 		const advanced = await commit(local, {
 			files: { "local.txt": "from client\n" },
@@ -229,7 +232,7 @@ describe("network: push", () => {
 			branch: "main",
 		});
 
-		const result = await push(withCapabilities(local, { network: net }), {
+		const result = await push(withCapabilities(local, { transport: net }), {
 			url: `${BASE}/repo`,
 			branch: "main",
 		});
@@ -243,9 +246,9 @@ describe("network: push", () => {
 	test("no-op push reports up-to-date", async () => {
 		const { net } = await setupRemote();
 		const local = await localRepo();
-		await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
+		await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`);
 
-		const result = await push(withCapabilities(local, { network: net }), {
+		const result = await push(withCapabilities(local, { transport: net }), {
 			url: `${BASE}/repo`,
 			branch: "main",
 		});
@@ -256,7 +259,7 @@ describe("network: push", () => {
 	test("non-fast-forward is rejected with structured status", async () => {
 		const { net, remote } = await setupRemote();
 		const local = await localRepo();
-		await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
+		await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`);
 
 		// Advance the remote out from under the client.
 		await commit(remote, {
@@ -273,7 +276,7 @@ describe("network: push", () => {
 			branch: "main",
 		});
 
-		const result = await push(withCapabilities(local, { network: net }), {
+		const result = await push(withCapabilities(local, { transport: net }), {
 			url: `${BASE}/repo`,
 			branch: "main",
 		});
@@ -284,7 +287,7 @@ describe("network: push", () => {
 	test("force push overrides and is flagged forced", async () => {
 		const { net, remote } = await setupRemote();
 		const local = await localRepo();
-		await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
+		await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`);
 
 		await commit(remote, {
 			files: { "server.txt": "server side\n" },
@@ -299,7 +302,7 @@ describe("network: push", () => {
 			branch: "main",
 		});
 
-		const result = await push(withCapabilities(local, { network: net }), {
+		const result = await push(withCapabilities(local, { transport: net }), {
 			url: `${BASE}/repo`,
 			branch: "main",
 			force: true,
@@ -320,7 +323,7 @@ describe("network: push", () => {
 		expect(await refHash(remote, "refs/heads/feature")).not.toBeNull();
 
 		const local = await localRepo();
-		const result = await push(withCapabilities(local, { network: net }), {
+		const result = await push(withCapabilities(local, { transport: net }), {
 			url: `${BASE}/repo`,
 			refspecs: [":refs/heads/feature"],
 		});
@@ -333,7 +336,7 @@ describe("network: push", () => {
 		const { net } = await setupRemote();
 		const local = await localRepo();
 		expect(
-			push(withCapabilities(local, { network: net }), {
+			push(withCapabilities(local, { transport: net }), {
 				url: `${BASE}/repo`,
 				branch: "main",
 				refspecs: ["refs/heads/main"],
@@ -344,7 +347,7 @@ describe("network: push", () => {
 	test("prePush rejection aborts the push", async () => {
 		const { net } = await setupRemote();
 		const local = await localRepo();
-		await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
+		await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`);
 		await commit(local, {
 			files: { "x.txt": "x\n" },
 			message: "edit",
@@ -355,7 +358,7 @@ describe("network: push", () => {
 		const hooks: GitHooks = { prePush: () => ({ reject: true, message: "blocked" }) };
 
 		expect(
-			push(withCapabilities(local, { network: net, hooks }), {
+			push(withCapabilities(local, { transport: net, hooks }), {
 				url: `${BASE}/repo`,
 				branch: "main",
 			}),
@@ -365,7 +368,7 @@ describe("network: push", () => {
 	test("pushes a new branch to the remote (ref creation)", async () => {
 		const { net, remote } = await setupRemote();
 		const local = await localRepo();
-		await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
+		await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`);
 
 		const featureHash = await commit(local, {
 			files: { "feature.txt": "feat\n" },
@@ -375,7 +378,7 @@ describe("network: push", () => {
 		});
 		expect(await refHash(remote, "refs/heads/feature")).toBeNull();
 
-		const result = await push(withCapabilities(local, { network: net }), {
+		const result = await push(withCapabilities(local, { transport: net }), {
 			url: `${BASE}/repo`,
 			branch: "feature",
 		});
@@ -388,7 +391,7 @@ describe("network: push", () => {
 	test("rejected-non-fast-forward when the remote object is present locally", async () => {
 		const { net, remote } = await setupRemote();
 		const local = await localRepo();
-		await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
+		await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`);
 
 		// Remote advances; the client fetches the new object but doesn't merge it.
 		await commit(remote, {
@@ -397,7 +400,7 @@ describe("network: push", () => {
 			author: AUTHOR,
 			branch: "main",
 		});
-		await fetch(withCapabilities(local, { network: net }), { url: `${BASE}/repo` });
+		await fetch(withCapabilities(local, { transport: net }), { url: `${BASE}/repo` });
 
 		// Client commits on its own (stale) main, diverging from the remote tip.
 		await commit(local, {
@@ -407,7 +410,7 @@ describe("network: push", () => {
 			branch: "main",
 		});
 
-		const result = await push(withCapabilities(local, { network: net }), {
+		const result = await push(withCapabilities(local, { transport: net }), {
 			url: `${BASE}/repo`,
 			branch: "main",
 		});
@@ -420,7 +423,7 @@ describe("network: push", () => {
 	test("fires postPush on a successful push", async () => {
 		const { net } = await setupRemote();
 		const local = await localRepo();
-		await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
+		await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`);
 		await commit(local, {
 			files: { "p.txt": "p\n" },
 			message: "edit",
@@ -431,7 +434,7 @@ describe("network: push", () => {
 		let postCount = 0;
 		const hooks: GitHooks = { postPush: () => void postCount++ };
 
-		const result = await push(withCapabilities(local, { network: net, hooks }), {
+		const result = await push(withCapabilities(local, { transport: net, hooks }), {
 			url: `${BASE}/repo`,
 			branch: "main",
 		});
@@ -444,7 +447,7 @@ describe("network: push (refspecs + src/dst sugar)", () => {
 	test("pushes via an explicit src:dst refspec", async () => {
 		const { net, remote } = await setupRemote();
 		const local = await localRepo();
-		await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
+		await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`);
 		const advanced = await commit(local, {
 			files: { "a.txt": "a\n" },
 			message: "edit",
@@ -452,7 +455,7 @@ describe("network: push (refspecs + src/dst sugar)", () => {
 			branch: "main",
 		});
 
-		const result = await push(withCapabilities(local, { network: net }), {
+		const result = await push(withCapabilities(local, { transport: net }), {
 			url: `${BASE}/repo`,
 			refspecs: ["main:main"],
 		});
@@ -464,7 +467,7 @@ describe("network: push (refspecs + src/dst sugar)", () => {
 	test("src/dst sugar pushes a source ref to a differently named remote ref", async () => {
 		const { net, remote } = await setupRemote();
 		const local = await localRepo();
-		await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
+		await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`);
 		const hash = await commit(local, {
 			files: { "x.txt": "x\n" },
 			message: "edit",
@@ -472,7 +475,7 @@ describe("network: push (refspecs + src/dst sugar)", () => {
 			branch: "main",
 		});
 
-		const result = await push(withCapabilities(local, { network: net }), {
+		const result = await push(withCapabilities(local, { transport: net }), {
 			url: `${BASE}/repo`,
 			src: "main",
 			dst: "released",
@@ -487,7 +490,7 @@ describe("network: push (refspecs + src/dst sugar)", () => {
 	test("force via the '+' refspec prefix overrides a non-fast-forward", async () => {
 		const { net, remote } = await setupRemote();
 		const local = await localRepo();
-		await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
+		await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`);
 
 		await commit(remote, {
 			files: { "server.txt": "server side\n" },
@@ -502,7 +505,7 @@ describe("network: push (refspecs + src/dst sugar)", () => {
 			branch: "main",
 		});
 
-		const result = await push(withCapabilities(local, { network: net }), {
+		const result = await push(withCapabilities(local, { transport: net }), {
 			url: `${BASE}/repo`,
 			refspecs: ["+main:main"],
 		});
@@ -514,12 +517,12 @@ describe("network: push (refspecs + src/dst sugar)", () => {
 	test("pushes a tag and rejects a non-fast-forward tag rewrite", async () => {
 		const { net, remote } = await setupRemote();
 		const local = await localRepo();
-		await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
+		await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`);
 		const base = await refHash(local, "refs/heads/main");
 
 		// Lightweight tag pointing at the cloned tip.
 		await local.refStore.writeRef("refs/tags/v1", base!);
-		const tagPush = await push(withCapabilities(local, { network: net }), {
+		const tagPush = await push(withCapabilities(local, { transport: net }), {
 			url: `${BASE}/repo`,
 			refspecs: ["refs/tags/v1:refs/tags/v1"],
 		});
@@ -535,7 +538,7 @@ describe("network: push (refspecs + src/dst sugar)", () => {
 			branch: "main",
 		});
 		await local.refStore.writeRef("refs/tags/v1", moved);
-		const rewrite = await push(withCapabilities(local, { network: net }), {
+		const rewrite = await push(withCapabilities(local, { transport: net }), {
 			url: `${BASE}/repo`,
 			refspecs: ["refs/tags/v1:refs/tags/v1"],
 		});
@@ -564,7 +567,10 @@ describe("network: resolveRemote (LocalTransport)", () => {
 		const local = await localRepo();
 		const resolveRemote = (url: string) => (url === "repo://remote" ? remote : null);
 
-		const result = await cloneInto(withCapabilities(local, { resolveRemote }), "repo://remote");
+		const result = await cloneInto(
+			withCapabilities(local, { transport: httpTransport({ resolveInProcess: resolveRemote }) }),
+			"repo://remote",
+		);
 
 		expect(result.defaultBranch).toBe("main");
 		expect(result.objectCount).toBeGreaterThan(0);
@@ -579,7 +585,10 @@ describe("network: resolveRemote (LocalTransport)", () => {
 		const remote = await bareRemoteRepo();
 		const resolveRemote = (url: string) => (url === "repo://remote" ? remote : null);
 		const local = await localRepo();
-		await cloneInto(withCapabilities(local, { resolveRemote }), "repo://remote");
+		await cloneInto(
+			withCapabilities(local, { transport: httpTransport({ resolveInProcess: resolveRemote }) }),
+			"repo://remote",
+		);
 
 		// Local edit, pushed back over the local transport.
 		const advanced = await commit(local, {
@@ -588,10 +597,13 @@ describe("network: resolveRemote (LocalTransport)", () => {
 			author: AUTHOR,
 			branch: "main",
 		});
-		const pushResult = await push(withCapabilities(local, { resolveRemote }), {
-			url: "repo://remote",
-			branch: "main",
-		});
+		const pushResult = await push(
+			withCapabilities(local, { transport: httpTransport({ resolveInProcess: resolveRemote }) }),
+			{
+				url: "repo://remote",
+				branch: "main",
+			},
+		);
 		expect(pushResult.ok).toBe(true);
 		expect(await refHash(remote, "refs/heads/main")).toBe(advanced);
 
@@ -602,9 +614,12 @@ describe("network: resolveRemote (LocalTransport)", () => {
 			author: AUTHOR,
 			branch: "main",
 		});
-		const fetchResult = await fetch(withCapabilities(local, { resolveRemote }), {
-			url: "repo://remote",
-		});
+		const fetchResult = await fetch(
+			withCapabilities(local, { transport: httpTransport({ resolveInProcess: resolveRemote }) }),
+			{
+				url: "repo://remote",
+			},
+		);
 		expect(fetchResult.objectCount).toBeGreaterThan(0);
 		expect(await refHash(local, "refs/remotes/origin/main")).toBe(second);
 		expect(fetchResult.updated.some((u) => u.ref === "refs/remotes/origin/main")).toBe(true);

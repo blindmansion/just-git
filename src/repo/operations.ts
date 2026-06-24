@@ -1053,7 +1053,7 @@ function snapshotContinuation(state: RebaseReplayState): RebaseContinuation {
 
 /** Options for {@link pull}. */
 export interface PullOptions {
-	/** Remote URL (or custom scheme resolved via `repo.capabilities.resolveRemote`). */
+	/** Remote URL (or custom scheme resolved via `repo.capabilities.transport`). */
 	url: string;
 	/** Remote short name driving the tracking namespace. Default `"origin"`. */
 	remote?: string;

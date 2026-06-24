@@ -16,27 +16,30 @@ function makeRepo(caps?: GitRepo["capabilities"]): GitRepo {
 // ── mergeCapabilities: override-wins fields ─────────────────────────
 
 describe("mergeCapabilities override-wins fields", () => {
+	const idA = { name: "a", email: "a@x" };
+	const idB = { name: "b", email: "b@x" };
+
 	test("a defined override value replaces the base", () => {
-		const merged = mergeCapabilities({ network: false }, { network: { allowed: ["x"] } });
-		expect(merged?.network).toEqual({ allowed: ["x"] });
+		const merged = mergeCapabilities({ identity: idA }, { identity: idB });
+		expect(merged?.identity).toEqual(idB);
 	});
 
 	test("an undefined override key falls through to the base", () => {
-		const merged = mergeCapabilities({ network: false }, { network: undefined });
-		expect(merged?.network).toBe(false);
+		const merged = mergeCapabilities({ identity: idA }, { identity: undefined });
+		expect(merged?.identity).toBe(idA);
 	});
 
 	test("base-only keys survive", () => {
-		const resolveRemote = () => null;
-		const merged = mergeCapabilities({ resolveRemote }, { network: false });
-		expect(merged?.resolveRemote).toBe(resolveRemote);
-		expect(merged?.network).toBe(false);
+		const onProgress = () => {};
+		const merged = mergeCapabilities({ onProgress }, { identity: idB });
+		expect(merged?.onProgress).toBe(onProgress);
+		expect(merged?.identity).toEqual(idB);
 	});
 
 	test("returns undefined only when both inputs are absent", () => {
 		expect(mergeCapabilities(undefined, undefined)).toBeUndefined();
-		expect(mergeCapabilities({ network: false }, undefined)).toEqual({ network: false });
-		expect(mergeCapabilities(undefined, { network: false })).toEqual({ network: false });
+		expect(mergeCapabilities({ identity: idA }, undefined)).toEqual({ identity: idA });
+		expect(mergeCapabilities(undefined, { identity: idA })).toEqual({ identity: idA });
 	});
 });
 
@@ -97,7 +100,7 @@ describe("mergeCapabilities composes hooks", () => {
 
 	test("override hooks win as a plain replace when the base has none", () => {
 		const override: GitHooks = { preCommit: () => {} };
-		const merged = mergeCapabilities({ network: false }, { hooks: override });
+		const merged = mergeCapabilities({ onProgress: () => {} }, { hooks: override });
 		expect(merged?.hooks).toBe(override);
 	});
 });
@@ -125,7 +128,7 @@ describe("mergeCapabilities deep-merges config", () => {
 
 	test("config falls through when only one side defines it", () => {
 		const base: ConfigOverrides = { locked: { "user.name": "base" } };
-		const merged = mergeCapabilities({ config: base }, { network: false });
+		const merged = mergeCapabilities({ config: base }, { onProgress: () => {} });
 		expect(merged?.config).toBe(base);
 	});
 });
@@ -139,23 +142,26 @@ describe("withCapabilities", () => {
 	});
 
 	test("layers onto an existing bag without dropping prior fields", () => {
-		const repo = makeRepo({ network: false });
-		const wrapped = withCapabilities(repo, { resolveRemote: () => null });
-		expect(wrapped.capabilities?.network).toBe(false);
-		expect(wrapped.capabilities?.resolveRemote).toBeDefined();
+		const onProgress = () => {};
+		const repo = makeRepo({ onProgress });
+		const wrapped = withCapabilities(repo, { identity: { name: "x", email: "x@y" } });
+		expect(wrapped.capabilities?.onProgress).toBe(onProgress);
+		expect(wrapped.capabilities?.identity).toBeDefined();
 	});
 });
 
 // ── wrappers preserve capabilities (Phase 4 drop-bug fix) ───────────
 
 describe("repo wrappers preserve capabilities", () => {
+	const onProgress = () => {};
+
 	test("readonlyRepo carries capabilities forward", () => {
-		const repo = makeRepo({ network: false });
-		expect(readonlyRepo(repo).capabilities?.network).toBe(false);
+		const repo = makeRepo({ onProgress });
+		expect(readonlyRepo(repo).capabilities?.onProgress).toBe(onProgress);
 	});
 
 	test("overlayRepo carries capabilities forward", () => {
-		const repo = makeRepo({ network: false });
-		expect(overlayRepo(repo).capabilities?.network).toBe(false);
+		const repo = makeRepo({ onProgress });
+		expect(overlayRepo(repo).capabilities?.onProgress).toBe(onProgress);
 	});
 });

@@ -1,17 +1,14 @@
 import type { FileSystem } from "../fs.ts";
 import type {
 	ConfigOverrides,
-	CredentialProvider,
 	FetchFunction,
 	GitHooks,
 	IdentityOverride,
-	NetworkPolicy,
 	ProgressCallback,
 } from "../hooks.ts";
 import type { MergeDriver } from "./merge-ort.ts";
 import type { PackObject } from "./pack/packfile.ts";
 import type { SigningCapability } from "./signing.ts";
-import type { HttpAuth } from "./transport/transport.ts";
 
 // ── Object identifiers ──────────────────────────────────────────────
 
@@ -260,19 +257,17 @@ export interface RepoCapabilities {
 	/** Locked + default git config values. */
 	config?: ConfigOverrides;
 	/**
-	 * The network seam: resolve how to reach a remote (an HTTP fetch or an
-	 * in-process repo). When set, it overrides the built-in default resolver
-	 * (which the core otherwise synthesizes from `network` / `credentials` /
-	 * `resolveRemote`). Compose one with the shipped `httpTransport({…})` /
-	 * `pipe(allowlist, withAuth, …)` builders.
+	 * The single network seam: resolve how to reach a remote (an HTTP fetch or
+	 * an in-process repo). The sole network capability on a handle — policy,
+	 * credentials, retry, and cross-VFS resolution are all composed *into* the
+	 * resolver, not carried as separate fields. Build one with the shipped
+	 * `httpTransport({…})` / `pipe(allowlist, withAuth, …)` builders (the
+	 * `createGit` `network`/`credentials`/`resolveRemote` options are sugar that
+	 * compile into this). When absent, the core uses a git-faithful default
+	 * (env auth, URL-embedded credentials, Smart HTTP), falling back to local
+	 * filesystem repo discovery.
 	 */
 	transport?: TransportResolver;
-	/** Static auth or a per-URL credential resolver for Smart HTTP. */
-	credentials?: HttpAuth | CredentialProvider;
-	/** Network policy. `false` blocks all HTTP. A NetworkPolicy object may carry `fetch`. */
-	network?: NetworkPolicy | false;
-	/** Resolve non-HTTP remote URLs to a GitRepo (cross-VFS / in-process). */
-	resolveRemote?: RemoteResolver;
 	/** Receives server progress messages (sideband band-2). */
 	onProgress?: ProgressCallback;
 
@@ -297,7 +292,7 @@ export interface GitRepo {
 	refStore: RefStore;
 	/**
 	 * The single channel for host-provided behavior (hooks, signing, merge
-	 * driver, identity, config, credentials, network, progress). Attached
+	 * driver, identity, config, transport, progress). Attached
 	 * via `withCapabilities`; never auto-populated by a storage backend, so
 	 * a bare handle is inert until a host opts in. Every capability read in
 	 * the SDK, command, and server layers resolves through here.

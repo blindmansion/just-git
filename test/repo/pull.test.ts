@@ -23,7 +23,7 @@ const ENGINE: Identity = {
 
 interface Harness {
 	server: ReturnType<typeof createServer>;
-	net: ReturnType<ReturnType<typeof createServer>["asNetwork"]>;
+	net: ReturnType<ReturnType<typeof createServer>["asTransport"]>;
 	local: GitRepo;
 	url: string;
 }
@@ -38,9 +38,9 @@ async function setup(): Promise<Harness> {
 		author: AUTHOR,
 		branch: "main",
 	});
-	const net = server.asNetwork(BASE);
+	const net = server.asTransport(BASE);
 	const local = await createRepoStore(new MemoryStorage()).createRepo("local");
-	await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
+	await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`);
 	return { server, net, local, url: `${BASE}/repo` };
 }
 
@@ -65,7 +65,7 @@ const fileAtMain = async (repo: GitRepo, path: string) =>
 describe("pull: merge strategy", () => {
 	test("up-to-date when nothing changed on either side", async () => {
 		const h = await setup();
-		const { integration } = await pull(withCapabilities(h.local, { network: h.net }), {
+		const { integration } = await pull(withCapabilities(h.local, { transport: h.net }), {
 			url: h.url,
 			branch: "main",
 		});
@@ -76,7 +76,7 @@ describe("pull: merge strategy", () => {
 		const h = await setup();
 		const remoteTip = await cloudCommit(h, { "doc.md": "base\nv2\n" }, "remote v2");
 
-		const { integration, fetched } = await pull(withCapabilities(h.local, { network: h.net }), {
+		const { integration, fetched } = await pull(withCapabilities(h.local, { transport: h.net }), {
 			url: h.url,
 			branch: "main",
 		});
@@ -96,7 +96,7 @@ describe("pull: merge strategy", () => {
 			branch: "main",
 		});
 
-		const { integration } = await pull(withCapabilities(h.local, { network: h.net }), {
+		const { integration } = await pull(withCapabilities(h.local, { transport: h.net }), {
 			url: h.url,
 			branch: "main",
 			author: ENGINE,
@@ -117,7 +117,7 @@ describe("pull: merge strategy", () => {
 			branch: "main",
 		});
 
-		const { integration } = await pull(withCapabilities(h.local, { network: h.net }), {
+		const { integration } = await pull(withCapabilities(h.local, { transport: h.net }), {
 			url: h.url,
 			branch: "main",
 			author: ENGINE,
@@ -141,7 +141,7 @@ describe("pull: merge strategy", () => {
 	test("defaults the branch to the current HEAD branch", async () => {
 		const h = await setup();
 		const remoteTip = await cloudCommit(h, { "doc.md": "base\nv2\n" }, "remote v2");
-		const { integration } = await pull(withCapabilities(h.local, { network: h.net }), {
+		const { integration } = await pull(withCapabilities(h.local, { transport: h.net }), {
 			url: h.url,
 		});
 		expect(integration.status).toBe("fast-forward");
@@ -160,7 +160,7 @@ describe("pull: rebase strategy", () => {
 			branch: "main",
 		});
 
-		const { integration } = await pull(withCapabilities(h.local, { network: h.net }), {
+		const { integration } = await pull(withCapabilities(h.local, { transport: h.net }), {
 			url: h.url,
 			branch: "main",
 			strategy: "rebase",
@@ -184,7 +184,7 @@ describe("pull: rebase strategy", () => {
 			branch: "main",
 		});
 
-		const { integration } = await pull(withCapabilities(h.local, { network: h.net }), {
+		const { integration } = await pull(withCapabilities(h.local, { transport: h.net }), {
 			url: h.url,
 			branch: "main",
 			strategy: "rebase",

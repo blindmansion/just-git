@@ -16,6 +16,7 @@ import { withCapabilities } from "./lib/capabilities.ts";
 import type { MergeDriver } from "./lib/merge-ort.ts";
 import { findRepo as findRepoOnFs } from "./lib/repo.ts";
 import type { SigningCapability } from "./lib/signing.ts";
+import { makeDefaultTransport } from "./lib/transport/resolver.ts";
 import type {
 	GitContext,
 	ObjectStore,
@@ -319,9 +320,13 @@ export class Git {
 		this.defaultCwd = options?.cwd ?? "/";
 		this.hooks = options?.hooks;
 		this.blocked = options?.disabled?.length ? new Set<string>(options.disabled) : null;
-		const network = options?.network;
 
 		const configOverrides = mergeIdentityIntoConfig(options?.identity, options?.config);
+
+		// Instance-scoped credential store: creds stripped from a URL by
+		// `remote add` / `clone` survive to a later `fetch` / `push`. Runtime
+		// state, not a capability. Host-overridable via GitOptions.credentialStore.
+		const credentialStore = options?.credentialStore ?? createMemoryCredentialStore();
 
 		const capabilities: RepoCapabilities = {
 			hooks: options?.hooks,
@@ -329,9 +334,16 @@ export class Git {
 			mergeDriver: options?.mergeDriver,
 			identity: options?.identity,
 			config: configOverrides,
-			credentials: options?.credentials,
-			network,
-			resolveRemote: options?.resolveRemote,
+			// The ergonomic network/credentials/resolveRemote options are sugar:
+			// compile them (over the credential store) into the one transport seam.
+			transport: makeDefaultTransport(
+				{
+					network: options?.network,
+					credentials: options?.credentials,
+					resolveRemote: options?.resolveRemote,
+				},
+				credentialStore,
+			),
 			onProgress: options?.onProgress,
 		};
 
@@ -344,11 +356,7 @@ export class Git {
 		const extensions: GitExtensions = {
 			capabilities,
 			locators,
-			// Instance-scoped credential store: creds stripped from a URL by
-			// `remote add` / `clone` survive to a later `fetch` / `push`. Runtime
-			// state, not a capability — read by the default transport resolver.
-			// Host-overridable via GitOptions.credentialStore.
-			credentialStore: options?.credentialStore ?? createMemoryCredentialStore(),
+			credentialStore,
 		};
 		this.ext = extensions;
 		this.inner = createGitCommand(extensions).toCommand();

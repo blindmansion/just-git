@@ -11,7 +11,7 @@ import { findRepo, initRepository } from "../lib/repo.ts";
 import { applyShallowUpdates } from "../lib/shallow.ts";
 import { withCapabilities } from "../lib/capabilities.ts";
 import { stripAndCacheCredentials } from "../lib/transport/remote.ts";
-import { createTransportForUrl } from "../lib/transport/resolver.ts";
+import { createTransportForUrl, resolveInProcessRemote } from "../lib/transport/resolver.ts";
 import type { ShallowFetchOptions, Transport } from "../lib/transport/transport.ts";
 import { flattenTree } from "../lib/tree-ops.ts";
 import type { GitContext, GitRepo, ObjectId } from "../lib/types.ts";
@@ -44,14 +44,13 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			const branchOpt = args.branch;
 
 			// For local paths, verify the source is a git repository.
-			// Try resolveRemote with the raw URL first (supports custom URL
-			// schemes like "server://repo"), then fall back to path resolution.
+			// Ask the transport resolver to resolve the raw URL first (supports
+			// custom URL schemes like "server://repo"), then fall back to path
+			// resolution.
 			let sourceRepo: GitRepo | null = null;
 			let sourcePath = repository;
 			if (!isHttp) {
-				if (ext?.capabilities?.resolveRemote) {
-					sourceRepo = await ext.capabilities.resolveRemote(repository);
-				}
+				sourceRepo = await resolveInProcessRemote(ext?.capabilities, repository, ctx.env);
 				if (!sourceRepo) {
 					sourcePath = resolve(ctx.cwd, repository);
 					sourceRepo = await findRepo(ctx.fs, sourcePath);

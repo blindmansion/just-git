@@ -57,7 +57,7 @@ const ENGINE: Identity = {
 interface Cloud {
 	server: ReturnType<typeof createServer>;
 	url: string;
-	net: ReturnType<ReturnType<typeof createServer>["asNetwork"]>;
+	net: ReturnType<ReturnType<typeof createServer>["asTransport"]>;
 	repoId: string;
 }
 
@@ -74,7 +74,7 @@ async function makeCloud(
 		author: person("Founder"),
 		branch: BRANCH,
 	});
-	return { server, url: `${BASE}/${repoId}`, net: server.asNetwork(BASE), repoId };
+	return { server, url: `${BASE}/${repoId}`, net: server.asTransport(BASE), repoId };
 }
 
 /** Push a commit straight onto the cloud repo (simulates "another client"). */
@@ -102,7 +102,7 @@ interface Workspace {
 /** Clone the cloud into a fresh client — the app's "open workspace" step. */
 async function openWorkspace(id: string, cloud: Cloud): Promise<Workspace> {
 	const repo = await createRepoStore(new MemoryStorage()).createRepo(id);
-	await cloneInto(withCapabilities(repo, { network: cloud.net }), cloud.url);
+	await cloneInto(withCapabilities(repo, { transport: cloud.net }), cloud.url);
 	return { repo, id };
 }
 
@@ -166,7 +166,7 @@ async function syncWorkspace(
 		beforePush?: (attempt: number) => Promise<void>;
 	} = {},
 ): Promise<SyncOutcome> {
-	const repo = withCapabilities(ws.repo, { network: cloud.net });
+	const repo = withCapabilities(ws.repo, { transport: cloud.net });
 	const maxAttempts = opts.maxAttempts ?? 4;
 
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -415,7 +415,7 @@ describe("sync workflow: linear history via rebase", () => {
 
 		// pull() with the rebase strategy stops on conflict and hands back the
 		// continuation as part of the integration result.
-		const { integration } = await pull(withCapabilities(ws.repo, { network: cloud.net }), {
+		const { integration } = await pull(withCapabilities(ws.repo, { transport: cloud.net }), {
 			url: cloud.url,
 			branch: BRANCH,
 			strategy: "rebase",
@@ -446,13 +446,13 @@ describe("sync workflow: cheap divergence detection for the UI", () => {
 		// A pure ref-advertisement probe: enough to light up a "sync available"
 		// badge without downloading anything.
 		await cloudCommit(cloud, { "doc.md": "# Project\n\nnew\n" }, "remote change");
-		const refs = await listRemoteRefs(cloud.url, { network: cloud.net });
+		const refs = await listRemoteRefs(cloud.url, { transport: cloud.net });
 		const remoteMain = refs.find((r) => r.name === `refs/heads/${BRANCH}`)!;
 		expect(remoteMain.hash).not.toBe(await localTip(ws));
 
 		// To render "N behind" you must fetch the objects (no merge), then count
 		// against the updated tracking ref.
-		await fetch(withCapabilities(ws.repo, { network: cloud.net }), { url: cloud.url });
+		await fetch(withCapabilities(ws.repo, { transport: cloud.net }), { url: cloud.url });
 		const counts = await countAheadBehind(
 			ws.repo,
 			(await localTip(ws)) as string,
@@ -469,7 +469,7 @@ describe("sync workflow: cheap divergence detection for the UI", () => {
 		await edit(ws, person("Alice"), { "a.md": "a\n" }, "local work");
 
 		// Fetch-only to learn where the remote is, without integrating.
-		await fetch(withCapabilities(ws.repo, { network: cloud.net }), { url: cloud.url });
+		await fetch(withCapabilities(ws.repo, { transport: cloud.net }), { url: cloud.url });
 		const counts = await countAheadBehind(
 			ws.repo,
 			(await localTip(ws)) as string,

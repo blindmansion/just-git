@@ -14,41 +14,43 @@ describe("createRepoStore capabilities", () => {
 	});
 
 	test("attaches default capabilities to every handle handed out", async () => {
+		const onProgress = () => {};
 		const store = createRepoStore(new MemoryStorage(), {
-			capabilities: { network: false },
+			capabilities: { onProgress },
 		});
 		const created = await store.createRepo("r");
-		expect(created.capabilities?.network).toBe(false);
+		expect(created.capabilities?.onProgress).toBe(onProgress);
 
 		const fetched = await store.repo("r");
-		expect(fetched?.capabilities?.network).toBe(false);
+		expect(fetched?.capabilities?.onProgress).toBe(onProgress);
 	});
 
 	test("per-handle override layers over the store defaults", async () => {
-		const resolveRemote = () => null;
+		const onProgress = () => {};
+		const identity = { name: "x", email: "x@y" };
 		const store = createRepoStore(new MemoryStorage(), {
-			capabilities: { network: false },
+			capabilities: { onProgress },
 		});
 		await store.createRepo("r");
 
-		const repo = await store.repo("r", { resolveRemote });
-		expect(repo?.capabilities?.network).toBe(false); // default survives
-		expect(repo?.capabilities?.resolveRemote).toBe(resolveRemote); // override added
+		const repo = await store.repo("r", { identity });
+		expect(repo?.capabilities?.onProgress).toBe(onProgress); // default survives
+		expect(repo?.capabilities?.identity).toBe(identity); // override added
 	});
 
 	test("per-handle override replaces a default field per override-wins", async () => {
 		const store = createRepoStore(new MemoryStorage(), {
-			capabilities: { network: false },
+			capabilities: { identity: { name: "base", email: "base@x" } },
 		});
 		await store.createRepo("r");
 
-		const repo = await store.repo("r", { network: { allowed: ["github.com"] } });
-		expect(repo?.capabilities?.network).toEqual({ allowed: ["github.com"] });
+		const repo = await store.repo("r", { identity: { name: "over", email: "over@x" } });
+		expect(repo?.capabilities?.identity).toEqual({ name: "over", email: "over@x" });
 	});
 
 	test("repo() returns null (no wrapping) for an unknown repo", async () => {
 		const store = createRepoStore(new MemoryStorage(), {
-			capabilities: { network: false },
+			capabilities: { onProgress: () => {} },
 		});
 		expect(await store.repo("missing")).toBeNull();
 	});
@@ -58,24 +60,26 @@ describe("createRepoStore capabilities", () => {
 
 describe("createServer capabilities", () => {
 	test("forwards default capabilities onto server handles", async () => {
-		const server = createServer({ capabilities: { network: false } });
+		const onProgress = () => {};
+		const server = createServer({ capabilities: { onProgress } });
 		await server.createRepo("r");
 
 		const repo = await server.repo("r");
-		expect(repo?.capabilities?.network).toBe(false);
+		expect(repo?.capabilities?.onProgress).toBe(onProgress);
 
 		const required = await server.requireRepo("r");
-		expect(required.capabilities?.network).toBe(false);
+		expect(required.capabilities?.onProgress).toBe(onProgress);
 	});
 
 	test("per-handle override layers over server defaults", async () => {
-		const resolveRemote = () => null;
-		const server = createServer({ capabilities: { network: false } });
+		const onProgress = () => {};
+		const identity = { name: "x", email: "x@y" };
+		const server = createServer({ capabilities: { onProgress } });
 		await server.createRepo("r");
 
-		const repo = await server.repo("r", { resolveRemote });
-		expect(repo?.capabilities?.network).toBe(false);
-		expect(repo?.capabilities?.resolveRemote).toBe(resolveRemote);
+		const repo = await server.repo("r", { identity });
+		expect(repo?.capabilities?.onProgress).toBe(onProgress);
+		expect(repo?.capabilities?.identity).toBe(identity);
 	});
 
 	test("handles are inert when no capabilities are configured", async () => {

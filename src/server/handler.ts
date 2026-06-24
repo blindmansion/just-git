@@ -17,7 +17,8 @@
 
 import { isRejection } from "../hooks.ts";
 import { buildCommit } from "../repo/writing.ts";
-import type { GitRepo } from "../lib/types.ts";
+import { httpTransport } from "../transport.ts";
+import type { GitRepo, TransportResolver } from "../lib/types.ts";
 
 const inProcessAuth = new WeakMap<Request, unknown>();
 import {
@@ -570,6 +571,11 @@ export function createServer<A = Auth>(
 					return server.fetch(req);
 				},
 			};
+		},
+
+		asTransport(baseUrl = "http://git", auth?: A): TransportResolver {
+			const policy = this.asNetwork(baseUrl, auth);
+			return httpTransport({ allowed: policy.allowed, fetch: policy.fetch });
 		},
 
 		async close(options?): Promise<void> {

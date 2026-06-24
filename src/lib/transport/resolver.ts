@@ -4,13 +4,17 @@ import {
 	type CredentialStore,
 	createMemoryCredentialStore,
 	type FetchFunction,
+	type NetworkPolicy,
 } from "../../hooks.ts";
-import { buildCapabilityContext } from "../config.ts";
+import { buildCapabilityContext, makeConfigView } from "../config.ts";
 import { findRepo } from "../repo.ts";
 import type {
 	GitContext,
 	GitOperation,
 	GitRepo,
+	ObjectStore,
+	RefStore,
+	RemoteResolver,
 	RepoCapabilities,
 	TransportResolver,
 } from "../types.ts";
@@ -69,14 +73,27 @@ async function resolveAuthForUrl(
 }
 
 /**
- * The git-faithful built-in transport resolver, synthesized from a handle's
- * interim network capabilities (`network` / `credentials` / `resolveRemote`)
- * plus the instance credential store. Used whenever a handle has no explicit
- * `capabilities.transport`. Returns `null` for non-HTTP URLs it cannot resolve
- * in-process, letting the caller fall back to filesystem repo discovery.
+ * Inputs to the git-faithful default transport — the ergonomic
+ * `createGit` network options, compiled into a {@link TransportResolver}. This
+ * is the single adapter from the old `network` / `credentials` / `resolveRemote`
+ * fields to the unified `transport` seam; an empty config yields the bare
+ * git-native default (env auth + URL-embedded credentials, allow-all network).
+ */
+export interface DefaultTransportConfig {
+	credentials?: HttpAuth | CredentialProvider;
+	network?: NetworkPolicy | false;
+	resolveRemote?: RemoteResolver;
+}
+
+/**
+ * Build the git-faithful built-in transport resolver from the {@link
+ * DefaultTransportConfig} plus the instance credential store. Used whenever a
+ * handle has no explicit `capabilities.transport`. Returns `null` for non-HTTP
+ * URLs it cannot resolve in-process, letting the caller fall back to filesystem
+ * repo discovery.
  */
 export function makeDefaultTransport(
-	caps: RepoCapabilities | undefined,
+	config: DefaultTransportConfig,
 	store: CredentialStore | undefined,
 ): TransportResolver {
 	return async (ctx) => {
@@ -84,21 +101,51 @@ export function makeDefaultTransport(
 		if (!url) return null;
 
 		if (isHttpUrl(url)) {
-			const policy = caps?.network;
+			const policy = config.network;
 			const networkErr = validateNetworkAccess(url, policy);
 			if (networkErr) throw new Error(networkErr);
-			const auth = await resolveAuthForUrl(caps?.credentials, ctx.env, store, url);
+			const auth = await resolveAuthForUrl(config.credentials, ctx.env, store, url);
 			const baseFetch: FetchFunction =
 				(policy && typeof policy === "object" ? policy.fetch : undefined) ?? globalThis.fetch;
 			return { kind: "http", fetch: auth ? withAuthHeader(auth, baseFetch) : baseFetch };
 		}
 
-		if (caps?.resolveRemote) {
-			const repo = await caps.resolveRemote(url);
+		if (config.resolveRemote) {
+			const repo = await config.resolveRemote(url);
 			if (repo) return { kind: "repo", repo };
 		}
 		return null;
 	};
+}
+
+/** A handle-less placeholder repo for resolver calls that only read `ctx.url`. */
+const NO_REPO = {
+	objectStore: undefined as unknown as ObjectStore,
+	refStore: undefined as unknown as RefStore,
+};
+
+/**
+ * Resolve a non-HTTP URL to an in-process {@link GitRepo} via a handle's
+ * `transport` resolver (the unified home of the old `resolveRemote`). Used by
+ * `clone` for its pre-init source check; returns `null` when the resolver is
+ * absent or yields no in-process repo, so the caller falls back to filesystem
+ * discovery.
+ */
+export async function resolveInProcessRemote(
+	capabilities: RepoCapabilities | undefined,
+	url: string,
+	env?: ReadonlyMap<string, string>,
+): Promise<GitRepo | null> {
+	const resolver = capabilities?.transport;
+	if (!resolver) return null;
+	const target = await resolver({
+		operation: "clone",
+		repo: NO_REPO,
+		config: makeConfigView({}, capabilities.config),
+		env,
+		url,
+	});
+	return target?.kind === "repo" ? target.repo : null;
 }
 
 interface OpenTransportOptions {
@@ -131,8 +178,7 @@ export async function openTransport(
 
 	if (remoteRepo) return new LocalTransport(handle, remoteRepo);
 
-	const resolver =
-		handle.capabilities?.transport ?? makeDefaultTransport(handle.capabilities, store);
+	const resolver = handle.capabilities?.transport ?? makeDefaultTransport({}, store);
 	const ctx = await buildCapabilityContext(handle, operation, { env, url: cleanUrl });
 	const target = await resolver(ctx);
 	if (target) {

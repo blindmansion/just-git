@@ -1,4 +1,4 @@
-import type { GitRepo, RepoCapabilities } from "../lib/types.ts";
+import type { GitRepo, RepoCapabilities, TransportResolver } from "../lib/types.ts";
 import type { NetworkPolicy, Rejection } from "../hooks.ts";
 import type { NodeHttpRequest, NodeHttpResponse } from "../node-http.ts";
 import type { CommitOptions, CommitResult } from "../repo/writing.ts";
@@ -513,6 +513,21 @@ export interface GitServer<A = Auth> {
 	 *   bypassing `auth.http`. Must match the server's `A` type.
 	 */
 	asNetwork(baseUrl?: string, auth?: A): NetworkPolicy;
+
+	/**
+	 * Build a {@link TransportResolver} that routes to this server in-process,
+	 * for attaching to a handle's `capabilities.transport` (the SDK/store path):
+	 *
+	 * ```ts
+	 * const local = withCapabilities(repo, { transport: server.asTransport() });
+	 * await cloneInto(local, "http://git/my-repo");
+	 * ```
+	 *
+	 * The `createGit` front door can keep using {@link asNetwork} via the
+	 * `network` option; this is the equivalent for code that composes the
+	 * transport seam directly. Parameters mirror {@link asNetwork}.
+	 */
+	asTransport(baseUrl?: string, auth?: A): TransportResolver;
 }
 
 // ── Hooks ───────────────────────────────────────────────────────────
