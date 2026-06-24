@@ -1,4 +1,4 @@
-import type { GitRepo } from "../lib/types.ts";
+import type { GitRepo, RepoCapabilities } from "../lib/types.ts";
 import type { NetworkPolicy, Rejection } from "../hooks.ts";
 import type { NodeHttpRequest, NodeHttpResponse } from "../node-http.ts";
 import type { CommitOptions, CommitResult } from "../repo/writing.ts";
@@ -158,6 +158,19 @@ export interface GitServerConfig<A = Auth> {
 	 * When `false` or omitted, unknown repos return 404.
 	 */
 	autoCreate?: boolean | { defaultBranch?: string };
+
+	/**
+	 * Default host behavior ({@link RepoCapabilities}) attached to every repo
+	 * handle the server hands out via `repo()` / `requireRepo()` / `createRepo()`.
+	 * Sugar for "`withCapabilities` every handle"; omit it and handles are inert.
+	 * Forwarded to `createRepoStore`. Per-handle layering is the `override`
+	 * argument to {@link GitServer.repo}.
+	 *
+	 * Note: this is distinct from {@link hooks} / {@link policy}, which govern
+	 * the transport (push/fetch) boundary. `capabilities` shapes the behavior of
+	 * the bare `GitRepo` handles used for in-process SDK operations.
+	 */
+	capabilities?: RepoCapabilities;
 
 	/** Server-side hooks. All optional. */
 	hooks?: ServerHooks<A>;
@@ -406,8 +419,14 @@ export interface GitServer<A = Auth> {
 	/** Create a new repo. Throws if the repo already exists. */
 	createRepo(id: string, options?: CreateRepoOptions): Promise<GitRepo>;
 
-	/** Get a repo by ID, or `null` if it doesn't exist. */
-	repo(id: string): Promise<GitRepo | null>;
+	/**
+	 * Get a repo by ID, or `null` if it doesn't exist.
+	 *
+	 * The handle carries the server's default {@link GitServerConfig.capabilities}.
+	 * Pass `override` to layer extra capabilities onto just this handle (e.g. a
+	 * per-request identity); it is merged over the server defaults.
+	 */
+	repo(id: string, override?: RepoCapabilities): Promise<GitRepo | null>;
 
 	/** Get a repo by ID, or throw if it doesn't exist. */
 	requireRepo(id: string): Promise<GitRepo>;

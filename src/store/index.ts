@@ -10,6 +10,7 @@ export { createRepoStore } from "./repo-store.ts";
 // Manager + backend contract types
 export type {
 	RepoStore,
+	RepoStoreOptions,
 	Storage,
 	StoredObject,
 	ObjectEncoding,
@@ -32,4 +33,4 @@ export { PgStorage, type PgPool } from "./pg-storage.ts";
 export { DurableObjectSqliteStorage, type DurableObjectStorageSql } from "./do-sqlite-storage.ts";
 
 // Re-exported lib types used in the Storage / RepoStore signatures
-export type { GitRepo, RawObject, Ref } from "../lib/types.ts";
+export type { GitRepo, RawObject, Ref, RepoCapabilities } from "../lib/types.ts";

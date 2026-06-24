@@ -102,7 +102,7 @@ export function createServer<A = Auth>(
 	config: GitServerConfig<A> = {} as GitServerConfig<A>,
 ): GitServer<A> {
 	const rawStorage = config.storage ?? new MemoryStorage();
-	const storage = createRepoStore(rawStorage);
+	const storage = createRepoStore(rawStorage, { capabilities: config.capabilities });
 	const resolve = config.resolve ?? ((path: string) => path);
 	const autoCreate = config.autoCreate;
 	const { basePath } = config;
@@ -528,7 +528,7 @@ export function createServer<A = Auth>(
 		},
 
 		createRepo: (id, options) => storage.createRepo(id, options) as Promise<GitRepo>,
-		repo: (id) => storage.repo(id) as Promise<GitRepo | null>,
+		repo: (id, override) => storage.repo(id, override) as Promise<GitRepo | null>,
 		async requireRepo(id) {
 			const repo = await storage.repo(id);
 			if (!repo) throw new Error(`Repository "${id}" not found`);

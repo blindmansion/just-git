@@ -1,3 +1,4 @@
+import { mergeCapabilities, withCapabilities } from "../lib/capabilities.ts";
 import { ObjectCache } from "../lib/object-cache.ts";
 import { envelope } from "../lib/object-store.ts";
 import type { PackObject } from "../lib/pack/packfile.ts";
@@ -17,6 +18,7 @@ import type {
 	Ref,
 	RefEntry,
 	RefStore,
+	RepoCapabilities,
 } from "../lib/types.ts";
 
 // ── Public types ────────────────────────────────────────────────────
@@ -116,8 +118,15 @@ export interface RepoStore {
 	/**
 	 * Get a `GitRepo` scoped to a specific repo, or `null` if the repo
 	 * has not been created via {@link createRepo}.
+	 *
+	 * The handle carries the store's default {@link RepoCapabilities} (passed
+	 * to {@link createRepoStore}). Pass a per-handle `override` to layer extra
+	 * capabilities onto just this handle — e.g. a per-request identity in a
+	 * multi-tenant server. The override is merged over the store defaults via
+	 * {@link mergeCapabilities} (hooks compose, config deep-merges, everything
+	 * else replaces).
 	 */
-	repo(repoId: string): GitRepo | null | Promise<GitRepo | null>;
+	repo(repoId: string, override?: RepoCapabilities): GitRepo | null | Promise<GitRepo | null>;
 
 	/** Delete the repo record plus all repo-local objects and refs. */
 	deleteRepo(repoId: string): void | Promise<void>;
@@ -369,6 +378,17 @@ export interface Storage {
 
 // ── createRepoStore ───────────────────────────────────────────────────
 
+/** Options for {@link createRepoStore}. */
+export interface RepoStoreOptions {
+	/**
+	 * Default host behavior attached to every handle the store hands out
+	 * (via {@link withCapabilities}). Sugar for "`withCapabilities` every repo
+	 * I return." Omit it and handles are inert. Per-handle layering is the
+	 * `override` argument to {@link RepoStore.repo}.
+	 */
+	capabilities?: RepoCapabilities;
+}
+
 /**
  * Build a {@link RepoStore} from a {@link Storage} backend.
  *
@@ -379,14 +399,23 @@ export interface Storage {
  * Defaults to {@link MemoryStorage} when no driver is supplied, mirroring
  * `createServer`. In-memory data is lost when the process exits — pass an
  * explicit backend for persistence.
+ *
+ * Pass `options.capabilities` to attach default host behavior (hooks,
+ * signing, identity, config, …) to every handle the store returns.
  */
-export function createRepoStore(driver: Storage = new MemoryStorage()): RepoStore {
-	async function buildRepo(repoId: string): Promise<GitRepo> {
+export function createRepoStore(
+	driver: Storage = new MemoryStorage(),
+	options?: RepoStoreOptions,
+): RepoStore {
+	const defaultCapabilities = options?.capabilities;
+
+	async function buildRepo(repoId: string, override?: RepoCapabilities): Promise<GitRepo> {
 		const parentId = driver.getForkParent ? await driver.getForkParent(repoId) : null;
-		return {
+		const repo: GitRepo = {
 			objectStore: new AdaptedObjectStore(driver, repoId, parentId),
 			refStore: new AdaptedRefStore(driver, repoId),
 		};
+		return withCapabilities(repo, mergeCapabilities(defaultCapabilities, override));
 	}
 
 	async function requireRepo(repoId: string): Promise<GitRepo> {
@@ -429,10 +458,10 @@ export function createRepoStore(driver: Storage = new MemoryStorage()): RepoStor
 			return buildRepo(repoId);
 		},
 
-		async repo(repoId: string): Promise<GitRepo | null> {
+		async repo(repoId: string, override?: RepoCapabilities): Promise<GitRepo | null> {
 			const exists = await driver.hasRepo(repoId);
 			if (!exists) return null;
-			return buildRepo(repoId);
+			return buildRepo(repoId, override);
 		},
 
 		async deleteRepo(repoId: string): Promise<void> {

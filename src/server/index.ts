@@ -64,7 +64,7 @@ export type {
 } from "./types.ts";
 
 // Re-exported lib types used in Storage and hook signatures
-export type { GitRepo, RawObject, Ref } from "../lib/types.ts";
+export type { GitRepo, RawObject, Ref, RepoCapabilities } from "../lib/types.ts";
 
 // Storage backends — re-exported from just-git/store for back-compat. The
 // server is a consumer of this layer, not its owner; this surface is the
