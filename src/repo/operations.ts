@@ -930,7 +930,7 @@ export async function rebase(repo: GitRepo, options: RebaseOptions): Promise<Reb
 		rebased: [],
 		dropped: [],
 		skipped: selection.skipped,
-		committer: toIdentity(options.committer),
+		committer: toIdentity(options.committer, repo.capabilities?.now),
 		branch: options.branch,
 		expectedOldHash: options.expectedOldHash,
 		labels: options.labels,

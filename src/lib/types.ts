@@ -270,10 +270,18 @@ export interface RepoCapabilities {
 	transport?: TransportResolver;
 	/** Receives server progress messages (sideband band-2). */
 	onProgress?: ProgressCallback;
+	/**
+	 * Injected clock. Supplies the "current time" for author/committer
+	 * timestamps (when no `GIT_AUTHOR_DATE`/`GIT_COMMITTER_DATE` is given),
+	 * reflog entries, and the gc reflog-expiry cutoff. Absent ⇒ the system
+	 * clock (`new Date()`). Set it once on the handle for deterministic time
+	 * in tests or a host-controlled clock in multi-tenant servers — the
+	 * non-env counterpart to the `GIT_*_DATE` vars. Returns a `Date`; the
+	 * timezone of recorded timestamps is unchanged (still derived as today).
+	 */
+	now?: () => Date;
 
 	// ── Future seams (reserved; not in the first cut) ──────────────────
-	/** Injected clock for author/committer timestamps and reflog. */
-	// now?: () => Date;
 	/** Clean/smudge content filters keyed by attribute. */
 	// filters?: FilterConfig;
 	/** Retry / credential-refresh policy for failed network requests. */

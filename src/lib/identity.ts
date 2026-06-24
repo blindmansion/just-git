@@ -1,3 +1,4 @@
+import { clockNow } from "./capabilities.ts";
 import { getConfigValue } from "./config.ts";
 import type { GitContext, Identity } from "./types.ts";
 
@@ -50,7 +51,7 @@ async function resolveIdentity(
 	const keys = ROLE_ENV[role];
 	const override = ctx.capabilities?.identity;
 
-	const { timestamp, timezone } = parseDateEnv(env.get(keys.date));
+	const { timestamp, timezone } = parseDateEnv(env.get(keys.date), ctx.capabilities?.now);
 
 	if (override?.locked) {
 		return {
@@ -103,7 +104,7 @@ export async function getReflogIdentity(
 		return {
 			name: env.get("GIT_COMMITTER_NAME") ?? "",
 			email: env.get("GIT_COMMITTER_EMAIL") ?? "",
-			timestamp: Math.floor(Date.now() / 1000),
+			timestamp: Math.floor(clockNow(ctx.capabilities).getTime() / 1000),
 			tz: "+0000",
 		};
 	}
@@ -122,10 +123,17 @@ export async function getReflogIdentity(
  *   - ISO 8601: "2024-06-15T14:30:00+0200" or "+02:00" or "Z"
  *   - Anything Date.parse understands (RFC 2822, etc.)
  *
- * Falls back to current time with +0000 when undefined or unparseable.
+ * Falls back to the injected clock (or system time) with +0000 when
+ * undefined or unparseable.
  */
-function parseDateEnv(dateStr: string | undefined): { timestamp: number; timezone: string } {
-	const fallback = { timestamp: Math.floor(Date.now() / 1000), timezone: "+0000" };
+function parseDateEnv(
+	dateStr: string | undefined,
+	now?: () => Date,
+): { timestamp: number; timezone: string } {
+	const fallback = {
+		timestamp: Math.floor((now?.() ?? new Date()).getTime() / 1000),
+		timezone: "+0000",
+	};
 	if (!dateStr) return fallback;
 
 	const s = dateStr.trim();

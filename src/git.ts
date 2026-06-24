@@ -195,6 +195,13 @@ export interface GitOptions {
 	 */
 	signing?: SigningCapability;
 	/**
+	 * Injected clock for author/committer/reflog timestamps. When omitted,
+	 * the system clock is used. Supplying it makes recorded times
+	 * deterministic without setting `GIT_AUTHOR_DATE`/`GIT_COMMITTER_DATE`
+	 * on every call — useful for tests and host-controlled clocks.
+	 */
+	now?: () => Date;
+	/**
 	 * Store for credentials stripped from a URL by `git remote add` / `git clone`
 	 * so a later `fetch` / `push` on the same instance can reuse them. Defaults
 	 * to an in-memory, instance-scoped store ({@link createMemoryCredentialStore}).
@@ -345,6 +352,7 @@ export class Git {
 				credentialStore,
 			),
 			onProgress: options?.onProgress,
+			now: options?.now,
 		};
 
 		const locators: RepoLocators = {

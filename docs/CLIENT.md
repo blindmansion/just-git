@@ -19,6 +19,7 @@ Operator API for configuring git command execution in sandboxed environments. Se
 | `onProgress`    | `(message: string) => void` callback for server progress messages during fetch/clone/push over HTTP. Messages are raw sideband text from the remote.                                                                                               |
 | `resolveRemote` | `(url) => GitRepo \| null` callback for cross-VFS remote resolution. See [Multi-agent collaboration](#multi-agent-collaboration).                                                                                                                  |
 | `mergeDriver`   | Custom content merge callback. Called during `merge`, `cherry-pick`, `revert`, `rebase`, and `pull` when both sides modify the same file. See [Merge driver](#merge-driver).                                                                       |
+| `now`           | `() => Date` injected clock for author/committer/reflog timestamps when no `GIT_AUTHOR_DATE` / `GIT_COMMITTER_DATE` is set. Defaults to the system clock. Useful for deterministic time in tests or a host-controlled clock.                        |
 
 ```ts
 const git = createGit({

@@ -76,3 +76,13 @@ export function withCapabilities<T extends GitRepo>(repo: T, caps?: RepoCapabili
 	if (!caps) return repo;
 	return { ...repo, capabilities: mergeCapabilities(repo.capabilities, caps) };
 }
+
+/**
+ * Read the current time from the injected {@link RepoCapabilities.now} clock,
+ * falling back to the system clock. The single seam every "what time is it now"
+ * read routes through, so a host can make author/committer/reflog timestamps
+ * deterministic by setting `now` once on the handle.
+ */
+export function clockNow(caps?: RepoCapabilities): Date {
+	return caps?.now?.() ?? new Date();
+}

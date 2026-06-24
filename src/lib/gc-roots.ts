@@ -1,3 +1,4 @@
+import { clockNow } from "./capabilities.ts";
 import { readIndex } from "./index.ts";
 import { objectExists } from "./object-db.ts";
 import { join } from "./path.ts";
@@ -25,7 +26,7 @@ export async function collectAllRoots(gitCtx: GitContext): Promise<ObjectId[]> {
  * Matches real git's ordering (expire before reachability walk).
  */
 export async function collectRootsAndExpireReflogs(gitCtx: GitContext): Promise<ObjectId[]> {
-	const cutoff = Math.floor(Date.now() / 1000) - REFLOG_EXPIRE_SECONDS;
+	const cutoff = Math.floor(clockNow(gitCtx.capabilities).getTime() / 1000) - REFLOG_EXPIRE_SECONDS;
 	return collectRoots(gitCtx, cutoff);
 }
 

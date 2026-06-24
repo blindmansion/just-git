@@ -35,11 +35,12 @@ function formatTimezone(offsetMinutes: number): string {
 /**
  * Resolve a {@link CommitIdentity} to a concrete {@link Identity}. A full
  * `Identity` (with `timestamp`/`timezone`) passes through; the simplified
- * `{ name, email, date? }` form is converted, defaulting `date` to now.
+ * `{ name, email, date? }` form is converted, defaulting `date` to the
+ * injected clock (`now`) or the system time when neither is supplied.
  */
-export function toIdentity(input: CommitIdentity): Identity {
+export function toIdentity(input: CommitIdentity, now?: () => Date): Identity {
 	if ("timestamp" in input) return input as Identity;
-	const date = input.date ?? new Date();
+	const date = input.date ?? (now ? now() : new Date());
 	return {
 		name: input.name,
 		email: input.email,
@@ -84,8 +85,9 @@ export interface CreateCommitOptions {
  * Without `branch`, no refs are updated.
  */
 export async function createCommit(repo: GitRepo, options: CreateCommitOptions): Promise<string> {
-	const author = toIdentity(options.author);
-	const committer = options.committer ? toIdentity(options.committer) : author;
+	const now = repo.capabilities?.now;
+	const author = toIdentity(options.author, now);
+	const committer = options.committer ? toIdentity(options.committer, now) : author;
 	const commit: Commit = {
 		type: "commit",
 		tree: options.tree,
@@ -143,7 +145,7 @@ export async function createAnnotatedTag(
 	repo: GitRepo,
 	options: CreateAnnotatedTagOptions,
 ): Promise<string> {
-	const tagger = toIdentity(options.tagger);
+	const tagger = toIdentity(options.tagger, repo.capabilities?.now);
 	const tag: Tag = {
 		type: "tag",
 		object: options.target,
@@ -247,8 +249,9 @@ export async function buildCommit(
 		treeHash = await applyUpdates(repo, null, groupBySegment(updates));
 	}
 
-	const author = toIdentity(options.author);
-	const committer = options.committer ? toIdentity(options.committer) : author;
+	const now = repo.capabilities?.now;
+	const author = toIdentity(options.author, now);
+	const committer = options.committer ? toIdentity(options.committer, now) : author;
 	const parents = parentHash ? [parentHash] : [];
 
 	const commit: Commit = {
