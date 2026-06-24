@@ -3,6 +3,8 @@ import type { FileSystem } from "./fs.ts";
 import {
 	type ConfigOverrides,
 	type CredentialProvider,
+	type CredentialStore,
+	createMemoryCredentialStore,
 	type ExecResult,
 	type GitHooks,
 	type IdentityOverride,
@@ -14,7 +16,6 @@ import { withCapabilities } from "./lib/capabilities.ts";
 import type { MergeDriver } from "./lib/merge-ort.ts";
 import { findRepo as findRepoOnFs } from "./lib/repo.ts";
 import type { SigningCapability } from "./lib/signing.ts";
-import type { CredentialCache } from "./lib/transport/remote.ts";
 import type {
 	GitContext,
 	ObjectStore,
@@ -192,6 +193,15 @@ export interface GitOptions {
 	 * explicit rather than implicitly signing off ambient state.
 	 */
 	signing?: SigningCapability;
+	/**
+	 * Store for credentials stripped from a URL by `git remote add` / `git clone`
+	 * so a later `fetch` / `push` on the same instance can reuse them. Defaults
+	 * to an in-memory, instance-scoped store ({@link createMemoryCredentialStore}).
+	 * Supply a custom {@link CredentialStore} to back it with an OS keychain,
+	 * encrypted-at-rest storage, etc. For credentials you already hold, prefer
+	 * the {@link credentials} provider — it never touches the CLI URL path.
+	 */
+	credentialStore?: CredentialStore;
 }
 
 /**
@@ -220,13 +230,13 @@ export interface GitExtensions {
 	capabilities?: RepoCapabilities;
 	locators?: RepoLocators;
 	/**
-	 * Instance-scoped credential cache (origin → auth) for the CLI front door.
+	 * Instance-scoped credential store (origin → auth) for the CLI front door.
 	 * Runtime state, not a host capability: credentials stripped from a URL by
 	 * `remote add` / `clone` are stashed here so a later `fetch` / `push` on the
 	 * same {@link Git} instance can reuse them. Threaded explicitly into the
 	 * transport boundary; never placed on the `GitRepo` / `GitContext` handle.
 	 */
-	credentialCache?: CredentialCache;
+	credentialStore?: CredentialStore;
 }
 
 /** Simplified context for {@link Git.exec}. */
@@ -334,10 +344,11 @@ export class Git {
 		const extensions: GitExtensions = {
 			capabilities,
 			locators,
-			// Instance-scoped credential cache: creds stripped from a URL by
+			// Instance-scoped credential store: creds stripped from a URL by
 			// `remote add` / `clone` survive to a later `fetch` / `push`. Runtime
 			// state, not a capability — read by the default transport resolver.
-			credentialCache: new Map(),
+			// Host-overridable via GitOptions.credentialStore.
+			credentialStore: options?.credentialStore ?? createMemoryCredentialStore(),
 		};
 		this.ext = extensions;
 		this.inner = createGitCommand(extensions).toCommand();

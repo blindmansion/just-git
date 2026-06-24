@@ -1,5 +1,10 @@
 import type { FileSystem } from "../../fs.ts";
-import type { CredentialProvider, FetchFunction } from "../../hooks.ts";
+import {
+	type CredentialProvider,
+	type CredentialStore,
+	createMemoryCredentialStore,
+	type FetchFunction,
+} from "../../hooks.ts";
 import { buildCapabilityContext } from "../config.ts";
 import { findRepo } from "../repo.ts";
 import type {
@@ -11,7 +16,6 @@ import type {
 } from "../types.ts";
 import {
 	authHeaders,
-	type CredentialCache,
 	getRemoteConfig,
 	isHttpUrl,
 	isSshUrl,
@@ -35,12 +39,12 @@ function withAuthHeader(auth: HttpAuth, next: FetchFunction): FetchFunction {
 
 /**
  * Resolve HTTP auth for a URL, in git's precedence order:
- * credential provider → `GIT_HTTP_*` env vars → instance credential cache.
+ * credential provider → `GIT_HTTP_*` env vars → instance credential store.
  */
 async function resolveAuthForUrl(
 	credentials: HttpAuth | CredentialProvider | undefined,
 	env: ReadonlyMap<string, string> | undefined,
-	cache: CredentialCache | undefined,
+	store: CredentialStore | undefined,
 	url: string,
 ): Promise<HttpAuth | undefined> {
 	if (credentials) {
@@ -52,12 +56,14 @@ async function resolveAuthForUrl(
 		const envAuth = resolveAuth(env);
 		if (envAuth) return envAuth;
 	}
-	if (cache) {
+	if (store) {
+		let origin: string;
 		try {
-			return cache.get(new URL(url).origin);
+			origin = new URL(url).origin;
 		} catch {
 			return undefined;
 		}
+		return (await store.get(origin)) ?? undefined;
 	}
 	return undefined;
 }
@@ -65,13 +71,13 @@ async function resolveAuthForUrl(
 /**
  * The git-faithful built-in transport resolver, synthesized from a handle's
  * interim network capabilities (`network` / `credentials` / `resolveRemote`)
- * plus the instance credential cache. Used whenever a handle has no explicit
+ * plus the instance credential store. Used whenever a handle has no explicit
  * `capabilities.transport`. Returns `null` for non-HTTP URLs it cannot resolve
  * in-process, letting the caller fall back to filesystem repo discovery.
  */
 export function makeDefaultTransport(
 	caps: RepoCapabilities | undefined,
-	cache: CredentialCache | undefined,
+	store: CredentialStore | undefined,
 ): TransportResolver {
 	return async (ctx) => {
 		const url = ctx.url;
@@ -81,7 +87,7 @@ export function makeDefaultTransport(
 			const policy = caps?.network;
 			const networkErr = validateNetworkAccess(url, policy);
 			if (networkErr) throw new Error(networkErr);
-			const auth = await resolveAuthForUrl(caps?.credentials, ctx.env, cache, url);
+			const auth = await resolveAuthForUrl(caps?.credentials, ctx.env, store, url);
 			const baseFetch: FetchFunction =
 				(policy && typeof policy === "object" ? policy.fetch : undefined) ?? globalThis.fetch;
 			return { kind: "http", fetch: auth ? withAuthHeader(auth, baseFetch) : baseFetch };
@@ -99,8 +105,8 @@ interface OpenTransportOptions {
 	env?: ReadonlyMap<string, string>;
 	/** Pre-resolved in-process remote (e.g. a local clone source). */
 	remoteRepo?: GitRepo;
-	/** Instance credential cache; a fresh per-call map is used when omitted. */
-	credentialCache?: CredentialCache;
+	/** Instance credential store; a fresh per-call store is used when omitted. */
+	credentialStore?: CredentialStore;
 	/** Filesystem for local-path repo discovery (CLI only). */
 	fs?: FileSystem;
 }
@@ -119,14 +125,14 @@ export async function openTransport(
 	options?: OpenTransportOptions,
 ): Promise<Transport | null> {
 	const { env, remoteRepo, fs } = options ?? {};
-	const cache = options?.credentialCache ?? new Map<string, HttpAuth>();
-	stripAndCacheCredentials(rawUrl, cache);
+	const store = options?.credentialStore ?? createMemoryCredentialStore();
+	await stripAndCacheCredentials(rawUrl, store);
 	const cleanUrl = parseRemoteUrl(rawUrl).url;
 
 	if (remoteRepo) return new LocalTransport(handle, remoteRepo);
 
 	const resolver =
-		handle.capabilities?.transport ?? makeDefaultTransport(handle.capabilities, cache);
+		handle.capabilities?.transport ?? makeDefaultTransport(handle.capabilities, store);
 	const ctx = await buildCapabilityContext(handle, operation, { env, url: cleanUrl });
 	const target = await resolver(ctx);
 	if (target) {
@@ -174,7 +180,7 @@ export async function resolveRemoteTransport(
 	remoteName: string,
 	operation: GitOperation,
 	env?: Map<string, string>,
-	credentialCache?: CredentialCache,
+	credentialStore?: CredentialStore,
 ): Promise<{ transport: Transport; config: RemoteConfig } | null> {
 	const remote = await getRemoteConfig(ctx, remoteName);
 	if (!remote) return null;
@@ -182,7 +188,7 @@ export async function resolveRemoteTransport(
 	const cleanUrl = parseRemoteUrl(remote.url).url;
 	const transport = await openTransport(ctx, operation, remote.url, {
 		env,
-		credentialCache,
+		credentialStore,
 		fs: ctx.fs,
 	});
 	if (!transport) return null;

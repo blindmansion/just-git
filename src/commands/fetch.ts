@@ -281,7 +281,7 @@ async function fetchOneRemote(
 		"fetch",
 		env,
 		undefined,
-		ext?.credentialCache,
+		ext?.credentialStore,
 	);
 	if (isCommandError(resolved)) return resolved;
 	const { transport, config } = resolved;

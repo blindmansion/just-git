@@ -157,7 +157,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					stderr: `fatal: ${msg}\n`,
 					exitCode: 1,
 				}),
-				ext?.credentialCache,
+				ext?.credentialStore,
 			);
 			if (isCommandError(resolved)) return resolved;
 			const { transport, config } = resolved;

@@ -7,6 +7,7 @@ export type {
 	CommitMsgEvent,
 	ConfigOverrides,
 	CredentialProvider,
+	CredentialStore,
 	ExecResult,
 	GitHooks,
 	IdentityOverride,
@@ -41,7 +42,7 @@ export type {
 	RefUpdateEvent,
 	Rejection,
 } from "./hooks.ts";
-export { composeGitHooks, isRejection } from "./hooks.ts";
+export { composeGitHooks, createMemoryCredentialStore, isRejection } from "./hooks.ts";
 export { MemoryFileSystem } from "./memory-fs.ts";
 export type {
 	CapabilityContext,

@@ -1,9 +1,7 @@
 import { readConfig } from "../config.ts";
 import type { GitContext } from "../types.ts";
-import type { NetworkPolicy } from "../../hooks.ts";
+import type { CredentialStore, NetworkPolicy } from "../../hooks.ts";
 import type { HttpAuth } from "./transport.ts";
-
-export type CredentialCache = Map<string, HttpAuth>;
 
 /** Render an {@link HttpAuth} as the HTTP `Authorization` header(s). */
 export function authHeaders(auth?: HttpAuth): Record<string, string> {
@@ -39,17 +37,17 @@ export function parseRemoteUrl(raw: string): ParsedRemoteUrl {
 }
 
 /**
- * Strip embedded credentials from a URL and cache them by origin.
- * Returns the sanitized URL.
+ * Strip embedded credentials from a URL and remember them by origin in the
+ * given {@link CredentialStore}. Returns the sanitized URL.
  */
-export function stripAndCacheCredentials(
+export async function stripAndCacheCredentials(
 	raw: string,
-	cache: CredentialCache | undefined,
-): ParsedRemoteUrl {
+	store: CredentialStore | undefined,
+): Promise<ParsedRemoteUrl> {
 	const parsed = parseRemoteUrl(raw);
-	if (parsed.embeddedAuth && cache) {
+	if (parsed.embeddedAuth && store) {
 		try {
-			cache.set(new URL(parsed.url).origin, parsed.embeddedAuth);
+			await store.remember(new URL(parsed.url).origin, parsed.embeddedAuth);
 		} catch {
 			// malformed URL — skip caching
 		}

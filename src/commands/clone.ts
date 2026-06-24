@@ -60,7 +60,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 					return fatal(`repository '${repository}' does not exist`);
 				}
 			} else {
-				sourcePath = stripAndCacheCredentials(repository, ext?.credentialCache).url;
+				sourcePath = (await stripAndCacheCredentials(repository, ext?.credentialStore)).url;
 			}
 
 			// Determine target directory name
@@ -124,7 +124,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			try {
 				transport = await createTransportForUrl(newCtx, "clone", sourcePath, {
 					env: ctx.env,
-					credentialCache: ext?.credentialCache,
+					credentialStore: ext?.credentialStore,
 					remoteRepo: sourceRepo ?? undefined,
 				});
 			} catch (e) {

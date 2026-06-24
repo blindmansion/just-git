@@ -27,6 +27,40 @@ export type ProgressCallback = (message: string) => void;
 export type CredentialProvider = (url: string) => HttpAuth | null | Promise<HttpAuth | null>;
 
 /**
+ * Pluggable store for credentials *discovered at runtime* — specifically the
+ * secrets that `git remote add` / `git clone` strip out of a URL before the
+ * sanitized URL is written to `.git/config`. The producing command calls
+ * {@link CredentialStore.remember}; a later `fetch` / `push` on the same
+ * {@link GitOptions.credentialStore | instance} calls {@link CredentialStore.get}.
+ *
+ * Keys are URL origins (e.g. `https://github.com`). Supply a custom
+ * implementation on {@link GitOptions.credentialStore} to back this with, say,
+ * an OS keychain or encrypted-at-rest storage; the default is in-memory and
+ * instance-scoped ({@link createMemoryCredentialStore}).
+ *
+ * Note: the explicit {@link CredentialProvider} capability always takes
+ * precedence over the store and never touches the CLI URL path at all, so it
+ * remains the safest place to supply credentials.
+ */
+export interface CredentialStore {
+	/** Look up remembered auth for a URL origin. */
+	get(origin: string): HttpAuth | undefined | Promise<HttpAuth | undefined>;
+	/** Remember auth for a URL origin (stripped from a remote URL). */
+	remember(origin: string, auth: HttpAuth): void | Promise<void>;
+}
+
+/** Default in-memory, instance-scoped {@link CredentialStore} backed by a `Map`. */
+export function createMemoryCredentialStore(): CredentialStore {
+	const map = new Map<string, HttpAuth>();
+	return {
+		get: (origin) => map.get(origin),
+		remember: (origin, auth) => {
+			map.set(origin, auth);
+		},
+	};
+}
+
+/**
  * Override the author/committer identity for commits.
  *
  * When `locked` is true, this identity always wins — even if the agent

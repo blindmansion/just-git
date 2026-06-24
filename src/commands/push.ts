@@ -56,7 +56,7 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 					remoteName,
 					"push",
 					ctx.env,
-					ext?.credentialCache,
+					ext?.credentialStore,
 				);
 			} catch (e) {
 				const msg = e instanceof Error ? e.message : "";

@@ -87,7 +87,7 @@ export function registerRemoteCommand(parent: Command, ext?: GitExtensions) {
 				return err(`error: remote ${args.name} already exists.\n`, 3);
 			}
 
-			const cleanUrl = stripAndCacheCredentials(args.url, ext?.credentialCache).url;
+			const cleanUrl = (await stripAndCacheCredentials(args.url, ext?.credentialStore)).url;
 
 			config[sectionKey] = {
 				url: cleanUrl,
@@ -169,7 +169,7 @@ export function registerRemoteCommand(parent: Command, ext?: GitExtensions) {
 				return err(`error: No such remote '${args.name}'\n`, 2);
 			}
 
-			const cleanUrl = stripAndCacheCredentials(args.url, ext?.credentialCache).url;
+			const cleanUrl = (await stripAndCacheCredentials(args.url, ext?.credentialStore)).url;
 
 			const section = config[sectionKey];
 			if (section) section.url = cleanUrl;

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { parseRemoteUrl, type CredentialCache } from "../../src/lib/transport/remote.ts";
+import { createMemoryCredentialStore } from "../../src/hooks.ts";
+import { parseRemoteUrl, stripAndCacheCredentials } from "../../src/lib/transport/remote.ts";
 import type { HttpAuth } from "../../src/lib/transport/transport.ts";
 
 describe("parseRemoteUrl", () => {
@@ -92,47 +93,70 @@ describe("parseRemoteUrl", () => {
 	});
 });
 
-describe("CredentialCache", () => {
-	test("stores and retrieves by origin", () => {
-		const cache: CredentialCache = new Map();
+describe("createMemoryCredentialStore", () => {
+	test("remembers and retrieves by origin", async () => {
+		const store = createMemoryCredentialStore();
 		const auth: HttpAuth = { type: "bearer", token: "abc123" };
-		cache.set("https://github.com", auth);
-		expect(cache.get("https://github.com")).toBe(auth);
+		await store.remember("https://github.com", auth);
+		expect(await store.get("https://github.com")).toBe(auth);
 	});
 
-	test("different paths on same origin share credentials", () => {
-		const cache: CredentialCache = new Map();
+	test("different paths on same origin share credentials", async () => {
+		const store = createMemoryCredentialStore();
 		const auth: HttpAuth = { type: "basic", username: "u", password: "p" };
 		const origin = new URL("https://github.com/org/repo.git").origin;
-		cache.set(origin, auth);
+		await store.remember(origin, auth);
 
 		const lookupOrigin = new URL("https://github.com/other/repo2.git").origin;
-		expect(cache.get(lookupOrigin)).toBe(auth);
+		expect(await store.get(lookupOrigin)).toBe(auth);
 	});
 
-	test("different origins are independent", () => {
-		const cache: CredentialCache = new Map();
+	test("different origins are independent", async () => {
+		const store = createMemoryCredentialStore();
 		const auth1: HttpAuth = { type: "bearer", token: "token1" };
 		const auth2: HttpAuth = { type: "bearer", token: "token2" };
-		cache.set("https://github.com", auth1);
-		cache.set("https://gitlab.com", auth2);
+		await store.remember("https://github.com", auth1);
+		await store.remember("https://gitlab.com", auth2);
 
-		expect(cache.get("https://github.com")).toBe(auth1);
-		expect(cache.get("https://gitlab.com")).toBe(auth2);
+		expect(await store.get("https://github.com")).toBe(auth1);
+		expect(await store.get("https://gitlab.com")).toBe(auth2);
 	});
 
-	test("different ports are independent origins", () => {
-		const cache: CredentialCache = new Map();
+	test("different ports are independent origins", async () => {
+		const store = createMemoryCredentialStore();
 		const auth1: HttpAuth = { type: "bearer", token: "t1" };
 		const auth2: HttpAuth = { type: "bearer", token: "t2" };
-		cache.set(new URL("https://example.com:443/repo").origin, auth1);
-		cache.set(new URL("https://example.com:8443/repo").origin, auth2);
+		await store.remember(new URL("https://example.com:443/repo").origin, auth1);
+		await store.remember(new URL("https://example.com:8443/repo").origin, auth2);
 
-		expect(cache.get(new URL("https://example.com:8443/repo").origin)).toBe(auth2);
+		expect(await store.get(new URL("https://example.com:8443/repo").origin)).toBe(auth2);
 	});
 
-	test("returns undefined for unknown origin", () => {
-		const cache: CredentialCache = new Map();
-		expect(cache.get("https://unknown.com")).toBeUndefined();
+	test("returns undefined for unknown origin", async () => {
+		const store = createMemoryCredentialStore();
+		expect(await store.get("https://unknown.com")).toBeUndefined();
+	});
+});
+
+describe("stripAndCacheCredentials", () => {
+	test("strips embedded creds and remembers them in the store", async () => {
+		const store = createMemoryCredentialStore();
+		const parsed = await stripAndCacheCredentials(
+			"https://user:token123@github.com/org/repo.git",
+			store,
+		);
+		expect(parsed.url).toBe("https://github.com/org/repo.git");
+		expect(await store.get("https://github.com")).toEqual({
+			type: "basic",
+			username: "user",
+			password: "token123",
+		});
+	});
+
+	test("leaves credential-free URLs untouched and stores nothing", async () => {
+		const store = createMemoryCredentialStore();
+		const parsed = await stripAndCacheCredentials("https://github.com/org/repo.git", store);
+		expect(parsed.url).toBe("https://github.com/org/repo.git");
+		expect(await store.get("https://github.com")).toBeUndefined();
 	});
 });
