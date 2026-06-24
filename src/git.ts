@@ -13,6 +13,7 @@ import {
 	isRejection,
 } from "./hooks.ts";
 import { withCapabilities } from "./lib/capabilities.ts";
+import type { FilterConfig } from "./lib/filters.ts";
 import type { MergeDriver } from "./lib/merge-ort.ts";
 import { findRepo as findRepoOnFs } from "./lib/repo.ts";
 import type { SigningCapability } from "./lib/signing.ts";
@@ -171,6 +172,15 @@ export interface GitOptions {
 	 * or `null` to fall back to the default diff3 algorithm.
 	 */
 	mergeDriver?: MergeDriver;
+	/**
+	 * Clean/smudge content filters, keyed by `.gitattributes` driver name.
+	 * The host registers the trusted `name → driver` half; `.gitattributes`
+	 * in the repo supplies the untrusted `path → name` half. `clean` runs on
+	 * check-in (`git add`, `commit -a`, `status`), `smudge` on check-out
+	 * (`git checkout`, merge, ...). A `filter=<name>` attribute with no
+	 * registered driver is passthrough, matching git.
+	 */
+	filters?: FilterConfig;
 	/**
 	 * Pluggable commit/tag signing and verification. Both halves are
 	 * independent and optional:
@@ -339,6 +349,7 @@ export class Git {
 			hooks: options?.hooks,
 			signing: options?.signing,
 			mergeDriver: options?.mergeDriver,
+			filters: options?.filters,
 			identity: options?.identity,
 			config: configOverrides,
 			// The ergonomic network/credentials/resolveRemote options are sugar:

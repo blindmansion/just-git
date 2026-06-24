@@ -34,6 +34,8 @@ function mergeConfigOverrides(
  *   chain base-first and short-circuit on the first rejection).
  * - `config` — deep-merged per key (override wins per key; base-only keys
  *   survive).
+ * - `filters` — merged per driver name (override wins per name; base-only
+ *   drivers survive), so wrapping adds a driver without dropping the base's.
  *
  * Returns `undefined` only when both inputs are absent, so callers can
  * round-trip a "no capabilities" handle without materializing an empty bag.
@@ -58,6 +60,9 @@ export function mergeCapabilities(
 	}
 	if (base.config && override.config) {
 		merged.config = mergeConfigOverrides(base.config, override.config);
+	}
+	if (base.filters && override.filters) {
+		merged.filters = { ...base.filters, ...override.filters };
 	}
 
 	return merged;

@@ -6,6 +6,7 @@ import type {
 	IdentityOverride,
 	ProgressCallback,
 } from "../hooks.ts";
+import type { FilterConfig } from "./filters.ts";
 import type { MergeDriver } from "./merge-ort.ts";
 import type { PackObject } from "./pack/packfile.ts";
 import type { SigningCapability } from "./signing.ts";
@@ -293,11 +294,13 @@ export interface RepoCapabilities {
 	 */
 	now?: () => Date;
 
-	// ── Future seams (reserved; not in the first cut) ──────────────────
-	/** Clean/smudge content filters keyed by attribute. */
-	// filters?: FilterConfig;
-	// (Retry / credential-refresh is not a separate seam: compose it into
-	// `transport` by wrapping the fetch — see `withRetry` / `withAuth`.)
+	/**
+	 * Clean/smudge content filters, keyed by `.gitattributes` driver name. The
+	 * host registers the trusted `name → driver` half; the in-tree
+	 * `.gitattributes` supplies the untrusted `path → name` half. A name with
+	 * no registered driver is passthrough, matching git.
+	 */
+	filters?: FilterConfig;
 }
 
 /**
@@ -357,7 +360,11 @@ export type GitOperation =
 	| "push"
 	| "pull"
 	| "ls-remote"
-	| "tag";
+	| "tag"
+	// Worktree-conversion operations that drive content filters.
+	| "checkout"
+	| "add"
+	| "status";
 
 /**
  * Read-only view over resolved config: parsed `.git/config` merged with the

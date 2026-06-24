@@ -12,6 +12,11 @@ import type { GitContext } from "./types.ts";
  * Checks for both normal repos (`.git/` subdirectory) and bare repos
  * (`HEAD` + `objects/` + `refs/` directly in the directory).
  * Returns a GitContext if found, null otherwise.
+ *
+ * The returned handle is **inert**: it carries no `capabilities`, so
+ * host-provided behaviors (filters, signing, merge driver, hooks, ...) are
+ * silently skipped — an absent capability is a no-op, never an error. Attach
+ * them with `withCapabilities` (the `Git.findRepo()` method does this for you).
  */
 export async function findRepo(fs: FileSystem, startPath: string): Promise<GitContext | null> {
 	let current = startPath;
