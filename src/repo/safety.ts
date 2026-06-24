@@ -1,3 +1,4 @@
+import { withCapabilities } from "../lib/capabilities.ts";
 import { envelope } from "../lib/object-store.ts";
 import { sha1 } from "../lib/sha1.ts";
 import { normalizeRef } from "../lib/types.ts";
@@ -81,11 +82,14 @@ class ReadonlyRefStore implements RefStore {
  * ```
  */
 export function readonlyRepo(repo: GitRepo): GitRepo {
-	return {
-		objectStore: new ReadonlyObjectStore(repo.objectStore),
-		refStore: new ReadonlyRefStore(repo.refStore),
-		hooks: repo.hooks,
-	};
+	return withCapabilities(
+		{
+			objectStore: new ReadonlyObjectStore(repo.objectStore),
+			refStore: new ReadonlyRefStore(repo.refStore),
+			hooks: repo.hooks,
+		},
+		repo.capabilities,
+	);
 }
 
 // ── Overlay repo wrapper ───────────────────────────────────────────
@@ -278,9 +282,12 @@ class OverlayRefStore implements RefStore {
  * ```
  */
 export function overlayRepo(repo: GitRepo): GitRepo {
-	return {
-		objectStore: new OverlayObjectStore(repo.objectStore),
-		refStore: new OverlayRefStore(repo.refStore),
-		hooks: repo.hooks,
-	};
+	return withCapabilities(
+		{
+			objectStore: new OverlayObjectStore(repo.objectStore),
+			refStore: new OverlayRefStore(repo.refStore),
+			hooks: repo.hooks,
+		},
+		repo.capabilities,
+	);
 }

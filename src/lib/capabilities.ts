@@ -1,15 +1,42 @@
+import { type ConfigOverrides, composeGitHooks } from "../hooks.ts";
 import type { GitRepo, RepoCapabilities } from "./types.ts";
 
 /**
- * Shallow per-field merge of two capability bags. Override keys win per
- * field; keys whose override value is `undefined` fall through to the base.
+ * Deep-merge two config-override bags. `locked` and `defaults` are merged
+ * per-key with the override winning; a key only present on the base survives.
+ * Returns `undefined` only when both inputs are absent.
+ */
+function mergeConfigOverrides(
+	base?: ConfigOverrides,
+	override?: ConfigOverrides,
+): ConfigOverrides | undefined {
+	if (!base) return override;
+	if (!override) return base;
+
+	const locked = { ...base.locked, ...override.locked };
+	const defaults = { ...base.defaults, ...override.defaults };
+
+	const merged: ConfigOverrides = {};
+	if (Object.keys(locked).length > 0) merged.locked = locked;
+	if (Object.keys(defaults).length > 0) merged.defaults = defaults;
+	return merged;
+}
+
+/**
+ * Per-field merge of two capability bags, layering an override onto a base.
+ *
+ * Most fields are override-wins: a defined override value replaces the base,
+ * while an `undefined` (or absent) override key falls through to the base. Two
+ * fields combine instead of replace, since wrapping should never silently
+ * disable what the base already provided:
+ *
+ * - `hooks` — composed via {@link composeGitHooks} (both sets fire; pre-hooks
+ *   chain base-first and short-circuit on the first rejection).
+ * - `config` — deep-merged per key (override wins per key; base-only keys
+ *   survive).
  *
  * Returns `undefined` only when both inputs are absent, so callers can
  * round-trip a "no capabilities" handle without materializing an empty bag.
- *
- * This is the additive first-cut policy (override-wins everywhere). A later
- * phase switches it to compose `hooks` and deep-merge `config` once wrapping
- * is the only override path.
  */
 export function mergeCapabilities(
 	base?: RepoCapabilities,
@@ -18,13 +45,22 @@ export function mergeCapabilities(
 	if (!base) return override;
 	if (!override) return base;
 
-	const defined: Partial<RepoCapabilities> = {};
+	const merged: RepoCapabilities = { ...base };
 	for (const key of Object.keys(override) as Array<keyof RepoCapabilities>) {
-		if (override[key] !== undefined) {
-			(defined as Record<string, unknown>)[key] = override[key];
+		const value = override[key];
+		if (value !== undefined) {
+			(merged as Record<string, unknown>)[key] = value;
 		}
 	}
-	return { ...base, ...defined };
+
+	if (base.hooks && override.hooks) {
+		merged.hooks = composeGitHooks(base.hooks, override.hooks);
+	}
+	if (base.config && override.config) {
+		merged.config = mergeConfigOverrides(base.config, override.config);
+	}
+
+	return merged;
 }
 
 /**
