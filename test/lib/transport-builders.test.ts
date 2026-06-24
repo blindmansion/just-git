@@ -94,6 +94,48 @@ describe("withRetry", () => {
 		expect(attempts).toBe(1);
 	});
 
+	test("retries a 429 then succeeds", async () => {
+		let attempts = 0;
+		const fetchFn = withRetry({ maxAttempts: 3, backoffMs: 1 })(() => {
+			attempts++;
+			return Promise.resolve(
+				attempts < 2 ? new Response("slow down", { status: 429 }) : new Response("ok"),
+			);
+		});
+		const res = await fetchFn("https://example.com/r");
+		expect(res.status).toBe(200);
+		expect(attempts).toBe(2);
+	});
+
+	test("honors a numeric Retry-After header over the computed backoff", async () => {
+		let attempts = 0;
+		const start = Date.now();
+		const fetchFn = withRetry({ maxAttempts: 2, backoffMs: 10_000 })(() => {
+			attempts++;
+			return Promise.resolve(
+				attempts < 2
+					? new Response("slow down", { status: 429, headers: { "Retry-After": "0" } })
+					: new Response("ok"),
+			);
+		});
+		const res = await fetchFn("https://example.com/r");
+		expect(res.status).toBe(200);
+		expect(attempts).toBe(2);
+		// Retry-After: 0 wins, so we do not wait the 10s computed backoff.
+		expect(Date.now() - start).toBeLessThan(1000);
+	});
+
+	test("does not retry a 404", async () => {
+		let attempts = 0;
+		const fetchFn = withRetry({ maxAttempts: 3, backoffMs: 1 })(() => {
+			attempts++;
+			return Promise.resolve(new Response("missing", { status: 404 }));
+		});
+		const res = await fetchFn("https://example.com/r");
+		expect(res.status).toBe(404);
+		expect(attempts).toBe(1);
+	});
+
 	test("retries thrown errors then rethrows the last", async () => {
 		let attempts = 0;
 		const fetchFn = withRetry({ maxAttempts: 2, backoffMs: 1 })(() => {

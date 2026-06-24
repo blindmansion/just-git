@@ -21,6 +21,27 @@ function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Whether an HTTP status is a transient failure worth retrying. */
+function isRetriableStatus(status: number): boolean {
+	return status === 429 || status >= 500;
+}
+
+/**
+ * Parse a `Retry-After` header into milliseconds. Supports both the
+ * delta-seconds form (`"120"`) and the HTTP-date form. Returns `undefined`
+ * when the header is absent or unparseable, so the caller falls back to its
+ * own backoff.
+ */
+function retryAfterMs(res: Response): number | undefined {
+	const header = res.headers.get("retry-after");
+	if (!header) return undefined;
+	const seconds = Number(header);
+	if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+	const date = Date.parse(header);
+	if (Number.isNaN(date)) return undefined;
+	return Math.max(0, date - Date.now());
+}
+
 /**
  * Restrict which hosts the returned fetch may reach. Matches a bare hostname
  * (`github.com`) or a URL prefix (`https://github.com/org/`); a disallowed URL
@@ -52,8 +73,12 @@ export function withAuth(provider: HttpAuth | CredentialProvider): FetchWrapper 
 }
 
 /**
- * Retry transient failures (thrown errors and `>= 500` responses) with
- * exponential backoff. Auth failures (`401`/`403`) are not retried.
+ * Retry transient failures with exponential backoff. Thrown errors (connection
+ * reset, timeout) and transient responses (`429 Too Many Requests` and any
+ * `>= 500`) are retried; a `Retry-After` header on the response overrides the
+ * computed backoff. Auth failures (`401`/`403`) and other `4xx` are never
+ * retried. Safe because Smart HTTP request bodies are buffered `Uint8Array`s,
+ * so each attempt re-sends an identical request.
  */
 export function withRetry(policy?: { maxAttempts?: number; backoffMs?: number }): FetchWrapper {
 	const maxAttempts = policy?.maxAttempts ?? 3;
@@ -61,16 +86,17 @@ export function withRetry(policy?: { maxAttempts?: number; backoffMs?: number })
 	return (next) => async (input, init) => {
 		let lastError: unknown;
 		for (let attempt = 0; attempt < maxAttempts; attempt++) {
+			const isLast = attempt >= maxAttempts - 1;
 			try {
 				const res = await next(input, init);
-				if (res.status >= 500 && attempt < maxAttempts - 1) {
-					await delay(backoffMs * 2 ** attempt);
+				if (isRetriableStatus(res.status) && !isLast) {
+					await delay(retryAfterMs(res) ?? backoffMs * 2 ** attempt);
 					continue;
 				}
 				return res;
 			} catch (err) {
 				lastError = err;
-				if (attempt < maxAttempts - 1) await delay(backoffMs * 2 ** attempt);
+				if (!isLast) await delay(backoffMs * 2 ** attempt);
 			}
 		}
 		throw lastError;

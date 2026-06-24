@@ -284,8 +284,8 @@ export interface RepoCapabilities {
 	// ── Future seams (reserved; not in the first cut) ──────────────────
 	/** Clean/smudge content filters keyed by attribute. */
 	// filters?: FilterConfig;
-	/** Retry / credential-refresh policy for failed network requests. */
-	// retry?: RetryPolicy;
+	// (Retry / credential-refresh is not a separate seam: compose it into
+	// `transport` by wrapping the fetch — see `withRetry` / `withAuth`.)
 }
 
 /**
