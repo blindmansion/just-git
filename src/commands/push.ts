@@ -22,7 +22,7 @@ import {
 	updateRef,
 } from "../lib/refs.ts";
 import { parseRefspec } from "../lib/transport/refspec.ts";
-import { resolveRemoteTransport } from "../lib/transport/remote.ts";
+import { resolveRemoteTransport } from "../lib/transport/resolver.ts";
 import type { PushRefUpdate } from "../lib/transport/transport.ts";
 import type { GitContext, GitRepo, ObjectId } from "../lib/types.ts";
 import { a, type Command, f } from "../parse/index.ts";
@@ -51,7 +51,13 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 
 			let resolved;
 			try {
-				resolved = await resolveRemoteTransport(gitCtx, remoteName, ctx.env, ext?.credentialCache);
+				resolved = await resolveRemoteTransport(
+					gitCtx,
+					remoteName,
+					"push",
+					ctx.env,
+					ext?.credentialCache,
+				);
 			} catch (e) {
 				const msg = e instanceof Error ? e.message : "";
 				if (msg.startsWith("network")) return fatal(msg);

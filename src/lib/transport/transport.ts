@@ -9,13 +9,7 @@ import { listRefs, readHead, resolveRef } from "../refs.ts";
 import { computeShallowBoundary, type ShallowUpdate } from "../shallow.ts";
 import type { GitRepo, ObjectId } from "../types.ts";
 import { collectEnumeration, enumerateObjectsWithContent } from "./object-walk.ts";
-import {
-	discoverRefs,
-	fetchPack,
-	type HttpAuth,
-	type PushCommand,
-	pushPack,
-} from "./smart-http.ts";
+import { discoverRefs, fetchPack, type PushCommand, pushPack } from "./smart-http.ts";
 
 // ── Transport interface ──────────────────────────────────────────────
 
@@ -302,13 +296,12 @@ export class SmartHttpTransport implements Transport {
 	constructor(
 		private local: GitRepo,
 		private url: string,
-		private auth?: HttpAuth,
 		private fetchFn?: FetchFunction,
 		private onProgress?: ProgressCallback,
 	) {}
 
 	async advertiseRefs(): Promise<RemoteRef[]> {
-		const result = await discoverRefs(this.url, "git-upload-pack", this.auth, this.fetchFn);
+		const result = await discoverRefs(this.url, "git-upload-pack", this.fetchFn);
 		this.cachedFetchCaps = result.capabilities;
 		this.cachedFetchRefs = result.refs;
 
@@ -332,7 +325,7 @@ export class SmartHttpTransport implements Transport {
 
 	private async ensurePushDiscovery() {
 		if (!this.cachedPushCaps) {
-			const result = await discoverRefs(this.url, "git-receive-pack", this.auth, this.fetchFn);
+			const result = await discoverRefs(this.url, "git-receive-pack", this.fetchFn);
 			this.cachedPushCaps = result.capabilities;
 		}
 		return this.cachedPushCaps as string[];
@@ -354,7 +347,6 @@ export class SmartHttpTransport implements Transport {
 			wants,
 			haves,
 			caps,
-			this.auth,
 			this.fetchFn,
 			shallow,
 			this.onProgress,
@@ -434,7 +426,6 @@ export class SmartHttpTransport implements Transport {
 			commands,
 			packData,
 			pushCaps,
-			this.auth,
 			this.fetchFn,
 			this.onProgress,
 		);

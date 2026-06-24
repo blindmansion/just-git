@@ -10,11 +10,8 @@ import { createSymbolicRef, ensureRemoteHead, updateRef } from "../lib/refs.ts";
 import { findRepo, initRepository } from "../lib/repo.ts";
 import { applyShallowUpdates } from "../lib/shallow.ts";
 import { withCapabilities } from "../lib/capabilities.ts";
-import {
-	createTransportForUrl,
-	stripAndCacheCredentials,
-	withTransportEnv,
-} from "../lib/transport/remote.ts";
+import { stripAndCacheCredentials } from "../lib/transport/remote.ts";
+import { createTransportForUrl } from "../lib/transport/resolver.ts";
 import type { ShallowFetchOptions, Transport } from "../lib/transport/transport.ts";
 import { flattenTree } from "../lib/tree-ops.ts";
 import type { GitContext, GitRepo, ObjectId } from "../lib/types.ts";
@@ -125,12 +122,11 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			// Create transport and fetch all objects
 			let transport: Transport;
 			try {
-				transport = await createTransportForUrl(
-					withTransportEnv(newCtx, ext?.credentialCache),
-					sourcePath,
-					ctx.env,
-					sourceRepo ?? undefined,
-				);
+				transport = await createTransportForUrl(newCtx, "clone", sourcePath, {
+					env: ctx.env,
+					credentialCache: ext?.credentialCache,
+					remoteRepo: sourceRepo ?? undefined,
+				});
 			} catch (e) {
 				const msg = e instanceof Error ? e.message : "";
 				if (msg.startsWith("network")) return fatal(msg);

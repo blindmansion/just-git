@@ -62,7 +62,17 @@ export type {
 	RemoteResolver,
 	RepoCapabilities,
 	SymbolicRef,
+	TransportResolver,
+	TransportTarget,
 } from "./lib/types.ts";
+export {
+	allowlist,
+	type FetchWrapper,
+	httpTransport,
+	pipe,
+	withAuth,
+	withRetry,
+} from "./transport.ts";
 export { mergeCapabilities, withCapabilities } from "./lib/capabilities.ts";
 export type { MergeDriver, MergeDriverInput, MergeDriverResult } from "./lib/merge-ort.ts";
 export type { PackObject } from "./lib/pack/packfile.ts";

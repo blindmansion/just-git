@@ -336,7 +336,7 @@ export class Git {
 			locators,
 			// Instance-scoped credential cache: creds stripped from a URL by
 			// `remote add` / `clone` survive to a later `fetch` / `push`. Runtime
-			// state, not a capability — see `withTransportEnv`.
+			// state, not a capability — read by the default transport resolver.
 			credentialCache: new Map(),
 		};
 		this.ext = extensions;

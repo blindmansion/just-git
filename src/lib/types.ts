@@ -2,6 +2,7 @@ import type { FileSystem } from "../fs.ts";
 import type {
 	ConfigOverrides,
 	CredentialProvider,
+	FetchFunction,
 	GitHooks,
 	IdentityOverride,
 	NetworkPolicy,
@@ -258,6 +259,14 @@ export interface RepoCapabilities {
 	identity?: IdentityOverride;
 	/** Locked + default git config values. */
 	config?: ConfigOverrides;
+	/**
+	 * The network seam: resolve how to reach a remote (an HTTP fetch or an
+	 * in-process repo). When set, it overrides the built-in default resolver
+	 * (which the core otherwise synthesizes from `network` / `credentials` /
+	 * `resolveRemote`). Compose one with the shipped `httpTransport({…})` /
+	 * `pipe(allowlist, withAuth, …)` builders.
+	 */
+	transport?: TransportResolver;
 	/** Static auth or a per-URL credential resolver for Smart HTTP. */
 	credentials?: HttpAuth | CredentialProvider;
 	/** Network policy. `false` blocks all HTTP. A NetworkPolicy object may carry `fetch`. */
@@ -381,6 +390,26 @@ export interface CapabilityContext {
 	/** Target URL — present only for transport operations. */
 	url?: string;
 }
+
+// ── Transport resolver ──────────────────────────────────────────────
+
+/**
+ * What a {@link TransportResolver} resolves a remote URL to: either an HTTP
+ * fetch (auth/policy/retry already baked in by the resolver) for Smart HTTP, or
+ * an in-process {@link GitRepo} for cross-VFS transport.
+ */
+export type TransportTarget =
+	| { kind: "http"; fetch: FetchFunction }
+	| { kind: "repo"; repo: GitRepo };
+
+/**
+ * The single network seam. Given the {@link CapabilityContext} (whose `url`
+ * carries the target remote), decide how to reach it. Returning `null` defers
+ * to the core's default local-path/filesystem resolution.
+ */
+export type TransportResolver = (
+	ctx: CapabilityContext,
+) => TransportTarget | null | Promise<TransportTarget | null>;
 
 // ── Diff result types ───────────────────────────────────────────────
 

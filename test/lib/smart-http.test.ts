@@ -7,6 +7,7 @@ import {
 	pktLineText,
 } from "../../src/lib/transport/pkt-line.ts";
 import { discoverRefs, fetchPack, pushPack } from "../../src/lib/transport/smart-http.ts";
+import { withAuth } from "../../src/transport.ts";
 
 const enc = new TextEncoder();
 
@@ -112,10 +113,11 @@ describe("discoverRefs", () => {
 			});
 		});
 
-		await discoverRefs("https://github.com/repo.git", "git-upload-pack", {
-			type: "bearer",
-			token: "test-token-123",
-		});
+		await discoverRefs(
+			"https://github.com/repo.git",
+			"git-upload-pack",
+			withAuth({ type: "bearer", token: "test-token-123" })(globalThis.fetch),
+		);
 	});
 
 	test("handles empty repo (capabilities^{})", async () => {
@@ -255,11 +257,11 @@ describe("discoverRefs", () => {
 			});
 		});
 
-		await discoverRefs("https://github.com/repo.git", "git-upload-pack", {
-			type: "basic",
-			username: "alice",
-			password: "s3cret",
-		});
+		await discoverRefs(
+			"https://github.com/repo.git",
+			"git-upload-pack",
+			withAuth({ type: "basic", username: "alice", password: "s3cret" })(globalThis.fetch),
+		);
 	});
 
 	test("throws on HTTP 401 (unauthorized)", async () => {
@@ -454,7 +456,6 @@ describe("fetchPack", () => {
 			["multi_ack_detailed", "no-done", "side-band-64k", "ofs-delta"],
 			undefined,
 			undefined,
-			undefined,
 			(msg) => progress.push(msg),
 		);
 
@@ -529,11 +530,13 @@ describe("fetchPack", () => {
 			});
 		});
 
-		await fetchPack("https://github.com/repo.git", [HASH_A], [], ["side-band-64k"], {
-			type: "basic",
-			username: "user",
-			password: "pass",
-		});
+		await fetchPack(
+			"https://github.com/repo.git",
+			[HASH_A],
+			[],
+			["side-band-64k"],
+			withAuth({ type: "basic", username: "user", password: "pass" })(globalThis.fetch),
+		);
 	});
 
 	test("throws on empty wants", async () => {
@@ -688,7 +691,6 @@ describe("fetchPack", () => {
 			["side-band-64k"],
 			undefined,
 			undefined,
-			undefined,
 			(msg) => progress.push(msg),
 		);
 		expect(result.packData.byteLength).toBe(12);
@@ -795,7 +797,6 @@ describe("fetchPack", () => {
 			[HASH_A],
 			[],
 			["side-band-64k"],
-			undefined,
 			undefined,
 			undefined,
 			(msg) => progress.push(msg),

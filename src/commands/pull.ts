@@ -150,6 +150,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			const resolved = await resolveRemoteTransportOrError(
 				gitCtx,
 				remoteName,
+				"pull",
 				ctx.env,
 				(msg) => ({
 					stdout: "",

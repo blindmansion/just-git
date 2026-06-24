@@ -3,9 +3,10 @@ import { objectExists } from "./object-db.ts";
 import { appendReflog, ZERO_HASH } from "./reflog.ts";
 import { listRefs, resolveRef, shortenRef, updateRef } from "./refs.ts";
 import { INFINITE_DEPTH, isShallowRepo, readShallowCommits } from "./shallow.ts";
-import { type CredentialCache, resolveRemoteTransport } from "./transport/remote.ts";
+import type { CredentialCache } from "./transport/remote.ts";
+import { resolveRemoteTransport } from "./transport/resolver.ts";
 import type { RemoteRef, ShallowFetchOptions, Transport } from "./transport/transport.ts";
-import type { GitContext, ObjectId } from "./types.ts";
+import type { GitContext, GitOperation, ObjectId } from "./types.ts";
 
 interface NormalizedFetchArgs {
 	depth?: number;
@@ -44,12 +45,19 @@ export async function normalizeFetchDepth(
 export async function resolveRemoteTransportOrError(
 	gitCtx: GitContext,
 	remoteName: string,
+	operation: GitOperation,
 	env: Map<string, string>,
 	buildError: (message: string) => CommandResult = fatal,
 	credentialCache?: CredentialCache,
 ): Promise<ResolvedRemoteTransport | CommandResult> {
 	try {
-		const resolved = await resolveRemoteTransport(gitCtx, remoteName, env, credentialCache);
+		const resolved = await resolveRemoteTransport(
+			gitCtx,
+			remoteName,
+			operation,
+			env,
+			credentialCache,
+		);
 		if (!resolved) {
 			return buildError(`'${remoteName}' does not appear to be a git repository`);
 		}

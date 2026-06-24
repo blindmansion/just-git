@@ -278,6 +278,7 @@ async function fetchOneRemote(
 	const resolved = await resolveRemoteTransportOrError(
 		gitCtx,
 		remoteName,
+		"fetch",
 		env,
 		undefined,
 		ext?.credentialCache,

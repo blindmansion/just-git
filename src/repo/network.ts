@@ -11,13 +11,12 @@ import { withCapabilities } from "../lib/capabilities.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 import { isAncestor } from "../lib/merge.ts";
 import { listRefs, resolveRef } from "../lib/refs.ts";
-import { createTransportForUrl, withTransportEnv } from "../lib/transport/remote.ts";
+import { createTransportForUrl } from "../lib/transport/resolver.ts";
 import { mapRefspec, parseRefspec } from "../lib/transport/refspec.ts";
 import type { RemoteRef, ShallowFetchOptions } from "../lib/transport/transport.ts";
 import type { GitRepo, ObjectId, ObjectStore, RefStore, RepoCapabilities } from "../lib/types.ts";
 
 const DEFAULT_REMOTE = "origin";
-const NO_ENV = new Map<string, string>();
 
 /** Default mirror-all refspec for a remote name: `+refs/heads/*:refs/remotes/<name>/*`. */
 function defaultFetchRefspec(remote: string): string {
@@ -131,9 +130,9 @@ export async function listRemoteRefs(
 	capabilities?: RepoCapabilities,
 ): Promise<RemoteRef[]> {
 	const transport = await createTransportForUrl(
-		withTransportEnv(withCapabilities(UNUSED_REPO, capabilities)),
+		withCapabilities(UNUSED_REPO, capabilities),
+		"ls-remote",
 		url,
-		NO_ENV,
 	);
 	return transport.advertiseRefs();
 }
@@ -154,7 +153,7 @@ export async function fetch(
 	remote: { url: string; name?: string; refspecs?: string[] },
 ): Promise<FetchResult> {
 	const remoteName = remote.name ?? DEFAULT_REMOTE;
-	const transport = await createTransportForUrl(withTransportEnv(repo), remote.url, NO_ENV);
+	const transport = await createTransportForUrl(repo, "fetch", remote.url);
 
 	const specs = (
 		remote.refspecs && remote.refspecs.length > 0
@@ -296,7 +295,7 @@ export async function push(repo: GitRepo, remote: PushRemote): Promise<PushResul
 		throw new Error("push: pass either `refspecs` or the branch/src/dst/force sugar, not both");
 	}
 
-	const transport = await createTransportForUrl(withTransportEnv(repo), remote.url, NO_ENV);
+	const transport = await createTransportForUrl(repo, "push", remote.url);
 	const remoteRefs = await transport.advertiseRefs();
 	const remoteMap = new Map<string, ObjectId>(remoteRefs.map((r) => [r.name, r.hash]));
 
@@ -456,7 +455,7 @@ export async function cloneInto(
 	const branchOpt = options?.branch;
 	const depth = options?.depth;
 	const remoteName = options?.remote ?? DEFAULT_REMOTE;
-	const transport = await createTransportForUrl(withTransportEnv(repo), url, NO_ENV);
+	const transport = await createTransportForUrl(repo, "clone", url);
 
 	const rej = await repo.capabilities?.hooks?.preClone?.({
 		repo,

@@ -23,15 +23,6 @@ export type HttpAuth =
 	| { type: "basic"; username: string; password: string }
 	| { type: "bearer"; token: string };
 
-function authHeaders(auth?: HttpAuth): Record<string, string> {
-	if (!auth) return {};
-	if (auth.type === "bearer") {
-		return { Authorization: `Bearer ${auth.token}` };
-	}
-	const encoded = btoa(`${auth.username}:${auth.password}`);
-	return { Authorization: `Basic ${encoded}` };
-}
-
 // ── Ref discovery ────────────────────────────────────────────────────
 
 interface DiscoverResult {
@@ -43,13 +34,11 @@ interface DiscoverResult {
 export async function discoverRefs(
 	url: string,
 	service: "git-upload-pack" | "git-receive-pack",
-	auth?: HttpAuth,
 	fetchFn: FetchFunction = globalThis.fetch,
 ): Promise<DiscoverResult> {
 	const cleanUrl = url.replace(/\/+$/, "");
 	const res = await fetchFn(`${cleanUrl}/info/refs?service=${service}`, {
 		headers: {
-			...authHeaders(auth),
 			"User-Agent": "just-git/1.0",
 		},
 	});
@@ -168,7 +157,6 @@ export async function fetchPack(
 	wants: string[],
 	haves: string[],
 	serverCaps: string[],
-	auth?: HttpAuth,
 	fetchFn: FetchFunction = globalThis.fetch,
 	shallow?: ShallowFetchOptions,
 	onProgress?: ProgressCallback,
@@ -210,7 +198,6 @@ export async function fetchPack(
 		method: "POST",
 		headers: {
 			"Content-Type": "application/x-git-upload-pack-request",
-			...authHeaders(auth),
 			"User-Agent": "just-git/1.0",
 		},
 		body: requestBody,
@@ -341,7 +328,6 @@ export async function pushPack(
 	commands: PushCommand[],
 	packData: Uint8Array | null,
 	serverCaps: string[],
-	auth?: HttpAuth,
 	fetchFn: FetchFunction = globalThis.fetch,
 	onProgress?: ProgressCallback,
 ): Promise<PushPackResult> {
@@ -380,7 +366,6 @@ export async function pushPack(
 		method: "POST",
 		headers: {
 			"Content-Type": "application/x-git-receive-pack-request",
-			...authHeaders(auth),
 			"User-Agent": "just-git/1.0",
 		},
 		body: requestBody,
