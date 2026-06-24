@@ -6,8 +6,9 @@
 // Hooks fire via `repo.hooks` (the handle already carries them) — there is no
 // separate hook channel on the transport context.
 
-import type { CredentialProvider, ProgressCallback } from "../hooks.ts";
+import type { CredentialProvider } from "../hooks.ts";
 import { isRejection } from "../hooks.ts";
+import { withCapabilities } from "../lib/capabilities.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 import { isAncestor } from "../lib/merge.ts";
 import { listRefs, resolveRef } from "../lib/refs.ts";
@@ -15,8 +16,7 @@ import { createTransportForUrl, type TransportEnv } from "../lib/transport/remot
 import { mapRefspec, parseRefspec } from "../lib/transport/refspec.ts";
 import type { HttpAuth } from "../lib/transport/transport.ts";
 import type { RemoteRef, ShallowFetchOptions } from "../lib/transport/transport.ts";
-import type { GitRepo, ObjectId, ObjectStore, RefStore, RemoteResolver } from "../lib/types.ts";
-import type { FetchFunction, NetworkPolicy } from "../hooks.ts";
+import type { GitRepo, ObjectId, ObjectStore, RefStore, RepoCapabilities } from "../lib/types.ts";
 
 const DEFAULT_REMOTE = "origin";
 const NO_ENV = new Map<string, string>();
@@ -30,23 +30,6 @@ function defaultFetchRefspec(remote: string): string {
 
 /** A ref advertised by a remote. */
 export type { RemoteRef } from "../lib/transport/transport.ts";
-
-/**
- * Transport configuration shared by all network functions. A subset of the
- * operator-level `GitContext` extensions, normalized onto the transport layer.
- */
-export interface TransportContext {
-	/** Custom fetch implementation. Defaults to `globalThis.fetch`. */
-	fetchFn?: FetchFunction;
-	/** Static auth, or a callback resolving auth per remote URL. */
-	credentials?: HttpAuth | CredentialProvider;
-	/** Restrict which remote URLs may be contacted. `false` blocks all HTTP. */
-	networkPolicy?: NetworkPolicy | false;
-	/** Receives server progress messages (sideband band-2). */
-	onProgress?: ProgressCallback;
-	/** Resolve non-HTTP remote URLs to a `GitRepo` (cross-VFS / in-process). */
-	resolveRemote?: RemoteResolver;
-}
 
 /** Result of {@link fetch}. */
 export interface FetchResult {
@@ -126,18 +109,24 @@ function toCredentialProvider(c?: HttpAuth | CredentialProvider): CredentialProv
 	return typeof c === "function" ? c : () => c;
 }
 
-/** Augment a repo handle with the transport environment derived from `ctx`. */
-function withEnv(repo: GitRepo, ctx?: TransportContext): GitRepo & TransportEnv {
-	const policy = ctx?.networkPolicy;
+/**
+ * Augment a repo handle with the transport environment derived from its
+ * attached capabilities (`repo.capabilities.{network,credentials,resolveRemote,
+ * onProgress}`). Network behavior now rides on the handle (wrap with
+ * `withCapabilities`) rather than a per-call transport bag.
+ */
+function withEnv(repo: GitRepo): GitRepo & TransportEnv {
+	const caps = repo.capabilities;
+	const policy = caps?.network;
 	// Mirror createGit: a NetworkPolicy object may carry the fetch function.
-	const fetchFn = ctx?.fetchFn ?? (policy && typeof policy === "object" ? policy.fetch : undefined);
+	const fetchFn = policy && typeof policy === "object" ? policy.fetch : undefined;
 	return {
 		...repo,
-		credentialProvider: toCredentialProvider(ctx?.credentials),
+		credentialProvider: toCredentialProvider(caps?.credentials),
 		fetchFn,
 		networkPolicy: policy,
-		resolveRemote: ctx?.resolveRemote,
-		onProgress: ctx?.onProgress,
+		resolveRemote: caps?.resolveRemote,
+		onProgress: caps?.onProgress,
 		credentialCache: new Map(),
 	};
 }
@@ -161,9 +150,20 @@ async function collectHaves(repo: GitRepo): Promise<ObjectId[]> {
 
 /**
  * Enumerate the refs a remote advertises, without fetching any objects.
+ *
+ * Handle-less: there is no repo to wrap, so network behavior is passed as a
+ * `capabilities` bag (`{ network, credentials, resolveRemote, onProgress }`).
+ * This is the one place a capability bag is still an argument.
  */
-export async function listRemoteRefs(url: string, ctx?: TransportContext): Promise<RemoteRef[]> {
-	const transport = await createTransportForUrl(withEnv(UNUSED_REPO, ctx), url, NO_ENV);
+export async function listRemoteRefs(
+	url: string,
+	capabilities?: RepoCapabilities,
+): Promise<RemoteRef[]> {
+	const transport = await createTransportForUrl(
+		withEnv(withCapabilities(UNUSED_REPO, capabilities)),
+		url,
+		NO_ENV,
+	);
 	return transport.advertiseRefs();
 }
 
@@ -181,10 +181,9 @@ export async function listRemoteRefs(url: string, ctx?: TransportContext): Promi
 export async function fetch(
 	repo: GitRepo,
 	remote: { url: string; name?: string; refspecs?: string[] },
-	ctx?: TransportContext,
 ): Promise<FetchResult> {
 	const remoteName = remote.name ?? DEFAULT_REMOTE;
-	const transport = await createTransportForUrl(withEnv(repo, ctx), remote.url, NO_ENV);
+	const transport = await createTransportForUrl(withEnv(repo), remote.url, NO_ENV);
 
 	const specs = (
 		remote.refspecs && remote.refspecs.length > 0
@@ -319,18 +318,14 @@ function pushStatus(name: string, ok: boolean, error: string | undefined): PushR
  * grammar (force `+`, deletes `:dst`, globs `*`). The sugar fields and
  * `refspecs` are mutually exclusive. Fires `repo.hooks.prePush` / `postPush`.
  */
-export async function push(
-	repo: GitRepo,
-	remote: PushRemote,
-	ctx?: TransportContext,
-): Promise<PushResult> {
+export async function push(repo: GitRepo, remote: PushRemote): Promise<PushResult> {
 	const hasRefspecs = !!remote.refspecs && remote.refspecs.length > 0;
 	const hasSugar = !!(remote.branch || remote.src || remote.dst || remote.force);
 	if (hasRefspecs && hasSugar) {
 		throw new Error("push: pass either `refspecs` or the branch/src/dst/force sugar, not both");
 	}
 
-	const transport = await createTransportForUrl(withEnv(repo, ctx), remote.url, NO_ENV);
+	const transport = await createTransportForUrl(withEnv(repo), remote.url, NO_ENV);
 	const remoteRefs = await transport.advertiseRefs();
 	const remoteMap = new Map<string, ObjectId>(remoteRefs.map((r) => [r.name, r.hash]));
 
@@ -485,12 +480,12 @@ function resolveDefaultBranch(
 export async function cloneInto(
 	repo: GitRepo,
 	url: string,
-	ctx?: TransportContext & { branch?: string; depth?: number; remote?: string },
+	options?: { branch?: string; depth?: number; remote?: string },
 ): Promise<CloneResult> {
-	const branchOpt = ctx?.branch;
-	const depth = ctx?.depth;
-	const remoteName = ctx?.remote ?? DEFAULT_REMOTE;
-	const transport = await createTransportForUrl(withEnv(repo, ctx), url, NO_ENV);
+	const branchOpt = options?.branch;
+	const depth = options?.depth;
+	const remoteName = options?.remote ?? DEFAULT_REMOTE;
+	const transport = await createTransportForUrl(withEnv(repo), url, NO_ENV);
 
 	const rej = await repo.hooks?.preClone?.({
 		repo,

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { GitRepo, Identity } from "../../src/lib/types.ts";
+import { withCapabilities } from "../../src/lib/capabilities.ts";
 import { cloneInto, merge, pull, rebase } from "../../src/repo/index.ts";
 import { readFileAtCommit, resolveRef } from "../../src/repo/reading.ts";
 import { commit } from "../../src/repo/writing.ts";
@@ -39,7 +40,7 @@ async function setup(): Promise<Harness> {
 	});
 	const net = server.asNetwork(BASE);
 	const local = await createRepoStore(new MemoryStorage()).createRepo("local");
-	await cloneInto(local, `${BASE}/repo`, { networkPolicy: net });
+	await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
 	return { server, net, local, url: `${BASE}/repo` };
 }
 
@@ -64,11 +65,10 @@ const fileAtMain = async (repo: GitRepo, path: string) =>
 describe("pull: merge strategy", () => {
 	test("up-to-date when nothing changed on either side", async () => {
 		const h = await setup();
-		const { integration } = await pull(
-			h.local,
-			{ url: h.url, branch: "main" },
-			{ networkPolicy: h.net },
-		);
+		const { integration } = await pull(withCapabilities(h.local, { network: h.net }), {
+			url: h.url,
+			branch: "main",
+		});
 		expect(integration.status).toBe("up-to-date");
 	});
 
@@ -76,11 +76,10 @@ describe("pull: merge strategy", () => {
 		const h = await setup();
 		const remoteTip = await cloudCommit(h, { "doc.md": "base\nv2\n" }, "remote v2");
 
-		const { integration, fetched } = await pull(
-			h.local,
-			{ url: h.url, branch: "main" },
-			{ networkPolicy: h.net },
-		);
+		const { integration, fetched } = await pull(withCapabilities(h.local, { network: h.net }), {
+			url: h.url,
+			branch: "main",
+		});
 
 		expect(integration.status).toBe("fast-forward");
 		expect(await localMain(h.local)).toBe(remoteTip);
@@ -97,11 +96,11 @@ describe("pull: merge strategy", () => {
 			branch: "main",
 		});
 
-		const { integration } = await pull(
-			h.local,
-			{ url: h.url, branch: "main", author: ENGINE },
-			{ networkPolicy: h.net },
-		);
+		const { integration } = await pull(withCapabilities(h.local, { network: h.net }), {
+			url: h.url,
+			branch: "main",
+			author: ENGINE,
+		});
 
 		expect(integration.status).toBe("merged");
 		expect(await fileAtMain(h.local, "remote.md")).toBe("r\n");
@@ -118,11 +117,11 @@ describe("pull: merge strategy", () => {
 			branch: "main",
 		});
 
-		const { integration } = await pull(
-			h.local,
-			{ url: h.url, branch: "main", author: ENGINE },
-			{ networkPolicy: h.net },
-		);
+		const { integration } = await pull(withCapabilities(h.local, { network: h.net }), {
+			url: h.url,
+			branch: "main",
+			author: ENGINE,
+		});
 		if (integration.status !== "conflicts" || !("ours" in integration)) {
 			throw new Error("expected a merge conflict");
 		}
@@ -142,7 +141,9 @@ describe("pull: merge strategy", () => {
 	test("defaults the branch to the current HEAD branch", async () => {
 		const h = await setup();
 		const remoteTip = await cloudCommit(h, { "doc.md": "base\nv2\n" }, "remote v2");
-		const { integration } = await pull(h.local, { url: h.url }, { networkPolicy: h.net });
+		const { integration } = await pull(withCapabilities(h.local, { network: h.net }), {
+			url: h.url,
+		});
 		expect(integration.status).toBe("fast-forward");
 		expect(await localMain(h.local)).toBe(remoteTip);
 	});
@@ -159,11 +160,12 @@ describe("pull: rebase strategy", () => {
 			branch: "main",
 		});
 
-		const { integration } = await pull(
-			h.local,
-			{ url: h.url, branch: "main", strategy: "rebase", committer: ENGINE },
-			{ networkPolicy: h.net },
-		);
+		const { integration } = await pull(withCapabilities(h.local, { network: h.net }), {
+			url: h.url,
+			branch: "main",
+			strategy: "rebase",
+			committer: ENGINE,
+		});
 
 		expect(integration.status).toBe("ok");
 		if (integration.status !== "ok") throw new Error("unreachable");
@@ -182,11 +184,12 @@ describe("pull: rebase strategy", () => {
 			branch: "main",
 		});
 
-		const { integration } = await pull(
-			h.local,
-			{ url: h.url, branch: "main", strategy: "rebase", committer: ENGINE },
-			{ networkPolicy: h.net },
-		);
+		const { integration } = await pull(withCapabilities(h.local, { network: h.net }), {
+			url: h.url,
+			branch: "main",
+			strategy: "rebase",
+			committer: ENGINE,
+		});
 		if (integration.status !== "conflicts" || !("continuation" in integration)) {
 			throw new Error("expected a rebase conflict");
 		}

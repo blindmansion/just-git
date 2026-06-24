@@ -131,7 +131,8 @@ export {
 	type RevertResult,
 } from "./operations.ts";
 
-// Network operations (clone / fetch / push over a GitRepo + transport context)
+// Network operations (clone / fetch / push over a GitRepo; network behavior
+// rides on repo.capabilities)
 export {
 	cloneInto,
 	fetch,
@@ -144,7 +145,6 @@ export {
 	type PushRemote,
 	type PushResult,
 	type RemoteRef,
-	type TransportContext,
 } from "./network.ts";
 
 export { createTreeAccessor, type TreeAccessor } from "./tree-accessor.ts";

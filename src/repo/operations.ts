@@ -11,7 +11,7 @@ import {
 	mergeTreesDetailedFromTreeHashes,
 	mergeTreesFromTreeHashes,
 } from "./merging.ts";
-import { fetch, type FetchResult, type TransportContext } from "./network.ts";
+import { fetch, type FetchResult } from "./network.ts";
 import { readHead, revParse } from "./reading.ts";
 import { createTreeAccessor, type TreeAccessor } from "./tree-accessor.ts";
 import {
@@ -1053,7 +1053,7 @@ function snapshotContinuation(state: RebaseReplayState): RebaseContinuation {
 
 /** Options for {@link pull}. */
 export interface PullOptions {
-	/** Remote URL (or custom scheme resolved via `ctx.resolveRemote`). */
+	/** Remote URL (or custom scheme resolved via `repo.capabilities.resolveRemote`). */
 	url: string;
 	/** Remote short name driving the tracking namespace. Default `"origin"`. */
 	remote?: string;
@@ -1106,17 +1106,13 @@ export interface PullResult {
  * carries (`ours`/`theirs`, or `continuation`).
  *
  * ```ts
- * const { integration } = await pull(repo, { url, branch: "main", author }, ctx);
+ * const { integration } = await pull(repo, { url, branch: "main", author });
  * if (integration.status === "conflicts") {
  *   // resolve via merge() with integration.ours / integration.theirs
  * }
  * ```
  */
-export async function pull(
-	repo: GitRepo,
-	options: PullOptions,
-	ctx?: TransportContext,
-): Promise<PullResult> {
+export async function pull(repo: GitRepo, options: PullOptions): Promise<PullResult> {
 	const remote = options.remote ?? "origin";
 	const branch = options.branch ?? (await readHead(repo)).branch;
 	if (!branch) {
@@ -1125,7 +1121,7 @@ export async function pull(
 	const remoteBranch = options.remoteBranch ?? branch;
 	const theirs = `${remote}/${remoteBranch}`;
 
-	const fetched = await fetch(repo, { url: options.url, name: remote }, ctx);
+	const fetched = await fetch(repo, { url: options.url, name: remote });
 
 	if ((options.strategy ?? "merge") === "rebase") {
 		const integration = await rebase(repo, {

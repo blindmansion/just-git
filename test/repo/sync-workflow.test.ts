@@ -7,6 +7,7 @@
 // retry on a rejected push), and conflicts surfaced to the "UI" as data.
 
 import { describe, expect, test } from "bun:test";
+import { withCapabilities } from "../../src/lib/capabilities.ts";
 import type { GitRepo, Identity } from "../../src/lib/types.ts";
 import {
 	type ConflictedPath,
@@ -101,7 +102,7 @@ interface Workspace {
 /** Clone the cloud into a fresh client — the app's "open workspace" step. */
 async function openWorkspace(id: string, cloud: Cloud): Promise<Workspace> {
 	const repo = await createRepoStore(new MemoryStorage()).createRepo(id);
-	await cloneInto(repo, cloud.url, { networkPolicy: cloud.net });
+	await cloneInto(withCapabilities(repo, { network: cloud.net }), cloud.url);
 	return { repo, id };
 }
 
@@ -165,15 +166,17 @@ async function syncWorkspace(
 		beforePush?: (attempt: number) => Promise<void>;
 	} = {},
 ): Promise<SyncOutcome> {
-	const ctx = { networkPolicy: cloud.net };
+	const repo = withCapabilities(ws.repo, { network: cloud.net });
 	const maxAttempts = opts.maxAttempts ?? 4;
 
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-		const { integration } = await pull(
-			ws.repo,
-			{ url: cloud.url, branch: BRANCH, author, committer: ENGINE, strategy: opts.strategy },
-			ctx,
-		);
+		const { integration } = await pull(repo, {
+			url: cloud.url,
+			branch: BRANCH,
+			author,
+			committer: ENGINE,
+			strategy: opts.strategy,
+		});
 
 		if (integration.status === "conflicts") {
 			return { kind: "conflicts", integration };
@@ -181,7 +184,7 @@ async function syncWorkspace(
 
 		await opts.beforePush?.(attempt);
 
-		const pushed = await push(ws.repo, { url: cloud.url, branch: BRANCH }, ctx);
+		const pushed = await push(repo, { url: cloud.url, branch: BRANCH });
 		if (pushed.ok) {
 			return {
 				kind: "in-sync",
@@ -412,11 +415,12 @@ describe("sync workflow: linear history via rebase", () => {
 
 		// pull() with the rebase strategy stops on conflict and hands back the
 		// continuation as part of the integration result.
-		const { integration } = await pull(
-			ws.repo,
-			{ url: cloud.url, branch: BRANCH, strategy: "rebase", committer: ENGINE },
-			{ networkPolicy: cloud.net },
-		);
+		const { integration } = await pull(withCapabilities(ws.repo, { network: cloud.net }), {
+			url: cloud.url,
+			branch: BRANCH,
+			strategy: "rebase",
+			committer: ENGINE,
+		});
 		if (integration.status !== "conflicts" || !("continuation" in integration)) {
 			throw new Error("expected a rebase conflict");
 		}
@@ -442,13 +446,13 @@ describe("sync workflow: cheap divergence detection for the UI", () => {
 		// A pure ref-advertisement probe: enough to light up a "sync available"
 		// badge without downloading anything.
 		await cloudCommit(cloud, { "doc.md": "# Project\n\nnew\n" }, "remote change");
-		const refs = await listRemoteRefs(cloud.url, { networkPolicy: cloud.net });
+		const refs = await listRemoteRefs(cloud.url, { network: cloud.net });
 		const remoteMain = refs.find((r) => r.name === `refs/heads/${BRANCH}`)!;
 		expect(remoteMain.hash).not.toBe(await localTip(ws));
 
 		// To render "N behind" you must fetch the objects (no merge), then count
 		// against the updated tracking ref.
-		await fetch(ws.repo, { url: cloud.url }, { networkPolicy: cloud.net });
+		await fetch(withCapabilities(ws.repo, { network: cloud.net }), { url: cloud.url });
 		const counts = await countAheadBehind(
 			ws.repo,
 			(await localTip(ws)) as string,
@@ -465,7 +469,7 @@ describe("sync workflow: cheap divergence detection for the UI", () => {
 		await edit(ws, person("Alice"), { "a.md": "a\n" }, "local work");
 
 		// Fetch-only to learn where the remote is, without integrating.
-		await fetch(ws.repo, { url: cloud.url }, { networkPolicy: cloud.net });
+		await fetch(withCapabilities(ws.repo, { network: cloud.net }), { url: cloud.url });
 		const counts = await countAheadBehind(
 			ws.repo,
 			(await localTip(ws)) as string,
