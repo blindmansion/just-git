@@ -58,7 +58,7 @@ import {
 	updateRef,
 } from "./refs.ts";
 import { buildTreeFromIndex, flattenTree, flattenTreeToMap } from "./tree-ops.ts";
-import type { GitContext, Index, ObjectId } from "./types.ts";
+import type { GitContext, GitRepo, Index, ObjectId } from "./types.ts";
 import {
 	applyWorktreeOps,
 	checkoutTrees,
@@ -73,7 +73,7 @@ import { walkWorkTree } from "./worktree.ts";
  * Return the display label for the current HEAD — either the branch name
  * (e.g. "dev-uxvs") or "detached HEAD".
  */
-async function headLabel(gitCtx: GitContext): Promise<string> {
+async function headLabel(gitCtx: GitRepo): Promise<string> {
 	const head = await readHead(gitCtx);
 	if (head?.type === "symbolic") {
 		return branchNameFromRef(head.target);

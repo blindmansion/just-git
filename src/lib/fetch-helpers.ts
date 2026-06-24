@@ -5,7 +5,7 @@ import { listRefs, resolveRef, shortenRef, updateRef } from "./refs.ts";
 import { INFINITE_DEPTH, isShallowRepo, readShallowCommits } from "./shallow.ts";
 import { resolveRemoteTransport } from "./transport/resolver.ts";
 import type { RemoteRef, ShallowFetchOptions, Transport } from "./transport/transport.ts";
-import type { GitContext, GitOperation, ObjectId } from "./types.ts";
+import type { GitContext, GitOperation, GitRepo, ObjectId } from "./types.ts";
 import type { CredentialStore } from "../hooks.ts";
 
 interface NormalizedFetchArgs {
@@ -69,7 +69,7 @@ export async function resolveRemoteTransportOrError(
 	}
 }
 
-export async function collectFetchHaves(gitCtx: GitContext): Promise<ObjectId[]> {
+export async function collectFetchHaves(gitCtx: GitRepo): Promise<ObjectId[]> {
 	const localRefs = await listRefs(gitCtx);
 	const haves: ObjectId[] = localRefs.map((r) => r.hash);
 	const localHead = await resolveRef(gitCtx, "HEAD");

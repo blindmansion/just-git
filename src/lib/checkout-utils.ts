@@ -407,7 +407,7 @@ export async function formatPrevHeadPosition(gitCtx: GitRepo, hash: ObjectId): P
  * currentHash === targetHash).
  */
 export async function buildDetachPreamble(
-	gitCtx: GitContext,
+	gitCtx: GitRepo,
 	currentHash: ObjectId,
 	targetHash: ObjectId,
 ): Promise<string> {
