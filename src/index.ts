@@ -57,8 +57,10 @@ export type {
 	RefEntry,
 	RefStore,
 	RemoteResolver,
+	RepoCapabilities,
 	SymbolicRef,
 } from "./lib/types.ts";
+export { mergeCapabilities, withCapabilities } from "./lib/capabilities.ts";
 export type { MergeDriver, MergeDriverResult } from "./lib/merge-ort.ts";
 export type { PackObject } from "./lib/pack/packfile.ts";
 export {

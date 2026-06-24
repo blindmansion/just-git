@@ -8,9 +8,11 @@ import type {
 	NetworkPolicy,
 	ProgressCallback,
 } from "../hooks.ts";
+import type { MergeDriver } from "./merge-ort.ts";
 import type { PackObject } from "./pack/packfile.ts";
 import type { SigningCapability } from "./signing.ts";
 import type { CredentialCache } from "./transport/remote.ts";
+import type { HttpAuth } from "./transport/transport.ts";
 
 // ── Object identifiers ──────────────────────────────────────────────
 
@@ -235,6 +237,48 @@ export interface ObjectStore {
 // ── Repository context ──────────────────────────────────────────────
 
 /**
+ * Host-provided behavior for git operations: the single capability
+ * vocabulary shared by every entry point. Supplied once as defaults
+ * (`createGit` / `createRepoStore` / `createServer`), attached to a repo
+ * handle via `withCapabilities`, and (for now) still overridable per-call
+ * where a function exposes the matching option.
+ *
+ * Every field is optional; an absent field means "use the built-in
+ * default". This is the additive first cut — it deliberately mirrors
+ * today's loose fields (`GitRepo.hooks`/`.signing`, the `GitContext`
+ * operator fields, and the per-call `mergeDriver`) under one name so
+ * later phases can migrate reads onto it and then delete the originals.
+ */
+export interface RepoCapabilities {
+	/** Operation hooks and low-level events. */
+	hooks?: GitHooks;
+	/** Commit/tag signing (write) + verification (read). */
+	signing?: SigningCapability;
+	/** Custom content-merge driver (merge / rebase / cherry-pick / revert / pull). */
+	mergeDriver?: MergeDriver;
+	/** Author/committer identity override (locked or fallback). */
+	identity?: IdentityOverride;
+	/** Locked + default git config values. */
+	config?: ConfigOverrides;
+	/** Static auth or a per-URL credential resolver for Smart HTTP. */
+	credentials?: HttpAuth | CredentialProvider;
+	/** Network policy. `false` blocks all HTTP. A NetworkPolicy object may carry `fetch`. */
+	network?: NetworkPolicy | false;
+	/** Resolve non-HTTP remote URLs to a GitRepo (cross-VFS / in-process). */
+	resolveRemote?: RemoteResolver;
+	/** Receives server progress messages (sideband band-2). */
+	onProgress?: ProgressCallback;
+
+	// ── Future seams (reserved; not in the first cut) ──────────────────
+	/** Injected clock for author/committer timestamps and reflog. */
+	// now?: () => Date;
+	/** Clean/smudge content filters keyed by attribute. */
+	// filters?: FilterConfig;
+	/** Retry / credential-refresh policy for failed network requests. */
+	// retry?: RetryPolicy;
+}
+
+/**
  * Minimal repository handle: object store + ref store + hooks.
  * Sufficient for all pure object/ref operations (read, write, walk,
  * diff trees, merge-base, blame, etc.) without filesystem access.
@@ -244,6 +288,15 @@ export interface ObjectStore {
 export interface GitRepo {
 	objectStore: ObjectStore;
 	refStore: RefStore;
+	/**
+	 * The single channel for host-provided behavior (hooks, signing, merge
+	 * driver, identity, config, credentials, network, progress). Attached
+	 * via `withCapabilities`; never auto-populated by a storage backend, so
+	 * a bare handle is inert until a host opts in. This is the seam that
+	 * later phases migrate every capability read onto; the loose `hooks` /
+	 * `signing` fields below remain during the additive transition.
+	 */
+	capabilities?: RepoCapabilities;
 	/** Hook callbacks for operation hooks and low-level events. */
 	hooks?: GitHooks;
 	/**
