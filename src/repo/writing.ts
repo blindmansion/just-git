@@ -4,12 +4,7 @@ import { serializeCommit } from "../lib/objects/commit.ts";
 import { serializeTag } from "../lib/objects/tag.ts";
 import { parseTree, serializeTree } from "../lib/objects/tree.ts";
 import { resolveRef as _resolveRef } from "../lib/refs.ts";
-import {
-	type Signer,
-	resolveSdkSigning,
-	signCommitPayload,
-	signTagPayload,
-} from "../lib/signing.ts";
+import { resolveSdkSigning, signCommitPayload, signTagPayload } from "../lib/signing.ts";
 import type { Commit, GitRepo, Identity, ObjectType, Tag, TreeEntry } from "../lib/types.ts";
 
 // ── Identity helpers ────────────────────────────────────────────────
@@ -73,14 +68,11 @@ export interface CreateCommitOptions {
 	 */
 	branch?: string;
 	/**
-	 * Signing policy (three-state). `undefined` defers to the mechanism: a
-	 * per-call `signer` implies signing. `true` forces signing (resolving
-	 * `signer ?? ctx.signer`, throwing if neither is set). `false` forces
-	 * the commit unsigned.
+	 * Signing policy. `true` forces signing with the handle's ambient signer
+	 * (`withCapabilities(repo, { signing })`), throwing {@link SigningError} if
+	 * none is set. `false` / `undefined` leaves the commit unsigned.
 	 */
 	sign?: boolean;
-	/** Per-call signer override. Falls back to the repo's ambient `signer`. */
-	signer?: Signer;
 }
 
 /**
@@ -128,12 +120,10 @@ export interface CreateAnnotatedTagOptions {
 	/** Type of the target object. Defaults to `"commit"`. */
 	targetType?: ObjectType;
 	/**
-	 * Signing policy (three-state), as in {@link CreateCommitOptions.sign}.
-	 * A signed tag appends the armored block after the message body.
+	 * Signing policy, as in {@link CreateCommitOptions.sign}. A signed tag
+	 * appends the armored block after the message body.
 	 */
 	sign?: boolean;
-	/** Per-call signer override. Falls back to the repo's ambient `signer`. */
-	signer?: Signer;
 }
 
 /**
@@ -192,10 +182,8 @@ export interface BuildCommitOptions {
 	 * with only the specified files.
 	 */
 	branch?: string;
-	/** Signing policy (three-state), as in {@link CreateCommitOptions.sign}. */
+	/** Signing policy, as in {@link CreateCommitOptions.sign}. */
 	sign?: boolean;
-	/** Per-call signer override. Falls back to the repo's ambient `signer`. */
-	signer?: Signer;
 }
 
 /** Result of {@link buildCommit}. */
@@ -295,10 +283,8 @@ export interface CommitOptions {
 	committer?: CommitIdentity;
 	/** Branch to commit to. Parent is auto-resolved from the current branch tip. */
 	branch: string;
-	/** Signing policy (three-state), as in {@link CreateCommitOptions.sign}. */
+	/** Signing policy, as in {@link CreateCommitOptions.sign}. */
 	sign?: boolean;
-	/** Per-call signer override. Falls back to the repo's ambient `signer`. */
-	signer?: Signer;
 }
 
 /**

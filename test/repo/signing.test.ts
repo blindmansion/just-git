@@ -211,9 +211,9 @@ describe("SDK signing", () => {
 		expect(decoder.decode(payloads[0]!)).not.toContain("gpgsig");
 	});
 
-	test("a per-call signer implies signing without sign:true", async () => {
+	test("an ambient signer alone does not sign without sign:true", async () => {
 		const { signer } = stubSigner();
-		const { git, fs } = await initRepoWithCommit();
+		const { git, fs } = await initRepoWithCommit({ signer });
 		const repo = (await git.findRepo({ fs, cwd: "/repo" }))!;
 		const head = ((await repo.refStore.readRef("refs/heads/main")) as { hash: string }).hash;
 		const parentCommit = await readCommit(repo, head);
@@ -222,9 +222,9 @@ describe("SDK signing", () => {
 			parents: [],
 			author: IDENT,
 			message: "m\n",
-			signer,
 		});
-		expect((await readCommit(repo, hash)).gpgsig).toBe(FAKE_PGP_SIG);
+		// Mechanism (signer on the handle) without policy (`sign`) stays unsigned.
+		expect((await readCommit(repo, hash)).gpgsig).toBeUndefined();
 	});
 
 	test("sign:false suppresses an ambient signer", async () => {

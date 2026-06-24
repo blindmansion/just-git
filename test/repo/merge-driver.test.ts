@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
+import { withCapabilities } from "../../src/lib/capabilities.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import type { GitRepo } from "../../src/lib/types.ts";
 import { readBlobText } from "../../src/repo/reading.ts";
@@ -69,7 +70,11 @@ describe("mergeDriver", () => {
 			return { content: `${ours.trim()}\n${theirs.trim()}\n`, conflict: false };
 		};
 
-		const result = await mergeTrees(repo, oursHash, theirsHash, { mergeDriver: driver });
+		const result = await mergeTrees(
+			withCapabilities(repo, { mergeDriver: driver }),
+			oursHash,
+			theirsHash,
+		);
 
 		expect(result.clean).toBe(true);
 		expect(result.conflicts).toHaveLength(0);
@@ -85,7 +90,11 @@ describe("mergeDriver", () => {
 			return { content: `CUSTOM-CONFLICT\n${ours}${theirs}`, conflict: true };
 		};
 
-		const result = await mergeTrees(repo, oursHash, theirsHash, { mergeDriver: driver });
+		const result = await mergeTrees(
+			withCapabilities(repo, { mergeDriver: driver }),
+			oursHash,
+			theirsHash,
+		);
 
 		expect(result.clean).toBe(false);
 		expect(result.conflicts).toHaveLength(1);
@@ -101,7 +110,11 @@ describe("mergeDriver", () => {
 			return null;
 		};
 
-		const result = await mergeTrees(repo, oursHash, theirsHash, { mergeDriver: driver });
+		const result = await mergeTrees(
+			withCapabilities(repo, { mergeDriver: driver }),
+			oursHash,
+			theirsHash,
+		);
 
 		expect(called).toBe(true);
 		expect(result.clean).toBe(false);
@@ -139,7 +152,11 @@ describe("mergeDriver", () => {
 			return null;
 		};
 
-		const result = await mergeTrees(repo, oursHash, theirsHash, { mergeDriver: driver });
+		const result = await mergeTrees(
+			withCapabilities(repo, { mergeDriver: driver }),
+			oursHash,
+			theirsHash,
+		);
 
 		expect(result.clean).toBe(true);
 		expect(calledPaths).toHaveLength(0);
@@ -153,7 +170,11 @@ describe("mergeDriver", () => {
 			return { content: `// merged\n${ours}${theirs}`, conflict: false };
 		};
 
-		const result = await mergeTrees(repo, oursHash, theirsHash, { mergeDriver: driver });
+		const result = await mergeTrees(
+			withCapabilities(repo, { mergeDriver: driver }),
+			oursHash,
+			theirsHash,
+		);
 
 		expect(result.clean).toBe(true);
 		const blob = await readFileFromTree(repo, result.treeHash, "code.ts");
@@ -168,7 +189,11 @@ describe("mergeDriver", () => {
 			return { content: "async-merged\n", conflict: false };
 		};
 
-		const result = await mergeTrees(repo, oursHash, theirsHash, { mergeDriver: driver });
+		const result = await mergeTrees(
+			withCapabilities(repo, { mergeDriver: driver }),
+			oursHash,
+			theirsHash,
+		);
 
 		expect(result.clean).toBe(true);
 		const blob = await readFileFromTree(repo, result.treeHash, "file.txt");
@@ -204,7 +229,11 @@ describe("mergeDriver", () => {
 			return { content: `${ours.trim()}+${theirs.trim()}\n`, conflict: false };
 		};
 
-		const result = await mergeTrees(repo, oursHash, theirsHash, { mergeDriver: driver });
+		const result = await mergeTrees(
+			withCapabilities(repo, { mergeDriver: driver }),
+			oursHash,
+			theirsHash,
+		);
 
 		expect(result.clean).toBe(true);
 		const blob = await readFileFromTree(repo, result.treeHash, "new.txt");
@@ -223,11 +252,10 @@ describe("mergeDriver", () => {
 		};
 
 		const result = await mergeTreesFromTreeHashes(
-			repo,
+			withCapabilities(repo, { mergeDriver: driver }),
 			baseCommit.tree,
 			oursCommit.tree,
 			theirsCommit.tree,
-			{ mergeDriver: driver },
 		);
 
 		expect(result.clean).toBe(true);
@@ -252,7 +280,7 @@ describe("mergeDriver", () => {
 			return null;
 		};
 
-		await mergeTrees(repo, oursHash, theirsHash, { mergeDriver: driver });
+		await mergeTrees(withCapabilities(repo, { mergeDriver: driver }), oursHash, theirsHash);
 
 		expect(capturedCtx).not.toBeNull();
 		expect(capturedCtx!.path).toBe("file.txt");
@@ -302,7 +330,11 @@ describe("mergeDriver", () => {
 			return { content: "rename-merged\n", conflict: false };
 		};
 
-		const result = await mergeTrees(repo, oursHash, theirsHash, { mergeDriver: driver });
+		const result = await mergeTrees(
+			withCapabilities(repo, { mergeDriver: driver }),
+			oursHash,
+			theirsHash,
+		);
 
 		expect(result.clean).toBe(true);
 		expect(calledPaths.length).toBeGreaterThan(0);

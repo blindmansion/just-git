@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { withCapabilities } from "../../src/lib/capabilities.ts";
 import type { MergeDriver } from "../../src/lib/merge-ort.ts";
 import type { GitRepo, Identity } from "../../src/lib/types.ts";
 import { merge, rebase } from "../../src/repo/operations.ts";
@@ -420,12 +421,11 @@ describe("rebase: conflicts and resume", () => {
 		const driver: MergeDriver = (ctx) =>
 			ctx.path === "shared.txt" ? { content: "auto\n", conflict: false } : null;
 
-		const res = await rebase(repo, {
+		const res = await rebase(withCapabilities(repo, { mergeDriver: driver }), {
 			rebase: "feature",
 			upstream: "main",
 			branch: "feature",
 			committer: BOT,
-			mergeDriver: driver,
 		});
 
 		expect(res.status).toBe("ok");

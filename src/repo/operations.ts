@@ -1,6 +1,5 @@
 import { findBisectionCommit } from "../lib/bisect.ts";
 import { isAncestor, type MergeConflict } from "../lib/merge.ts";
-import type { MergeDriver } from "../lib/merge-ort.ts";
 import { readCommit as _readCommit, writeObject } from "../lib/object-db.ts";
 import { serializeTree } from "../lib/objects/tree.ts";
 import { selectRebaseCommits } from "../lib/rebase.ts";
@@ -186,8 +185,6 @@ export interface CherryPickOptions {
 	message?: string;
 	/** When true, perform the merge but don't create a commit. `hash` will be `null` in the result. */
 	noCommit?: boolean;
-	/** Custom merge driver for content conflicts. */
-	mergeDriver?: MergeDriver;
 }
 
 /** Clean result when a commit was created. */
@@ -282,7 +279,6 @@ export async function cherryPick(
 		message,
 		noCommit: options.noCommit,
 		branch: options.branch,
-		mergeDriver: options.mergeDriver,
 	});
 }
 
@@ -306,8 +302,6 @@ export interface RevertOptions {
 	message?: string;
 	/** When true, perform the merge but don't create a commit. `hash` will be `null` in the result. */
 	noCommit?: boolean;
-	/** Custom merge driver for content conflicts. */
-	mergeDriver?: MergeDriver;
 }
 
 /** Result of {@link revert}. Same shape as {@link CherryPickResult}. */
@@ -375,7 +369,6 @@ export async function revert(
 		message,
 		noCommit: options.noCommit,
 		branch: options.branch,
-		mergeDriver: options.mergeDriver,
 	});
 }
 
@@ -430,7 +423,6 @@ interface ApplyPickInput {
 	message: string;
 	noCommit?: boolean;
 	branch?: string;
-	mergeDriver?: MergeDriver;
 }
 
 async function applyPick(
@@ -442,7 +434,6 @@ async function applyPick(
 		input.baseTree,
 		input.oursTree,
 		input.theirsTree,
-		{ mergeDriver: input.mergeDriver },
 	);
 
 	if (!result.clean) {
@@ -524,8 +515,6 @@ export interface MergeOptions {
 	 * - `"never"` — always create a merge commit (`--no-ff`).
 	 */
 	fastForward?: "allow" | "only" | "never";
-	/** Inline content-merge driver, applied during the merge (auto-resolution). */
-	mergeDriver?: MergeDriver;
 	/**
 	 * Post-hoc resolutions, keyed by conflicted path. Derived from a prior
 	 * probe call's `conflicts`. When every conflicted path is resolved, the
@@ -614,7 +603,6 @@ export async function merge(repo: GitRepo, options: MergeOptions): Promise<Merge
 	const m = await mergeTreesDetailed(repo, ours, theirs, {
 		ours: options.labels?.ours,
 		theirs: options.labels?.theirs,
-		mergeDriver: options.mergeDriver,
 	});
 
 	const applied = await applyResolutions(repo, m, options.resolutions ?? {}, "merge");
@@ -819,8 +807,6 @@ export interface RebaseOptions {
 	branch?: string;
 	/** Skip patch-id cherry-pick dedup and replay every commit in the range. */
 	reapplyCherryPicks?: boolean;
-	/** Custom merge driver for content conflicts. Re-supply on every resume — it is not stored in the token. */
-	mergeDriver?: MergeDriver;
 	/** Conflict-marker labels for ours/theirs. */
 	labels?: { ours?: string; theirs?: string };
 	/** CAS guard for the final branch advance (see {@link MergeOptions.expectedOldHash}). */
@@ -919,7 +905,7 @@ export async function rebase(repo: GitRepo, options: RebaseOptions): Promise<Reb
 			expectedOldHash: cont.expectedOldHash,
 			labels: cont.labels,
 		};
-		return runRebaseReplay(repo, state, options.resolutions ?? {}, options.mergeDriver);
+		return runRebaseReplay(repo, state, options.resolutions ?? {});
 	}
 
 	// ── Fresh rebase ─────────────────────────────────────────
@@ -959,7 +945,7 @@ export async function rebase(repo: GitRepo, options: RebaseOptions): Promise<Reb
 		return finishRebaseReplay(repo, state);
 	}
 
-	return runRebaseReplay(repo, state, {}, options.mergeDriver);
+	return runRebaseReplay(repo, state, {});
 }
 
 /**
@@ -971,7 +957,6 @@ async function runRebaseReplay(
 	repo: GitRepo,
 	state: RebaseReplayState,
 	firstResolutions: Record<string, Resolution>,
-	mergeDriver: MergeDriver | undefined,
 ): Promise<RebaseResult> {
 	let isFirst = true;
 
@@ -992,7 +977,6 @@ async function runRebaseReplay(
 			{
 				ours: state.labels?.ours,
 				theirs: state.labels?.theirs,
-				mergeDriver,
 			},
 		);
 
@@ -1091,8 +1075,6 @@ export interface PullOptions {
 	message?: string;
 	/** Fast-forward policy (merge strategy). Default `"allow"`. */
 	fastForward?: "allow" | "only" | "never";
-	/** Custom content-merge driver. */
-	mergeDriver?: MergeDriver;
 	/** Conflict-marker labels for ours/theirs. */
 	labels?: { ours?: string; theirs?: string };
 	/** Skip patch-id cherry-pick dedup and replay every commit (rebase strategy). */
@@ -1153,7 +1135,6 @@ export async function pull(
 			branch,
 			committer: options.committer,
 			reapplyCherryPicks: options.reapplyCherryPicks,
-			mergeDriver: options.mergeDriver,
 			labels: options.labels,
 		});
 		return { fetched, integration };
@@ -1167,7 +1148,6 @@ export async function pull(
 		committer: options.committer,
 		message: options.message,
 		fastForward: options.fastForward,
-		mergeDriver: options.mergeDriver,
 		labels: options.labels,
 	});
 	return { fetched, integration };

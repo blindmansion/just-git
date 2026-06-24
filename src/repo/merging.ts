@@ -33,7 +33,7 @@ export async function mergeTrees(
 	repo: GitRepo,
 	oursCommit: string,
 	theirsCommit: string,
-	options?: { ours?: string; theirs?: string; mergeDriver?: MergeDriver },
+	options?: { ours?: string; theirs?: string },
 ): Promise<MergeTreesResult> {
 	const mergeLabels = options
 		? { a: options.ours ?? "ours", b: options.theirs ?? "theirs" }
@@ -44,7 +44,7 @@ export async function mergeTrees(
 		oursCommit,
 		theirsCommit,
 		mergeLabels,
-		options?.mergeDriver,
+		repo.capabilities?.mergeDriver,
 	);
 
 	return {
@@ -65,7 +65,7 @@ export async function mergeTreesFromTreeHashes(
 	baseTree: string | null,
 	oursTree: string,
 	theirsTree: string,
-	options?: { ours?: string; theirs?: string; mergeDriver?: MergeDriver },
+	options?: { ours?: string; theirs?: string },
 ): Promise<MergeTreesResult> {
 	const mergeLabels = options
 		? { a: options.ours ?? "ours", b: options.theirs ?? "theirs" }
@@ -77,7 +77,7 @@ export async function mergeTreesFromTreeHashes(
 		oursTree,
 		theirsTree,
 		mergeLabels,
-		options?.mergeDriver,
+		repo.capabilities?.mergeDriver,
 	);
 
 	return {
@@ -138,7 +138,7 @@ export async function mergeTreesDetailed(
 	repo: GitRepo,
 	oursCommit: string,
 	theirsCommit: string,
-	options?: { ours?: string; theirs?: string; mergeDriver?: MergeDriver },
+	options?: { ours?: string; theirs?: string },
 ): Promise<MergeTreesDetailedResult> {
 	const mergeLabels = options
 		? { a: options.ours ?? "ours", b: options.theirs ?? "theirs" }
@@ -149,7 +149,7 @@ export async function mergeTreesDetailed(
 		oursCommit,
 		theirsCommit,
 		mergeLabels,
-		options?.mergeDriver,
+		repo.capabilities?.mergeDriver,
 	);
 
 	return toDetailedResult(result);
@@ -167,7 +167,7 @@ export async function mergeTreesDetailedFromTreeHashes(
 	baseTree: string | null,
 	oursTree: string,
 	theirsTree: string,
-	options?: { ours?: string; theirs?: string; mergeDriver?: MergeDriver },
+	options?: { ours?: string; theirs?: string },
 ): Promise<MergeTreesDetailedResult> {
 	const mergeLabels = options
 		? { a: options.ours ?? "ours", b: options.theirs ?? "theirs" }
@@ -179,7 +179,7 @@ export async function mergeTreesDetailedFromTreeHashes(
 		oursTree,
 		theirsTree,
 		mergeLabels,
-		options?.mergeDriver,
+		repo.capabilities?.mergeDriver,
 	);
 
 	return toDetailedResult(result);

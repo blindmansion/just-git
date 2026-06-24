@@ -113,14 +113,14 @@ export function tagSigningPayload(tag: Tag): Uint8Array {
 
 // ── Resolution helpers ──────────────────────────────────────────────
 
-/** Read an ambient {@link Signer} off a repo handle (set on `GitRepo`). */
+/** Read the ambient {@link Signer} off a handle's capabilities. */
 export function getRepoSigner(repo: GitRepo): Signer | undefined {
-	return repo.signing?.signer;
+	return repo.capabilities?.signing?.signer;
 }
 
-/** Read an ambient {@link Verifier} off a repo handle (set on `GitRepo`). */
+/** Read the ambient {@link Verifier} off a handle's capabilities. */
 export function getRepoVerifier(repo: GitRepo): Verifier | undefined {
-	return repo.signing?.verifier;
+	return repo.capabilities?.signing?.verifier;
 }
 
 /**
@@ -151,22 +151,20 @@ export class VerificationError extends Error {
  * Resolve the SDK-level signing decision for a writer (`createCommit`,
  * `buildCommit`, `commit`, `createAnnotatedTag`).
  *
- * Policy (`sign`) and mechanism (`signer`) are independent:
- * - `sign === false` → never sign.
- * - `sign === true` → must sign; resolves `signer ?? ctx.signing?.signer` and
- *   throws {@link SigningError} if neither is present (no silent unsigned commit).
- * - `sign === undefined` → a concrete per-call `signer` implies signing;
- *   an ambient `ctx.signing?.signer` alone does NOT (that is gated by config at
- *   the command layer, not the bare SDK).
+ * Policy (`sign`) and mechanism (the handle's `capabilities.signing.signer`)
+ * are independent:
+ * - `sign === false` / `undefined` → never sign. An ambient signer alone does
+ *   NOT trigger signing from the bare SDK — that is gated by config at the
+ *   command layer.
+ * - `sign === true` → must sign; resolves the handle's ambient signer and
+ *   throws {@link SigningError} if none is present (no silent unsigned commit).
+ *
+ * The signer is wrap-on-handle only (`withCapabilities(repo, { signing })`);
+ * there is no per-call `signer` override.
  */
-export function resolveSdkSigning(
-	repo: GitRepo,
-	options: { sign?: boolean; signer?: Signer },
-): Signer | undefined {
-	const ambient = getRepoSigner(repo);
-	const shouldSign = options.sign ?? options.signer != null;
-	if (!shouldSign) return undefined;
-	const signer = options.signer ?? ambient;
+export function resolveSdkSigning(repo: GitRepo, options: { sign?: boolean }): Signer | undefined {
+	if (!options.sign) return undefined;
+	const signer = getRepoSigner(repo);
 	if (!signer) throw new SigningError();
 	return signer;
 }

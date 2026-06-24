@@ -14,7 +14,6 @@ import {
 } from "../lib/refs.ts";
 import { resolveRevisionRepo } from "../lib/rev-parse.ts";
 import {
-	type Verifier,
 	type VerificationResult,
 	VerificationError,
 	commitSigningPayload,
@@ -147,21 +146,16 @@ export type { VerificationResult };
  *
  * Resolves `ref` (a hash or revision expression) to a commit, reconstructs
  * the exact signed bytes via {@link commitSigningPayload}, and delegates to
- * a {@link Verifier}. The verifier is the explicit argument when given,
- * otherwise the ambient one on the repo (set via `createGit({ signing })`).
+ * the handle's ambient verifier (`withCapabilities(repo, { signing })`).
  *
  * Returns `null` when the commit carries no signature. Throws when a
  * signature is present but no verifier is available.
  */
-export async function verifyCommit(
-	repo: GitRepo,
-	ref: string,
-	verifier?: Verifier,
-): Promise<VerificationResult | null> {
+export async function verifyCommit(repo: GitRepo, ref: string): Promise<VerificationResult | null> {
 	const hash = (await resolveRevisionRepo(repo, ref)) ?? ref;
 	const commit = await _readCommit(repo, hash);
 	if (commit.gpgsig === undefined) return null;
-	const v = verifier ?? getRepoVerifier(repo);
+	const v = getRepoVerifier(repo);
 	if (!v) throw new VerificationError();
 	return v(commitSigningPayload(commit), commit.gpgsig);
 }
@@ -171,22 +165,18 @@ export async function verifyCommit(
  *
  * Resolves `ref` (a tag name, hash, or revision expression) to a tag
  * object, reconstructs the signed bytes via {@link tagSigningPayload}, and
- * delegates to a {@link Verifier}. Returns `null` for lightweight tags or
- * unsigned annotated tags. Throws when a signature is present but no
+ * delegates to the handle's ambient verifier. Returns `null` for lightweight
+ * tags or unsigned annotated tags. Throws when a signature is present but no
  * verifier is available.
  */
-export async function verifyTag(
-	repo: GitRepo,
-	ref: string,
-	verifier?: Verifier,
-): Promise<VerificationResult | null> {
+export async function verifyTag(repo: GitRepo, ref: string): Promise<VerificationResult | null> {
 	const hash =
 		(await resolveRevisionRepo(repo, ref)) ?? (await _resolveRef(repo, `refs/tags/${ref}`)) ?? ref;
 	const raw = await readObject(repo, hash);
 	if (raw.type !== "tag") return null; // lightweight tag → no signature
 	const tag = await _readTag(repo, hash);
 	if (tag.gpgsig === undefined) return null;
-	const v = verifier ?? getRepoVerifier(repo);
+	const v = getRepoVerifier(repo);
 	if (!v) throw new VerificationError();
 	return v(tagSigningPayload(tag), tag.gpgsig);
 }

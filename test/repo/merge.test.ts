@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { withCapabilities } from "../../src/lib/capabilities.ts";
 import type { GitRepo, Identity } from "../../src/lib/types.ts";
 import { merge } from "../../src/repo/operations.ts";
 import { readCommit, resolveRef } from "../../src/repo/reading.ts";
@@ -444,14 +445,18 @@ describe("merge: delete/modify conflict", () => {
 describe("merge: mergeDriver auto-resolution", () => {
 	test("a mergeDriver can clear a content conflict before it surfaces", async () => {
 		const { repo } = await setupConflict();
-		const res = await merge(repo, {
-			ours: "main",
-			theirs: "feature",
-			author: ID,
-			branch: "main",
-			mergeDriver: ({ path }) =>
-				path === "shared.txt" ? { content: "driver-merged\n", conflict: false } : null,
-		});
+		const res = await merge(
+			withCapabilities(repo, {
+				mergeDriver: ({ path }) =>
+					path === "shared.txt" ? { content: "driver-merged\n", conflict: false } : null,
+			}),
+			{
+				ours: "main",
+				theirs: "feature",
+				author: ID,
+				branch: "main",
+			},
+		);
 		expect(res.status).toBe("merged");
 		if (res.status !== "merged") throw new Error("unreachable");
 		expect(await readFileFromTree(repo, res.treeHash, "shared.txt")).toBe("driver-merged\n");
