@@ -1,5 +1,6 @@
+import type { ConfigOverrides } from "../hooks.ts";
 import { join } from "./path.ts";
-import type { GitContext } from "./types.ts";
+import type { CapabilityContext, ConfigView, GitContext, GitOperation, GitRepo } from "./types.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -558,6 +559,75 @@ export async function getConfigValueAll(ctx: GitContext, dottedKey: string): Pro
 	return [];
 }
 
+// ── Capability context ──────────────────────────────────────────────
+
+/**
+ * Build a synchronous {@link ConfigView} over an in-memory config snapshot,
+ * applying the same precedence as {@link getConfigValue} / {@link
+ * getConfigValueAll}: a `locked` override wins, then the on-disk value(s), then
+ * a `defaults` fallback. An unparseable dotted key resolves to "no value"
+ * rather than throwing, since the view is handed to host capability code.
+ */
+export function makeConfigView(disk: GitConfigMulti, overrides?: ConfigOverrides): ConfigView {
+	return {
+		get(dottedKey) {
+			const locked = overrides?.locked?.[dottedKey];
+			if (locked !== undefined) return locked;
+			const parsed = tryParseDottedKey(dottedKey);
+			const values = parsed && disk[parsed.section]?.[parsed.key];
+			if (values && values.length > 0) return values[values.length - 1];
+			return overrides?.defaults?.[dottedKey];
+		},
+		getAll(dottedKey) {
+			const locked = overrides?.locked?.[dottedKey];
+			if (locked !== undefined) return [locked];
+			const parsed = tryParseDottedKey(dottedKey);
+			const values = parsed && disk[parsed.section]?.[parsed.key];
+			if (values && values.length > 0) return [...values];
+			const def = overrides?.defaults?.[dottedKey];
+			return def !== undefined ? [def] : [];
+		},
+	};
+}
+
+/** Read and parse .git/config preserving duplicate keys. Empty if no file. */
+export async function readConfigMulti(ctx: GitContext): Promise<GitConfigMulti> {
+	const raw = await readConfigRaw(ctx);
+	return raw ? parseConfigMulti(raw) : {};
+}
+
+/**
+ * Snapshot a handle into a {@link CapabilityContext} for the function-shaped
+ * capabilities. Reads `.git/config` once (when the handle is filesystem-backed)
+ * to back a synchronous {@link ConfigView}; a bare store-backed handle gets an
+ * empty view layered only with the static overrides. Identity is intentionally
+ * not resolved here — it is not part of the context.
+ */
+export async function buildCapabilityContext(
+	handle: GitRepo | GitContext,
+	operation: GitOperation,
+	opts?: { env?: ReadonlyMap<string, string>; url?: string },
+): Promise<CapabilityContext> {
+	const overrides = handle.capabilities?.config;
+	const fsBound = isGitContext(handle);
+	const disk = fsBound ? await readConfigMulti(handle) : {};
+	return {
+		operation,
+		repo: {
+			gitDir: fsBound ? handle.gitDir : undefined,
+			objectStore: handle.objectStore,
+			refStore: handle.refStore,
+		},
+		config: makeConfigView(disk, overrides),
+		env: opts?.env,
+		url: opts?.url,
+	};
+}
+
+function isGitContext(handle: GitRepo | GitContext): handle is GitContext {
+	return "fs" in handle && "gitDir" in handle;
+}
+
 /**
  * Surgically append a value to a key in raw config text, without
  * replacing any existing values. If the section doesn't exist, it is
@@ -664,4 +734,13 @@ function parseDottedKey(dottedKey: string): {
 	}
 
 	throw new Error(`Invalid config key: "${dottedKey}"`);
+}
+
+/** Like {@link parseDottedKey} but returns null instead of throwing. */
+function tryParseDottedKey(dottedKey: string): { section: string; key: string } | null {
+	try {
+		return parseDottedKey(dottedKey);
+	} catch {
+		return null;
+	}
 }

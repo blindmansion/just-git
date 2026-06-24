@@ -319,6 +319,69 @@ export interface GitContext extends GitRepo {
 	workTree: string | null;
 }
 
+// ── Capability context ──────────────────────────────────────────────
+
+/** The git operation driving a capability resolver. */
+export type GitOperation =
+	| "commit"
+	| "merge"
+	| "rebase"
+	| "cherry-pick"
+	| "revert"
+	| "clone"
+	| "fetch"
+	| "push"
+	| "pull"
+	| "ls-remote"
+	| "tag";
+
+/**
+ * Read-only view over resolved config: parsed `.git/config` merged with the
+ * static `capabilities.config` overrides (a `locked` value wins, then the
+ * on-disk value, then a `defaults` fallback). Synchronous — built from a
+ * one-time snapshot, so a resolver can read config without re-touching the
+ * filesystem on every call.
+ */
+export interface ConfigView {
+	get(dottedKey: string): string | undefined;
+	getAll(dottedKey: string): string[];
+}
+
+/**
+ * The single context handed to every function-shaped capability (the
+ * `mergeDriver` today; `transport` and `filters` later) as the mandatory first
+ * argument, ahead of any operation-specific data.
+ *
+ * The object is always constructed by the core; individual fields may be
+ * absent — a bare store-backed handle has no `gitDir`/`env` and gets an empty
+ * `config` view, and `url` is present only for transport operations.
+ * `identity` is deliberately NOT carried here: no capability consumes it (it is
+ * itself a producer the core invokes to build a commit/tag), and leaving it out
+ * keeps the most expensive, fallible derivation off the context — building the
+ * context for a merge can never throw "please tell me who you are".
+ */
+export interface CapabilityContext {
+	/** Which git operation is driving this resolver. */
+	operation: GitOperation;
+	/**
+	 * The handle the operation runs against. Stores are exposed for advanced
+	 * resolvers (semantic merge drivers, content filters); the common case
+	 * reads only `config`.
+	 */
+	repo: {
+		id?: string;
+		gitDir?: string;
+		objectStore: ObjectStore;
+		refStore: RefStore;
+	};
+	/** Effective config view; an empty view for bare, config-less handles. */
+	config: ConfigView;
+	/** CLI env, when driven through the front door; absent on the bare SDK path. */
+	env?: ReadonlyMap<string, string>;
+	/** Target URL — present only for transport operations. */
+	url?: string;
+}
+
 // ── Diff result types ───────────────────────────────────────────────
 
 export type DiffStatus = "added" | "deleted" | "modified";

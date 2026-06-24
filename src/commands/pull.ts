@@ -28,7 +28,7 @@ import {
 import { getReflogIdentity } from "../lib/identity.ts";
 import { getConflictedPaths, hasConflicts, readIndex } from "../lib/index.ts";
 import { buildMergeMessage, findAllMergeBases, handleFastForward } from "../lib/merge.ts";
-import { applyMergeResult, mergeOrtRecursive } from "../lib/merge-ort.ts";
+import { applyMergeResult, bindMergeDriver, mergeOrtRecursive } from "../lib/merge-ort.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { deleteStateFile, writeStateFile } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";
@@ -523,7 +523,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				headHash,
 				theirsHash,
 				labels,
-				gitCtx.capabilities?.mergeDriver,
+				await bindMergeDriver(gitCtx, "pull"),
 			);
 
 			const headCommit = await readCommit(gitCtx, headHash);

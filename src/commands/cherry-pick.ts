@@ -25,6 +25,7 @@ import { getStage0Entries, readIndex, writeIndex } from "../lib/index.ts";
 import {
 	type ApplyMergeFailure,
 	applyMergeResult,
+	bindMergeDriver,
 	mergeOrtNonRecursive,
 } from "../lib/merge-ort.ts";
 import { readCommit } from "../lib/object-db.ts";
@@ -235,7 +236,7 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 				headCommit.tree,
 				theirsCommit.tree,
 				labels,
-				gitCtx.capabilities?.mergeDriver,
+				await bindMergeDriver(gitCtx, "cherry-pick"),
 			);
 
 			// ── Empty cherry-pick detection ───────────────────────────

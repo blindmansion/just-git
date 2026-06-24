@@ -15,6 +15,7 @@
  */
 
 import { comparePaths } from "./command-utils.ts";
+import { buildCapabilityContext } from "./config.ts";
 import type { MergeLabels } from "./diff3.ts";
 import {
 	merge as diff3Merge,
@@ -32,7 +33,9 @@ import { isSymlinkMode } from "./symlink.ts";
 import { buildTreeFromIndex, type FlatTreeEntry, flattenTreeToMap } from "./tree-ops.ts";
 import { checkoutEntry } from "./worktree.ts";
 import type {
+	CapabilityContext,
 	GitContext,
+	GitOperation,
 	GitRepo,
 	Identity,
 	Index,
@@ -116,17 +119,50 @@ interface MergeOrtResult extends MergeTreeResult {
  * blobs are preserved as index stages 1/2/3 (so `--ours`/`--theirs`
  * checkout still works) and the returned content becomes the worktree blob.
  */
-export type MergeDriver = (ctx: {
+export type MergeDriver = (
+	ctx: CapabilityContext,
+	input: MergeDriverInput,
+) => MergeDriverResult | null | Promise<MergeDriverResult | null>;
+
+/** The per-path data for one content-merge decision. */
+export interface MergeDriverInput {
 	path: string;
 	base: string | null;
 	ours: string;
 	theirs: string;
-}) => MergeDriverResult | null | Promise<MergeDriverResult | null>;
+}
 
 /** Result from a {@link MergeDriver} callback. */
 export interface MergeDriverResult {
 	content: string;
 	conflict: boolean;
+}
+
+/**
+ * Internal, context-bound form of a merge driver threaded through the engine.
+ * {@link bindMergeDriver} has already captured the {@link CapabilityContext},
+ * so the engine only supplies the per-path {@link MergeDriverInput}.
+ */
+export type ContentMergeFn = (
+	input: MergeDriverInput,
+) => MergeDriverResult | null | Promise<MergeDriverResult | null>;
+
+/**
+ * Read the `mergeDriver` capability off a handle and bind it to a freshly
+ * snapshotted {@link CapabilityContext}, yielding the context-free form the
+ * merge engine threads internally. Returns `undefined` — and skips building the
+ * context entirely — when no driver is configured, so the common no-driver path
+ * keeps its current zero overhead. Call once per operation at the capability
+ * boundary; the bound function is then reused for every conflicted path.
+ */
+export async function bindMergeDriver(
+	handle: GitRepo | GitContext,
+	operation: GitOperation,
+): Promise<ContentMergeFn | undefined> {
+	const driver = handle.capabilities?.mergeDriver;
+	if (!driver) return undefined;
+	const ctx = await buildCapabilityContext(handle, operation);
+	return (input) => driver(ctx, input);
 }
 
 /** Sortable message buffer entry. */
@@ -155,7 +191,7 @@ export async function mergeOrtNonRecursive(
 	oursTree: ObjectId,
 	theirsTree: ObjectId,
 	labels?: MergeLabels,
-	mergeDriver?: MergeDriver,
+	mergeDriver?: ContentMergeFn,
 ): Promise<MergeOrtResult> {
 	// Phase 1: Collect
 	const { paths, baseMap, oursMap, theirsMap } = await collectMergeInfo(
@@ -191,7 +227,7 @@ export async function mergeOrtRecursive(
 	oursHash: ObjectId,
 	theirsHash: ObjectId,
 	labels?: MergeLabels,
-	mergeDriver?: MergeDriver,
+	mergeDriver?: ContentMergeFn,
 ): Promise<MergeOrtResult & { baseTree: ObjectId | null }> {
 	const bases = await findAllMergeBases(ctx, oursHash, theirsHash);
 	const oursCommit = await readCommit(ctx, oursHash);
@@ -389,7 +425,7 @@ async function detectAndProcessRenames(
 	oursMap: Map<string, FlatTreeEntry>,
 	theirsMap: Map<string, FlatTreeEntry>,
 	labels?: MergeLabels,
-	mergeDriver?: MergeDriver,
+	mergeDriver?: ContentMergeFn,
 ): Promise<RenameOutput> {
 	const output: RenameOutput = {
 		entries: [],
@@ -1217,7 +1253,7 @@ async function handleRenameAddAdd(
 	theirsMap: Map<string, FlatTreeEntry>,
 	isTheirsRename = false,
 	labels?: MergeLabels,
-	mergeDriver?: MergeDriver,
+	mergeDriver?: ContentMergeFn,
 ): Promise<void> {
 	const targetEntry = isTheirsRename ? oursMap.get(targetPath)! : theirsMap.get(targetPath)!;
 
@@ -1318,7 +1354,7 @@ async function mergeRenameContent(
 	labels?: MergeLabels,
 	pathLabels?: { oursPath?: string; theirsPath?: string },
 	markerSize?: number,
-	mergeDriver?: MergeDriver,
+	mergeDriver?: ContentMergeFn,
 ): Promise<{ hash: ObjectId; conflict: boolean }> {
 	if (ours.hash === base.hash) return { hash: theirs.hash, conflict: false };
 	if (theirs.hash === base.hash) return { hash: ours.hash, conflict: false };
@@ -1417,7 +1453,7 @@ async function processEntries(
 	paths: Map<string, ConflictInfo>,
 	labels: MergeLabels | undefined,
 	renameOutput: RenameOutput,
-	mergeDriver?: MergeDriver,
+	mergeDriver?: ContentMergeFn,
 ): Promise<MergeOrtResult> {
 	// Start with rename-produced entries/conflicts/messages
 	const entries: IndexEntry[] = [...renameOutput.entries];
@@ -1481,7 +1517,7 @@ async function processEntry(
 	conflicts: MergeConflict[],
 	pushMsg: (sortKey: string, text: string, subOrder?: number) => void,
 	worktreeBlobs: Map<string, { hash: ObjectId; mode: string }>,
-	mergeDriver?: MergeDriver,
+	mergeDriver?: ContentMergeFn,
 ): Promise<void> {
 	const path = ci.path;
 	const [base, ours, theirs] = ci.stages;
@@ -1746,7 +1782,7 @@ async function computeRecursiveMergeBase(
 	_theirsHash: ObjectId,
 	bases: ObjectId[],
 	callDepth: number,
-	mergeDriver?: MergeDriver,
+	mergeDriver?: ContentMergeFn,
 ): Promise<ObjectId> {
 	// Sort merge bases oldest-first (ascending by commit timestamp)
 	const basesWithTimestamp = await Promise.all(

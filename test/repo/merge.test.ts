@@ -447,7 +447,7 @@ describe("merge: mergeDriver auto-resolution", () => {
 		const { repo } = await setupConflict();
 		const res = await merge(
 			withCapabilities(repo, {
-				mergeDriver: ({ path }) =>
+				mergeDriver: (_ctx, { path }) =>
 					path === "shared.txt" ? { content: "driver-merged\n", conflict: false } : null,
 			}),
 			{

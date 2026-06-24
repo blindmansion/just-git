@@ -26,6 +26,7 @@ import { getStage0Entries, readIndex, writeIndex } from "../lib/index.ts";
 import {
 	type ApplyMergeFailure,
 	applyMergeResult,
+	bindMergeDriver,
 	mergeOrtNonRecursive,
 } from "../lib/merge-ort.ts";
 import { readCommit } from "../lib/object-db.ts";
@@ -208,7 +209,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				headCommit.tree,
 				parentTree,
 				labels,
-				gitCtx.capabilities?.mergeDriver,
+				await bindMergeDriver(gitCtx, "revert"),
 			);
 
 			// ── Empty revert detection ────────────────────────────────

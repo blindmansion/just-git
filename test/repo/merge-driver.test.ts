@@ -66,7 +66,7 @@ describe("mergeDriver", () => {
 	test("driver resolves a conflict cleanly", async () => {
 		const { repo, oursHash, theirsHash } = await setupDivergent();
 
-		const driver: MergeDriver = ({ ours, theirs }) => {
+		const driver: MergeDriver = (_ctx, { ours, theirs }) => {
 			return { content: `${ours.trim()}\n${theirs.trim()}\n`, conflict: false };
 		};
 
@@ -86,7 +86,7 @@ describe("mergeDriver", () => {
 	test("driver returns conflict: true preserves index stages", async () => {
 		const { repo, oursHash, theirsHash } = await setupDivergent();
 
-		const driver: MergeDriver = ({ ours, theirs }) => {
+		const driver: MergeDriver = (_ctx, { ours, theirs }) => {
 			return { content: `CUSTOM-CONFLICT\n${ours}${theirs}`, conflict: true };
 		};
 
@@ -147,7 +147,7 @@ describe("mergeDriver", () => {
 		const theirsHash = await getRefHash(repo, "refs/heads/feature");
 
 		const calledPaths: string[] = [];
-		const driver: MergeDriver = ({ path }) => {
+		const driver: MergeDriver = (_ctx, { path }) => {
 			calledPaths.push(path);
 			return null;
 		};
@@ -165,7 +165,7 @@ describe("mergeDriver", () => {
 	test("selective driver: only handle certain file extensions", async () => {
 		const { repo, oursHash, theirsHash } = await setupDivergent({ path: "code.ts" });
 
-		const driver: MergeDriver = ({ path, ours, theirs }) => {
+		const driver: MergeDriver = (_ctx, { path, ours, theirs }) => {
 			if (!path.endsWith(".ts")) return null;
 			return { content: `// merged\n${ours}${theirs}`, conflict: false };
 		};
@@ -224,7 +224,7 @@ describe("mergeDriver", () => {
 		const oursHash = await getRefHash(repo, "refs/heads/main");
 		const theirsHash = await getRefHash(repo, "refs/heads/feature");
 
-		const driver: MergeDriver = ({ base, ours, theirs }) => {
+		const driver: MergeDriver = (_ctx, { base, ours, theirs }) => {
 			expect(base).toBeNull();
 			return { content: `${ours.trim()}+${theirs.trim()}\n`, conflict: false };
 		};
@@ -274,6 +274,24 @@ describe("mergeDriver", () => {
 			theirsContent,
 		});
 
+		let capturedInput: Parameters<MergeDriver>[1] | null = null;
+		const driver: MergeDriver = (_ctx, input) => {
+			capturedInput = input;
+			return null;
+		};
+
+		await mergeTrees(withCapabilities(repo, { mergeDriver: driver }), oursHash, theirsHash);
+
+		expect(capturedInput).not.toBeNull();
+		expect(capturedInput!.path).toBe("file.txt");
+		expect(capturedInput!.base).toBe(baseContent);
+		expect(capturedInput!.ours).toBe(oursContent);
+		expect(capturedInput!.theirs).toBe(theirsContent);
+	});
+
+	test("driver receives a CapabilityContext with operation and a config view", async () => {
+		const { repo, oursHash, theirsHash } = await setupDivergent();
+
 		let capturedCtx: Parameters<MergeDriver>[0] | null = null;
 		const driver: MergeDriver = (ctx) => {
 			capturedCtx = ctx;
@@ -283,10 +301,32 @@ describe("mergeDriver", () => {
 		await mergeTrees(withCapabilities(repo, { mergeDriver: driver }), oursHash, theirsHash);
 
 		expect(capturedCtx).not.toBeNull();
-		expect(capturedCtx!.path).toBe("file.txt");
-		expect(capturedCtx!.base).toBe(baseContent);
-		expect(capturedCtx!.ours).toBe(oursContent);
-		expect(capturedCtx!.theirs).toBe(theirsContent);
+		expect(capturedCtx!.operation).toBe("merge");
+		expect(capturedCtx!.repo.objectStore).toBe(repo.objectStore);
+		// `core.bare` is written by `git init`; the snapshot view reads it back.
+		expect(capturedCtx!.config.get("core.bare")).toBe("false");
+		expect(capturedCtx!.config.get("nonexistent.key")).toBeUndefined();
+	});
+
+	test("config view reflects capabilities.config overrides", async () => {
+		const { repo, oursHash, theirsHash } = await setupDivergent();
+
+		let lockedValue: string | undefined;
+		const driver: MergeDriver = (ctx) => {
+			lockedValue = ctx.config.get("merge.mydriver");
+			return null;
+		};
+
+		await mergeTrees(
+			withCapabilities(repo, {
+				mergeDriver: driver,
+				config: { locked: { "merge.mydriver": "on" } },
+			}),
+			oursHash,
+			theirsHash,
+		);
+
+		expect(lockedValue).toBe("on");
 	});
 
 	test("without mergeDriver, existing behavior is unchanged", async () => {
@@ -325,7 +365,7 @@ describe("mergeDriver", () => {
 		const theirsHash = await getRefHash(repo, "refs/heads/feature");
 
 		const calledPaths: string[] = [];
-		const driver: MergeDriver = ({ path }) => {
+		const driver: MergeDriver = (_ctx, { path }) => {
 			calledPaths.push(path);
 			return { content: "rename-merged\n", conflict: false };
 		};

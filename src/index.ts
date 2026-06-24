@@ -44,9 +44,12 @@ export type {
 export { composeGitHooks, isRejection } from "./hooks.ts";
 export { MemoryFileSystem } from "./memory-fs.ts";
 export type {
+	CapabilityContext,
 	Commit,
+	ConfigView,
 	DirectRef,
 	GitContext,
+	GitOperation,
 	GitRepo,
 	Identity,
 	ObjectId,
@@ -61,7 +64,7 @@ export type {
 	SymbolicRef,
 } from "./lib/types.ts";
 export { mergeCapabilities, withCapabilities } from "./lib/capabilities.ts";
-export type { MergeDriver, MergeDriverResult } from "./lib/merge-ort.ts";
+export type { MergeDriver, MergeDriverInput, MergeDriverResult } from "./lib/merge-ort.ts";
 export type { PackObject } from "./lib/pack/packfile.ts";
 export {
 	commitSigningPayload,

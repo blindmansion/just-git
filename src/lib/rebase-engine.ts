@@ -26,7 +26,7 @@ import {
 	readIndex,
 	writeIndex,
 } from "./index.ts";
-import { type MergeDriver, mergeOrtNonRecursive } from "./merge-ort.ts";
+import { bindMergeDriver, type ContentMergeFn, mergeOrtNonRecursive } from "./merge-ort.ts";
 import { readCommit } from "./object-db.ts";
 import type { Signer } from "./signing.ts";
 import {
@@ -506,7 +506,12 @@ export async function performRebase(
 	// ── Run the pick loop ────────────────────────────────────
 	const signer = await resolveCommandSigner(gitCtx, undefined, "commit.gpgsign");
 	if (isCommandError(signer)) return signer;
-	const pickResult = await runPickLoop(gitCtx, env, gitCtx.capabilities?.mergeDriver, signer);
+	const pickResult = await runPickLoop(
+		gitCtx,
+		env,
+		await bindMergeDriver(gitCtx, "rebase"),
+		signer,
+	);
 	if (skipStderr) {
 		pickResult.stderr = skipStderr + pickResult.stderr;
 	}
@@ -518,7 +523,7 @@ export async function performRebase(
 async function runPickLoop(
 	gitCtx: GitContext,
 	env: Map<string, string>,
-	mergeDriver?: MergeDriver,
+	mergeDriver?: ContentMergeFn,
 	signer?: Signer,
 ): Promise<CommandResult> {
 	const stderrLines: string[] = [];
@@ -588,7 +593,7 @@ async function pickOneCommit(
 	gitCtx: GitContext,
 	entry: RebaseTodoEntry,
 	env: Map<string, string>,
-	mergeDriver?: MergeDriver,
+	mergeDriver?: ContentMergeFn,
 	signer?: Signer,
 ): Promise<PickResult> {
 	const theirsHash = entry.hash;
@@ -965,7 +970,7 @@ export async function handleAbort(
 export async function handleContinue(
 	gitCtx: GitContext,
 	env: Map<string, string>,
-	mergeDriver?: MergeDriver,
+	mergeDriver?: ContentMergeFn,
 ): Promise<CommandResult> {
 	let continueStdout = "";
 
@@ -1138,7 +1143,7 @@ export async function handleContinue(
 export async function handleSkip(
 	gitCtx: GitContext,
 	env: Map<string, string>,
-	mergeDriver?: MergeDriver,
+	mergeDriver?: ContentMergeFn,
 ): Promise<CommandResult> {
 	const state = await readRebaseState(gitCtx);
 	if (!state) {
