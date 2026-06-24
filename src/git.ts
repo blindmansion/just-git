@@ -11,11 +11,18 @@ import {
 	type ProgressCallback,
 	isRejection,
 } from "./hooks.ts";
+import { withCapabilities } from "./lib/capabilities.ts";
 import type { MergeDriver } from "./lib/merge-ort.ts";
 import { findRepo as findRepoOnFs } from "./lib/repo.ts";
 import type { SigningCapability } from "./lib/signing.ts";
 import type { CredentialCache } from "./lib/transport/remote.ts";
-import type { GitContext, ObjectStore, RefStore, RemoteResolver } from "./lib/types.ts";
+import type {
+	GitContext,
+	ObjectStore,
+	RefStore,
+	RemoteResolver,
+	RepoCapabilities,
+} from "./lib/types.ts";
 
 export const VERSION = "1.7.1";
 
@@ -218,6 +225,16 @@ export interface GitExtensions {
 	mergeDriver?: MergeDriver;
 	/** Commit/tag signing and verification capability (write + read sides). */
 	signing?: SigningCapability;
+	/**
+	 * The unified host-behavior bag. Built once in {@link createGit} and
+	 * attached to every discovered handle via `withCapabilities`, so the
+	 * command layer reads behavior from `gitCtx.capabilities` rather than
+	 * the loose fields above. Carried here (not just on the handle) so the
+	 * pre-discovery commands (`clone`, `init`) can still reach it before a
+	 * `GitContext` exists. The loose fields remain during the additive
+	 * transition; later phases delete them.
+	 */
+	capabilities?: RepoCapabilities;
 }
 
 /** Simplified context for {@link Git.exec}. */
@@ -306,6 +323,18 @@ export class Git {
 
 		const gitDirExt = options?.gitDir ? { gitDir: options.gitDir, workTree: this.defaultCwd } : {};
 
+		const capabilities: RepoCapabilities = {
+			hooks: options?.hooks,
+			signing: options?.signing,
+			mergeDriver: options?.mergeDriver,
+			identity: options?.identity,
+			config: configOverrides,
+			credentials: options?.credentials,
+			network,
+			resolveRemote: options?.resolveRemote,
+			onProgress: options?.onProgress,
+		};
+
 		const extensions: GitExtensions = {
 			hooks: options?.hooks,
 			credentialProvider: options?.credentials,
@@ -317,6 +346,7 @@ export class Git {
 			onProgress: options?.onProgress,
 			mergeDriver: options?.mergeDriver,
 			signing: options?.signing,
+			capabilities,
 			...(options?.objectStore ? { objectStore: options.objectStore } : {}),
 			...(options?.refStore ? { refStore: options.refStore } : {}),
 			...gitDirExt,
@@ -352,19 +382,22 @@ export class Git {
 		const cwd = ctx?.cwd ?? this.defaultCwd;
 
 		if (this.ext.objectStore && this.ext.refStore && this.ext.gitDir) {
-			return {
-				fs,
-				gitDir: this.ext.gitDir,
-				workTree: this.ext.workTree ?? cwd,
-				objectStore: this.ext.objectStore,
-				refStore: this.ext.refStore,
-				...this.ext,
-			};
+			return withCapabilities(
+				{
+					fs,
+					gitDir: this.ext.gitDir,
+					workTree: this.ext.workTree ?? cwd,
+					objectStore: this.ext.objectStore,
+					refStore: this.ext.refStore,
+					...this.ext,
+				},
+				this.ext.capabilities,
+			);
 		}
 
 		const found = await findRepoOnFs(fs, cwd);
 		if (!found) return null;
-		return { ...found, ...this.ext };
+		return withCapabilities({ ...found, ...this.ext }, this.ext.capabilities);
 	}
 
 	/**

@@ -113,7 +113,7 @@ async function resetPaths(
 	commitRef?: string,
 	ext?: GitExtensions,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-	const preResetRej = await ext?.hooks?.preReset?.({
+	const preResetRej = await ext?.capabilities?.hooks?.preReset?.({
 		repo: gitCtx,
 		mode: "paths",
 		targetRef: commitRef ?? null,
@@ -200,7 +200,7 @@ async function resetPaths(
 		stderr: "",
 		exitCode: 0,
 	};
-	await ext?.hooks?.postReset?.({
+	await ext?.capabilities?.hooks?.postReset?.({
 		repo: gitCtx,
 		mode: "paths",
 		targetHash: null,
@@ -263,7 +263,7 @@ async function resetToCommit(
 	env: Map<string, string>,
 	ext?: GitExtensions,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-	const preResetRej = await ext?.hooks?.preReset?.({
+	const preResetRej = await ext?.capabilities?.hooks?.preReset?.({
 		repo: gitCtx,
 		mode,
 		targetRef: commitRef,
@@ -329,7 +329,7 @@ async function resetToCommit(
 
 		const resetOutput = await formatUnstagedAfterReset(gitCtx, index);
 		if (resetOutput) {
-			await ext?.hooks?.postReset?.({
+			await ext?.capabilities?.hooks?.postReset?.({
 				repo: gitCtx,
 				mode,
 				targetHash,
@@ -354,7 +354,7 @@ async function resetToCommit(
 		mode === "hard"
 			? `HEAD is now at ${abbreviateHash(targetHash)} ${firstLine(targetCommit.message)}\n`
 			: "";
-	await ext?.hooks?.postReset?.({
+	await ext?.capabilities?.hooks?.postReset?.({
 		repo: gitCtx,
 		mode,
 		targetHash,

@@ -65,7 +65,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 
 			// ── --abort path ──────────────────────────────────────────
 			if (args.abort) {
-				const preRvAbortRej = await ext?.hooks?.preRevert?.({
+				const preRvAbortRej = await ext?.capabilities?.hooks?.preRevert?.({
 					repo: gitCtx,
 					mode: "abort",
 					commitRef: null,
@@ -75,7 +75,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				}
 				const result = await handleAbort(gitCtx, ctx.env);
 				if (result.exitCode === 0) {
-					await ext?.hooks?.postRevert?.({
+					await ext?.capabilities?.hooks?.postRevert?.({
 						repo: gitCtx,
 						mode: "abort",
 						commitHash: null,
@@ -87,7 +87,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 
 			// ── --continue path ───────────────────────────────────────
 			if (args.continue) {
-				const preRvContinueRej = await ext?.hooks?.preRevert?.({
+				const preRvContinueRej = await ext?.capabilities?.hooks?.preRevert?.({
 					repo: gitCtx,
 					mode: "continue",
 					commitRef: null,
@@ -98,7 +98,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				const result = await handleContinue(gitCtx, ctx.env);
 				if (result.exitCode === 0) {
 					const newHead = await resolveHead(gitCtx);
-					await ext?.hooks?.postRevert?.({
+					await ext?.capabilities?.hooks?.postRevert?.({
 						repo: gitCtx,
 						mode: "continue",
 						commitHash: newHead,
@@ -117,7 +117,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 			if (!commitRef) {
 				return fatal("you must specify a commit to revert");
 			}
-			const preRvRevertRej = await ext?.hooks?.preRevert?.({
+			const preRvRevertRej = await ext?.capabilities?.hooks?.preRevert?.({
 				repo: gitCtx,
 				mode: "revert",
 				commitRef,
@@ -208,7 +208,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				headCommit.tree,
 				parentTree,
 				labels,
-				ext?.mergeDriver,
+				gitCtx.capabilities?.mergeDriver,
 			);
 
 			// ── Empty revert detection ────────────────────────────────
@@ -251,7 +251,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				await setPendingRevertState(gitCtx, resolvedHash, revertMessage, headHash);
 
 				const mergeOutput = result.messages.join("\n");
-				await ext?.hooks?.postRevert?.({
+				await ext?.capabilities?.hooks?.postRevert?.({
 					repo: gitCtx,
 					mode: "revert",
 					commitHash: null,
@@ -283,7 +283,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 			const committer = await requireCommitter(gitCtx, ctx.env);
 			if (isCommandError(committer)) return committer;
 
-			const revertSigner = await resolveCommandSigner(gitCtx, ext, undefined, "commit.gpgsign");
+			const revertSigner = await resolveCommandSigner(gitCtx, undefined, "commit.gpgsign");
 			if (isCommandError(revertSigner)) return revertSigner;
 
 			const commitOutput = await finalizeRevertCommit({
@@ -300,7 +300,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				reflogMessage: `revert: ${firstLine(revertMessage)}`,
 			});
 			const mergeMessages = result.messages.length > 0 ? `${result.messages.join("\n")}\n` : "";
-			await ext?.hooks?.postRevert?.({
+			await ext?.capabilities?.hooks?.postRevert?.({
 				repo: gitCtx,
 				mode: "revert",
 				commitHash: commitOutput.commitHash,
@@ -444,7 +444,7 @@ async function handleContinue(
 
 	const message = ensureTrailingNewline(messageText);
 
-	const continueSigner = await resolveCommandSigner(gitCtx, undefined, undefined, "commit.gpgsign");
+	const continueSigner = await resolveCommandSigner(gitCtx, undefined, "commit.gpgsign");
 	if (isCommandError(continueSigner)) return continueSigner;
 
 	const commitOutput = await finalizeRevertCommit({

@@ -339,7 +339,7 @@ export async function performRebase(
 	}
 
 	// pre-rebase hook
-	const preRebaseRej = await ext?.hooks?.preRebase?.({
+	const preRebaseRej = await ext?.capabilities?.hooks?.preRebase?.({
 		repo: gitCtx,
 		upstream: upstreamLabel,
 		branch: headName !== "detached HEAD" ? branchName : null,
@@ -504,9 +504,9 @@ export async function performRebase(
 	await updateRef(gitCtx, "ORIG_HEAD", origHead);
 
 	// ── Run the pick loop ────────────────────────────────────
-	const signer = await resolveCommandSigner(gitCtx, ext, undefined, "commit.gpgsign");
+	const signer = await resolveCommandSigner(gitCtx, undefined, "commit.gpgsign");
 	if (isCommandError(signer)) return signer;
-	const pickResult = await runPickLoop(gitCtx, env, ext?.mergeDriver, signer);
+	const pickResult = await runPickLoop(gitCtx, env, gitCtx.capabilities?.mergeDriver, signer);
 	if (skipStderr) {
 		pickResult.stderr = skipStderr + pickResult.stderr;
 	}
@@ -1067,12 +1067,7 @@ export async function handleContinue(
 				parents.push(mergeHeadHash);
 			}
 
-			const continueSigner = await resolveCommandSigner(
-				gitCtx,
-				undefined,
-				undefined,
-				"commit.gpgsign",
-			);
+			const continueSigner = await resolveCommandSigner(gitCtx, undefined, "commit.gpgsign");
 			if (isCommandError(continueSigner)) return continueSigner;
 
 			const commitHash = await writeCommitAndAdvance(

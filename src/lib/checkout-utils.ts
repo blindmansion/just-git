@@ -493,7 +493,7 @@ export async function switchBranchCore(
 		`checkout: moving from ${fromName} to ${branchName}`,
 	);
 
-	await ext?.hooks?.postCheckout?.({
+	await ext?.capabilities?.hooks?.postCheckout?.({
 		repo: gitCtx,
 		prevHead: currentHash,
 		newHead: targetHash,
@@ -578,7 +578,7 @@ export async function detachHeadCore(
 	}
 	const opWarning = await clearOperationState(gitCtx);
 
-	await ext?.hooks?.postCheckout?.({
+	await ext?.capabilities?.hooks?.postCheckout?.({
 		repo: gitCtx,
 		prevHead: currentHash,
 		newHead: targetHash,

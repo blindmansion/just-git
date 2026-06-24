@@ -235,7 +235,7 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 			const treeHash = await buildTreeFromIndex(gitCtx, stage0Entries);
 
 			// pre-commit hook
-			const rej = await ext?.hooks?.preCommit?.({ repo: gitCtx, index, treeHash });
+			const rej = await ext?.capabilities?.hooks?.preCommit?.({ repo: gitCtx, index, treeHash });
 			if (isRejection(rej)) return err(rej.message ?? "");
 
 			const allowEmpty = args.allowEmpty;
@@ -349,7 +349,7 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 
 			// commit-msg hook
 			const msgEvent = { repo: gitCtx, message };
-			const msgRej = await ext?.hooks?.commitMsg?.(msgEvent);
+			const msgRej = await ext?.capabilities?.hooks?.commitMsg?.(msgEvent);
 			if (isRejection(msgRej)) return err(msgRej.message ?? "");
 			message = msgEvent.message;
 
@@ -366,7 +366,7 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 
 			// Resolve signing policy: -S / --no-gpg-sign override commit.gpgsign.
 			const cliSign = args.gpgSign ? true : args.noGpgSign ? false : undefined;
-			const signer = await resolveCommandSigner(gitCtx, ext, cliSign, "commit.gpgsign");
+			const signer = await resolveCommandSigner(gitCtx, cliSign, "commit.gpgsign");
 			if (isCommandError(signer)) return signer;
 
 			// Build and write the commit object
@@ -441,7 +441,7 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 			await deleteStateFile(gitCtx, "SQUASH_MSG");
 
 			// post-commit hook
-			await ext?.hooks?.postCommit?.({
+			await ext?.capabilities?.hooks?.postCommit?.({
 				repo: gitCtx,
 				hash: commitHash,
 				message,

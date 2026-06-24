@@ -63,7 +63,7 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 
 			// ── --abort path ──────────────────────────────────────────
 			if (args.abort) {
-				const preCpAbortRej = await ext?.hooks?.preCherryPick?.({
+				const preCpAbortRej = await ext?.capabilities?.hooks?.preCherryPick?.({
 					repo: gitCtx,
 					mode: "abort",
 					commitRef: null,
@@ -73,7 +73,7 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 				}
 				const result = await handleAbort(gitCtx, ctx.env);
 				if (result.exitCode === 0) {
-					await ext?.hooks?.postCherryPick?.({
+					await ext?.capabilities?.hooks?.postCherryPick?.({
 						repo: gitCtx,
 						mode: "abort",
 						commitHash: null,
@@ -85,7 +85,7 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 
 			// ── --continue path ───────────────────────────────────────
 			if (args.continue) {
-				const preCpContinueRej = await ext?.hooks?.preCherryPick?.({
+				const preCpContinueRej = await ext?.capabilities?.hooks?.preCherryPick?.({
 					repo: gitCtx,
 					mode: "continue",
 					commitRef: null,
@@ -96,7 +96,7 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 				const result = await handleContinue(gitCtx, ctx.env);
 				if (result.exitCode === 0) {
 					const newHead = await resolveHead(gitCtx);
-					await ext?.hooks?.postCherryPick?.({
+					await ext?.capabilities?.hooks?.postCherryPick?.({
 						repo: gitCtx,
 						mode: "continue",
 						commitHash: newHead,
@@ -115,7 +115,7 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 			if (!commitRef) {
 				return fatal("you must specify a commit to cherry-pick");
 			}
-			const preCpPickRej = await ext?.hooks?.preCherryPick?.({
+			const preCpPickRej = await ext?.capabilities?.hooks?.preCherryPick?.({
 				repo: gitCtx,
 				mode: "pick",
 				commitRef,
@@ -235,7 +235,7 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 				headCommit.tree,
 				theirsCommit.tree,
 				labels,
-				ext?.mergeDriver,
+				gitCtx.capabilities?.mergeDriver,
 			);
 
 			// ── Empty cherry-pick detection ───────────────────────────
@@ -283,7 +283,7 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 			// ── Handle conflicts ──────────────────────────────────────
 			if (result.conflicts.length > 0) {
 				const mergeOutput = result.messages.join("\n");
-				await ext?.hooks?.postCherryPick?.({
+				await ext?.capabilities?.hooks?.postCherryPick?.({
 					repo: gitCtx,
 					mode: "pick",
 					commitHash: null,
@@ -334,7 +334,7 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 			const committer = await requireCommitter(gitCtx, ctx.env);
 			if (isCommandError(committer)) return committer;
 
-			const cpSigner = await resolveCommandSigner(gitCtx, ext, undefined, "commit.gpgsign");
+			const cpSigner = await resolveCommandSigner(gitCtx, undefined, "commit.gpgsign");
 			if (isCommandError(cpSigner)) return cpSigner;
 
 			const commitHash = await writeCommitAndAdvance(
@@ -376,7 +376,7 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 
 			const header = formatCommitOneLiner(branchName, commitHash, cherryPickMessage);
 			const mergeMessages = result.messages.length > 0 ? `${result.messages.join("\n")}\n` : "";
-			await ext?.hooks?.postCherryPick?.({
+			await ext?.capabilities?.hooks?.postCherryPick?.({
 				repo: gitCtx,
 				mode: "pick",
 				commitHash,
@@ -518,7 +518,7 @@ async function handleContinue(
 
 	const message = ensureTrailingNewline(messageText);
 
-	const continueSigner = await resolveCommandSigner(gitCtx, undefined, undefined, "commit.gpgsign");
+	const continueSigner = await resolveCommandSigner(gitCtx, undefined, "commit.gpgsign");
 	if (isCommandError(continueSigner)) return continueSigner;
 
 	const commitHash = await writeCommitAndAdvance(

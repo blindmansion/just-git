@@ -253,7 +253,7 @@ async function switchCreateBranch(
 	const opBlock = await checkActiveOperation(gitCtx);
 	if (opBlock) return opBlock;
 
-	const preRej = await ext?.hooks?.preCheckout?.({
+	const preRej = await ext?.capabilities?.hooks?.preCheckout?.({
 		repo: gitCtx,
 		target: branchName,
 		mode: "create-branch",
@@ -339,7 +339,7 @@ async function switchCreateBranch(
 		trackingMsg = await maybeSetupTracking(gitCtx, branchName, startPoint);
 	}
 
-	await ext?.hooks?.postCheckout?.({
+	await ext?.capabilities?.hooks?.postCheckout?.({
 		repo: gitCtx,
 		prevHead: currentHash,
 		newHead: targetHash,
@@ -389,7 +389,7 @@ async function switchToBranch(
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
 	const opBlock = await checkActiveOperation(gitCtx);
 	if (opBlock) return opBlock;
-	const preRej = await ext?.hooks?.preCheckout?.({
+	const preRej = await ext?.capabilities?.hooks?.preCheckout?.({
 		repo: gitCtx,
 		target: branchName,
 		mode: "switch",
@@ -409,7 +409,7 @@ async function switchDetachHead(
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
 	const opBlock = await checkActiveOperation(gitCtx);
 	if (opBlock) return opBlock;
-	const preRej = await ext?.hooks?.preCheckout?.({
+	const preRej = await ext?.capabilities?.hooks?.preCheckout?.({
 		repo: gitCtx,
 		target,
 		mode: "detach",
@@ -474,7 +474,7 @@ async function switchOrphanBranch(
 	await clearDetachPoint(gitCtx);
 	const opWarning = await clearOperationState(gitCtx);
 
-	await ext?.hooks?.postCheckout?.({
+	await ext?.capabilities?.hooks?.postCheckout?.({
 		repo: gitCtx,
 		prevHead,
 		newHead: ZERO_HASH,

@@ -129,7 +129,7 @@ export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 						const force = configBool(await getConfigValue(gitCtx, "tag.forcesignannotated"));
 						if (force) signPolicy = true;
 					}
-					const signer = await resolveCommandSigner(gitCtx, ext, signPolicy, "tag.gpgsign");
+					const signer = await resolveCommandSigner(gitCtx, signPolicy, "tag.gpgsign");
 					if (isCommandError(signer)) return signer;
 
 					const tagObject = {

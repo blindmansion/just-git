@@ -227,7 +227,7 @@ async function createOrphanBranch(
 	await clearDetachPoint(gitCtx);
 	const opWarning = await clearOperationState(gitCtx);
 
-	await ext?.hooks?.postCheckout?.({
+	await ext?.capabilities?.hooks?.postCheckout?.({
 		repo: gitCtx,
 		prevHead,
 		newHead: ZERO_HASH,
@@ -261,7 +261,7 @@ async function createAndSwitch(
 		return fatal(`'${branchName}' is not a valid branch name`);
 	}
 
-	const rej = await ext?.hooks?.preCheckout?.({
+	const rej = await ext?.capabilities?.hooks?.preCheckout?.({
 		repo: gitCtx,
 		target: branchName,
 		mode: "create-branch",
@@ -342,7 +342,7 @@ async function createAndSwitch(
 		`checkout: moving from ${fromName} to ${branchName}`,
 	);
 
-	await ext?.hooks?.postCheckout?.({
+	await ext?.capabilities?.hooks?.postCheckout?.({
 		repo: gitCtx,
 		prevHead: headHash,
 		newHead: targetHash ?? ZERO_HASH,
@@ -386,7 +386,7 @@ async function switchBranch(
 	env: Map<string, string>,
 	ext?: GitExtensions,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-	const rej = await ext?.hooks?.preCheckout?.({
+	const rej = await ext?.capabilities?.hooks?.preCheckout?.({
 		repo: gitCtx,
 		target: branchName,
 		mode: "switch",
@@ -405,7 +405,7 @@ async function createAndSwitchFromRemote(
 	env: Map<string, string>,
 	ext?: GitExtensions,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-	const rej = await ext?.hooks?.preCheckout?.({
+	const rej = await ext?.capabilities?.hooks?.preCheckout?.({
 		repo: gitCtx,
 		target: branchName,
 		mode: "create-branch",
@@ -454,7 +454,7 @@ async function detachHead(
 	env: Map<string, string>,
 	ext?: GitExtensions,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-	const rej = await ext?.hooks?.preCheckout?.({
+	const rej = await ext?.capabilities?.hooks?.preCheckout?.({
 		repo: gitCtx,
 		target,
 		mode: "detach",

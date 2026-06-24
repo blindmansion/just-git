@@ -120,7 +120,6 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 			const cliVerify = args.verifySignatures ? true : args.noVerifySignatures ? false : undefined;
 			const verifyErr = await requireVerifiedCommit(
 				gitCtx,
-				ext,
 				theirsHash,
 				cliVerify,
 				"merge.verifysignatures",
@@ -209,7 +208,7 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 						`merge ${branch}: Fast-forward${args.message ? " (no commit created; -m option ignored)" : ""}`,
 						head?.type === "symbolic",
 					);
-					await ext?.hooks?.postMerge?.({
+					await ext?.capabilities?.hooks?.postMerge?.({
 						repo: gitCtx,
 						headHash,
 						theirsHash,
@@ -228,7 +227,7 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 				: undefined;
 
 			if (args.squash) {
-				return handleSquashMerge(gitCtx, headHash, theirsHash, branch, ctx.env, ext, customMessage);
+				return handleSquashMerge(gitCtx, headHash, theirsHash, branch, ctx.env, customMessage);
 			}
 
 			return handleThreeWayMerge(
@@ -269,7 +268,13 @@ async function handleThreeWayMerge(
 	const labels = { a: "HEAD", b: branchName, conflictStyle };
 
 	// Step 1: Run merge-ort (recursive — handles criss-cross merges)
-	const result = await mergeOrtRecursive(gitCtx, headHash, theirsHash, labels, ext?.mergeDriver);
+	const result = await mergeOrtRecursive(
+		gitCtx,
+		headHash,
+		theirsHash,
+		labels,
+		gitCtx.capabilities?.mergeDriver,
+	);
 
 	// Step 2: Apply merge result to index and worktree
 	const applyResult = await applyMergeResult(gitCtx, result, headCommit.tree, {
@@ -303,7 +308,7 @@ async function handleThreeWayMerge(
 			headHash,
 			theirsHash,
 		};
-		const msgRejConflict = await ext?.hooks?.mergeMsg?.(msgEventConflict);
+		const msgRejConflict = await ext?.capabilities?.hooks?.mergeMsg?.(msgEventConflict);
 		if (isRejection(msgRejConflict))
 			return { stdout: "", stderr: msgRejConflict.message ?? "", exitCode: 1 };
 		mergeMsg = msgEventConflict.message;
@@ -346,11 +351,11 @@ async function handleThreeWayMerge(
 		headHash,
 		theirsHash,
 	};
-	const msgRej = await ext?.hooks?.mergeMsg?.(msgEvent);
+	const msgRej = await ext?.capabilities?.hooks?.mergeMsg?.(msgEvent);
 	if (isRejection(msgRej)) return { stdout: "", stderr: msgRej.message ?? "", exitCode: 1 };
 	mergeMsg = msgEvent.message;
 
-	const mcRej = await ext?.hooks?.preMergeCommit?.({
+	const mcRej = await ext?.capabilities?.hooks?.preMergeCommit?.({
 		repo: gitCtx,
 		message: mergeMsg,
 		treeHash,
@@ -359,7 +364,7 @@ async function handleThreeWayMerge(
 	});
 	if (isRejection(mcRej)) return { stdout: "", stderr: mcRej.message ?? "", exitCode: 1 };
 
-	const signer = await resolveCommandSigner(gitCtx, ext, undefined, "commit.gpgsign");
+	const signer = await resolveCommandSigner(gitCtx, undefined, "commit.gpgsign");
 	if (isCommandError(signer)) return signer;
 
 	const commitHash = await writeCommitAndAdvance(
@@ -383,7 +388,7 @@ async function handleThreeWayMerge(
 		head?.type === "symbolic",
 	);
 
-	await ext?.hooks?.postMerge?.({
+	await ext?.capabilities?.hooks?.postMerge?.({
 		repo: gitCtx,
 		headHash,
 		theirsHash,
@@ -436,7 +441,6 @@ async function handleSquashMerge(
 	theirsHash: ObjectId,
 	branchName: string,
 	env: Map<string, string>,
-	_ext?: GitExtensions,
 	customMessage?: string,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
 	const headCommit = await readCommit(gitCtx, headHash);
@@ -453,7 +457,13 @@ async function handleSquashMerge(
 		? `Updating ${abbreviateHash(headHash)}..${abbreviateHash(theirsHash)}\n`
 		: "";
 
-	const result = await mergeOrtRecursive(gitCtx, headHash, theirsHash, labels, _ext?.mergeDriver);
+	const result = await mergeOrtRecursive(
+		gitCtx,
+		headHash,
+		theirsHash,
+		labels,
+		gitCtx.capabilities?.mergeDriver,
+	);
 
 	const applyResult = await applyMergeResult(gitCtx, result, headCommit.tree, {
 		labels,
@@ -578,12 +588,12 @@ async function handleContinue(
 		headHash,
 		theirsHash: mergeHeadHash,
 	};
-	const msgRejContinue = await ext?.hooks?.mergeMsg?.(msgEventContinue);
+	const msgRejContinue = await ext?.capabilities?.hooks?.mergeMsg?.(msgEventContinue);
 	if (isRejection(msgRejContinue))
 		return { stdout: "", stderr: msgRejContinue.message ?? "", exitCode: 1 };
 	message = msgEventContinue.message;
 
-	const mcRejContinue = await ext?.hooks?.preMergeCommit?.({
+	const mcRejContinue = await ext?.capabilities?.hooks?.preMergeCommit?.({
 		repo: gitCtx,
 		message: message,
 		treeHash,
@@ -593,7 +603,7 @@ async function handleContinue(
 	if (isRejection(mcRejContinue))
 		return { stdout: "", stderr: mcRejContinue.message ?? "", exitCode: 1 };
 
-	const signer = await resolveCommandSigner(gitCtx, ext, undefined, "commit.gpgsign");
+	const signer = await resolveCommandSigner(gitCtx, undefined, "commit.gpgsign");
 	if (isCommandError(signer)) return signer;
 
 	const commitHash = await writeCommitAndAdvance(
@@ -620,7 +630,7 @@ async function handleContinue(
 		head?.type === "symbolic",
 	);
 
-	await ext?.hooks?.postMerge?.({
+	await ext?.capabilities?.hooks?.postMerge?.({
 		repo: gitCtx,
 		headHash,
 		theirsHash: mergeHeadHash,

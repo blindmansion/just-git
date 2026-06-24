@@ -268,7 +268,7 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			// pre-push hook
-			const prePushRej = await ext?.hooks?.prePush?.({
+			const prePushRej = await ext?.capabilities?.hooks?.prePush?.({
 				repo: gitCtx,
 				remote: remoteName,
 				url: config.url,
@@ -421,7 +421,7 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				exitCode: hasError ? 1 : 0,
 			};
 			if (!hasError) {
-				await ext?.hooks?.postPush?.({
+				await ext?.capabilities?.hooks?.postPush?.({
 					repo: gitCtx,
 					remote: remoteName,
 					url: config.url,

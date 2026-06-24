@@ -47,8 +47,8 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			let sourceRepo: GitRepo | null = null;
 			let sourcePath = repository;
 			if (!isHttp) {
-				if (ext?.resolveRemote) {
-					sourceRepo = await ext.resolveRemote(repository);
+				if (ext?.capabilities?.resolveRemote) {
+					sourceRepo = await ext.capabilities.resolveRemote(repository);
 				}
 				if (!sourceRepo) {
 					sourcePath = resolve(ctx.cwd, repository);
@@ -76,7 +76,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 				targetName = base;
 			}
 			const targetPath = resolve(ctx.cwd, targetName);
-			const rej = await ext?.hooks?.preClone?.({
+			const rej = await ext?.capabilities?.hooks?.preClone?.({
 				repository: sourcePath,
 				targetPath,
 				bare: args.bare,
@@ -139,7 +139,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 					fetch: "+refs/heads/*:refs/remotes/origin/*",
 				};
 				await writeConfig(newCtx, config);
-				await ext?.hooks?.postClone?.({
+				await ext?.capabilities?.hooks?.postClone?.({
 					repo: newCtx,
 					repository: sourcePath,
 					targetPath,
@@ -272,7 +272,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 				if (defaultBranch) {
 					await createSymbolicRef(newCtx, "HEAD", `refs/heads/${defaultBranch}`);
 				}
-				await ext?.hooks?.postClone?.({
+				await ext?.capabilities?.hooks?.postClone?.({
 					repo: newCtx,
 					repository: sourcePath,
 					targetPath,
@@ -333,7 +333,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 				stderr: `Cloning into '${targetName}'...\n`,
 				exitCode: 0,
 			};
-			await ext?.hooks?.postClone?.({
+			await ext?.capabilities?.hooks?.postClone?.({
 				repo: newCtx,
 				repository: sourcePath,
 				targetPath,

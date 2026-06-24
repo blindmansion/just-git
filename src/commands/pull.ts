@@ -155,7 +155,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			if (isCommandError(resolved)) return resolved;
 			const { transport, config } = resolved;
 			const pullBranch = remoteBranch ?? null;
-			const prePullRej = await ext?.hooks?.prePull?.({
+			const prePullRej = await ext?.capabilities?.hooks?.prePull?.({
 				repo: gitCtx,
 				remote: remoteName,
 				branch: pullBranch,
@@ -323,7 +323,6 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			const cliVerify = args.verifySignatures ? true : args.noVerifySignatures ? false : undefined;
 			const verifyErr = await requireVerifiedCommit(
 				gitCtx,
-				ext,
 				theirsHash,
 				cliVerify,
 				"pull.verifysignatures",
@@ -336,7 +335,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			await deleteStateFile(gitCtx, "MERGE_MSG");
 
 			if (headHash === theirsHash) {
-				await ext?.hooks?.postPull?.({
+				await ext?.capabilities?.hooks?.postPull?.({
 					repo: gitCtx,
 					remote: remoteName,
 					branch: pullBranch,
@@ -370,7 +369,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 
 				if (result.exitCode === 0) {
 					const rebasedHead = await resolveHead(gitCtx);
-					await ext?.hooks?.postPull?.({
+					await ext?.capabilities?.hooks?.postPull?.({
 						repo: gitCtx,
 						remote: remoteName,
 						branch: pullBranch,
@@ -390,7 +389,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			const baseCommit = bases[0] ?? null;
 
 			if (baseCommit === theirsHash) {
-				await ext?.hooks?.postPull?.({
+				await ext?.capabilities?.hooks?.postPull?.({
 					repo: gitCtx,
 					remote: remoteName,
 					branch: pullBranch,
@@ -482,14 +481,14 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 							message: pullFFMsg,
 						});
 					}
-					await ext?.hooks?.postMerge?.({
+					await ext?.capabilities?.hooks?.postMerge?.({
 						repo: gitCtx,
 						headHash,
 						theirsHash,
 						strategy: "fast-forward",
 						commitHash: null,
 					});
-					await ext?.hooks?.postPull?.({
+					await ext?.capabilities?.hooks?.postPull?.({
 						repo: gitCtx,
 						remote: remoteName,
 						branch: pullBranch,
@@ -518,7 +517,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				headHash,
 				theirsHash,
 				labels,
-				ext?.mergeDriver,
+				gitCtx.capabilities?.mergeDriver,
 			);
 
 			const headCommit = await readCommit(gitCtx, headHash);
@@ -571,12 +570,12 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				headHash,
 				theirsHash,
 			};
-			const mergeMsgRej = await ext?.hooks?.mergeMsg?.(msgEvent);
+			const mergeMsgRej = await ext?.capabilities?.hooks?.mergeMsg?.(msgEvent);
 			if (isRejection(mergeMsgRej)) {
 				return { stdout: "", stderr: mergeMsgRej.message ?? "", exitCode: 1 };
 			}
 			mergeMsg = msgEvent.message;
-			const preMergeCommitRej = await ext?.hooks?.preMergeCommit?.({
+			const preMergeCommitRej = await ext?.capabilities?.hooks?.preMergeCommit?.({
 				repo: gitCtx,
 				message: mergeMsg,
 				treeHash,
@@ -586,7 +585,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			if (isRejection(preMergeCommitRej)) {
 				return { stdout: "", stderr: preMergeCommitRej.message ?? "", exitCode: 1 };
 			}
-			const pullSigner = await resolveCommandSigner(gitCtx, ext, undefined, "commit.gpgsign");
+			const pullSigner = await resolveCommandSigner(gitCtx, undefined, "commit.gpgsign");
 			if (isCommandError(pullSigner)) return pullSigner;
 			const commitHash = await writeCommitAndAdvance(
 				gitCtx,
@@ -598,14 +597,14 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				pullSigner,
 			);
 
-			await ext?.hooks?.postMerge?.({
+			await ext?.capabilities?.hooks?.postMerge?.({
 				repo: gitCtx,
 				headHash,
 				theirsHash,
 				strategy: "three-way",
 				commitHash,
 			});
-			await ext?.hooks?.postPull?.({
+			await ext?.capabilities?.hooks?.postPull?.({
 				repo: gitCtx,
 				remote: remoteName,
 				branch: pullBranch,

@@ -36,10 +36,10 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 				return handleAbort(gitCtx, ctx.env);
 			}
 			if (args.continue) {
-				return handleContinue(gitCtx, ctx.env, ext?.mergeDriver);
+				return handleContinue(gitCtx, ctx.env, gitCtx.capabilities?.mergeDriver);
 			}
 			if (args.skip) {
-				return handleSkip(gitCtx, ctx.env, ext?.mergeDriver);
+				return handleSkip(gitCtx, ctx.env, gitCtx.capabilities?.mergeDriver);
 			}
 
 			// ── Starting a new rebase ────────────────────────────────

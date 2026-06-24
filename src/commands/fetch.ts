@@ -281,7 +281,7 @@ async function fetchOneRemote(
 
 	const configSpec = parseRefspec(config.fetchRefspec);
 	const fetchSpecs = resolveFetchSpecs(rawRefspecs, configSpec);
-	const preFetchRej = await ext?.hooks?.preFetch?.({
+	const preFetchRej = await ext?.capabilities?.hooks?.preFetch?.({
 		repo: gitCtx,
 		remote: remoteName,
 		url: config.url,
@@ -413,7 +413,7 @@ async function fetchOneRemote(
 		stderr,
 		exitCode: hadTagRejection ? 1 : 0,
 	};
-	await ext?.hooks?.postFetch?.({
+	await ext?.capabilities?.hooks?.postFetch?.({
 		repo: gitCtx,
 		remote: remoteName,
 		url: config.url,
