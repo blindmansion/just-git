@@ -26,6 +26,45 @@ export interface TransportEnv {
 	onProgress?: ProgressCallback;
 }
 
+function toCredentialProvider(c?: HttpAuth | CredentialProvider): CredentialProvider | undefined {
+	if (!c) return undefined;
+	return typeof c === "function" ? c : () => c;
+}
+
+/**
+ * Derive the transport-layer environment from a handle's attached
+ * `capabilities` (`network`, `credentials`, `resolveRemote`, `onProgress`) and
+ * return the handle augmented with it — the single adapter both the CLI command
+ * layer and the programmatic SDK use to open a transport from `repo.capabilities`.
+ *
+ * The `credentialCache` is runtime state, not a capability, so it is injected
+ * separately: the CLI passes its instance-scoped cache (so credentials stripped
+ * from a URL by `remote add` / `clone` survive to a later `fetch` / `push`),
+ * while the SDK gets a fresh per-call cache by default.
+ *
+ * Interim shape: this whole `TransportEnv` is slated to fold into the
+ * `transport` resolver in a later phase; the adapter is the seam that change
+ * rides inside.
+ */
+export function withTransportEnv(
+	repo: GitRepo,
+	credentialCache: CredentialCache = new Map(),
+): GitRepo & TransportEnv {
+	const caps = repo.capabilities;
+	const policy = caps?.network;
+	// Mirror createGit: a NetworkPolicy object may carry the fetch function.
+	const fetchFn = policy && typeof policy === "object" ? policy.fetch : undefined;
+	return {
+		...repo,
+		credentialProvider: toCredentialProvider(caps?.credentials),
+		fetchFn,
+		networkPolicy: policy,
+		resolveRemote: caps?.resolveRemote,
+		onProgress: caps?.onProgress,
+		credentialCache,
+	};
+}
+
 interface ParsedRemoteUrl {
 	url: string;
 	embeddedAuth?: HttpAuth;
@@ -200,24 +239,26 @@ export async function resolveRemoteTransport(
 	ctx: GitContext,
 	remoteName: string,
 	env?: Map<string, string>,
+	credentialCache?: CredentialCache,
 ): Promise<{ transport: Transport; config: RemoteConfig } | null> {
 	const remote = await getRemoteConfig(ctx, remoteName);
 	if (!remote) return null;
 
-	const cleanUrl = stripAndCacheCredentials(remote.url, ctx.credentialCache).url;
+	const tctx = withTransportEnv(ctx, credentialCache);
+	const cleanUrl = stripAndCacheCredentials(remote.url, tctx.credentialCache).url;
 
 	if (isHttpUrl(cleanUrl)) {
-		const networkErr = validateNetworkAccess(cleanUrl, ctx.networkPolicy);
+		const networkErr = validateNetworkAccess(cleanUrl, tctx.networkPolicy);
 		if (networkErr) throw new Error(networkErr);
-		const auth = env ? await resolveAuthForUrl(ctx, cleanUrl, env) : undefined;
+		const auth = env ? await resolveAuthForUrl(tctx, cleanUrl, env) : undefined;
 		return {
-			transport: new SmartHttpTransport(ctx, cleanUrl, auth, ctx.fetchFn, ctx.onProgress),
+			transport: new SmartHttpTransport(ctx, cleanUrl, auth, tctx.fetchFn, tctx.onProgress),
 			config: { ...remote, url: cleanUrl },
 		};
 	}
 
 	const remoteRepo: GitRepo | null =
-		(ctx.resolveRemote ? await ctx.resolveRemote(cleanUrl) : null) ??
+		(tctx.resolveRemote ? await tctx.resolveRemote(cleanUrl) : null) ??
 		(await findRepo(ctx.fs, cleanUrl));
 	if (!remoteRepo) {
 		if (isSshUrl(cleanUrl)) {

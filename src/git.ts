@@ -4,7 +4,6 @@ import {
 	type ConfigOverrides,
 	type CredentialProvider,
 	type ExecResult,
-	type FetchFunction,
 	type GitHooks,
 	type IdentityOverride,
 	type NetworkPolicy,
@@ -196,45 +195,38 @@ export interface GitOptions {
 }
 
 /**
- * Bundle of operator-level extensions threaded into command handlers
- * via closures and merged onto GitContext after discovery.
+ * Pre-resolved storage handles + paths that let `requireGitContext` skip
+ * filesystem discovery (`findRepo`) entirely. When `objectStore`, `refStore`,
+ * and `gitDir` are all present, no `.git` directory needs to exist on the VFS.
  */
-export interface GitExtensions {
-	hooks?: GitHooks;
-	credentialProvider?: CredentialProvider;
-	identityOverride?: IdentityOverride;
-	fetchFn?: FetchFunction;
-	networkPolicy?: NetworkPolicy | false;
-	resolveRemote?: RemoteResolver;
+export interface RepoLocators {
 	objectStore?: ObjectStore;
 	refStore?: RefStore;
-	configOverrides?: ConfigOverrides;
-	/**
-	 * Pre-resolved .git directory path. When set together with
-	 * `objectStore` and `refStore`, `requireGitContext` skips
-	 * filesystem discovery (`findRepo`) entirely.
-	 */
+	/** Pre-resolved .git directory path. */
 	gitDir?: string;
-	/** Pre-resolved worktree root. Used with `gitDir` to skip discovery. */
+	/** Pre-resolved worktree root. */
 	workTree?: string;
-	/** In-memory credential cache for URL-extracted auth, keyed by origin. */
-	credentialCache?: CredentialCache;
-	/** Callback for server progress messages (sideband band-2). */
-	onProgress?: ProgressCallback;
-	/** Custom merge driver for content conflicts. */
-	mergeDriver?: MergeDriver;
-	/** Commit/tag signing and verification capability (write + read sides). */
-	signing?: SigningCapability;
-	/**
-	 * The unified host-behavior bag. Built once in {@link createGit} and
-	 * attached to every discovered handle via `withCapabilities`, so the
-	 * command layer reads behavior from `gitCtx.capabilities` rather than
-	 * the loose fields above. Carried here (not just on the handle) so the
-	 * pre-discovery commands (`clone`, `init`) can still reach it before a
-	 * `GitContext` exists. The loose fields remain during the additive
-	 * transition; later phases delete them.
-	 */
+}
+
+/**
+ * Bundle threaded into command handlers via closures. Carries the unified
+ * host-behavior bag and the optional pre-resolved storage locators. Built
+ * once in {@link createGit}; the `capabilities` are attached to every
+ * discovered handle via `withCapabilities`, and carried here (not just on the
+ * handle) so the pre-discovery commands (`clone`, `init`) can reach them
+ * before a `GitContext` exists.
+ */
+export interface GitExtensions {
 	capabilities?: RepoCapabilities;
+	locators?: RepoLocators;
+	/**
+	 * Instance-scoped credential cache (origin → auth) for the CLI front door.
+	 * Runtime state, not a host capability: credentials stripped from a URL by
+	 * `remote add` / `clone` are stashed here so a later `fetch` / `push` on the
+	 * same {@link Git} instance can reuse them. Threaded explicitly into the
+	 * transport boundary; never placed on the `GitRepo` / `GitContext` handle.
+	 */
+	credentialCache?: CredentialCache;
 }
 
 /** Simplified context for {@link Git.exec}. */
@@ -321,8 +313,6 @@ export class Git {
 
 		const configOverrides = mergeIdentityIntoConfig(options?.identity, options?.config);
 
-		const gitDirExt = options?.gitDir ? { gitDir: options.gitDir, workTree: this.defaultCwd } : {};
-
 		const capabilities: RepoCapabilities = {
 			hooks: options?.hooks,
 			signing: options?.signing,
@@ -335,22 +325,19 @@ export class Git {
 			onProgress: options?.onProgress,
 		};
 
-		const extensions: GitExtensions = {
-			hooks: options?.hooks,
-			credentialProvider: options?.credentials,
-			identityOverride: options?.identity,
-			fetchFn: typeof network === "object" ? network.fetch : undefined,
-			networkPolicy: network,
-			resolveRemote: options?.resolveRemote,
-			credentialCache: new Map(),
-			onProgress: options?.onProgress,
-			mergeDriver: options?.mergeDriver,
-			signing: options?.signing,
-			capabilities,
+		const locators: RepoLocators = {
 			...(options?.objectStore ? { objectStore: options.objectStore } : {}),
 			...(options?.refStore ? { refStore: options.refStore } : {}),
-			...gitDirExt,
-			...(configOverrides ? { configOverrides } : {}),
+			...(options?.gitDir ? { gitDir: options.gitDir, workTree: this.defaultCwd } : {}),
+		};
+
+		const extensions: GitExtensions = {
+			capabilities,
+			locators,
+			// Instance-scoped credential cache: creds stripped from a URL by
+			// `remote add` / `clone` survive to a later `fetch` / `push`. Runtime
+			// state, not a capability — see `withTransportEnv`.
+			credentialCache: new Map(),
 		};
 		this.ext = extensions;
 		this.inner = createGitCommand(extensions).toCommand();
@@ -381,15 +368,15 @@ export class Git {
 		}
 		const cwd = ctx?.cwd ?? this.defaultCwd;
 
-		if (this.ext.objectStore && this.ext.refStore && this.ext.gitDir) {
+		const loc = this.ext.locators;
+		if (loc?.objectStore && loc?.refStore && loc?.gitDir) {
 			return withCapabilities(
 				{
 					fs,
-					gitDir: this.ext.gitDir,
-					workTree: this.ext.workTree ?? cwd,
-					objectStore: this.ext.objectStore,
-					refStore: this.ext.refStore,
-					...this.ext,
+					gitDir: loc.gitDir,
+					workTree: loc.workTree ?? cwd,
+					objectStore: loc.objectStore,
+					refStore: loc.refStore,
 				},
 				this.ext.capabilities,
 			);
@@ -397,7 +384,16 @@ export class Git {
 
 		const found = await findRepoOnFs(fs, cwd);
 		if (!found) return null;
-		return withCapabilities({ ...found, ...this.ext }, this.ext.capabilities);
+		// Hybrid path: locator stores (without a gitDir) override the discovered
+		// context's object/ref stores while the filesystem supplies worktree/index.
+		return withCapabilities(
+			{
+				...found,
+				...(loc?.objectStore ? { objectStore: loc.objectStore } : {}),
+				...(loc?.refStore ? { refStore: loc.refStore } : {}),
+			},
+			this.ext.capabilities,
+		);
 	}
 
 	/**

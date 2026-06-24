@@ -218,7 +218,9 @@ async function handleUnset(
 async function handleList(gitCtx: {
 	gitDir: string;
 	fs: { exists: (p: string) => Promise<boolean>; readFile: (p: string) => Promise<string> };
-	configOverrides?: { locked?: Record<string, string>; defaults?: Record<string, string> };
+	capabilities?: {
+		config?: { locked?: Record<string, string>; defaults?: Record<string, string> };
+	};
 }): Promise<{
 	stdout: string;
 	stderr: string;
@@ -233,7 +235,7 @@ async function handleList(gitCtx: {
 	const lines = flattenConfigMulti(config);
 
 	const seen = new Set(lines.map((l) => l.split("=")[0]!));
-	const defaults = gitCtx.configOverrides?.defaults;
+	const defaults = gitCtx.capabilities?.config?.defaults;
 	if (defaults) {
 		for (const [key, value] of Object.entries(defaults)) {
 			if (!seen.has(key)) {
@@ -242,7 +244,7 @@ async function handleList(gitCtx: {
 			}
 		}
 	}
-	const locked = gitCtx.configOverrides?.locked;
+	const locked = gitCtx.capabilities?.config?.locked;
 	if (locked) {
 		for (const [key, value] of Object.entries(locked)) {
 			if (!seen.has(key)) {

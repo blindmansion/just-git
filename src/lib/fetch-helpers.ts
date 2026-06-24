@@ -3,7 +3,7 @@ import { objectExists } from "./object-db.ts";
 import { appendReflog, ZERO_HASH } from "./reflog.ts";
 import { listRefs, resolveRef, shortenRef, updateRef } from "./refs.ts";
 import { INFINITE_DEPTH, isShallowRepo, readShallowCommits } from "./shallow.ts";
-import { resolveRemoteTransport } from "./transport/remote.ts";
+import { type CredentialCache, resolveRemoteTransport } from "./transport/remote.ts";
 import type { RemoteRef, ShallowFetchOptions, Transport } from "./transport/transport.ts";
 import type { GitContext, ObjectId } from "./types.ts";
 
@@ -46,9 +46,10 @@ export async function resolveRemoteTransportOrError(
 	remoteName: string,
 	env: Map<string, string>,
 	buildError: (message: string) => CommandResult = fatal,
+	credentialCache?: CredentialCache,
 ): Promise<ResolvedRemoteTransport | CommandResult> {
 	try {
-		const resolved = await resolveRemoteTransport(gitCtx, remoteName, env);
+		const resolved = await resolveRemoteTransport(gitCtx, remoteName, env, credentialCache);
 		if (!resolved) {
 			return buildError(`'${remoteName}' does not appear to be a git repository`);
 		}

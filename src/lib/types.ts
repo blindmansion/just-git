@@ -2,7 +2,6 @@ import type { FileSystem } from "../fs.ts";
 import type {
 	ConfigOverrides,
 	CredentialProvider,
-	FetchFunction,
 	GitHooks,
 	IdentityOverride,
 	NetworkPolicy,
@@ -11,7 +10,6 @@ import type {
 import type { MergeDriver } from "./merge-ort.ts";
 import type { PackObject } from "./pack/packfile.ts";
 import type { SigningCapability } from "./signing.ts";
-import type { CredentialCache } from "./transport/remote.ts";
 import type { HttpAuth } from "./transport/transport.ts";
 
 // ── Object identifiers ──────────────────────────────────────────────
@@ -292,24 +290,10 @@ export interface GitRepo {
 	 * The single channel for host-provided behavior (hooks, signing, merge
 	 * driver, identity, config, credentials, network, progress). Attached
 	 * via `withCapabilities`; never auto-populated by a storage backend, so
-	 * a bare handle is inert until a host opts in. This is the seam that
-	 * later phases migrate every capability read onto; the loose `hooks` /
-	 * `signing` fields below remain during the additive transition.
+	 * a bare handle is inert until a host opts in. Every capability read in
+	 * the SDK, command, and server layers resolves through here.
 	 */
 	capabilities?: RepoCapabilities;
-	/** Hook callbacks for operation hooks and low-level events. */
-	hooks?: GitHooks;
-	/**
-	 * Operator-provided commit/tag signing and verification, set via
-	 * `createGit({ signing })`. The `signer` is the ambient default for SDK
-	 * writers (`createCommit`, `buildCommit`, `commit`, `createAnnotatedTag`)
-	 * and the fallback the command layer signs with when policy
-	 * (`commit.gpgsign` / `tag.gpgsign` / `-S`) requires a signature; the
-	 * `verifier` backs `verifyCommit` / `verifyTag` and `--verify-signatures`.
-	 * Grouped so the handle mirrors the `createGit` input and stays stable as
-	 * the capability set grows.
-	 */
-	signing?: SigningCapability;
 }
 
 /**
@@ -333,22 +317,6 @@ export interface GitContext extends GitRepo {
 	gitDir: string;
 	/** Absolute path to the working tree root, or null for bare repos. */
 	workTree: string | null;
-	/** Operator-provided credential resolver (bypasses env vars). */
-	credentialProvider?: CredentialProvider;
-	/** Operator-provided identity override for author/committer. */
-	identityOverride?: IdentityOverride;
-	/** Custom fetch function for HTTP transport. Falls back to globalThis.fetch. */
-	fetchFn?: FetchFunction;
-	/** Network access policy. `false` blocks all HTTP access. */
-	networkPolicy?: NetworkPolicy | false;
-	/** Resolves remote URLs to GitRepos on potentially different VFS instances. */
-	resolveRemote?: RemoteResolver;
-	/** Operator-provided config overrides (locked values + defaults). */
-	configOverrides?: ConfigOverrides;
-	/** In-memory credential cache for URL-extracted auth, keyed by origin. */
-	credentialCache?: CredentialCache;
-	/** Callback for server progress messages (sideband band-2). */
-	onProgress?: ProgressCallback;
 }
 
 // ── Diff result types ───────────────────────────────────────────────

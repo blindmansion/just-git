@@ -116,11 +116,11 @@ describe("network: cloneInto", () => {
 		expect(await refHash(local, "refs/heads/main")).toBeNull();
 	});
 
-	test("fires preClone / postClone via repo.hooks", async () => {
+	test("fires preClone / postClone via repo.capabilities.hooks", async () => {
 		const { net } = await setupRemote();
 		const local = await localRepo();
 		const events: string[] = [];
-		local.hooks = {
+		const hooks: GitHooks = {
 			preClone: () => {
 				events.push("pre");
 			},
@@ -129,18 +129,18 @@ describe("network: cloneInto", () => {
 			},
 		};
 
-		await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
+		await cloneInto(withCapabilities(local, { network: net, hooks }), `${BASE}/repo`);
 		expect(events).toEqual(["pre", "post"]);
 	});
 
 	test("preClone rejection aborts the clone", async () => {
 		const { net } = await setupRemote();
 		const local = await localRepo();
-		local.hooks = { preClone: () => ({ reject: true, message: "no clone" }) };
+		const hooks: GitHooks = { preClone: () => ({ reject: true, message: "no clone" }) };
 
-		expect(cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`)).rejects.toThrow(
-			"no clone",
-		);
+		expect(
+			cloneInto(withCapabilities(local, { network: net, hooks }), `${BASE}/repo`),
+		).rejects.toThrow("no clone");
 	});
 });
 
@@ -179,13 +179,13 @@ describe("network: fetch", () => {
 		});
 
 		let seenRemote: string | undefined;
-		local.hooks = {
+		const hooks: GitHooks = {
 			preFetch: (e) => {
 				seenRemote = e.remote;
 			},
 		};
 
-		const result = await fetch(withCapabilities(local, { network: net }), {
+		const result = await fetch(withCapabilities(local, { network: net, hooks }), {
 			url: `${BASE}/repo`,
 			name: "upstream",
 		});
@@ -201,13 +201,17 @@ describe("network: fetch", () => {
 		await cloneInto(withCapabilities(local, { network: net }), `${BASE}/repo`);
 
 		let postCount = 0;
-		local.hooks = { postFetch: () => void postCount++ };
-		await fetch(withCapabilities(local, { network: net }), { url: `${BASE}/repo` });
+		const postHooks: GitHooks = { postFetch: () => void postCount++ };
+		await fetch(withCapabilities(local, { network: net, hooks: postHooks }), {
+			url: `${BASE}/repo`,
+		});
 		expect(postCount).toBe(1);
 
-		local.hooks = { preFetch: () => ({ reject: true, message: "no fetch" }) };
+		const rejectHooks: GitHooks = { preFetch: () => ({ reject: true, message: "no fetch" }) };
 		await expect(
-			fetch(withCapabilities(local, { network: net }), { url: `${BASE}/repo` }),
+			fetch(withCapabilities(local, { network: net, hooks: rejectHooks }), {
+				url: `${BASE}/repo`,
+			}),
 		).rejects.toThrow("no fetch");
 	});
 });
@@ -349,10 +353,12 @@ describe("network: push", () => {
 		});
 
 		const hooks: GitHooks = { prePush: () => ({ reject: true, message: "blocked" }) };
-		local.hooks = hooks;
 
 		expect(
-			push(withCapabilities(local, { network: net }), { url: `${BASE}/repo`, branch: "main" }),
+			push(withCapabilities(local, { network: net, hooks }), {
+				url: `${BASE}/repo`,
+				branch: "main",
+			}),
 		).rejects.toThrow("blocked");
 	});
 
@@ -423,9 +429,9 @@ describe("network: push", () => {
 		});
 
 		let postCount = 0;
-		local.hooks = { postPush: () => void postCount++ };
+		const hooks: GitHooks = { postPush: () => void postCount++ };
 
-		const result = await push(withCapabilities(local, { network: net }), {
+		const result = await push(withCapabilities(local, { network: net, hooks }), {
 			url: `${BASE}/repo`,
 			branch: "main",
 		});

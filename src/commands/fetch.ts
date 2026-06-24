@@ -275,7 +275,13 @@ async function fetchOneRemote(
 	ext?: GitExtensions,
 	depth?: number,
 ): Promise<ExecResult> {
-	const resolved = await resolveRemoteTransportOrError(gitCtx, remoteName, env);
+	const resolved = await resolveRemoteTransportOrError(
+		gitCtx,
+		remoteName,
+		env,
+		undefined,
+		ext?.credentialCache,
+	);
 	if (isCommandError(resolved)) return resolved;
 	const { transport, config } = resolved;
 

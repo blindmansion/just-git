@@ -254,15 +254,16 @@ export class LocalTransport implements Transport {
 					continue;
 				}
 
-				if (this.remote.hooks) {
+				const remoteHooks = this.remote.capabilities?.hooks;
+				if (remoteHooks) {
 					if (isDelete && update.oldHash) {
-						this.remote.hooks.onRefDelete?.({
+						remoteHooks.onRefDelete?.({
 							repo: this.remote,
 							ref: update.name,
 							oldHash: update.oldHash,
 						});
 					} else if (!isDelete) {
-						this.remote.hooks.onRefUpdate?.({
+						remoteHooks.onRefUpdate?.({
 							repo: this.remote,
 							ref: update.name,
 							oldHash: update.oldHash,

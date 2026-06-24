@@ -3,18 +3,16 @@
 // minus argument parsing and stdout/stderr formatting, and work against both
 // filesystem-backed and storage-backed repos (no worktree assumed).
 //
-// Hooks fire via `repo.hooks` (the handle already carries them) — there is no
-// separate hook channel on the transport context.
+// Hooks fire via `repo.capabilities.hooks` (the handle already carries them) —
+// there is no separate hook channel on the transport context.
 
-import type { CredentialProvider } from "../hooks.ts";
 import { isRejection } from "../hooks.ts";
 import { withCapabilities } from "../lib/capabilities.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 import { isAncestor } from "../lib/merge.ts";
 import { listRefs, resolveRef } from "../lib/refs.ts";
-import { createTransportForUrl, type TransportEnv } from "../lib/transport/remote.ts";
+import { createTransportForUrl, withTransportEnv } from "../lib/transport/remote.ts";
 import { mapRefspec, parseRefspec } from "../lib/transport/refspec.ts";
-import type { HttpAuth } from "../lib/transport/transport.ts";
 import type { RemoteRef, ShallowFetchOptions } from "../lib/transport/transport.ts";
 import type { GitRepo, ObjectId, ObjectStore, RefStore, RepoCapabilities } from "../lib/types.ts";
 
@@ -104,33 +102,6 @@ export interface CloneResult {
 
 // ── Shared helpers ──────────────────────────────────────────────────
 
-function toCredentialProvider(c?: HttpAuth | CredentialProvider): CredentialProvider | undefined {
-	if (!c) return undefined;
-	return typeof c === "function" ? c : () => c;
-}
-
-/**
- * Augment a repo handle with the transport environment derived from its
- * attached capabilities (`repo.capabilities.{network,credentials,resolveRemote,
- * onProgress}`). Network behavior now rides on the handle (wrap with
- * `withCapabilities`) rather than a per-call transport bag.
- */
-function withEnv(repo: GitRepo): GitRepo & TransportEnv {
-	const caps = repo.capabilities;
-	const policy = caps?.network;
-	// Mirror createGit: a NetworkPolicy object may carry the fetch function.
-	const fetchFn = policy && typeof policy === "object" ? policy.fetch : undefined;
-	return {
-		...repo,
-		credentialProvider: toCredentialProvider(caps?.credentials),
-		fetchFn,
-		networkPolicy: policy,
-		resolveRemote: caps?.resolveRemote,
-		onProgress: caps?.onProgress,
-		credentialCache: new Map(),
-	};
-}
-
 // A repo placeholder for URL-only operations (listRemoteRefs). The transport's
 // `local` store is never read when only advertising refs.
 const UNUSED_REPO: GitRepo = {
@@ -160,7 +131,7 @@ export async function listRemoteRefs(
 	capabilities?: RepoCapabilities,
 ): Promise<RemoteRef[]> {
 	const transport = await createTransportForUrl(
-		withEnv(withCapabilities(UNUSED_REPO, capabilities)),
+		withTransportEnv(withCapabilities(UNUSED_REPO, capabilities)),
 		url,
 		NO_ENV,
 	);
@@ -176,14 +147,14 @@ export async function listRemoteRefs(
  * into the remote's tracking namespace (`+refs/heads/*:refs/remotes/<name>/*`).
  * `name` is the remote's short name (default `"origin"`); it drives that
  * default tracking namespace and is reported to the `preFetch`/`postFetch`
- * hooks as `remote`. Fires `repo.hooks.preFetch` / `postFetch`.
+ * hooks as `remote`. Fires `repo.capabilities.hooks.preFetch` / `postFetch`.
  */
 export async function fetch(
 	repo: GitRepo,
 	remote: { url: string; name?: string; refspecs?: string[] },
 ): Promise<FetchResult> {
 	const remoteName = remote.name ?? DEFAULT_REMOTE;
-	const transport = await createTransportForUrl(withEnv(repo), remote.url, NO_ENV);
+	const transport = await createTransportForUrl(withTransportEnv(repo), remote.url, NO_ENV);
 
 	const specs = (
 		remote.refspecs && remote.refspecs.length > 0
@@ -191,7 +162,7 @@ export async function fetch(
 			: [defaultFetchRefspec(remoteName)]
 	).map(parseRefspec);
 
-	const rej = await repo.hooks?.preFetch?.({
+	const rej = await repo.capabilities?.hooks?.preFetch?.({
 		repo,
 		remote: remoteName,
 		url: remote.url,
@@ -238,7 +209,7 @@ export async function fetch(
 		updated.push({ ref: p.localRef, oldHash: oldHash ?? null, newHash: p.remote.hash });
 	}
 
-	await repo.hooks?.postFetch?.({
+	await repo.capabilities?.hooks?.postFetch?.({
 		repo,
 		remote: remoteName,
 		url: remote.url,
@@ -316,7 +287,7 @@ function pushStatus(name: string, ok: boolean, error: string | undefined): PushR
  * Common case: `{ url, branch: "main" }`. The `src`/`dst`/`force` fields cover
  * explicit single-ref pushes; `refspecs` is the escape hatch for raw `src:dst`
  * grammar (force `+`, deletes `:dst`, globs `*`). The sugar fields and
- * `refspecs` are mutually exclusive. Fires `repo.hooks.prePush` / `postPush`.
+ * `refspecs` are mutually exclusive. Fires `repo.capabilities.hooks.prePush` / `postPush`.
  */
 export async function push(repo: GitRepo, remote: PushRemote): Promise<PushResult> {
 	const hasRefspecs = !!remote.refspecs && remote.refspecs.length > 0;
@@ -325,7 +296,7 @@ export async function push(repo: GitRepo, remote: PushRemote): Promise<PushResul
 		throw new Error("push: pass either `refspecs` or the branch/src/dst/force sugar, not both");
 	}
 
-	const transport = await createTransportForUrl(withEnv(repo), remote.url, NO_ENV);
+	const transport = await createTransportForUrl(withTransportEnv(repo), remote.url, NO_ENV);
 	const remoteRefs = await transport.advertiseRefs();
 	const remoteMap = new Map<string, ObjectId>(remoteRefs.map((r) => [r.name, r.hash]));
 
@@ -382,7 +353,7 @@ export async function push(repo: GitRepo, remote: PushRemote): Promise<PushResul
 		};
 	}
 
-	const rej = await repo.hooks?.prePush?.({
+	const rej = await repo.capabilities?.hooks?.prePush?.({
 		repo,
 		remote: remote.url,
 		url: remote.url,
@@ -427,7 +398,7 @@ export async function push(repo: GitRepo, remote: PushRemote): Promise<PushResul
 	const ok = refs.every((r) => r.status === "ok" || r.status === "up-to-date");
 
 	if (ok) {
-		await repo.hooks?.postPush?.({
+		await repo.capabilities?.hooks?.postPush?.({
 			repo,
 			remote: remote.url,
 			url: remote.url,
@@ -475,7 +446,7 @@ function resolveDefaultBranch(
  * heads and remote-tracking refs are written, so ahead/behind vs the remote is
  * answerable immediately (no initial fetch needed). `remote` sets the tracking
  * namespace (default `"origin"`). Pass `branch` to narrow to a single branch
- * (mirrors `git clone --branch`). Fires `repo.hooks.preClone` / `postClone`.
+ * (mirrors `git clone --branch`). Fires `repo.capabilities.hooks.preClone` / `postClone`.
  */
 export async function cloneInto(
 	repo: GitRepo,
@@ -485,9 +456,9 @@ export async function cloneInto(
 	const branchOpt = options?.branch;
 	const depth = options?.depth;
 	const remoteName = options?.remote ?? DEFAULT_REMOTE;
-	const transport = await createTransportForUrl(withEnv(repo), url, NO_ENV);
+	const transport = await createTransportForUrl(withTransportEnv(repo), url, NO_ENV);
 
-	const rej = await repo.hooks?.preClone?.({
+	const rej = await repo.capabilities?.hooks?.preClone?.({
 		repo,
 		repository: url,
 		targetPath: "",
@@ -499,7 +470,7 @@ export async function cloneInto(
 	const remoteRefs = await transport.advertiseRefs();
 
 	if (remoteRefs.length === 0) {
-		await repo.hooks?.postClone?.({
+		await repo.capabilities?.hooks?.postClone?.({
 			repo,
 			repository: url,
 			targetPath: "",
@@ -579,7 +550,7 @@ export async function cloneInto(
 		});
 	}
 
-	await repo.hooks?.postClone?.({
+	await repo.capabilities?.hooks?.postClone?.({
 		repo,
 		repository: url,
 		targetPath: "",

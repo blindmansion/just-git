@@ -59,7 +59,7 @@ describe("Git.findRepo", () => {
 		expect(git.findRepo()).rejects.toThrow("No filesystem");
 	});
 
-	test("threads operator extensions onto returned context", async () => {
+	test("threads operator capabilities onto returned context", async () => {
 		const fs = new MemoryFileSystem();
 		const onRefUpdate = () => {};
 		const git = createGit({
@@ -72,13 +72,13 @@ describe("Git.findRepo", () => {
 
 		const repo = await git.findRepo();
 		expect(repo).not.toBeNull();
-		expect(repo!.identityOverride).toEqual({
+		expect(repo!.capabilities?.identity).toEqual({
 			name: "Agent",
 			email: "agent@test.com",
 			locked: true,
 		});
-		expect(repo!.hooks).toBeDefined();
-		expect(repo!.hooks!.onRefUpdate).toBe(onRefUpdate);
+		expect(repo!.capabilities?.hooks).toBeDefined();
+		expect(repo!.capabilities!.hooks!.onRefUpdate).toBe(onRefUpdate);
 	});
 
 	test("works with repo SDK functions (CLIENT.md example)", async () => {

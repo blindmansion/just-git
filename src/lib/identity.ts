@@ -48,7 +48,7 @@ async function resolveIdentity(
 	role: IdentityRole,
 ): Promise<Identity> {
 	const keys = ROLE_ENV[role];
-	const override = ctx.identityOverride;
+	const override = ctx.capabilities?.identity;
 
 	const { timestamp, timezone } = parseDateEnv(env.get(keys.date));
 

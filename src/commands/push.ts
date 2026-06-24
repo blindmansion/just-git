@@ -51,7 +51,7 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 
 			let resolved;
 			try {
-				resolved = await resolveRemoteTransport(gitCtx, remoteName, ctx.env);
+				resolved = await resolveRemoteTransport(gitCtx, remoteName, ctx.env, ext?.credentialCache);
 			} catch (e) {
 				const msg = e instanceof Error ? e.message : "";
 				if (msg.startsWith("network")) return fatal(msg);

@@ -147,11 +147,17 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				}
 			}
 
-			const resolved = await resolveRemoteTransportOrError(gitCtx, remoteName, ctx.env, (msg) => ({
-				stdout: "",
-				stderr: `fatal: ${msg}\n`,
-				exitCode: 1,
-			}));
+			const resolved = await resolveRemoteTransportOrError(
+				gitCtx,
+				remoteName,
+				ctx.env,
+				(msg) => ({
+					stdout: "",
+					stderr: `fatal: ${msg}\n`,
+					exitCode: 1,
+				}),
+				ext?.credentialCache,
+			);
 			if (isCommandError(resolved)) return resolved;
 			const { transport, config } = resolved;
 			const pullBranch = remoteBranch ?? null;

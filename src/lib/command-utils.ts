@@ -52,24 +52,34 @@ export async function requireGitContext(
 	cwd: string,
 	ext?: GitExtensions,
 ): Promise<GitContext | CommandResult> {
-	if (ext?.objectStore && ext?.refStore && ext?.gitDir) {
+	const loc = ext?.locators;
+	if (loc?.objectStore && loc?.refStore && loc?.gitDir) {
 		return withCapabilities(
 			{
 				fs,
-				gitDir: ext.gitDir,
-				workTree: ext.workTree ?? cwd,
-				objectStore: ext.objectStore,
-				refStore: ext.refStore,
-				...ext,
+				gitDir: loc.gitDir,
+				workTree: loc.workTree ?? cwd,
+				objectStore: loc.objectStore,
+				refStore: loc.refStore,
 			},
-			ext.capabilities,
+			ext?.capabilities,
 		);
 	}
 
 	const ctx = await findRepo(fs, cwd);
 	if (!ctx) return NOT_A_GIT_REPO;
 	if (!ext) return ctx;
-	return withCapabilities({ ...ctx, ...ext }, ext.capabilities);
+	// Hybrid path: locator stores (without a gitDir) override the discovered
+	// context's object/ref stores, while the filesystem still supplies the
+	// worktree, index, and config (e.g. a VFS worktree over a SQLite store).
+	return withCapabilities(
+		{
+			...ctx,
+			...(loc?.objectStore ? { objectStore: loc.objectStore } : {}),
+			...(loc?.refStore ? { refStore: loc.refStore } : {}),
+		},
+		ext.capabilities,
+	);
 }
 
 export function isCommandError<T>(result: T | CommandResult): result is CommandResult {
@@ -401,7 +411,7 @@ export async function resolveCommandSigner(
 ): Promise<Signer | CommandResult | undefined> {
 	const shouldSign = cliSign ?? configBool(await getConfigValue(gitCtx, configKey)) ?? false;
 	if (!shouldSign) return undefined;
-	const signer = gitCtx.capabilities?.signing?.signer ?? gitCtx.signing?.signer;
+	const signer = gitCtx.capabilities?.signing?.signer;
 	if (!signer) return err("error: gpg failed to sign the data\n", 128);
 	return signer;
 }
@@ -425,7 +435,7 @@ export async function requireVerifiedCommit(
 ): Promise<CommandResult | null> {
 	const verify = cliVerify ?? configBool(await getConfigValue(gitCtx, configKey)) ?? false;
 	if (!verify) return null;
-	const verifier = gitCtx.capabilities?.signing?.verifier ?? gitCtx.signing?.verifier;
+	const verifier = gitCtx.capabilities?.signing?.verifier;
 	if (!verifier) return fatal("no signature verifier configured");
 	const commit = await readCommit(gitCtx, commitHash);
 	// git identifies the commit by its abbreviated (7-char) hash in these messages.

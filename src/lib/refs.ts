@@ -403,9 +403,10 @@ export async function resolveHead(ctx: GitRepo): Promise<ObjectId | null> {
 
 /** Write a direct ref (a file containing just a hex hash). */
 export async function updateRef(ctx: GitRepo, name: string, hash: ObjectId): Promise<void> {
-	const oldHash = ctx.hooks ? await resolveRef(ctx, name) : null;
+	const hooks = ctx.capabilities?.hooks;
+	const oldHash = hooks ? await resolveRef(ctx, name) : null;
 	await ctx.refStore.writeRef(name, { type: "direct", hash });
-	ctx.hooks?.onRefUpdate?.({ repo: ctx, ref: name, oldHash, newHash: hash });
+	hooks?.onRefUpdate?.({ repo: ctx, ref: name, oldHash, newHash: hash });
 }
 
 /** Write a symbolic ref (a file containing `ref: <target>`). */
@@ -451,11 +452,12 @@ export async function ensureRemoteHead(
 
 /** Delete a ref (removes from storage, deletes reflog, emits hook). */
 export async function deleteRef(ctx: GitContext, name: string): Promise<void> {
-	const oldHash = ctx.hooks ? await resolveRef(ctx, name) : null;
+	const hooks = ctx.capabilities?.hooks;
+	const oldHash = hooks ? await resolveRef(ctx, name) : null;
 	await ctx.refStore.deleteRef(name);
 	await deleteReflog(ctx, name);
-	if (ctx.hooks && oldHash) {
-		ctx.hooks.onRefDelete?.({ repo: ctx, ref: name, oldHash });
+	if (hooks && oldHash) {
+		hooks.onRefDelete?.({ repo: ctx, ref: name, oldHash });
 	}
 }
 

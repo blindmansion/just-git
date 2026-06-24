@@ -86,7 +86,6 @@ export function readonlyRepo(repo: GitRepo): GitRepo {
 		{
 			objectStore: new ReadonlyObjectStore(repo.objectStore),
 			refStore: new ReadonlyRefStore(repo.refStore),
-			hooks: repo.hooks,
 		},
 		repo.capabilities,
 	);
@@ -286,7 +285,6 @@ export function overlayRepo(repo: GitRepo): GitRepo {
 		{
 			objectStore: new OverlayObjectStore(repo.objectStore),
 			refStore: new OverlayRefStore(repo.refStore),
-			hooks: repo.hooks,
 		},
 		repo.capabilities,
 	);

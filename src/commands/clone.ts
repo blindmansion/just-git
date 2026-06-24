@@ -9,7 +9,12 @@ import { logRef } from "../lib/reflog.ts";
 import { createSymbolicRef, ensureRemoteHead, updateRef } from "../lib/refs.ts";
 import { findRepo, initRepository } from "../lib/repo.ts";
 import { applyShallowUpdates } from "../lib/shallow.ts";
-import { createTransportForUrl, stripAndCacheCredentials } from "../lib/transport/remote.ts";
+import { withCapabilities } from "../lib/capabilities.ts";
+import {
+	createTransportForUrl,
+	stripAndCacheCredentials,
+	withTransportEnv,
+} from "../lib/transport/remote.ts";
 import type { ShallowFetchOptions, Transport } from "../lib/transport/transport.ts";
 import { flattenTree } from "../lib/tree-ops.ts";
 import type { GitContext, GitRepo, ObjectId } from "../lib/types.ts";
@@ -107,7 +112,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			const { ctx: baseCtx } = await initRepository(ctx.fs, targetPath, {
 				bare: args.bare,
 			});
-			const newCtx: GitContext = ext ? { ...baseCtx, ...ext } : baseCtx;
+			const newCtx: GitContext = withCapabilities(baseCtx, ext?.capabilities);
 
 			const depthOpt = args.depth;
 			const singleBranch = args.singleBranch || (depthOpt !== undefined && !args.noSingleBranch);
@@ -121,7 +126,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			let transport: Transport;
 			try {
 				transport = await createTransportForUrl(
-					newCtx,
+					withTransportEnv(newCtx, ext?.credentialCache),
 					sourcePath,
 					ctx.env,
 					sourceRepo ?? undefined,

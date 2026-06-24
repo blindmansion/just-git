@@ -495,7 +495,7 @@ export async function writeConfig(ctx: GitContext, config: GitConfig): Promise<v
  * For simple sections: "core.bare" → section="core", key="bare"
  * For subsections: 'remote.origin.url' → section='remote "origin"', key="url"
  *
- * Respects operator-level config overrides on `ctx.configOverrides`:
+ * Respects operator-level config overrides on `ctx.capabilities.config`:
  *   1. `locked` values always win
  *   2. `.git/config` value
  *   3. `defaults` fallback
@@ -504,7 +504,7 @@ export async function getConfigValue(
 	ctx: GitContext,
 	dottedKey: string,
 ): Promise<string | undefined> {
-	const overrides = ctx.configOverrides;
+	const overrides = ctx.capabilities?.config;
 	const locked = overrides?.locked?.[dottedKey];
 	if (locked !== undefined) return locked;
 
@@ -541,7 +541,7 @@ export async function setConfigValue(
  * when set, ignoring on-disk values) and defaults.
  */
 export async function getConfigValueAll(ctx: GitContext, dottedKey: string): Promise<string[]> {
-	const overrides = ctx.configOverrides;
+	const overrides = ctx.capabilities?.config;
 	const locked = overrides?.locked?.[dottedKey];
 	if (locked !== undefined) return [locked];
 
