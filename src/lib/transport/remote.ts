@@ -1,4 +1,4 @@
-import { readConfig } from "../config.ts";
+import { type ConfigData, parseConfig, readConfigData } from "../config.ts";
 import type { GitContext } from "../types.ts";
 import type { CredentialStore, NetworkPolicy } from "../../hooks.ts";
 import type { HttpAuth } from "./transport.ts";
@@ -65,11 +65,13 @@ export interface RemoteConfig {
  * Resolve a remote name to its config (url + fetch refspec).
  * Reads from `.git/config` section `[remote "<name>"]`.
  */
-export async function getRemoteConfig(
-	ctx: GitContext,
-	remoteName: string,
-): Promise<RemoteConfig | null> {
-	const config = await readConfig(ctx);
+/**
+ * Pure core of {@link getRemoteConfig}: resolve a remote's config from a
+ * materialized {@link ConfigData}. Uses section access (not a dotted key) so
+ * remote names containing dots keep working.
+ */
+export function getRemoteConfigFrom(data: ConfigData, remoteName: string): RemoteConfig | null {
+	const config = parseConfig(data.text);
 	const section = config[`remote "${remoteName}"`];
 	if (!section?.url) return null;
 
@@ -78,6 +80,13 @@ export async function getRemoteConfig(
 		url: section.url,
 		fetchRefspec: section.fetch ?? "+refs/heads/*:refs/remotes/origin/*",
 	};
+}
+
+export async function getRemoteConfig(
+	ctx: GitContext,
+	remoteName: string,
+): Promise<RemoteConfig | null> {
+	return getRemoteConfigFrom(await readConfigData(ctx), remoteName);
 }
 
 export function isHttpUrl(url: string): boolean {

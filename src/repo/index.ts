@@ -116,6 +116,7 @@ export {
 } from "./writing.ts";
 
 // Merging
+export { buildMergeMessageFrom } from "../lib/merge.ts";
 export {
 	mergeTrees,
 	mergeTreesDetailed,

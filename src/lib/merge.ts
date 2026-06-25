@@ -1,10 +1,10 @@
 import { abbreviateHash } from "./command-utils.ts";
 import { formatDiffStat } from "./commit-summary.ts";
-import { getConfigValue } from "./config.ts";
+import { readConfigView } from "./config.ts";
 import { readIndex, writeIndex } from "./index.ts";
 import { readCommit } from "./object-db.ts";
 import { advanceBranchRef } from "./refs.ts";
-import type { GitContext, GitRepo, IndexEntry, ObjectId } from "./types.ts";
+import type { ConfigView, GitContext, GitRepo, IndexEntry, ObjectId } from "./types.ts";
 import { applyWorktreeOps, fastForwardMerge } from "./unpack-trees.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -271,18 +271,31 @@ async function orderMergeBasesByPaintOrder(
  * When `remoteUrl` is provided (pull path), the message includes
  * `of <url>` after the branch name, matching real git's pull format.
  */
+/**
+ * Pure core of {@link buildMergeMessage}: build the default merge message from
+ * an already-materialized {@link ConfigView} (reads only `init.defaultBranch`).
+ */
+export function buildMergeMessageFrom(
+	config: ConfigView,
+	branchName: string,
+	currentBranch: string,
+	remoteUrl?: string,
+): string {
+	const defaultBranch = config.get("init.defaultBranch") ?? "main";
+	const ofRemote = remoteUrl ? ` of ${remoteUrl}` : "";
+	if (currentBranch === defaultBranch) {
+		return `Merge branch '${branchName}'${ofRemote}\n`;
+	}
+	return `Merge branch '${branchName}'${ofRemote} into ${currentBranch}\n`;
+}
+
 export async function buildMergeMessage(
 	gitCtx: GitContext,
 	branchName: string,
 	currentBranch: string,
 	remoteUrl?: string,
 ): Promise<string> {
-	const defaultBranch = (await getConfigValue(gitCtx, "init.defaultBranch")) ?? "main";
-	const ofRemote = remoteUrl ? ` of ${remoteUrl}` : "";
-	if (currentBranch === defaultBranch) {
-		return `Merge branch '${branchName}'${ofRemote}\n`;
-	}
-	return `Merge branch '${branchName}'${ofRemote} into ${currentBranch}\n`;
+	return buildMergeMessageFrom(await readConfigView(gitCtx), branchName, currentBranch, remoteUrl);
 }
 
 // ── Fast-forward merge (high-level) ─────────────────────────────────
