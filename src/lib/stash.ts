@@ -13,16 +13,25 @@ import { serializeCommit } from "./objects/commit.ts";
 import { dirname, join } from "./path.ts";
 import {
 	appendReflog,
-	deleteReflog,
+	applyReflogEffects,
 	logRef,
 	readReflog,
-	writeReflog,
+	type ReflogEffect,
+	type ReflogEntry,
+	reflogRewrite,
 	ZERO_HASH,
 } from "./reflog.ts";
-import { branchNameFromRef, deleteRef, readHead, resolveHead, updateRef } from "./refs.ts";
+import {
+	branchNameFromRef,
+	deleteRef,
+	deleteRefEffects,
+	readHead,
+	resolveHead,
+	updateRef,
+} from "./refs.ts";
 import { isSubmoduleMode } from "./symlink.ts";
 import { buildTreeFromIndex, diffTrees, flattenTree, flattenTreeToMap } from "./tree-ops.ts";
-import type { GitContext, IndexEntry, ObjectId } from "./types.ts";
+import type { GitContext, GitRepo, IndexEntry, ObjectId } from "./types.ts";
 import { applyWorktreeOps, resetHard, type WorktreeOp } from "./unpack-trees.ts";
 import { checkoutEntry, cleanEmptyDirs, walkWorkTree } from "./worktree.ts";
 
@@ -670,42 +679,65 @@ export async function applyStash(
 }
 
 /**
+ * GitRepo-shaped core of {@link dropStash}: given the stash reflog `entries`
+ * (materialized by the shell via `readReflog`), drop `stash@{stashIndex}` and
+ * renumber. The `refs/stash` update rides on `refStore` (already on `GitRepo`);
+ * the reflog change comes back as {@link ReflogEffect}s for the shell to apply.
+ *
+ * Returns the verbatim `error` message the stash flow surfaces (or `null`) and
+ * the effects to apply; on error the effects list is empty.
+ */
+export async function dropStashFrom(
+	repo: GitRepo,
+	entries: ReflogEntry[],
+	stashIndex: number = 0,
+): Promise<{ error: string | null; effects: ReflogEffect[] }> {
+	if (entries.length === 0) {
+		return { error: `error: stash@{${stashIndex}} is not a valid reference`, effects: [] };
+	}
+
+	// stash@{N} = entries[entries.length - 1 - N]
+	const reflogIdx = entries.length - 1 - stashIndex;
+	if (reflogIdx < 0 || reflogIdx >= entries.length) {
+		return { error: `error: stash@{${stashIndex}} is not a valid reference`, effects: [] };
+	}
+
+	const remaining = [...entries.slice(0, reflogIdx), ...entries.slice(reflogIdx + 1)];
+
+	// No stashes left — drop the ref (deleteRefEffects also clears its reflog).
+	if (remaining.length === 0) {
+		return { error: null, effects: await deleteRefEffects(repo, STASH_REF) };
+	}
+
+	// Renumber: point refs/stash at the new top, rewrite the reflog.
+	const newTop = remaining[remaining.length - 1];
+	if (newTop) await updateRef(repo, STASH_REF, newTop.newHash);
+	return { error: null, effects: [reflogRewrite(STASH_REF, remaining)] };
+}
+
+/**
  * Drop a stash entry and renumber the reflog.
  * Returns an error message string, or null on success.
  */
 export async function dropStash(ctx: GitContext, stashIndex: number = 0): Promise<string | null> {
 	const entries = await readReflog(ctx, STASH_REF);
-	if (entries.length === 0) return `error: stash@{${stashIndex}} is not a valid reference`;
+	const { error, effects } = await dropStashFrom(ctx, entries, stashIndex);
+	await applyReflogEffects(ctx, effects);
+	return error;
+}
 
-	// stash@{N} = entries[entries.length - 1 - N]
-	const reflogIdx = entries.length - 1 - stashIndex;
-	if (reflogIdx < 0 || reflogIdx >= entries.length)
-		return `error: stash@{${stashIndex}} is not a valid reference`;
-
-	// Remove the entry
-	entries.splice(reflogIdx, 1);
-
-	if (entries.length === 0) {
-		// No stashes left — remove both the ref and reflog
-		await deleteRef(ctx, STASH_REF);
-		await deleteReflog(ctx, STASH_REF);
-	} else {
-		// Rewrite the reflog
-		await writeReflog(ctx, STASH_REF, entries);
-		// Update refs/stash to point to the new top (last entry)
-		const newTop = entries[entries.length - 1];
-		if (newTop) {
-			await updateRef(ctx, STASH_REF, newTop.newHash);
-		}
-	}
-
-	return null;
+/**
+ * GitRepo-shaped core of {@link clearStashes}: drop `refs/stash` and return the
+ * reflog effect. `deleteRefEffects` already removes the stash reflog, so the
+ * previous extra `deleteReflog` (a no-op after the ref delete) is gone.
+ */
+export async function clearStashesFrom(repo: GitRepo): Promise<ReflogEffect[]> {
+	return deleteRefEffects(repo, STASH_REF);
 }
 
 /**
  * Remove all stash entries.
  */
 export async function clearStashes(ctx: GitContext): Promise<void> {
-	await deleteRef(ctx, STASH_REF);
-	await deleteReflog(ctx, STASH_REF);
+	await applyReflogEffects(ctx, await clearStashesFrom(ctx));
 }
