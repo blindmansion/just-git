@@ -172,6 +172,13 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			// ── Fetch phase ──────────────────────────────────────────
+			// Deliberately on the advertisement, *not* the by-name `want-ref`
+			// fast path: real git resolves `git pull` via `ls-refs` +
+			// `want <oid>` (CLI parity), and this path consumes the full
+			// advertisement (FETCH_HEAD, tag auto-follow, prune, ensureRemoteHead,
+			// "couldn't find remote ref" errors). The programmatic `pull`
+			// (`src/repo/operations.ts`) *does* use `want-ref` — it has no such
+			// parity constraint. See `local-docs/plans/want-ref-consumer-adoption.md` §3.5.
 			const fetchSpec = parseRefspec(config.fetchRefspec);
 			const remoteRefs = await transport.advertiseRefs();
 

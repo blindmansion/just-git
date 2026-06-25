@@ -300,6 +300,13 @@ async function fetchOneRemote(
 		return { stdout: "", stderr: preFetchRej.message ?? "", exitCode: 1 };
 	}
 
+	// Deliberately on the advertisement, *not* the by-name `want-ref` fast path
+	// (`transport.fetchRefs`): real git resolves `git fetch` via `ls-refs` +
+	// `want <oid>`, so we match its observable wire behavior. We also consume the
+	// full advertisement here — FETCH_HEAD-from-remote-`HEAD`, tag auto-follow,
+	// `--prune` stale detection, `ensureRemoteHead`, and "couldn't find remote
+	// ref" errors — which the by-name result can't supply. See
+	// `local-docs/plans/want-ref-consumer-adoption.md` §3.5.
 	const remoteRefs = await transport.advertiseRefs();
 
 	if (remoteRefs.length === 0) {
