@@ -10,7 +10,7 @@ import {
 	type Platform,
 	type PRMergedEvent,
 	type PRUpdatedEvent,
-} from "../../src/platform/index.ts";
+} from "./platform";
 import { readCommit, resolveRef } from "../../src/repo/reading.ts";
 import { flattenTree } from "../../src/repo/diffing.ts";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";

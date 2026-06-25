@@ -1,4 +1,4 @@
-import type { BunSqliteDatabase } from "../store/bun-sqlite-storage.ts";
+import type { BunSqliteDatabase } from "../../../src/store/bun-sqlite-storage.ts";
 import type {
 	CreatePullRequestOptions,
 	ListPullRequestsFilter,

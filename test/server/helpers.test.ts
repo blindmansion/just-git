@@ -526,7 +526,7 @@ describe("extractTree", () => {
 	});
 
 	test("use in beforeMerge hook — inspect PR files before allowing merge", async () => {
-		const { createPlatform } = await import("../../src/platform/platform.ts");
+		const { createPlatform } = await import("../platform/platform/index.ts");
 
 		const db = new Database(":memory:");
 		let inspectedFiles: string[] = [];
@@ -599,8 +599,8 @@ describe("extractTree", () => {
 	});
 
 	test("use in beforeMerge hook — reject merge based on file content", async () => {
-		const { createPlatform } = await import("../../src/platform/platform.ts");
-		const { MergeError } = await import("../../src/platform/pull-requests.ts");
+		const { createPlatform } = await import("../platform/platform/index.ts");
+		const { MergeError } = await import("../platform/platform/pull-requests.ts");
 
 		const db = new Database(":memory:");
 
@@ -674,7 +674,7 @@ describe("extractTree", () => {
 	});
 
 	test("use in onPush callback — inspect pushed code", async () => {
-		const { createPlatform } = await import("../../src/platform/platform.ts");
+		const { createPlatform } = await import("../platform/platform/index.ts");
 
 		const db = new Database(":memory:");
 		let pushedFiles: string[] = [];

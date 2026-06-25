@@ -1,6 +1,6 @@
-import type { GitRepo, Identity } from "../lib/types.ts";
-import type { BunSqliteDatabase } from "../store/bun-sqlite-storage.ts";
-import type { Rejection } from "../hooks.ts";
+import type { GitRepo, Identity } from "../../../src/lib/types.ts";
+import type { BunSqliteDatabase } from "../../../src/store/bun-sqlite-storage.ts";
+import type { Rejection } from "../../../src/hooks.ts";
 
 export type { Rejection };
 
@@ -140,7 +140,7 @@ export type Authorize = (
 
 export interface PlatformServerOptions {
 	/** Server-side git hooks (preReceive, update, postReceive, advertiseRefs). */
-	hooks?: import("../server/types.ts").ServerHooks;
+	hooks?: import("../../../src/server/types.ts").ServerHooks;
 	/** URL prefix for REST API routes (default: "/api"). */
 	apiBasePath?: string;
 	/**
