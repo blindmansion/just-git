@@ -35,6 +35,29 @@ async function localRepo(): Promise<GitRepo> {
 	return repos.createRepo("local");
 }
 
+/**
+ * Wrap a server's in-process network with an upload-pack POST counter. `ls-refs`
+ * and the object `fetch` both POST to `git-upload-pack`, so the count
+ * distinguishes the advertise+fetch path (two POSTs) from the by-name
+ * `want-ref` path (one). The discovery `GET /info/refs?service=git-upload-pack`
+ * is matched first so its query param isn't mistaken for a POST.
+ */
+function instrumentedNet(server: ReturnType<typeof createServer>) {
+	const policy = server.asNetwork(BASE);
+	const baseFetch = policy.fetch!;
+	const counts = { uploadPack: 0, infoRefs: 0 };
+	const net = httpTransport({
+		allowed: policy.allowed,
+		fetch: (input, init) => {
+			const url = input instanceof Request ? input.url : String(input);
+			if (url.includes("/info/refs")) counts.infoRefs++;
+			else if (url.includes("git-upload-pack")) counts.uploadPack++;
+			return baseFetch(input, init);
+		},
+	});
+	return { net, counts };
+}
+
 describe("network: listRemoteRefs", () => {
 	test("enumerates remote refs without fetching objects", async () => {
 		const { net } = await setupRemote();
@@ -117,6 +140,16 @@ describe("network: cloneInto", () => {
 		expect(await refHash(local, "refs/heads/main")).toBeNull();
 	});
 
+	test("branch clone of a non-existent branch errors clearly", async () => {
+		const { net } = await setupRemote();
+		const local = await localRepo();
+		await expect(
+			cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`, {
+				branch: "nope",
+			}),
+		).rejects.toThrow(/remote branch 'nope' not found/);
+	});
+
 	test("fires preClone / postClone via repo.capabilities.hooks", async () => {
 		const { net } = await setupRemote();
 		const local = await localRepo();
@@ -142,6 +175,51 @@ describe("network: cloneInto", () => {
 		expect(
 			cloneInto(withCapabilities(local, { transport: net, hooks }), `${BASE}/repo`),
 		).rejects.toThrow("no clone");
+	});
+});
+
+describe("network: cloneInto round-trip accounting", () => {
+	test("branch clone resolves via want-ref (one upload-pack POST, no separate ls-refs)", async () => {
+		const { server, remote } = await setupRemote();
+		const featureHash = await commit(remote, {
+			files: { "feature.txt": "feat\n" },
+			message: "feature root",
+			author: AUTHOR,
+			branch: "feature",
+		});
+		const { net, counts } = instrumentedNet(server);
+		const local = await localRepo();
+
+		const result = await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`, {
+			branch: "feature",
+		});
+
+		// By-name (`want-ref`) folds ref resolution into the fetch: one POST.
+		expect(counts.uploadPack).toBe(1);
+
+		// The single resolved branch drives the local head, tracking ref, and HEAD.
+		expect(result.defaultBranch).toBe("feature");
+		expect(await refHash(local, "refs/heads/feature")).toBe(featureHash);
+		expect(await refHash(local, "refs/remotes/origin/feature")).toBe(featureHash);
+		expect(await local.refStore.readRef("HEAD")).toEqual({
+			type: "symbolic",
+			target: "refs/heads/feature",
+		});
+		// Single-branch clone fetches no other heads.
+		expect(await refHash(local, "refs/heads/main")).toBeNull();
+	});
+
+	test("branch-less clone uses the advertisement (ls-refs + fetch)", async () => {
+		const { server } = await setupRemote();
+		const { net, counts } = instrumentedNet(server);
+		const local = await localRepo();
+
+		await cloneInto(withCapabilities(local, { transport: net }), `${BASE}/repo`);
+
+		// Default-branch resolution needs the advertisement, so this stays on the
+		// advertise+fetch path: an `ls-refs` POST plus the object `fetch` POST.
+		expect(counts.uploadPack).toBe(2);
+		expect(await refHash(local, "refs/heads/main")).not.toBeNull();
 	});
 });
 

@@ -482,60 +482,70 @@ export async function cloneInto(
 	});
 	if (isRejection(rej)) throw new Error(rej.message ?? "clone rejected by preClone hook");
 
-	const remoteRefs = await transport.advertiseRefs();
-
-	if (remoteRefs.length === 0) {
-		await repo.capabilities?.hooks?.postClone?.({
-			repo,
-			repository: url,
-			targetPath: "",
-			bare: true,
-			branch: branchOpt ?? null,
-		});
-		return {
-			remoteRefs,
-			defaultBranch: null,
-			objectCount: 0,
-			fetchedRefs: [],
-			trackingRefs: [],
-		};
-	}
-
-	let defaultBranch: string | null = null;
-	if (branchOpt) {
-		const match = remoteRefs.find((r) => r.name === `refs/heads/${branchOpt}`);
-		if (!match) throw new Error(`remote branch '${branchOpt}' not found`);
-		defaultBranch = branchOpt;
-	} else {
-		defaultBranch = resolveDefaultBranch(remoteRefs, transport.headTarget)?.branch ?? null;
-	}
-
-	const singleBranch = !!branchOpt;
-	const wants: ObjectId[] = [];
-	const seen = new Set<ObjectId>();
-	for (const ref of remoteRefs) {
-		if (ref.name === "HEAD") continue;
-		if (ref.name.startsWith("refs/heads/")) {
-			if (singleBranch && ref.name !== `refs/heads/${defaultBranch}`) continue;
-		} else if (ref.name.startsWith("refs/tags/")) {
-			if (singleBranch) continue;
-		} else {
-			continue;
-		}
-		if (!seen.has(ref.hash)) {
-			seen.add(ref.hash);
-			wants.push(ref.hash);
-		}
-	}
-
 	const shallow: ShallowFetchOptions | undefined =
 		depth !== undefined && depth > 0 ? { depth } : undefined;
 
+	let remoteRefs: RemoteRef[];
+	let defaultBranch: string | null = null;
 	let objectCount = 0;
-	if (wants.length > 0) {
-		const result = await transport.fetch(wants, await collectHaves(repo), shallow);
+
+	if (branchOpt) {
+		// By-name fast path: a single-branch clone already knows its target and
+		// sets HEAD to it directly, so it needs nothing from the advertisement
+		// (no `transport.headTarget` default-branch resolution). On a v2
+		// `ref-in-want` server this resolves the name *and* fetches its objects
+		// in one round-trip; otherwise it degrades to advertise+fetch.
+		const wantRef = `refs/heads/${branchOpt}`;
+		const result = await transport.fetchRefs([wantRef], await collectHaves(repo), shallow);
+		// The advertisement's implicit "ref doesn't exist" signal is gone, so a
+		// missing branch comes back as an absent ref — surface it explicitly.
+		if (!result.remoteRefs.some((r) => r.name === wantRef)) {
+			throw new Error(`remote branch '${branchOpt}' not found`);
+		}
+		remoteRefs = result.remoteRefs;
 		objectCount = result.objectCount;
+		defaultBranch = branchOpt;
+	} else {
+		remoteRefs = await transport.advertiseRefs();
+
+		if (remoteRefs.length === 0) {
+			await repo.capabilities?.hooks?.postClone?.({
+				repo,
+				repository: url,
+				targetPath: "",
+				bare: true,
+				branch: branchOpt ?? null,
+			});
+			return {
+				remoteRefs,
+				defaultBranch: null,
+				objectCount: 0,
+				fetchedRefs: [],
+				trackingRefs: [],
+			};
+		}
+
+		defaultBranch = resolveDefaultBranch(remoteRefs, transport.headTarget)?.branch ?? null;
+
+		// Branch-less clone mirrors all heads and tags.
+		const wants: ObjectId[] = [];
+		const seen = new Set<ObjectId>();
+		for (const ref of remoteRefs) {
+			if (ref.name === "HEAD") continue;
+			if (!ref.name.startsWith("refs/heads/") && !ref.name.startsWith("refs/tags/")) continue;
+			if (!seen.has(ref.hash)) {
+				seen.add(ref.hash);
+				wants.push(ref.hash);
+			}
+		}
+
+		if (wants.length > 0) {
+			const result = await transport.fetch(wants, await collectHaves(repo), shallow);
+			objectCount = result.objectCount;
+		}
 	}
+
+	const singleBranch = !!branchOpt;
 
 	const fetchedRefs: CloneResult["fetchedRefs"] = [];
 	const trackingRefs: CloneResult["trackingRefs"] = [];
