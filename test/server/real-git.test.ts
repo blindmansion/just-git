@@ -97,6 +97,28 @@ describe("server with real git client", () => {
 		}
 	});
 
+	test("clone from server over protocol v2", async () => {
+		const sandbox = await createSandbox("just-git-realclient-v2-");
+		try {
+			const cloneDir = join(sandbox, "local");
+			const result = await realGit(
+				home,
+				sandbox,
+				`clone http://localhost:${port}/repo ${cloneDir}`,
+				{ GIT_PROTOCOL_VERSION: "2" },
+			);
+			expect(result.exitCode).toBe(0);
+
+			expect(readFileSync(join(cloneDir, "README.md"), "utf8")).toBe("# Hello World");
+			expect(readFileSync(join(cloneDir, "src/util.ts"), "utf8")).toBe("export const VERSION = 1;");
+
+			const tagResult = await realGit(home, cloneDir, "tag -l", { GIT_PROTOCOL_VERSION: "2" });
+			expect(tagResult.stdout).toContain("v1.0");
+		} finally {
+			await rm(sandbox, { recursive: true, force: true });
+		}
+	});
+
 	test("push to server", async () => {
 		const sandbox = await createSandbox("just-git-realclient-");
 		try {

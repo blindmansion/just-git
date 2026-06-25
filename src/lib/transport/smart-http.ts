@@ -25,7 +25,7 @@ export type HttpAuth =
 
 // ── Ref discovery ────────────────────────────────────────────────────
 
-interface DiscoverResult {
+export interface DiscoverResult {
 	refs: RemoteRef[];
 	capabilities: string[];
 	symrefs: Map<string, string>;
@@ -64,7 +64,7 @@ export async function discoverRefs(
 	return parseRefAdvertisement(pktLines, service);
 }
 
-function parseRefAdvertisement(pktLines: PktLine[], service: string): DiscoverResult {
+export function parseRefAdvertisement(pktLines: PktLine[], service: string): DiscoverResult {
 	let idx = 0;
 
 	// Skip "# service=..." header line

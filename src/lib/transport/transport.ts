@@ -9,7 +9,19 @@ import { listRefs, readHead, resolveRef } from "../refs.ts";
 import { computeShallowBoundary, type ShallowUpdate } from "../shallow.ts";
 import type { GitRepo, ObjectId } from "../types.ts";
 import { collectEnumeration, enumerateObjectsWithContent } from "./object-walk.ts";
-import { discoverRefs, fetchPack, type PushCommand, pushPack } from "./smart-http.ts";
+import {
+	type DiscoverResult,
+	discoverRefs,
+	fetchPack,
+	type PushCommand,
+	pushPack,
+} from "./smart-http.ts";
+import {
+	type V2Capabilities,
+	discoverV2Capabilities,
+	fetchPackV2,
+	lsRefs,
+} from "./smart-http-v2.ts";
 
 // ── Transport interface ──────────────────────────────────────────────
 
@@ -293,34 +305,84 @@ export class SmartHttpTransport implements Transport {
 	private cachedPushCaps: string[] | null = null;
 	private cachedFetchRefs: RemoteRef[] | null = null;
 
+	/** Resolved upload-pack protocol version, null until first discovery. */
+	private protocolVersion: 1 | 2 | null = null;
+	/** v2 capabilities, populated only when `protocolVersion === 2`. */
+	private cachedV2Caps: V2Capabilities | null = null;
+
+	/**
+	 * @param protocolPreference Whether to *request* protocol v2 on discovery.
+	 *   Defaults to v2 (matching modern git ≥2.26) with transparent v1 fallback
+	 *   when the server doesn't upgrade. Push (receive-pack) is always v1.
+	 */
 	constructor(
 		private local: GitRepo,
 		private url: string,
 		private fetchFn?: FetchFunction,
 		private onProgress?: ProgressCallback,
+		private protocolPreference: 1 | 2 = 2,
 	) {}
 
-	async advertiseRefs(): Promise<RemoteRef[]> {
-		const result = await discoverRefs(this.url, "git-upload-pack", this.fetchFn);
-		this.cachedFetchCaps = result.capabilities;
-		this.cachedFetchRefs = result.refs;
+	/**
+	 * Run upload-pack discovery once, resolving the protocol version. For v2,
+	 * this only fetches capabilities; refs come later from ls-refs. For v1 (or
+	 * a v2-request that the server declines), refs + caps arrive together.
+	 */
+	private async ensureDiscovery(): Promise<void> {
+		if (this.protocolVersion !== null) return;
 
-		const headSymref = result.symrefs.get("HEAD");
-		if (headSymref) {
-			this.headTarget = headSymref;
+		if (this.protocolPreference === 2) {
+			const result = await discoverV2Capabilities(this.url, this.fetchFn);
+			if (result.version === 2) {
+				this.protocolVersion = 2;
+				this.cachedV2Caps = result.caps;
+				this.assertSupportedObjectFormat();
+				return;
+			}
+			this.protocolVersion = 1;
+			this.applyV1Discovery(result.v1);
+			return;
 		}
 
+		this.protocolVersion = 1;
+		this.applyV1Discovery(await discoverRefs(this.url, "git-upload-pack", this.fetchFn));
+	}
+
+	private applyV1Discovery(result: DiscoverResult): void {
+		this.cachedFetchCaps = result.capabilities;
+		this.cachedFetchRefs = result.refs;
+		const headSymref = result.symrefs.get("HEAD");
+		if (headSymref) this.headTarget = headSymref;
+	}
+
+	/**
+	 * Reject servers advertising a hash function we cannot consume. The pack
+	 * trailer verification (`ingestPack`) is SHA-1 only, so a clear error here
+	 * beats mis-parsing wider OIDs further downstream.
+	 */
+	private assertSupportedObjectFormat(): void {
+		const format = this.cachedV2Caps?.objectFormat ?? "sha1";
+		if (format !== "sha1") {
+			throw new Error(`unsupported object-format '${format}': just-git only supports sha1`);
+		}
+	}
+
+	/** Populate v2 refs from an ls-refs round-trip (idempotent). */
+	private async ensureV2Refs(): Promise<RemoteRef[]> {
+		if (this.cachedFetchRefs) return this.cachedFetchRefs;
+		const caps = this.cachedV2Caps as V2Capabilities;
+		const result = await lsRefs(this.url, caps, this.fetchFn, { symrefs: true, peel: true });
+		this.cachedFetchRefs = result.refs;
+		if (result.headTarget) this.headTarget = result.headTarget;
 		return result.refs;
 	}
 
-	private async ensureFetchDiscovery() {
-		if (!this.cachedFetchCaps || !this.cachedFetchRefs) {
-			await this.advertiseRefs();
+	async advertiseRefs(): Promise<RemoteRef[]> {
+		await this.ensureDiscovery();
+		if (this.protocolVersion === 2) {
+			return this.ensureV2Refs();
 		}
-		return {
-			caps: this.cachedFetchCaps as string[],
-			refs: this.cachedFetchRefs as RemoteRef[],
-		};
+		return this.cachedFetchRefs as RemoteRef[];
 	}
 
 	private async ensurePushDiscovery() {
@@ -336,7 +398,39 @@ export class SmartHttpTransport implements Transport {
 		haves: ObjectId[],
 		shallow?: ShallowFetchOptions,
 	): Promise<FetchResult> {
-		const { caps, refs } = await this.ensureFetchDiscovery();
+		await this.ensureDiscovery();
+
+		if (this.protocolVersion === 2) {
+			const refs = await this.ensureV2Refs();
+			if (wants.length === 0) {
+				return { remoteRefs: refs, objectCount: 0 };
+			}
+
+			const result = await fetchPackV2(
+				this.url,
+				wants,
+				haves,
+				this.cachedV2Caps as V2Capabilities,
+				this.fetchFn,
+				shallow,
+				this.onProgress,
+			);
+
+			if (result.packData.byteLength === 0) {
+				return { remoteRefs: refs, objectCount: 0 };
+			}
+
+			const objectCount = await ingestPackData(this.local, result.packData);
+			const shallowUpdates: ShallowUpdate | undefined =
+				result.shallowLines.length > 0 || result.unshallowLines.length > 0
+					? { shallow: result.shallowLines, unshallow: result.unshallowLines }
+					: undefined;
+
+			return { remoteRefs: refs, objectCount, shallowUpdates };
+		}
+
+		const caps = this.cachedFetchCaps as string[];
+		const refs = this.cachedFetchRefs as RemoteRef[];
 
 		if (wants.length === 0) {
 			return { remoteRefs: refs, objectCount: 0 };

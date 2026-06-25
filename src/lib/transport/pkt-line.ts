@@ -350,3 +350,132 @@ export function demuxSideband(pktLines: PktLine[]): SidebandResult {
 
 	return { packData, progress, errors };
 }
+
+// ── Protocol v2 sectioned fetch response ─────────────────────────────
+
+/**
+ * A wanted-ref entry (`<oid> <refname>`) from the v2 `wanted-refs` section.
+ * OIDs are treated as opaque, length-agnostic tokens (SHA-1 / SHA-256 safe).
+ */
+export interface V2WantedRef {
+	hash: string;
+	name: string;
+}
+
+/**
+ * The fully parsed contents of a protocol-v2 `fetch` command response.
+ *
+ * The response is a sequence of sections — `acknowledgments`,
+ * `shallow-info`, `wanted-refs`, `packfile` — separated by delim-pkts and
+ * terminated by a flush-pkt. Only the `packfile` section is
+ * sideband-multiplexed; the others are plain pkt-lines.
+ */
+export interface V2FetchSections {
+	acks: string[];
+	/** Whether the server emitted a `ready` line in `acknowledgments`. */
+	ready: boolean;
+	shallow: string[];
+	unshallow: string[];
+	wantedRefs: V2WantedRef[];
+	packData: Uint8Array;
+	progress: string[];
+	errors: string[];
+}
+
+type V2Section = "none" | "acknowledgments" | "shallow-info" | "wanted-refs" | "packfile" | "skip";
+
+/**
+ * Demultiplex a buffered protocol-v2 `fetch` response into its sections.
+ *
+ * Walks the pkt-lines, switching sections at each section header and
+ * resetting at each delim-pkt. Within `packfile`, lines are sideband-framed
+ * (band-1 pack, band-2 progress, band-3 error). The terminating flush-pkt
+ * ends the response. Unknown section headers are skipped for forward
+ * compatibility.
+ */
+export function demuxV2FetchResponse(pktLines: PktLine[]): V2FetchSections {
+	const acks: string[] = [];
+	const shallow: string[] = [];
+	const unshallow: string[] = [];
+	const wantedRefs: V2WantedRef[] = [];
+	const progress: string[] = [];
+	const errors: string[] = [];
+	const packChunks: Uint8Array[] = [];
+	let totalPackBytes = 0;
+	let ready = false;
+	let section: V2Section = "none";
+
+	for (const line of pktLines) {
+		if (line.type === "flush" || line.type === "response-end") break;
+		if (line.type === "delim") {
+			section = "none";
+			continue;
+		}
+		if (line.type !== "data") continue;
+
+		if (section === "packfile") {
+			if (line.data.byteLength === 0) continue;
+			const band = line.data[0];
+			const payload = line.data.subarray(1);
+			if (band === BAND_DATA) {
+				packChunks.push(payload);
+				totalPackBytes += payload.byteLength;
+			} else if (band === BAND_PROGRESS) {
+				progress.push(decoder.decode(payload));
+			} else if (band === BAND_ERROR) {
+				errors.push(decoder.decode(payload));
+			}
+			continue;
+		}
+
+		const text = pktLineText(line);
+
+		if (section === "none") {
+			section = sectionForHeader(text);
+			continue;
+		}
+
+		if (section === "skip") continue;
+
+		switch (section) {
+			case "acknowledgments":
+				if (text === "ready") ready = true;
+				else if (text === "NAK") acks.push("NAK");
+				else if (text.startsWith("ACK ")) acks.push(text);
+				break;
+			case "shallow-info":
+				if (text.startsWith("shallow ")) shallow.push(text.slice(8));
+				else if (text.startsWith("unshallow ")) unshallow.push(text.slice(10));
+				break;
+			case "wanted-refs": {
+				const sp = text.indexOf(" ");
+				if (sp !== -1) wantedRefs.push({ hash: text.slice(0, sp), name: text.slice(sp + 1) });
+				break;
+			}
+		}
+	}
+
+	const packData = new Uint8Array(totalPackBytes);
+	let offset = 0;
+	for (const chunk of packChunks) {
+		packData.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+
+	return { acks, ready, shallow, unshallow, wantedRefs, packData, progress, errors };
+}
+
+function sectionForHeader(text: string): V2Section {
+	switch (text) {
+		case "acknowledgments":
+			return "acknowledgments";
+		case "shallow-info":
+			return "shallow-info";
+		case "wanted-refs":
+			return "wanted-refs";
+		case "packfile":
+			return "packfile";
+		default:
+			return "skip";
+	}
+}

@@ -9,6 +9,7 @@ import {
 import { buildCapabilityContext, makeConfigView } from "../config.ts";
 import { findRepo } from "../repo.ts";
 import type {
+	ConfigView,
 	GitContext,
 	GitOperation,
 	GitRepo,
@@ -30,6 +31,25 @@ import {
 	validateNetworkAccess,
 } from "./remote.ts";
 import { LocalTransport, SmartHttpTransport, type HttpAuth, type Transport } from "./transport.ts";
+
+/**
+ * Decide which wire-protocol version the client should *request* on discovery.
+ *
+ * Precedence mirrors git: the `GIT_PROTOCOL` env var (e.g. `version=2`) wins,
+ * then `protocol.version` config. Defaults to v2 — discovery falls back to v1
+ * transparently when the server declines, so this is safe to leave on.
+ */
+function resolveProtocolPreference(config: ConfigView, env?: ReadonlyMap<string, string>): 1 | 2 {
+	const envProto = env?.get("GIT_PROTOCOL");
+	if (envProto) {
+		if (/(^|[:\s])version=2($|[:\s])/.test(envProto)) return 2;
+		if (/(^|[:\s])version=[01]($|[:\s])/.test(envProto)) return 1;
+	}
+	const configVersion = config.get("protocol.version");
+	if (configVersion === "2") return 2;
+	if (configVersion === "1" || configVersion === "0") return 1;
+	return 2;
+}
 
 /** Wrap a fetch so every request carries the resolved `Authorization` header. */
 function withAuthHeader(auth: HttpAuth, next: FetchFunction): FetchFunction {
@@ -183,7 +203,13 @@ export async function openTransport(
 	const target = await resolver(ctx);
 	if (target) {
 		return target.kind === "http"
-			? new SmartHttpTransport(handle, cleanUrl, target.fetch, handle.capabilities?.onProgress)
+			? new SmartHttpTransport(
+					handle,
+					cleanUrl,
+					target.fetch,
+					handle.capabilities?.onProgress,
+					resolveProtocolPreference(ctx.config, env),
+				)
 			: new LocalTransport(handle, target.repo);
 	}
 

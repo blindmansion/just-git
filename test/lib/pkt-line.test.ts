@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
 	concatPktLines,
+	delimPkt,
 	demuxSideband,
 	demuxSidebandStreaming,
+	demuxV2FetchResponse,
 	encodePktLine,
 	flushPkt,
 	parsePktLineStream,
@@ -486,5 +488,148 @@ describe("demuxSidebandStreaming", () => {
 
 		expect(Array.from(result.packData)).toEqual([1, 2, 3, 4, 5, 6]);
 		expect(progress).toEqual(["msg\n"]);
+	});
+});
+
+describe("demuxV2FetchResponse", () => {
+	const HASH_A = "a".repeat(40);
+	const HASH_B = "b".repeat(40);
+
+	function sidebandPkt(band: number, data: string | Uint8Array): Uint8Array {
+		const payload = typeof data === "string" ? enc.encode(data) : data;
+		const sb = new Uint8Array(1 + payload.byteLength);
+		sb[0] = band;
+		sb.set(payload, 1);
+		return encodePktLine(sb);
+	}
+
+	test("packfile-only response (fresh clone)", () => {
+		const body = concatPktLines(
+			encodePktLine("packfile\n"),
+			sidebandPkt(1, "PACK-DATA"),
+			flushPkt(),
+		);
+		const result = demuxV2FetchResponse(parsePktLineStream(body));
+		expect(new TextDecoder().decode(result.packData)).toBe("PACK-DATA");
+		expect(result.acks).toEqual([]);
+		expect(result.ready).toBe(false);
+	});
+
+	test("acknowledgments + delim + packfile", () => {
+		const body = concatPktLines(
+			encodePktLine("acknowledgments\n"),
+			encodePktLine(`ACK ${HASH_A}\n`),
+			encodePktLine("ready\n"),
+			delimPkt(),
+			encodePktLine("packfile\n"),
+			sidebandPkt(1, "PACK"),
+			flushPkt(),
+		);
+		const result = demuxV2FetchResponse(parsePktLineStream(body));
+		expect(result.acks).toEqual([`ACK ${HASH_A}`]);
+		expect(result.ready).toBe(true);
+		expect(new TextDecoder().decode(result.packData)).toBe("PACK");
+	});
+
+	test("acknowledgments NAK (no common, no packfile)", () => {
+		const body = concatPktLines(
+			encodePktLine("acknowledgments\n"),
+			encodePktLine("NAK\n"),
+			flushPkt(),
+		);
+		const result = demuxV2FetchResponse(parsePktLineStream(body));
+		expect(result.acks).toEqual(["NAK"]);
+		expect(result.ready).toBe(false);
+		expect(result.packData.byteLength).toBe(0);
+	});
+
+	test("shallow-info section feeds shallow/unshallow", () => {
+		const body = concatPktLines(
+			encodePktLine("shallow-info\n"),
+			encodePktLine(`shallow ${HASH_A}\n`),
+			encodePktLine(`unshallow ${HASH_B}\n`),
+			delimPkt(),
+			encodePktLine("packfile\n"),
+			sidebandPkt(1, "P"),
+			flushPkt(),
+		);
+		const result = demuxV2FetchResponse(parsePktLineStream(body));
+		expect(result.shallow).toEqual([HASH_A]);
+		expect(result.unshallow).toEqual([HASH_B]);
+	});
+
+	test("wanted-refs section parses oid + refname", () => {
+		const body = concatPktLines(
+			encodePktLine("wanted-refs\n"),
+			encodePktLine(`${HASH_A} refs/heads/main\n`),
+			delimPkt(),
+			encodePktLine("packfile\n"),
+			sidebandPkt(1, "P"),
+			flushPkt(),
+		);
+		const result = demuxV2FetchResponse(parsePktLineStream(body));
+		expect(result.wantedRefs).toEqual([{ hash: HASH_A, name: "refs/heads/main" }]);
+	});
+
+	test("all sections together, in spec order", () => {
+		const body = concatPktLines(
+			encodePktLine("acknowledgments\n"),
+			encodePktLine(`ACK ${HASH_A}\n`),
+			encodePktLine("ready\n"),
+			delimPkt(),
+			encodePktLine("shallow-info\n"),
+			encodePktLine(`shallow ${HASH_B}\n`),
+			delimPkt(),
+			encodePktLine("wanted-refs\n"),
+			encodePktLine(`${HASH_A} refs/heads/main\n`),
+			delimPkt(),
+			encodePktLine("packfile\n"),
+			sidebandPkt(1, "PACK1"),
+			sidebandPkt(1, "PACK2"),
+			flushPkt(),
+		);
+		const result = demuxV2FetchResponse(parsePktLineStream(body));
+		expect(result.acks).toEqual([`ACK ${HASH_A}`]);
+		expect(result.ready).toBe(true);
+		expect(result.shallow).toEqual([HASH_B]);
+		expect(result.wantedRefs).toEqual([{ hash: HASH_A, name: "refs/heads/main" }]);
+		expect(new TextDecoder().decode(result.packData)).toBe("PACK1PACK2");
+	});
+
+	test("demuxes band-2 progress and only band-1 into packData", () => {
+		const body = concatPktLines(
+			encodePktLine("packfile\n"),
+			sidebandPkt(2, "Counting objects\n"),
+			sidebandPkt(1, "PACK"),
+			sidebandPkt(2, "Done\n"),
+			flushPkt(),
+		);
+		const result = demuxV2FetchResponse(parsePktLineStream(body));
+		expect(new TextDecoder().decode(result.packData)).toBe("PACK");
+		expect(result.progress).toEqual(["Counting objects\n", "Done\n"]);
+	});
+
+	test("collects band-3 errors", () => {
+		const body = concatPktLines(
+			encodePktLine("packfile\n"),
+			sidebandPkt(3, "fatal: boom"),
+			flushPkt(),
+		);
+		const result = demuxV2FetchResponse(parsePktLineStream(body));
+		expect(result.errors).toEqual(["fatal: boom"]);
+	});
+
+	test("skips unknown section headers for forward compatibility", () => {
+		const body = concatPktLines(
+			encodePktLine("future-section\n"),
+			encodePktLine("some unknown payload\n"),
+			delimPkt(),
+			encodePktLine("packfile\n"),
+			sidebandPkt(1, "PACK"),
+			flushPkt(),
+		);
+		const result = demuxV2FetchResponse(parsePktLineStream(body));
+		expect(new TextDecoder().decode(result.packData)).toBe("PACK");
+		expect(result.acks).toEqual([]);
 	});
 });
