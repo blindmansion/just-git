@@ -6,7 +6,7 @@ import type { GitContext, ObjectId } from "./types.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
 
-interface ReflogEntry {
+export interface ReflogEntry {
 	oldHash: ObjectId;
 	newHash: ObjectId;
 	name: string;
@@ -14,6 +14,75 @@ interface ReflogEntry {
 	timestamp: number;
 	tz: string;
 	message: string;
+}
+
+/**
+ * The materialized committer-ish identity stamped onto a reflog entry.
+ * Produced by {@link getReflogIdentity} (the config/env-backed shell read)
+ * and handed to the pure {@link logRefEffects} builder.
+ */
+export interface ReflogIdentity {
+	name: string;
+	email: string;
+	timestamp: number;
+	tz: string;
+}
+
+/**
+ * A pending change to a ref's reflog, expressed as data instead of a
+ * filesystem write. This is the reflog half of the functional-core /
+ * imperative-shell split: pure code on a {@link GitRepo} produces
+ * `ReflogEffect[]`, and the shell {@link applyReflogEffects applies} them.
+ *
+ * - `append`  — add one entry to the end of the ref's reflog.
+ * - `rewrite` — replace the ref's reflog with this exact set (e.g. expiry).
+ * - `delete`  — remove the ref's reflog file entirely.
+ */
+export type ReflogEffect =
+	| { ref: string; append: ReflogEntry }
+	| { ref: string; rewrite: ReflogEntry[] }
+	| { ref: string; delete: true };
+
+// ── Pure effect builders ────────────────────────────────────────────
+
+/** Build an append effect: add `entry` to the end of `ref`'s reflog. */
+export function reflogAppend(ref: string, entry: ReflogEntry): ReflogEffect {
+	return { ref, append: entry };
+}
+
+/** Build a rewrite effect: replace `ref`'s reflog with `entries`. */
+export function reflogRewrite(ref: string, entries: ReflogEntry[]): ReflogEffect {
+	return { ref, rewrite: entries };
+}
+
+/** Build a delete effect: remove `ref`'s reflog file. */
+export function reflogDelete(ref: string): ReflogEffect {
+	return { ref, delete: true };
+}
+
+/**
+ * Pure counterpart to {@link logRef}: given an already-materialized
+ * {@link ReflogIdentity}, produce the reflog effect(s) for moving `refName`
+ * from `oldHash` to `newHash`. When `alsoHead` is set and `refName` isn't
+ * already HEAD, the same entry is also appended to the HEAD reflog.
+ */
+export function logRefEffects(
+	identity: ReflogIdentity,
+	refName: string,
+	oldHash: ObjectId | null,
+	newHash: ObjectId,
+	message: string,
+	alsoHead = false,
+): ReflogEffect[] {
+	const entry: ReflogEntry = {
+		oldHash: oldHash ?? ZERO_HASH,
+		newHash,
+		...identity,
+		message,
+	};
+	const effects: ReflogEffect[] = [reflogAppend(refName, entry)];
+	if (alsoHead && refName !== "HEAD") effects.push(reflogAppend("HEAD", entry));
+	return effects;
 }
 
 // ── Paths ───────────────────────────────────────────────────────────
@@ -91,6 +160,49 @@ function serializeEntry(entry: ReflogEntry): string {
 	return `${entry.oldHash} ${entry.newHash} ${entry.name} <${entry.email}> ${entry.timestamp} ${entry.tz}\t${entry.message}`;
 }
 
+// ── Filesystem boundary (apply effects) ─────────────────────────────
+
+/**
+ * Apply reflog effects to the filesystem, in order. This is the single
+ * imperative-shell write boundary for reflogs: pure code builds
+ * {@link ReflogEffect}s, this persists them.
+ */
+export async function applyReflogEffects(ctx: GitContext, effects: ReflogEffect[]): Promise<void> {
+	for (const effect of effects) {
+		await applyReflogEffect(ctx, effect);
+	}
+}
+
+async function applyReflogEffect(ctx: GitContext, effect: ReflogEffect): Promise<void> {
+	const path = reflogPath(ctx, effect.ref);
+
+	if ("delete" in effect) {
+		if (await ctx.fs.exists(path)) await ctx.fs.rm(path);
+		return;
+	}
+
+	if ("rewrite" in effect) {
+		await ensureParentDir(ctx.fs, path);
+		if (effect.rewrite.length === 0) {
+			await ctx.fs.writeFile(path, "");
+			return;
+		}
+		await ctx.fs.writeFile(path, `${effect.rewrite.map(serializeEntry).join("\n")}\n`);
+		return;
+	}
+
+	await ensureParentDir(ctx.fs, path);
+	const line = `${serializeEntry(effect.append)}\n`;
+	if (await ctx.fs.exists(path)) {
+		const existing = await ctx.fs.readFile(path);
+		await ctx.fs.writeFile(path, existing + line);
+	} else {
+		await ctx.fs.writeFile(path, line);
+	}
+}
+
+// ── Write (imperative-shell wrappers over the effect applier) ────────
+
 /**
  * Write a full set of reflog entries, replacing the file.
  * Entries should be in chronological order (oldest first).
@@ -100,14 +212,7 @@ export async function writeReflog(
 	refName: string,
 	entries: ReflogEntry[],
 ): Promise<void> {
-	const path = reflogPath(ctx, refName);
-	await ensureParentDir(ctx.fs, path);
-	if (entries.length === 0) {
-		await ctx.fs.writeFile(path, "");
-		return;
-	}
-	const content = `${entries.map(serializeEntry).join("\n")}\n`;
-	await ctx.fs.writeFile(path, content);
+	await applyReflogEffects(ctx, [reflogRewrite(refName, entries)]);
 }
 
 /**
@@ -118,26 +223,14 @@ export async function appendReflog(
 	refName: string,
 	entry: ReflogEntry,
 ): Promise<void> {
-	const path = reflogPath(ctx, refName);
-	await ensureParentDir(ctx.fs, path);
-	const line = `${serializeEntry(entry)}\n`;
-
-	if (await ctx.fs.exists(path)) {
-		const existing = await ctx.fs.readFile(path);
-		await ctx.fs.writeFile(path, existing + line);
-	} else {
-		await ctx.fs.writeFile(path, line);
-	}
+	await applyReflogEffects(ctx, [reflogAppend(refName, entry)]);
 }
 
 /**
  * Delete a reflog file entirely.
  */
 export async function deleteReflog(ctx: GitContext, refName: string): Promise<void> {
-	const path = reflogPath(ctx, refName);
-	if (await ctx.fs.exists(path)) {
-		await ctx.fs.rm(path);
-	}
+	await applyReflogEffects(ctx, [reflogDelete(refName)]);
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -156,17 +249,11 @@ export async function logRef(
 	message: string,
 	alsoHead = false,
 ): Promise<void> {
-	const ident = await getReflogIdentity(ctx, env);
-	const entry: ReflogEntry = {
-		oldHash: oldHash ?? ZERO_HASH,
-		newHash,
-		...ident,
-		message,
-	};
-	await appendReflog(ctx, refName, entry);
-	if (alsoHead && refName !== "HEAD") {
-		await appendReflog(ctx, "HEAD", entry);
-	}
+	const identity = await getReflogIdentity(ctx, env);
+	await applyReflogEffects(
+		ctx,
+		logRefEffects(identity, refName, oldHash, newHash, message, alsoHead),
+	);
 }
 
 export { ZERO_HASH } from "./hex.ts";

@@ -466,14 +466,136 @@ export function unsetConfigValueRaw(
 	return { text: lines.join("\n"), found: true };
 }
 
+// ── ConfigData: the bounded value-state for config ──────────────────
+
+/**
+ * Materialized, format-preserving config value.
+ *
+ * The raw `.git/config` text is the source of truth (parsed views are
+ * derived on demand), so that the pure transforms below preserve
+ * comments, formatting, and entry ordering exactly like real git.
+ *
+ * This is the "bounded value-state" that lets config operations run on a
+ * plain {@link GitRepo}: the imperative shell {@link readConfigData
+ * materializes} it from the filesystem, pure functions transform it, and
+ * the shell {@link writeConfigData persists} the result.
+ */
+export interface ConfigData {
+	/** Raw text of `.git/config` (the format-preserving source of truth). */
+	readonly text: string;
+}
+
+/** Wrap raw config text as a {@link ConfigData} value. */
+export function configDataFromText(text: string): ConfigData {
+	return { text };
+}
+
+// ── Pure readers (value in, data out) ───────────────────────────────
+
+/**
+ * Resolve a single config value from a materialized {@link ConfigData},
+ * applying the same precedence as the filesystem-backed
+ * {@link getConfigValue}: `locked` override wins, then the on-disk value,
+ * then a `defaults` fallback.
+ */
+export function getConfigFrom(
+	data: ConfigData,
+	overrides: ConfigOverrides | undefined,
+	dottedKey: string,
+): string | undefined {
+	const locked = overrides?.locked?.[dottedKey];
+	if (locked !== undefined) return locked;
+
+	const config = parseConfig(data.text);
+	const { section, key } = parseDottedKey(dottedKey);
+	const fromFile = config[section]?.[key];
+	if (fromFile !== undefined) return fromFile;
+
+	return overrides?.defaults?.[dottedKey];
+}
+
+/**
+ * Resolve all values for a multi-value config key from a materialized
+ * {@link ConfigData}. Mirrors {@link getConfigValueAll}'s precedence.
+ */
+export function getConfigAllFrom(
+	data: ConfigData,
+	overrides: ConfigOverrides | undefined,
+	dottedKey: string,
+): string[] {
+	const locked = overrides?.locked?.[dottedKey];
+	if (locked !== undefined) return [locked];
+
+	if (data.text) {
+		const config = parseConfigMulti(data.text);
+		const { section, key } = parseDottedKey(dottedKey);
+		const fromFile = config[section]?.[key];
+		if (fromFile && fromFile.length > 0) return fromFile;
+	}
+
+	const def = overrides?.defaults?.[dottedKey];
+	if (def !== undefined) return [def];
+	return [];
+}
+
+/** Build a {@link ConfigView} over a materialized {@link ConfigData}. */
+export function configViewFrom(data: ConfigData, overrides?: ConfigOverrides): ConfigView {
+	return makeConfigView(parseConfigMulti(data.text), overrides);
+}
+
+// ── Pure transforms ((ConfigData, args) → ConfigData) ───────────────
+
+/**
+ * Set a single config value by dotted key (creates the section if
+ * needed), returning new {@link ConfigData}. Format-preserving.
+ */
+export function setConfig(data: ConfigData, dottedKey: string, value: string): ConfigData {
+	const { section, key } = parseDottedKey(dottedKey);
+	return { text: setConfigValueRaw(data.text, section, key, value) };
+}
+
+/**
+ * Append a config value by dotted key without replacing existing values
+ * (`git config --add`), returning new {@link ConfigData}.
+ */
+export function addConfig(data: ConfigData, dottedKey: string, value: string): ConfigData {
+	const { section, key } = parseDottedKey(dottedKey);
+	return { text: addConfigValueRaw(data.text, section, key, value) };
+}
+
+/**
+ * Unset a single config value by dotted key, returning new
+ * {@link ConfigData} and whether the key was found.
+ */
+export function unsetConfig(
+	data: ConfigData,
+	dottedKey: string,
+): { data: ConfigData; found: boolean } {
+	const { section, key } = parseDottedKey(dottedKey);
+	const { text, found } = unsetConfigValueRaw(data.text, section, key);
+	return { data: { text }, found };
+}
+
+// ── Filesystem boundary (materialize / persist) ─────────────────────
+
+/**
+ * Materialize {@link ConfigData} from `.git/config`. Returns empty text
+ * if the file doesn't exist. This is the imperative-shell read boundary.
+ */
+export async function readConfigData(ctx: GitContext): Promise<ConfigData> {
+	return { text: await readConfigRaw(ctx) };
+}
+
+/** Persist {@link ConfigData} to `.git/config`. The shell write boundary. */
+export async function writeConfigData(ctx: GitContext, data: ConfigData): Promise<void> {
+	await ctx.fs.writeFile(join(ctx.gitDir, "config"), data.text);
+}
+
 // ── Filesystem operations ───────────────────────────────────────────
 
 /** Read and parse .git/config. Returns empty config if file doesn't exist. */
 export async function readConfig(ctx: GitContext): Promise<GitConfig> {
-	const path = join(ctx.gitDir, "config");
-	if (!(await ctx.fs.exists(path))) return {};
-	const text = await ctx.fs.readFile(path);
-	return parseConfig(text);
+	return parseConfig((await readConfigData(ctx)).text);
 }
 
 /** Read raw .git/config text. Returns empty string if file doesn't exist. */
@@ -500,6 +622,9 @@ export async function writeConfig(ctx: GitContext, config: GitConfig): Promise<v
  *   1. `locked` values always win
  *   2. `.git/config` value
  *   3. `defaults` fallback
+ *
+ * Imperative-shell wrapper over the pure {@link getConfigFrom}: a `locked`
+ * override short-circuits the filesystem read entirely.
  */
 export async function getConfigValue(
 	ctx: GitContext,
@@ -509,29 +634,22 @@ export async function getConfigValue(
 	const locked = overrides?.locked?.[dottedKey];
 	if (locked !== undefined) return locked;
 
-	const config = await readConfig(ctx);
-	const { section, key } = parseDottedKey(dottedKey);
-	const fromFile = config[section]?.[key];
-	if (fromFile !== undefined) return fromFile;
-
-	return overrides?.defaults?.[dottedKey];
+	return getConfigFrom(await readConfigData(ctx), overrides, dottedKey);
 }
 
 /**
  * Set a single config value by dotted key. Creates section if needed.
  * Uses format-preserving raw text editing to avoid destroying comments,
  * formatting, and other entries.
+ *
+ * Imperative-shell wrapper: materialize → {@link setConfig} → persist.
  */
 export async function setConfigValue(
 	ctx: GitContext,
 	dottedKey: string,
 	value: string,
 ): Promise<void> {
-	const raw = await readConfigRaw(ctx);
-	const { section, key } = parseDottedKey(dottedKey);
-	const updated = setConfigValueRaw(raw, section, key, value);
-	const path = join(ctx.gitDir, "config");
-	await ctx.fs.writeFile(path, updated);
+	await writeConfigData(ctx, setConfig(await readConfigData(ctx), dottedKey, value));
 }
 
 /**
@@ -540,23 +658,16 @@ export async function setConfigValue(
  *
  * Respects operator-level locked overrides (returns `[lockedValue]`
  * when set, ignoring on-disk values) and defaults.
+ *
+ * Imperative-shell wrapper over the pure {@link getConfigAllFrom}: a
+ * `locked` override short-circuits the filesystem read entirely.
  */
 export async function getConfigValueAll(ctx: GitContext, dottedKey: string): Promise<string[]> {
 	const overrides = ctx.capabilities?.config;
 	const locked = overrides?.locked?.[dottedKey];
 	if (locked !== undefined) return [locked];
 
-	const raw = await readConfigRaw(ctx);
-	if (raw) {
-		const config = parseConfigMulti(raw);
-		const { section, key } = parseDottedKey(dottedKey);
-		const fromFile = config[section]?.[key];
-		if (fromFile && fromFile.length > 0) return fromFile;
-	}
-
-	const def = overrides?.defaults?.[dottedKey];
-	if (def !== undefined) return [def];
-	return [];
+	return getConfigAllFrom(await readConfigData(ctx), overrides, dottedKey);
 }
 
 // ── Capability context ──────────────────────────────────────────────
@@ -673,30 +784,27 @@ export function addConfigValueRaw(
 /**
  * Append a config value by dotted key, without replacing existing values.
  * This is the high-level equivalent of `git config --add`.
+ *
+ * Imperative-shell wrapper: materialize → {@link addConfig} → persist.
  */
 export async function addConfigValue(
 	ctx: GitContext,
 	dottedKey: string,
 	value: string,
 ): Promise<void> {
-	const raw = await readConfigRaw(ctx);
-	const { section, key } = parseDottedKey(dottedKey);
-	const updated = addConfigValueRaw(raw, section, key, value);
-	const path = join(ctx.gitDir, "config");
-	await ctx.fs.writeFile(path, updated);
+	await writeConfigData(ctx, addConfig(await readConfigData(ctx), dottedKey, value));
 }
 
 /**
  * Unset a single config value by dotted key. Returns false if key was
  * not found. Uses format-preserving raw text editing.
+ *
+ * Imperative-shell wrapper: materialize → {@link unsetConfig} → persist.
  */
 export async function unsetConfigValue(ctx: GitContext, dottedKey: string): Promise<boolean> {
-	const raw = await readConfigRaw(ctx);
-	const { section, key } = parseDottedKey(dottedKey);
-	const result = unsetConfigValueRaw(raw, section, key);
-	if (!result.found) return false;
-	const path = join(ctx.gitDir, "config");
-	await ctx.fs.writeFile(path, result.text);
+	const { data, found } = unsetConfig(await readConfigData(ctx), dottedKey);
+	if (!found) return false;
+	await writeConfigData(ctx, data);
 	return true;
 }
 

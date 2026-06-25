@@ -24,6 +24,37 @@ export {
 	type VerificationResult,
 } from "./reading.ts";
 
+// Config (bounded value-state core: materialize on the shell, transform
+// purely, persist on the shell — keeps config operations GitRepo-shaped)
+export {
+	addConfig,
+	configDataFromText,
+	configViewFrom,
+	getConfigAllFrom,
+	getConfigFrom,
+	setConfig,
+	unsetConfig,
+	type ConfigData,
+} from "../lib/config.ts";
+
+// Operation state (bounded value-state core: the primary in-progress
+// operation unified into one discriminated value)
+export { operationInProgress, readOperationState, type OperationState } from "../lib/operation.ts";
+export type { BisectState } from "../lib/bisect.ts";
+export type { RebaseState, RebaseTodoEntry } from "../lib/rebase.ts";
+
+// Reflog (bounded value-state core: pure code builds ReflogEffects, the
+// shell applies them — keeps reflog writes GitRepo-shaped)
+export {
+	logRefEffects,
+	reflogAppend,
+	reflogDelete,
+	reflogRewrite,
+	type ReflogEffect,
+	type ReflogEntry,
+	type ReflogIdentity,
+} from "../lib/reflog.ts";
+
 // Signing & verification (the byte-for-byte sign/verify contract)
 export {
 	commitSigningPayload,
@@ -155,8 +186,10 @@ export type { MaterializeTarget } from "./materialize.ts";
 export { overlayRepo, readonlyRepo } from "./safety.ts";
 
 // Re-exported lib types used in helper signatures
+export type { ConfigOverrides } from "../hooks.ts";
 export type {
 	Commit,
+	ConfigView,
 	GitRepo,
 	Identity,
 	RefEntry,
