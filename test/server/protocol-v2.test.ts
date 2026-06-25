@@ -26,6 +26,7 @@ import {
 	handleV2Fetch,
 } from "../../src/server/operations.ts";
 import { createSeededServer, createServerClient, envAt } from "./util.ts";
+import { pathExists, readFile } from "../util.ts";
 import { SmartHttpTransport } from "../../src/lib/transport/transport.ts";
 import type { SshChannel } from "../../src/server/types.ts";
 import type { GitRepo } from "../../src/lib/types.ts";
@@ -862,6 +863,73 @@ describe("end-to-end v2 with just-git client", () => {
 		expect(result.objectCount).toBeGreaterThan(0);
 		// The resolved tip and its objects landed in the local store.
 		expect(await local.objectStore.exists(result.remoteRefs[0]!.hash)).toBe(true);
+	});
+
+	test("CLI single-branch -b clone drives want-ref (no ls-refs) and matches the advertise-path repo", async () => {
+		// Seed a two-branch repo directly on the server (no client requests, so
+		// the request counter only sees the clone under test).
+		const server = createServer({ autoCreate: true });
+		await server.createRepo("sb");
+		const author = { name: "T", email: "t@t", timestamp: 1000000000, timezone: "+0000" };
+		const { hash: mainTip } = await server.commit("sb", {
+			files: { "README.md": "# SB", "src/app.ts": "export default 1;" },
+			message: "seed main",
+			author,
+			branch: "main",
+		});
+		await server.commit("sb", {
+			files: { "feature.txt": "feat\n" },
+			message: "seed feature",
+			author,
+			branch: "feature",
+		});
+
+		// Count `ls-refs` commands the server sees (both `ls-refs` and the object
+		// `fetch` POST to `git-upload-pack`; we inspect the body to tell them apart).
+		let lsRefs = 0;
+		const counting = Bun.serve({
+			port: 0,
+			fetch: async (req) => {
+				if (req.method === "POST" && new URL(req.url).pathname.endsWith("/git-upload-pack")) {
+					if ((await req.clone().text()).includes("command=ls-refs")) lsRefs++;
+				}
+				return server.fetch(req);
+			},
+		});
+
+		try {
+			const client = createServerClient();
+			const res = await client.exec(
+				`git clone --single-branch -b main http://localhost:${counting.port}/sb /clone`,
+				{ env: envAt(1000002000) },
+			);
+			expect(res.exitCode).toBe(0);
+
+			// want-ref folded ref resolution into the fetch: no `ls-refs` round-trip.
+			expect(lsRefs).toBe(0);
+
+			// Checkout + refs match what the advertise path would have produced.
+			expect(await readFile(client.fs, "/clone/README.md")).toBe("# SB");
+			expect((await readFile(client.fs, "/clone/.git/HEAD"))?.trim()).toBe("ref: refs/heads/main");
+			expect((await client.exec("git rev-parse main", { cwd: "/clone" })).stdout.trim()).toBe(
+				mainTip,
+			);
+			expect(
+				(
+					await client.exec("git rev-parse refs/remotes/origin/main", { cwd: "/clone" })
+				).stdout.trim(),
+			).toBe(mainTip);
+			// Single-branch: only the named branch is tracked, no tags.
+			expect(await pathExists(client.fs, "/clone/.git/refs/remotes/origin/feature")).toBe(false);
+			// Like real git, an explicit-`-b` single-branch clone writes no origin/HEAD.
+			expect(await pathExists(client.fs, "/clone/.git/refs/remotes/origin/HEAD")).toBe(false);
+			// Narrowed fetch refspec.
+			expect(
+				(await client.exec("git config remote.origin.fetch", { cwd: "/clone" })).stdout.trim(),
+			).toBe("+refs/heads/main:refs/remotes/origin/main");
+		} finally {
+			counting.stop();
+		}
 	});
 });
 

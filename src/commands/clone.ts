@@ -12,7 +12,7 @@ import { applyShallowUpdates } from "../lib/shallow.ts";
 import { withCapabilities } from "../lib/capabilities.ts";
 import { stripAndCacheCredentials } from "../lib/transport/remote.ts";
 import { createTransportForUrl, resolveInProcessRemote } from "../lib/transport/resolver.ts";
-import type { ShallowFetchOptions, Transport } from "../lib/transport/transport.ts";
+import type { RemoteRef, ShallowFetchOptions, Transport } from "../lib/transport/transport.ts";
 import { flattenTree } from "../lib/tree-ops.ts";
 import type { GitContext, GitRepo, ObjectId } from "../lib/types.ts";
 import { checkoutTree } from "../lib/worktree.ts";
@@ -131,75 +131,130 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 				if (msg.startsWith("network")) return fatal(msg);
 				return fatal(`repository '${repository}' does not exist`);
 			}
-			const remoteRefs = await transport.advertiseRefs();
+			const shallowOpts: ShallowFetchOptions | undefined =
+				depthOpt !== undefined && depthOpt > 0 ? { depth: depthOpt } : undefined;
 
-			if (remoteRefs.length === 0) {
-				config['remote "origin"'] = {
-					url: sourcePath,
-					fetch: "+refs/heads/*:refs/remotes/origin/*",
-				};
-				await writeConfig(newCtx, config);
-				await ext?.capabilities?.hooks?.postClone?.({
-					repo: newCtx,
-					repository: sourcePath,
-					targetPath,
-					bare: args.bare,
-					branch: branchOpt ?? null,
-				});
-				return {
-					stdout: "",
-					stderr: `Cloning into '${targetName}'...\nwarning: You appear to have cloned an empty repository.\n`,
-					exitCode: 0,
-				};
-			}
-
-			// Resolve the default branch before building wants so
-			// single-branch mode knows which branch to fetch.
-			// -b flag takes priority (fail fast if invalid), then symref
-			// capability, then HEAD hash matching, then first branch.
+			// `-b <branch>` priority for the resolved default; symref capability,
+			// HEAD hash matching, then first branch fall through below.
+			let remoteRefs: RemoteRef[];
 			let defaultBranch: string | null = null;
 			let defaultHash: ObjectId | null = null;
 
-			if (branchOpt) {
-				const match = remoteRefs.find((r) => r.name === `refs/heads/${branchOpt}`);
+			if (branchOpt !== undefined && singleBranch) {
+				// Explicit `-b <branch>` + single-branch: the target is unambiguous
+				// without the advertisement, so resolve and fetch just that branch by
+				// name. On a v2 `ref-in-want` server this is a single round-trip with
+				// no separate `ls-refs` (matching real git's traced behavior); it
+				// degrades transparently to advertise+fetch on v1 / no `ref-in-want`.
+				// HEAD is set to the named branch directly, and the by-name result
+				// carries no remote `HEAD`, so — like real git — `ensureRemoteHead`
+				// below writes no `refs/remotes/origin/HEAD` for this case.
+				const wantRef = `refs/heads/${branchOpt}`;
+				const result = await transport.fetchRefs([wantRef], [], shallowOpts);
+				const match = result.remoteRefs.find((r) => r.name === wantRef);
 				if (!match) {
 					return fatal(`Remote branch '${branchOpt}' not found in upstream origin`);
 				}
+				remoteRefs = result.remoteRefs;
 				defaultBranch = branchOpt;
 				defaultHash = match.hash;
+				if (result.shallowUpdates) {
+					await applyShallowUpdates(newCtx, result.shallowUpdates);
+				}
 			} else {
-				const headSymref = transport.headTarget;
-				if (
-					headSymref?.startsWith("refs/heads/") &&
-					remoteRefs.some((r) => r.name === headSymref)
-				) {
-					defaultBranch = headSymref.slice("refs/heads/".length);
-					defaultHash = remoteRefs.find((r) => r.name === headSymref)?.hash ?? null;
+				remoteRefs = await transport.advertiseRefs();
+
+				if (remoteRefs.length === 0) {
+					config['remote "origin"'] = {
+						url: sourcePath,
+						fetch: "+refs/heads/*:refs/remotes/origin/*",
+					};
+					await writeConfig(newCtx, config);
+					await ext?.capabilities?.hooks?.postClone?.({
+						repo: newCtx,
+						repository: sourcePath,
+						targetPath,
+						bare: args.bare,
+						branch: branchOpt ?? null,
+					});
+					return {
+						stdout: "",
+						stderr: `Cloning into '${targetName}'...\nwarning: You appear to have cloned an empty repository.\n`,
+						exitCode: 0,
+					};
 				}
 
-				if (!defaultBranch) {
-					const headRef = remoteRefs.find((r) => r.name === "HEAD");
-					if (headRef) {
-						const match = remoteRefs.find(
-							(r) => r.name.startsWith("refs/heads/") && r.hash === headRef.hash,
-						);
-						if (match) {
-							defaultBranch = match.name.slice("refs/heads/".length);
-							defaultHash = match.hash;
+				if (branchOpt) {
+					const match = remoteRefs.find((r) => r.name === `refs/heads/${branchOpt}`);
+					if (!match) {
+						return fatal(`Remote branch '${branchOpt}' not found in upstream origin`);
+					}
+					defaultBranch = branchOpt;
+					defaultHash = match.hash;
+				} else {
+					const headSymref = transport.headTarget;
+					if (
+						headSymref?.startsWith("refs/heads/") &&
+						remoteRefs.some((r) => r.name === headSymref)
+					) {
+						defaultBranch = headSymref.slice("refs/heads/".length);
+						defaultHash = remoteRefs.find((r) => r.name === headSymref)?.hash ?? null;
+					}
+
+					if (!defaultBranch) {
+						const headRef = remoteRefs.find((r) => r.name === "HEAD");
+						if (headRef) {
+							const match = remoteRefs.find(
+								(r) => r.name.startsWith("refs/heads/") && r.hash === headRef.hash,
+							);
+							if (match) {
+								defaultBranch = match.name.slice("refs/heads/".length);
+								defaultHash = match.hash;
+							}
+						}
+					}
+
+					if (!defaultBranch) {
+						const firstBranch = remoteRefs.find((r) => r.name.startsWith("refs/heads/"));
+						if (firstBranch) {
+							defaultBranch = firstBranch.name.slice("refs/heads/".length);
+							defaultHash = firstBranch.hash;
 						}
 					}
 				}
 
-				if (!defaultBranch) {
-					const firstBranch = remoteRefs.find((r) => r.name.startsWith("refs/heads/"));
-					if (firstBranch) {
-						defaultBranch = firstBranch.name.slice("refs/heads/".length);
-						defaultHash = firstBranch.hash;
+				// Build wants list — single-branch limits to target branch only.
+				const wants: ObjectId[] = [];
+				const seen = new Set<ObjectId>();
+				for (const ref of remoteRefs) {
+					if (ref.name === "HEAD") continue;
+
+					if (ref.name.startsWith("refs/heads/")) {
+						if (singleBranch && defaultBranch) {
+							if (ref.name !== `refs/heads/${defaultBranch}`) continue;
+						}
+					} else if (ref.name.startsWith("refs/tags/")) {
+						if (noTags) continue;
+					} else {
+						continue;
+					}
+
+					if (!seen.has(ref.hash)) {
+						seen.add(ref.hash);
+						wants.push(ref.hash);
+					}
+				}
+
+				if (wants.length > 0) {
+					const fetchResult = await transport.fetch(wants, [], shallowOpts);
+
+					if (fetchResult.shallowUpdates) {
+						await applyShallowUpdates(newCtx, fetchResult.shallowUpdates);
 					}
 				}
 			}
 
-			// Build remote config with refspec narrowed for single-branch
+			// Build remote config with refspec narrowed for single-branch.
 			const remoteSection: Record<string, string> = {
 				url: sourcePath,
 				fetch:
@@ -211,39 +266,6 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 				remoteSection.tagOpt = "--no-tags";
 			}
 			config['remote "origin"'] = remoteSection;
-
-			// Build wants list — single-branch limits to target branch only
-			const wants: ObjectId[] = [];
-			const seen = new Set<ObjectId>();
-			for (const ref of remoteRefs) {
-				if (ref.name === "HEAD") continue;
-
-				if (ref.name.startsWith("refs/heads/")) {
-					if (singleBranch && defaultBranch) {
-						if (ref.name !== `refs/heads/${defaultBranch}`) continue;
-					}
-				} else if (ref.name.startsWith("refs/tags/")) {
-					if (noTags) continue;
-				} else {
-					continue;
-				}
-
-				if (!seen.has(ref.hash)) {
-					seen.add(ref.hash);
-					wants.push(ref.hash);
-				}
-			}
-
-			const shallowOpts: ShallowFetchOptions | undefined =
-				depthOpt !== undefined && depthOpt > 0 ? { depth: depthOpt } : undefined;
-
-			if (wants.length > 0) {
-				const fetchResult = await transport.fetch(wants, [], shallowOpts);
-
-				if (fetchResult.shallowUpdates) {
-					await applyShallowUpdates(newCtx, fetchResult.shallowUpdates);
-				}
-			}
 
 			// Create remote tracking refs and tags
 			const cloneMsg = `clone: from ${sourcePath}`;
