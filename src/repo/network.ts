@@ -150,7 +150,7 @@ export async function listRemoteRefs(
  */
 export async function fetch(
 	repo: GitRepo,
-	remote: { url: string; name?: string; refspecs?: string[] },
+	remote: { url: string; name?: string; refspecs?: string[]; refs?: string[] },
 ): Promise<FetchResult> {
 	const remoteName = remote.name ?? DEFAULT_REMOTE;
 	const transport = await createTransportForUrl(repo, "fetch", remote.url);
@@ -171,41 +171,57 @@ export async function fetch(
 	});
 	if (isRejection(rej)) throw new Error(rej.message ?? "fetch rejected by preFetch hook");
 
-	const remoteRefs = await transport.advertiseRefs();
+	const haves = await collectHaves(repo);
 
-	const wants: ObjectId[] = [];
-	const seen = new Set<ObjectId>();
-	const planned: Array<{ remote: RemoteRef; localRef: string }> = [];
-	for (const ref of remoteRefs) {
-		if (ref.name === "HEAD") continue;
-		for (const spec of specs) {
-			const dst = mapRefspec(spec, ref.name);
-			if (dst === null) continue;
-			planned.push({ remote: ref, localRef: dst });
-			if (!seen.has(ref.hash)) {
-				seen.add(ref.hash);
-				wants.push(ref.hash);
+	let remoteRefs: RemoteRef[];
+	let objectCount = 0;
+
+	if (remote.refs && remote.refs.length > 0) {
+		// By-name path: ask the server to resolve the named refs *at fetch time*
+		// (a single `want-ref` round-trip on v2 `ref-in-want` servers, with a
+		// transparent advertise+fetch fallback). `remoteRefs` comes back as the
+		// resolved `{ name, hash }` pairs for exactly the refs we asked for.
+		const result = await transport.fetchRefs(remote.refs, haves);
+		remoteRefs = result.remoteRefs;
+		objectCount = result.objectCount;
+	} else {
+		remoteRefs = await transport.advertiseRefs();
+
+		const wants: ObjectId[] = [];
+		const seen = new Set<ObjectId>();
+		for (const ref of remoteRefs) {
+			if (ref.name === "HEAD") continue;
+			for (const spec of specs) {
+				if (mapRefspec(spec, ref.name) === null) continue;
+				if (!seen.has(ref.hash)) {
+					seen.add(ref.hash);
+					wants.push(ref.hash);
+				}
+				break;
 			}
-			break;
+		}
+
+		const haveSet = new Set(haves);
+		const filtered = wants.filter((w) => !haveSet.has(w));
+		if (filtered.length > 0) {
+			const result = await transport.fetch(filtered, haves);
+			objectCount = result.objectCount;
 		}
 	}
 
-	const haves = await collectHaves(repo);
-	const haveSet = new Set(haves);
-	const filtered = wants.filter((w) => !haveSet.has(w));
-
-	let objectCount = 0;
-	if (filtered.length > 0) {
-		const result = await transport.fetch(filtered, haves);
-		objectCount = result.objectCount;
-	}
-
 	const updated: FetchResult["updated"] = [];
-	for (const p of planned) {
-		const oldHash = await resolveRef(repo, p.localRef);
-		if (oldHash === p.remote.hash) continue;
-		await repo.refStore.writeRef(p.localRef, p.remote.hash);
-		updated.push({ ref: p.localRef, oldHash: oldHash ?? null, newHash: p.remote.hash });
+	for (const ref of remoteRefs) {
+		if (ref.name === "HEAD") continue;
+		let localRef: string | null = null;
+		for (const spec of specs) {
+			localRef = mapRefspec(spec, ref.name);
+			if (localRef !== null) break;
+		}
+		if (localRef === null) continue;
+		const oldHash = await resolveRef(repo, localRef);
+		if (oldHash === ref.hash) continue;
+		await repo.refStore.writeRef(localRef, ref.hash);
+		updated.push({ ref: localRef, oldHash: oldHash ?? null, newHash: ref.hash });
 	}
 
 	await repo.capabilities?.hooks?.postFetch?.({

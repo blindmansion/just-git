@@ -26,6 +26,7 @@ import {
 	handleV2Fetch,
 } from "../../src/server/operations.ts";
 import { createSeededServer, createServerClient, envAt } from "./util.ts";
+import { SmartHttpTransport } from "../../src/lib/transport/transport.ts";
 import type { SshChannel } from "../../src/server/types.ts";
 import type { GitRepo } from "../../src/lib/types.ts";
 
@@ -101,6 +102,15 @@ describe("buildV2CapabilityAdvertisement", () => {
 		expect(texts.some((t) => t.startsWith("agent="))).toBe(true);
 		expect(texts.some((t) => t.startsWith("ls-refs"))).toBe(true);
 		expect(texts.some((t) => t.startsWith("fetch"))).toBe(true);
+	});
+
+	test("advertises ref-in-want in the fetch capability", () => {
+		const result = buildV2CapabilityAdvertisementBytes();
+		const texts = parsePktLineStream(result)
+			.filter((l) => l.type === "data")
+			.map((l) => pktLineText(l));
+		const fetchCap = texts.find((t) => t.startsWith("fetch"));
+		expect(fetchCap).toContain("ref-in-want");
 	});
 });
 
@@ -836,6 +846,22 @@ describe("end-to-end v2 with just-git client", () => {
 
 		const newFile = await client2.readFile("/local2/new.txt");
 		expect(newFile).toBe("new content");
+	});
+
+	test("client drives want-ref end-to-end (single fetch, no ls-refs)", async () => {
+		const driver = new MemoryStorage();
+		const storage = createRepoStore(driver);
+		const local = await storage.createRepo("local");
+
+		const transport = new SmartHttpTransport(local, `http://localhost:${port}/v2repo`);
+		const result = await transport.fetchRefs(["refs/heads/main"], []);
+
+		// The server resolved the name at fetch time and echoed it back.
+		expect(result.remoteRefs).toHaveLength(1);
+		expect(result.remoteRefs[0]!.name).toBe("refs/heads/main");
+		expect(result.objectCount).toBeGreaterThan(0);
+		// The resolved tip and its objects landed in the local store.
+		expect(await local.objectStore.exists(result.remoteRefs[0]!.hash)).toBe(true);
 	});
 });
 

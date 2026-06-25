@@ -1041,7 +1041,7 @@ export async function resolveRefUpdates(
 const V2_UPLOAD_PACK_CAPS = [
 	"agent=just-git/1.0",
 	"ls-refs=unborn",
-	"fetch=shallow",
+	"fetch=shallow ref-in-want",
 	"server-option",
 	"object-format=sha1",
 ];

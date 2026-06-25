@@ -20,6 +20,7 @@ import {
 	type V2Capabilities,
 	discoverV2Capabilities,
 	fetchPackV2,
+	fetchSupports,
 	lsRefs,
 } from "./smart-http-v2.ts";
 
@@ -86,6 +87,22 @@ export interface Transport {
 	 * Pass `shallow` options for depth-limited fetches.
 	 */
 	fetch(wants: ObjectId[], haves: ObjectId[], shallow?: ShallowFetchOptions): Promise<FetchResult>;
+
+	/**
+	 * Fetch objects for refs requested **by name**, returning the server's
+	 * resolved `{ name, hash }` pairs in `remoteRefs` (exactly the requested
+	 * refs that exist on the remote — missing ones are omitted).
+	 *
+	 * On a v2 server advertising `ref-in-want` this is a single `fetch` command
+	 * carrying `want-ref` args, skipping the separate `ls-refs` advertisement
+	 * (no discover-then-fetch race). Otherwise it transparently degrades to the
+	 * `advertiseRefs()` → `fetch(oids)` path.
+	 */
+	fetchRefs(
+		refNames: string[],
+		haves: ObjectId[],
+		shallow?: ShallowFetchOptions,
+	): Promise<FetchResult>;
 
 	/**
 	 * Push objects to the remote. Sends all objects reachable from the
@@ -196,6 +213,14 @@ export class LocalTransport implements Transport {
 
 		const objectCount = await ingestPackData(this.local, packData);
 		return { remoteRefs, objectCount, shallowUpdates };
+	}
+
+	async fetchRefs(
+		refNames: string[],
+		haves: ObjectId[],
+		shallow?: ShallowFetchOptions,
+	): Promise<FetchResult> {
+		return fetchRefsViaAdvertisement(this, refNames, haves, shallow);
 	}
 
 	async push(updates: PushRefUpdate[]): Promise<PushResult> {
@@ -460,6 +485,52 @@ export class SmartHttpTransport implements Transport {
 		return { remoteRefs: refs, objectCount, shallowUpdates };
 	}
 
+	async fetchRefs(
+		refNames: string[],
+		haves: ObjectId[],
+		shallow?: ShallowFetchOptions,
+	): Promise<FetchResult> {
+		await this.ensureDiscovery();
+
+		// Fast path: v2 + `ref-in-want`. One `fetch` POST resolves the names
+		// server-side and returns the packfile — no `ls-refs` round-trip.
+		if (
+			this.protocolVersion === 2 &&
+			fetchSupports(this.cachedV2Caps as V2Capabilities, "ref-in-want")
+		) {
+			const result = await fetchPackV2(
+				this.url,
+				[],
+				haves,
+				this.cachedV2Caps as V2Capabilities,
+				this.fetchFn,
+				shallow,
+				this.onProgress,
+				refNames,
+			);
+
+			const remoteRefs: RemoteRef[] = result.wantedRefs.map((r) => ({
+				name: r.name,
+				hash: r.hash,
+			}));
+
+			let objectCount = 0;
+			if (result.packData.byteLength > 0) {
+				objectCount = await ingestPackData(this.local, result.packData);
+			}
+
+			const shallowUpdates: ShallowUpdate | undefined =
+				result.shallowLines.length > 0 || result.unshallowLines.length > 0
+					? { shallow: result.shallowLines, unshallow: result.unshallowLines }
+					: undefined;
+
+			return { remoteRefs, objectCount, shallowUpdates };
+		}
+
+		// Fallback: server didn't advertise `ref-in-want` (or negotiated v1).
+		return fetchRefsViaAdvertisement(this, refNames, haves, shallow);
+	}
+
 	async push(updates: PushRefUpdate[]): Promise<PushResult> {
 		// Client-side fast-forward check (mirrors LocalTransport behaviour).
 		// Each ref is checked independently — real git is non-atomic by default.
@@ -540,6 +611,33 @@ export class SmartHttpTransport implements Transport {
 export type { HttpAuth } from "./smart-http.ts";
 
 // ── Shared helpers ───────────────────────────────────────────────────
+
+/**
+ * By-name fetch via the generic advertise → fetch(oids) path. Resolves
+ * `refNames` against the full advertisement, fetches the matched OIDs, and
+ * returns only the matched refs. Used as the fallback when `want-ref` is
+ * unavailable (v1, or a v2 server without `ref-in-want`).
+ */
+async function fetchRefsViaAdvertisement(
+	transport: Transport,
+	refNames: string[],
+	haves: ObjectId[],
+	shallow?: ShallowFetchOptions,
+): Promise<FetchResult> {
+	const allRefs = await transport.advertiseRefs();
+	const wanted = new Set(refNames);
+	const matched = allRefs.filter((r) => wanted.has(r.name));
+	const wants = [...new Set(matched.map((r) => r.hash))];
+	if (wants.length === 0) {
+		return { remoteRefs: [], objectCount: 0 };
+	}
+	const result = await transport.fetch(wants, haves, shallow);
+	return {
+		remoteRefs: matched,
+		objectCount: result.objectCount,
+		shallowUpdates: result.shallowUpdates,
+	};
+}
 
 function isNonDeleteUpdate(update: PushRefUpdate): update is NonDeletePushRefUpdate {
 	return !!update.oldHash && update.oldHash !== ZERO_HASH && update.newHash !== ZERO_HASH;

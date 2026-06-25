@@ -131,7 +131,7 @@ function parseV2Capabilities(pktLines: PktLine[]): V2Capabilities {
 }
 
 /** Whether the server advertised a specific value for the `fetch` capability. */
-function fetchSupports(caps: V2Capabilities, feature: string): boolean {
+export function fetchSupports(caps: V2Capabilities, feature: string): boolean {
 	return caps.features.get("fetch")?.includes(feature) ?? false;
 }
 
@@ -238,9 +238,13 @@ export async function fetchPackV2(
 	fetchFn: FetchFunction = globalThis.fetch,
 	shallow?: ShallowFetchOptions,
 	onProgress?: ProgressCallback,
+	wantRefs: string[] = [],
 ): Promise<FetchPackV2Result> {
-	if (wants.length === 0) {
-		throw new Error("fetchPackV2 requires at least one want");
+	if (wants.length === 0 && wantRefs.length === 0) {
+		throw new Error("fetchPackV2 requires at least one want or want-ref");
+	}
+	if (wantRefs.length > 0 && !fetchSupports(caps, "ref-in-want")) {
+		throw new Error("remote does not support ref-in-want (want-ref) over protocol v2");
 	}
 
 	const wantsShallow = shallow?.depth !== undefined || (shallow?.existingShallows?.size ?? 0) > 0;
@@ -260,6 +264,12 @@ export async function fetchPackV2(
 
 	for (const want of wants) {
 		lines.push(encodePktLine(`want ${want}\n`));
+	}
+
+	// Mixed OID + ref wants are legal; `want-ref <refname>` resolves on the
+	// server and is echoed back in the `wanted-refs` response section.
+	for (const refName of wantRefs) {
+		lines.push(encodePktLine(`want-ref ${refName}\n`));
 	}
 
 	if (shallow?.existingShallows) {

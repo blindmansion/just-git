@@ -119,6 +119,33 @@ describe("server with real git client", () => {
 		}
 	});
 
+	test("real git uses ref-in-want (want-ref) for a single-branch v2 clone", async () => {
+		const sandbox = await createSandbox("just-git-realclient-wantref-");
+		try {
+			const cloneDir = join(sandbox, "local");
+			const tracePath = join(sandbox, "trace.txt");
+			const result = await realGit(
+				home,
+				sandbox,
+				`clone --single-branch --branch main http://localhost:${port}/repo ${cloneDir}`,
+				{ GIT_PROTOCOL_VERSION: "2", GIT_TRACE_PACKET: tracePath },
+			);
+			expect(result.exitCode).toBe(0);
+
+			// The clone succeeded with the right content over the want-ref path.
+			expect(readFileSync(join(cloneDir, "README.md"), "utf8")).toBe("# Hello World");
+			expect(readFileSync(join(cloneDir, "src/util.ts"), "utf8")).toBe("export const VERSION = 1;");
+
+			// Confirm real git actually drove the ref-in-want capability (now that
+			// just-git advertises it): it sends `want-ref refs/heads/main` rather
+			// than resolving the OID via ls-refs first.
+			const trace = readFileSync(tracePath, "utf8");
+			expect(trace).toContain("want-ref refs/heads/main");
+		} finally {
+			await rm(sandbox, { recursive: true, force: true });
+		}
+	});
+
 	test("push to server", async () => {
 		const sandbox = await createSandbox("just-git-realclient-");
 		try {

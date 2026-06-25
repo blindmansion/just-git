@@ -74,6 +74,12 @@ const SAMPLE_CAPS: V2Capabilities = {
 	objectFormat: "sha1",
 };
 
+/** Caps that additionally advertise `ref-in-want` (`fetch=shallow ref-in-want`). */
+const RIW_CAPS: V2Capabilities = {
+	...SAMPLE_CAPS,
+	features: new Map([...SAMPLE_CAPS.features, ["fetch", ["shallow", "ref-in-want"]]]),
+};
+
 /** A minimal but valid empty packfile (header + SHA-1 trailer). */
 function emptyPack(): Uint8Array {
 	// PACK + version 2 + 0 objects, then a 20-byte trailer (zeros are fine here;
@@ -487,5 +493,73 @@ describe("fetchPackV2", () => {
 		await expect(fetchPackV2("https://example.com/repo.git", [], [], SAMPLE_CAPS)).rejects.toThrow(
 			"at least one want",
 		);
+	});
+
+	test("emits want-ref when ref-in-want is advertised (ref-only request)", async () => {
+		setMockFetch(async (req) => {
+			const cmd = parseV2CommandRequest(new Uint8Array(await req.arrayBuffer()));
+			expect(cmd.command).toBe("fetch");
+			expect(cmd.args).toContain("want-ref refs/heads/main");
+			expect(cmd.args.some((a) => a.startsWith("want "))).toBe(false);
+			return new Response(
+				buildV2FetchResponse(emptyPack(), {
+					wantedRefs: [{ hash: HASH_A, name: "refs/heads/main" }],
+				}),
+				{ headers: { "Content-Type": "application/x-git-upload-pack-result" } },
+			);
+		});
+
+		const result = await fetchPackV2(
+			"https://example.com/repo.git",
+			[],
+			[],
+			RIW_CAPS,
+			undefined,
+			undefined,
+			undefined,
+			["refs/heads/main"],
+		);
+		expect(result.wantedRefs).toEqual([{ hash: HASH_A, name: "refs/heads/main" }]);
+	});
+
+	test("emits mixed want + want-ref in one request", async () => {
+		setMockFetch(async (req) => {
+			const cmd = parseV2CommandRequest(new Uint8Array(await req.arrayBuffer()));
+			expect(cmd.args).toContain(`want ${HASH_A}`);
+			expect(cmd.args).toContain("want-ref refs/heads/dev");
+			return new Response(
+				buildV2FetchResponse(emptyPack(), {
+					wantedRefs: [{ hash: HASH_B, name: "refs/heads/dev" }],
+				}),
+				{ headers: { "Content-Type": "application/x-git-upload-pack-result" } },
+			);
+		});
+
+		const result = await fetchPackV2(
+			"https://example.com/repo.git",
+			[HASH_A],
+			[],
+			RIW_CAPS,
+			undefined,
+			undefined,
+			undefined,
+			["refs/heads/dev"],
+		);
+		expect(result.wantedRefs).toEqual([{ hash: HASH_B, name: "refs/heads/dev" }]);
+	});
+
+	test("throws when want-ref is requested but ref-in-want is unadvertised", async () => {
+		await expect(
+			fetchPackV2(
+				"https://example.com/repo.git",
+				[],
+				[],
+				SAMPLE_CAPS,
+				undefined,
+				undefined,
+				undefined,
+				["refs/heads/main"],
+			),
+		).rejects.toThrow("ref-in-want");
 	});
 });

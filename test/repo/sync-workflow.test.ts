@@ -461,6 +461,31 @@ describe("sync workflow: cheap divergence detection for the UI", () => {
 		expect(counts).toEqual({ ahead: 0, behind: 1 });
 	});
 
+	test("by-name fetch resolves a single branch and updates only its tracking ref", async () => {
+		const cloud = await makeCloud();
+		const ws = await openWorkspace("alice", cloud);
+
+		const remoteHash = await cloudCommit(
+			cloud,
+			{ "doc.md": "# Project\n\nnamed\n" },
+			"remote named",
+		);
+
+		// Request the branch *by name*: on a `ref-in-want` server this is one
+		// fetch round-trip with no separate advertisement; in-process it
+		// degrades to advertise+fetch. Either way only the named ref comes back.
+		const result = await fetch(withCapabilities(ws.repo, { transport: cloud.net }), {
+			url: cloud.url,
+			refs: [`refs/heads/${BRANCH}`],
+		});
+
+		expect(result.remoteRefs).toHaveLength(1);
+		expect(result.remoteRefs[0]!.name).toBe(`refs/heads/${BRANCH}`);
+		expect(result.remoteRefs[0]!.hash).toBe(remoteHash);
+		expect(result.objectCount).toBeGreaterThan(0);
+		expect(await trackedRemoteTip(ws)).toBe(remoteHash);
+	});
+
 	test("ahead/behind reflects unsynced local work and a simple timeline renders", async () => {
 		const cloud = await makeCloud();
 		const ws = await openWorkspace("alice", cloud);

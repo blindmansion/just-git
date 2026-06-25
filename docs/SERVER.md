@@ -280,7 +280,7 @@ new Server({ hostKeys: [hostKey] }, (client) => {
 
 `handleSession` takes an optional `SshSessionInfo` with `username` and a `metadata` bag for passing along SSH-layer details (key fingerprint, client IP, etc.) — the auth provider can extract and type these.
 
-> **Protocol version:** Both protocol v1 and v2 are supported over HTTP and SSH. Protocol v2 is used for upload-pack (`fetch`/`clone`) when the client requests it via `GIT_PROTOCOL_VERSION=2` or the `git-protocol` header. Receive-pack (`push`) always uses v1.
+> **Protocol version:** Both protocol v1 and v2 are supported over HTTP and SSH. Protocol v2 is used for upload-pack (`fetch`/`clone`) when the client requests it via `GIT_PROTOCOL_VERSION=2` or the `git-protocol` header. The v2 upload-pack advertisement includes the `ref-in-want` capability, so clients (including real git's single-branch fetch) may resolve refs by name with `want-ref` in a single fetch round-trip; the `advertiseRefs` hook's visibility filtering still applies to `want-ref` requests. Receive-pack (`push`) always uses v1.
 
 ## Policy
 
