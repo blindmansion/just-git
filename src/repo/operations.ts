@@ -1121,7 +1121,20 @@ export async function pull(repo: GitRepo, options: PullOptions): Promise<PullRes
 	const remoteBranch = options.remoteBranch ?? branch;
 	const theirs = `${remote}/${remoteBranch}`;
 
-	const fetched = await fetch(repo, { url: options.url, name: remote });
+	// `pull` knows the exact ref it needs, so take the by-name fast path: on a
+	// v2 `ref-in-want` server this folds `ls-refs` into the `fetch` (one POST),
+	// and the fetch is atomic on the tip — closing the discover-then-fetch race.
+	// Degrades to advertise+fetch on v1 / no `ref-in-want`.
+	const wantRef = `refs/heads/${remoteBranch}`;
+	const fetched = await fetch(repo, { url: options.url, name: remote, refs: [wantRef] });
+
+	// The advertisement's implicit "ref doesn't exist" signal is gone with the
+	// by-name path: a missing branch comes back as an absent ref. Surface it
+	// here with a clear error instead of failing later in `merge`/`rebase` when
+	// `theirs` fails to resolve.
+	if (!fetched.remoteRefs.some((r) => r.name === wantRef)) {
+		throw new Error(`pull: couldn't find remote ref ${wantRef} on '${remote}'`);
+	}
 
 	if ((options.strategy ?? "merge") === "rebase") {
 		const integration = await rebase(repo, {

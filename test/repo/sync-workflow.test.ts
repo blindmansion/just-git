@@ -9,6 +9,7 @@
 import { describe, expect, test } from "bun:test";
 import { withCapabilities } from "../../src/lib/capabilities.ts";
 import type { GitRepo, Identity } from "../../src/lib/types.ts";
+import { httpTransport } from "../../src/transport.ts";
 import {
 	type ConflictedPath,
 	cloneInto,
@@ -513,5 +514,76 @@ describe("sync workflow: cheap divergence detection for the UI", () => {
 		expect(subjects).toContain("local work");
 		expect(subjects).toContain("remote work");
 		expect(subjects).toContain("seed workspace");
+	});
+});
+
+// ── Round-trip accounting & partial-result handling ─────────────────
+
+/**
+ * Wrap a cloud's in-process network with a request counter so a test can assert
+ * how many upload-pack POSTs an operation issues. `ls-refs` and the object
+ * `fetch` both POST to `git-upload-pack`, so counting those POSTs distinguishes
+ * the advertise+fetch path (two POSTs) from the by-name `want-ref` path (one).
+ */
+function instrumentedNet(cloud: Cloud): {
+	net: ReturnType<ReturnType<typeof createServer>["asTransport"]>;
+	counts: { uploadPack: number; infoRefs: number };
+} {
+	const policy = cloud.server.asNetwork(BASE);
+	const baseFetch = policy.fetch!; // in-process asNetwork always supplies fetch
+	const counts = { uploadPack: 0, infoRefs: 0 };
+	const countingFetch = (input: string | URL | Request, init?: RequestInit) => {
+		const url = input instanceof Request ? input.url : String(input);
+		// Discovery is a GET to `/info/refs?service=git-upload-pack`; match it
+		// first so its `git-upload-pack` query param isn't mistaken for a POST.
+		if (url.includes("/info/refs")) counts.infoRefs++;
+		else if (url.includes("git-upload-pack")) counts.uploadPack++;
+		return baseFetch(input, init);
+	};
+	const net = httpTransport({ allowed: policy.allowed, fetch: countingFetch });
+	return { net, counts };
+}
+
+describe("sync workflow: round-trip accounting", () => {
+	test("a steady pull folds ls-refs into fetch (one upload-pack POST via want-ref)", async () => {
+		const cloud = await makeCloud();
+		const ws = await openWorkspace("alice", cloud);
+		const { net, counts } = instrumentedNet(cloud);
+
+		// The remote advances by one commit; Alice has no local work, so the pull
+		// fast-forwards.
+		const remoteHash = await cloudCommit(cloud, { "doc.md": "# Project\n\nv2\n" }, "remote v2");
+
+		const { integration } = await pull(withCapabilities(ws.repo, { transport: net }), {
+			url: cloud.url,
+			branch: BRANCH,
+			committer: ENGINE,
+		});
+
+		expect(integration.status).toBe("fast-forward");
+		expect(await localTip(ws)).toBe(remoteHash);
+
+		// By-name (`want-ref`) resolves the tip *and* returns the pack in a single
+		// upload-pack POST — no separate `ls-refs`. The advertise+fetch path would
+		// have issued two POSTs here.
+		expect(counts.uploadPack).toBe(1);
+	});
+
+	test("pull of a non-existent remote branch errors clearly (named ref not returned)", async () => {
+		const cloud = await makeCloud();
+		const ws = await openWorkspace("alice", cloud);
+
+		// The by-name path loses the advertisement's implicit "ref doesn't exist"
+		// signal: a missing branch comes back as an absent ref, so `pull` must
+		// surface it rather than failing opaquely later in `merge`.
+		await expect(
+			pull(withCapabilities(ws.repo, { transport: cloud.net }), {
+				url: cloud.url,
+				branch: BRANCH,
+				remoteBranch: "does-not-exist",
+				author: person("Alice"),
+				committer: ENGINE,
+			}),
+		).rejects.toThrow(/couldn't find remote ref refs\/heads\/does-not-exist/);
 	});
 });
