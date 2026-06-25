@@ -1,7 +1,7 @@
 import type { FileSystem } from "../fs.ts";
 import type { GitExtensions } from "../git.ts";
-import { configBool, getConfigValue } from "./config.ts";
-import { getAuthor, getCommitter } from "./identity.ts";
+import { configBool, readConfigView } from "./config.ts";
+import { resolveIdentityFrom } from "./identity.ts";
 import { hasConflicts, readIndex, writeIndex } from "./index.ts";
 import { peelToCommit, readCommit, writeObject } from "./object-db.ts";
 import { serializeCommit } from "./objects/commit.ts";
@@ -18,7 +18,15 @@ import {
 	resolveVerifierOpts,
 } from "./signing.ts";
 import { flattenTreeToMap } from "./tree-ops.ts";
-import type { Commit, GitContext, GitRepo, Identity, Index, ObjectId } from "./types.ts";
+import type {
+	Commit,
+	ConfigView,
+	GitContext,
+	GitRepo,
+	Identity,
+	Index,
+	ObjectId,
+} from "./types.ts";
 import { applyWorktreeOps, mergeAbort } from "./unpack-trees.ts";
 import { diffIndexToWorkTree } from "./worktree.ts";
 
@@ -164,33 +172,61 @@ export async function requireCommit(
 }
 
 /**
- * Resolve the committer identity, returning a CommandResult on failure.
- * Use with `isCommandError()` to check the result.
+ * GitRepo-shaped core of {@link requireCommitter}: resolve the committer
+ * identity from a materialized {@link ConfigView}, returning a CommandResult
+ * on failure. Pure (no fs).
  */
-export async function requireCommitter(
-	ctx: GitContext,
+export function requireCommitterFrom(
+	repo: GitRepo,
+	config: ConfigView,
 	env: Map<string, string>,
-): Promise<Identity | CommandResult> {
+): Identity | CommandResult {
 	try {
-		return await getCommitter(ctx, env);
+		return resolveIdentityFrom(repo, config, env, "committer");
 	} catch (e) {
 		return fatal((e as Error).message);
 	}
 }
 
 /**
+ * GitRepo-shaped core of {@link requireAuthor}: resolve the author identity
+ * from a materialized {@link ConfigView}, returning a CommandResult on failure.
+ * Pure (no fs).
+ */
+export function requireAuthorFrom(
+	repo: GitRepo,
+	config: ConfigView,
+	env: Map<string, string>,
+): Identity | CommandResult {
+	try {
+		return resolveIdentityFrom(repo, config, env, "author");
+	} catch (e) {
+		return fatal((e as Error).message);
+	}
+}
+
+/**
+ * Resolve the committer identity, returning a CommandResult on failure.
+ * Use with `isCommandError()` to check the result. Imperative-shell wrapper
+ * over {@link requireCommitterFrom}.
+ */
+export async function requireCommitter(
+	ctx: GitContext,
+	env: Map<string, string>,
+): Promise<Identity | CommandResult> {
+	return requireCommitterFrom(ctx, await readConfigView(ctx), env);
+}
+
+/**
  * Resolve the author identity, returning a CommandResult on failure.
- * Use with `isCommandError()` to check the result.
+ * Use with `isCommandError()` to check the result. Imperative-shell wrapper
+ * over {@link requireAuthorFrom}.
  */
 export async function requireAuthor(
 	ctx: GitContext,
 	env: Map<string, string>,
 ): Promise<Identity | CommandResult> {
-	try {
-		return await getAuthor(ctx, env);
-	} catch (e) {
-		return fatal((e as Error).message);
-	}
+	return requireAuthorFrom(ctx, await readConfigView(ctx), env);
 }
 
 /**
@@ -415,25 +451,40 @@ export async function writeCommitAndAdvance(
  * - a {@link Signer} — sign with it (pre-bound with the resolved key/format).
  * - a {@link CommandResult} — error (use {@link isCommandError} to detect).
  */
-export async function resolveCommandSigner(
-	gitCtx: GitContext,
+/**
+ * GitRepo-shaped core of {@link resolveCommandSigner}: resolve the signing
+ * policy from a materialized {@link ConfigView} (one read instead of three).
+ * Pure (no fs).
+ */
+export function resolveCommandSignerFrom(
+	repo: GitRepo,
+	config: ConfigView,
 	cliSign: boolean | undefined,
 	configKey = "commit.gpgsign",
 	opts?: { keyId?: string },
-): Promise<Signer | CommandResult | undefined> {
-	const shouldSign = cliSign ?? configBool(await getConfigValue(gitCtx, configKey)) ?? false;
+): Signer | CommandResult | undefined {
+	const shouldSign = cliSign ?? configBool(config.get(configKey)) ?? false;
 	if (!shouldSign) return undefined;
-	const signer = gitCtx.capabilities?.signing?.signer;
+	const signer = repo.capabilities?.signing?.signer;
 	if (!signer) return err("error: gpg failed to sign the data\n", 128);
 
-	const keyId = opts?.keyId ?? (await getConfigValue(gitCtx, "user.signingkey"));
-	const format = asSignatureFormat(await getConfigValue(gitCtx, "gpg.format"));
+	const keyId = opts?.keyId ?? config.get("user.signingkey");
+	const format = asSignatureFormat(config.get("gpg.format"));
 	if (keyId === undefined && format === undefined) return signer;
 
 	// Bind the resolved selection as defaults so every existing call site
 	// (`commit`, `tag`, and the `writeCommitAndAdvance` callers) forwards it
 	// without threading extra arguments through each one.
 	return (payload, callOpts) => signer(payload, { keyId, format, ...callOpts });
+}
+
+export async function resolveCommandSigner(
+	gitCtx: GitContext,
+	cliSign: boolean | undefined,
+	configKey = "commit.gpgsign",
+	opts?: { keyId?: string },
+): Promise<Signer | CommandResult | undefined> {
+	return resolveCommandSignerFrom(gitCtx, await readConfigView(gitCtx), cliSign, configKey, opts);
 }
 
 /**
@@ -447,17 +498,23 @@ export async function resolveCommandSigner(
  * verdict. A `good` or `unknown` (valid but untrusted) verdict passes,
  * mirroring git's acceptance set. Returns `null` when nothing blocks.
  */
-export async function requireVerifiedCommit(
-	gitCtx: GitContext,
+/**
+ * GitRepo-shaped core of {@link requireVerifiedCommit}: resolve the verify
+ * policy from a materialized {@link ConfigView}, then read the commit from the
+ * object store and run the operator verifier. No fs path needed.
+ */
+export async function requireVerifiedCommitFrom(
+	repo: GitRepo,
+	config: ConfigView,
 	commitHash: ObjectId,
 	cliVerify: boolean | undefined,
 	configKey: string,
 ): Promise<CommandResult | null> {
-	const verify = cliVerify ?? configBool(await getConfigValue(gitCtx, configKey)) ?? false;
+	const verify = cliVerify ?? configBool(config.get(configKey)) ?? false;
 	if (!verify) return null;
-	const verifier = gitCtx.capabilities?.signing?.verifier;
+	const verifier = repo.capabilities?.signing?.verifier;
 	if (!verifier) return fatal("no signature verifier configured");
-	const commit = await readCommit(gitCtx, commitHash);
+	const commit = await readCommit(repo, commitHash);
 	// git identifies the commit by its abbreviated (7-char) hash in these messages.
 	const short = abbreviateHash(commitHash);
 	if (commit.gpgsig === undefined) {
@@ -466,12 +523,27 @@ export async function requireVerifiedCommit(
 	const result = await verifier(
 		commitSigningPayload(commit),
 		commit.gpgsig,
-		await resolveVerifierOpts(gitCtx),
+		await resolveVerifierOpts(repo),
 	);
 	if (result.status !== "good" && result.status !== "unknown") {
 		return fatal(`Commit ${short} has a ${result.status} GPG signature.`);
 	}
 	return null;
+}
+
+export async function requireVerifiedCommit(
+	gitCtx: GitContext,
+	commitHash: ObjectId,
+	cliVerify: boolean | undefined,
+	configKey: string,
+): Promise<CommandResult | null> {
+	return requireVerifiedCommitFrom(
+		gitCtx,
+		await readConfigView(gitCtx),
+		commitHash,
+		cliVerify,
+		configKey,
+	);
 }
 
 /**
