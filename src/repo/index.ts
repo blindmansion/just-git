@@ -37,6 +37,10 @@ export {
 	type ConfigData,
 } from "../lib/config.ts";
 
+// Identity (GitRepo-shaped core: resolve commit/reflog identity from a
+// materialized ConfigView, no fs — the shell materializes and threads it)
+export { reflogIdentityFrom, resolveIdentityFrom, type IdentityRole } from "../lib/identity.ts";
+
 // Operation state (bounded value-state core: the primary in-progress
 // operation unified into one discriminated value)
 export { operationInProgress, readOperationState, type OperationState } from "../lib/operation.ts";

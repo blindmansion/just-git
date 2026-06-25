@@ -1,6 +1,6 @@
 import { clockNow } from "./capabilities.ts";
-import { getConfigValue } from "./config.ts";
-import type { GitContext, Identity } from "./types.ts";
+import { readConfigView } from "./config.ts";
+import type { ConfigView, GitContext, GitRepo, Identity } from "./types.ts";
 
 // ── Env var keys per role ───────────────────────────────────────────
 
@@ -13,45 +13,32 @@ const ROLE_ENV = {
 	},
 } as const;
 
-type IdentityRole = keyof typeof ROLE_ENV;
+export type IdentityRole = keyof typeof ROLE_ENV;
 
-// ── Public API ──────────────────────────────────────────────────────
+// ── Pure core (GitRepo + materialized ConfigView in, Identity out) ───
 
 /**
- * Resolve the author identity for a commit.
+ * Resolve an identity from an already-materialized {@link ConfigView} — the
+ * `GitRepo`-shaped core of {@link getAuthor} / {@link getCommitter}. No
+ * filesystem access: the shell materializes the view once (see
+ * {@link resolveIdentity}) and threads it here.
  *
  * Precedence:
  *   1. Locked identity override (operator-level, if set)
- *   2. GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL env vars
- *   3. user.name / user.email in .git/config
+ *   2. GIT_*_NAME / GIT_*_EMAIL env vars (per role)
+ *   3. user.name / user.email from the config view
  *   4. Unlocked identity override (fallback)
  */
-export function getAuthor(ctx: GitContext, env: Map<string, string>): Promise<Identity> {
-	return resolveIdentity(ctx, env, "author");
-}
-
-/**
- * Resolve the committer identity for a commit.
- *
- * Precedence:
- *   1. Locked identity override (operator-level, if set)
- *   2. GIT_COMMITTER_NAME / GIT_COMMITTER_EMAIL env vars
- *   3. user.name / user.email in .git/config
- *   4. Unlocked identity override (fallback)
- */
-export function getCommitter(ctx: GitContext, env: Map<string, string>): Promise<Identity> {
-	return resolveIdentity(ctx, env, "committer");
-}
-
-async function resolveIdentity(
-	ctx: GitContext,
+export function resolveIdentityFrom(
+	repo: GitRepo,
+	config: ConfigView,
 	env: Map<string, string>,
 	role: IdentityRole,
-): Promise<Identity> {
+): Identity {
 	const keys = ROLE_ENV[role];
-	const override = ctx.capabilities?.identity;
+	const override = repo.capabilities?.identity;
 
-	const { timestamp, timezone } = parseDateEnv(env.get(keys.date), ctx.capabilities?.now);
+	const { timestamp, timezone } = parseDateEnv(env.get(keys.date), repo.capabilities?.now);
 
 	if (override?.locked) {
 		return {
@@ -62,8 +49,8 @@ async function resolveIdentity(
 		};
 	}
 
-	const name = env.get(keys.name) ?? (await getConfigValue(ctx, "user.name")) ?? override?.name;
-	const email = env.get(keys.email) ?? (await getConfigValue(ctx, "user.email")) ?? override?.email;
+	const name = env.get(keys.name) ?? config.get("user.name") ?? override?.name;
+	const email = env.get(keys.email) ?? config.get("user.email") ?? override?.email;
 
 	if (!name || !email) {
 		throw new Error(
@@ -84,30 +71,67 @@ async function resolveIdentity(
 }
 
 /**
- * Get identity for reflog entries. Unlike getCommitter, this never throws --
- * it falls back to empty strings if identity isn't configured, since reflog
- * entries should still be written even without user config.
+ * Reflog-entry identity from an already-materialized {@link ConfigView} — the
+ * `GitRepo`-shaped core of {@link getReflogIdentity}. Unlike
+ * {@link resolveIdentityFrom} it never throws: it falls back to empty strings
+ * (and the injected clock) when identity isn't configured, since reflog entries
+ * are written even without user config.
+ */
+export function reflogIdentityFrom(
+	repo: GitRepo,
+	config: ConfigView,
+	env: Map<string, string>,
+): { name: string; email: string; timestamp: number; tz: string } {
+	try {
+		const c = resolveIdentityFrom(repo, config, env, "committer");
+		return { name: c.name, email: c.email, timestamp: c.timestamp, tz: c.timezone };
+	} catch {
+		return {
+			name: env.get("GIT_COMMITTER_NAME") ?? "",
+			email: env.get("GIT_COMMITTER_EMAIL") ?? "",
+			timestamp: Math.floor(clockNow(repo.capabilities).getTime() / 1000),
+			tz: "+0000",
+		};
+	}
+}
+
+// ── Filesystem-shell wrappers (materialize ConfigView → pure core) ───
+
+/**
+ * Resolve the author identity for a commit. Imperative-shell wrapper:
+ * materializes a {@link ConfigView} once, then delegates to
+ * {@link resolveIdentityFrom}.
+ */
+export async function getAuthor(ctx: GitContext, env: Map<string, string>): Promise<Identity> {
+	return resolveIdentity(ctx, env, "author");
+}
+
+/**
+ * Resolve the committer identity for a commit. Imperative-shell wrapper:
+ * materializes a {@link ConfigView} once, then delegates to
+ * {@link resolveIdentityFrom}.
+ */
+export async function getCommitter(ctx: GitContext, env: Map<string, string>): Promise<Identity> {
+	return resolveIdentity(ctx, env, "committer");
+}
+
+async function resolveIdentity(
+	ctx: GitContext,
+	env: Map<string, string>,
+	role: IdentityRole,
+): Promise<Identity> {
+	return resolveIdentityFrom(ctx, await readConfigView(ctx), env, role);
+}
+
+/**
+ * Get identity for reflog entries. Imperative-shell wrapper over
+ * {@link reflogIdentityFrom}: materializes a {@link ConfigView}, then delegates.
  */
 export async function getReflogIdentity(
 	ctx: GitContext,
 	env: Map<string, string>,
 ): Promise<{ name: string; email: string; timestamp: number; tz: string }> {
-	try {
-		const c = await getCommitter(ctx, env);
-		return {
-			name: c.name,
-			email: c.email,
-			timestamp: c.timestamp,
-			tz: c.timezone,
-		};
-	} catch {
-		return {
-			name: env.get("GIT_COMMITTER_NAME") ?? "",
-			email: env.get("GIT_COMMITTER_EMAIL") ?? "",
-			timestamp: Math.floor(clockNow(ctx.capabilities).getTime() / 1000),
-			tz: "+0000",
-		};
-	}
+	return reflogIdentityFrom(ctx, await readConfigView(ctx), env);
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
