@@ -2,7 +2,7 @@ import type { FileSystem } from "../fs.ts";
 import { readObject } from "./object-db.ts";
 import { parseTag } from "./objects/tag.ts";
 import { join } from "./path.ts";
-import { deleteReflog } from "./reflog.ts";
+import { applyReflogEffects, reflogDelete, type ReflogEffect } from "./reflog.ts";
 import { ensureParentDir } from "./repo.ts";
 import {
 	normalizeRef,
@@ -450,15 +450,27 @@ export async function ensureRemoteHead(
 	await ctx.refStore.writeRef(remoteHeadRef, { type: "symbolic", target: trackingRef });
 }
 
+/**
+ * Delete a ref on a {@link GitRepo}: removes it from the ref store and emits
+ * the delete hook, returning the reflog effect for the shell to apply.
+ *
+ * This is the `GitRepo`-shaped core of {@link deleteRef}. The ref write goes
+ * through `refStore` (already on `GitRepo`); the reflog side comes back as a
+ * {@link ReflogEffect} so the caller's imperative shell owns the fs write.
+ */
+export async function deleteRefEffects(repo: GitRepo, name: string): Promise<ReflogEffect[]> {
+	const hooks = repo.capabilities?.hooks;
+	const oldHash = hooks ? await resolveRef(repo, name) : null;
+	await repo.refStore.deleteRef(name);
+	if (hooks && oldHash) {
+		hooks.onRefDelete?.({ repo, ref: name, oldHash });
+	}
+	return [reflogDelete(name)];
+}
+
 /** Delete a ref (removes from storage, deletes reflog, emits hook). */
 export async function deleteRef(ctx: GitContext, name: string): Promise<void> {
-	const hooks = ctx.capabilities?.hooks;
-	const oldHash = hooks ? await resolveRef(ctx, name) : null;
-	await ctx.refStore.deleteRef(name);
-	await deleteReflog(ctx, name);
-	if (hooks && oldHash) {
-		hooks.onRefDelete?.({ repo: ctx, ref: name, oldHash });
-	}
+	await applyReflogEffects(ctx, await deleteRefEffects(ctx, name));
 }
 
 // ── Enumeration ─────────────────────────────────────────────────────
