@@ -46,7 +46,14 @@ import {
 	writeRebaseConflictMeta,
 	writeRebaseState,
 } from "./rebase.ts";
-import { logRef } from "./reflog.ts";
+import { getReflogIdentity } from "./identity.ts";
+import {
+	applyReflogEffects,
+	logRef,
+	logRefEffects,
+	type ReflogEffect,
+	type ReflogIdentity,
+} from "./reflog.ts";
 import {
 	advanceBranchRef,
 	branchNameFromRef,
@@ -229,6 +236,50 @@ function formatUntrackedMergeError(blockedPaths: string[], entry: RebaseTodoEntr
 	);
 }
 
+/**
+ * Pure builder for the reflog entries a rebase/pull fast-forward writes:
+ * a `(start): checkout` on HEAD, and (unless detached) a `(finish)` pair on
+ * the branch ref and HEAD. Takes an already-materialized {@link ReflogIdentity}
+ * and returns {@link ReflogEffect}s for the shell to apply.
+ */
+function rebaseFfReflogEffects(
+	identity: ReflogIdentity,
+	origHead: ObjectId,
+	targetHash: ObjectId,
+	headName: string,
+	upstreamArg: string,
+	reflogAction: "rebase" | "pull",
+): ReflogEffect[] {
+	const effects: ReflogEffect[] = [
+		...logRefEffects(
+			identity,
+			"HEAD",
+			origHead,
+			targetHash,
+			`rebase (start): checkout ${upstreamArg}`,
+		),
+	];
+	if (headName !== "detached HEAD") {
+		effects.push(
+			...logRefEffects(
+				identity,
+				headName,
+				origHead,
+				targetHash,
+				`${reflogAction} (finish): ${headName} onto ${targetHash}`,
+			),
+			...logRefEffects(
+				identity,
+				"HEAD",
+				targetHash,
+				targetHash,
+				`${reflogAction} (finish): returning to ${headName}`,
+			),
+		);
+	}
+	return effects;
+}
+
 async function writeRebaseFfReflog(
 	gitCtx: GitContext,
 	env: Map<string, string>,
@@ -238,32 +289,11 @@ async function writeRebaseFfReflog(
 	upstreamArg: string,
 	reflogAction: "rebase" | "pull",
 ): Promise<void> {
-	await logRef(
+	const identity = await getReflogIdentity(gitCtx, env);
+	await applyReflogEffects(
 		gitCtx,
-		env,
-		"HEAD",
-		origHead,
-		targetHash,
-		`rebase (start): checkout ${upstreamArg}`,
+		rebaseFfReflogEffects(identity, origHead, targetHash, headName, upstreamArg, reflogAction),
 	);
-	if (headName !== "detached HEAD") {
-		await logRef(
-			gitCtx,
-			env,
-			headName,
-			origHead,
-			targetHash,
-			`${reflogAction} (finish): ${headName} onto ${targetHash}`,
-		);
-		await logRef(
-			gitCtx,
-			env,
-			"HEAD",
-			targetHash,
-			targetHash,
-			`${reflogAction} (finish): returning to ${headName}`,
-		);
-	}
 }
 
 /**
