@@ -14,6 +14,7 @@ import { listRefs, resolveRef } from "../lib/refs.ts";
 import { createTransportForUrl } from "../lib/transport/resolver.ts";
 import { mapRefspec, parseRefspec } from "../lib/transport/refspec.ts";
 import type { RemoteRef, ShallowFetchOptions } from "../lib/transport/transport.ts";
+import type { ShallowUpdate } from "../lib/shallow.ts";
 import type { GitRepo, ObjectId, ObjectStore, RefStore, RepoCapabilities } from "../lib/types.ts";
 
 const DEFAULT_REMOTE = "origin";
@@ -36,6 +37,14 @@ export interface FetchResult {
 	objectCount: number;
 	/** Local tracking refs that were updated. */
 	updated: Array<{ ref: string; oldHash: string | null; newHash: string }>;
+	/**
+	 * Shallow boundary changes returned by the server, when any. Carries the
+	 * `shallow <oid>` lines a horizon-pruned client must fold into its boundary:
+	 * commits whose below-horizon parents the server declined to (re-)send. The
+	 * caller is responsible for persisting these (store-backed repos have no
+	 * `.git/shallow`), so the next fetch advertises them.
+	 */
+	shallowUpdates?: ShallowUpdate;
 }
 
 /** Per-ref outcome of a {@link push}. */
@@ -162,6 +171,13 @@ export async function fetch(
 		 * the freshness decision. Ignored on the by-name `refs` path.
 		 */
 		knownRefs?: RemoteRef[];
+		/**
+		 * Shallow/depth options for the fetch. When `existingShallows` is set, the
+		 * client advertises those commits as `shallow` boundaries so the server
+		 * stops crediting it with anything below them — required once the repo has
+		 * been horizon-pruned, or the server omits objects the client no longer has.
+		 */
+		shallow?: ShallowFetchOptions;
 	},
 ): Promise<FetchResult> {
 	const remoteName = remote.name ?? DEFAULT_REMOTE;
@@ -190,15 +206,17 @@ export async function fetch(
 
 	let remoteRefs: RemoteRef[];
 	let objectCount = 0;
+	let shallowUpdates: ShallowUpdate | undefined;
 
 	if (remote.refs && remote.refs.length > 0) {
 		// By-name path: ask the server to resolve the named refs *at fetch time*
 		// (a single `want-ref` round-trip on v2 `ref-in-want` servers, with a
 		// transparent advertise+fetch fallback). `remoteRefs` comes back as the
 		// resolved `{ name, hash }` pairs for exactly the refs we asked for.
-		const result = await transport.fetchRefs(remote.refs, haves);
+		const result = await transport.fetchRefs(remote.refs, haves, remote.shallow);
 		remoteRefs = result.remoteRefs;
 		objectCount = result.objectCount;
+		shallowUpdates = result.shallowUpdates;
 	} else {
 		remoteRefs = await transport.advertiseRefs();
 
@@ -219,8 +237,9 @@ export async function fetch(
 		const haveSet = new Set(haves);
 		const filtered = wants.filter((w) => !haveSet.has(w));
 		if (filtered.length > 0) {
-			const result = await transport.fetch(filtered, haves);
+			const result = await transport.fetch(filtered, haves, remote.shallow);
 			objectCount = result.objectCount;
+			shallowUpdates = result.shallowUpdates;
 		}
 	}
 
@@ -246,7 +265,7 @@ export async function fetch(
 		updatedRefCount: updated.length,
 	});
 
-	return { remoteRefs, objectCount, updated };
+	return { remoteRefs, objectCount, updated, shallowUpdates };
 }
 
 // ── push ────────────────────────────────────────────────────────────

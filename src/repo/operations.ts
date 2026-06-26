@@ -3,7 +3,7 @@ import { isAncestor, type MergeConflict } from "../lib/merge.ts";
 import { readCommit as _readCommit, writeObject } from "../lib/object-db.ts";
 import { serializeTree } from "../lib/objects/tree.ts";
 import { selectRebaseCommits } from "../lib/rebase.ts";
-import type { Commit, GitRepo, Identity } from "../lib/types.ts";
+import type { Commit, GitRepo, Identity, ObjectId } from "../lib/types.ts";
 import {
 	type ConflictedPath,
 	mergeTreesDetailed,
@@ -1079,6 +1079,13 @@ export interface PullOptions {
 	labels?: { ours?: string; theirs?: string };
 	/** Skip patch-id cherry-pick dedup and replay every commit (rebase strategy). */
 	reapplyCherryPicks?: boolean;
+	/**
+	 * Shallow boundary commits this repo holds (parents pruned). Advertised on
+	 * the fetch leg as `shallow` lines so the server stops assuming transitive
+	 * completeness below them — without this, a horizon-pruned repo can receive a
+	 * commit whose tree reuses an object it already pruned, leaving a dangling ref.
+	 */
+	existingShallows?: Set<ObjectId>;
 }
 
 /** Result of {@link pull}. */
@@ -1126,7 +1133,15 @@ export async function pull(repo: GitRepo, options: PullOptions): Promise<PullRes
 	// and the fetch is atomic on the tip — closing the discover-then-fetch race.
 	// Degrades to advertise+fetch on v1 / no `ref-in-want`.
 	const wantRef = `refs/heads/${remoteBranch}`;
-	const fetched = await fetch(repo, { url: options.url, name: remote, refs: [wantRef] });
+	const fetched = await fetch(repo, {
+		url: options.url,
+		name: remote,
+		refs: [wantRef],
+		shallow:
+			options.existingShallows && options.existingShallows.size > 0
+				? { existingShallows: options.existingShallows }
+				: undefined,
+	});
 
 	// The advertisement's implicit "ref doesn't exist" signal is gone with the
 	// by-name path: a missing branch comes back as an absent ref. Surface it

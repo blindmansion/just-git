@@ -442,9 +442,10 @@ export async function handleUploadPack(
 		if (commonHashes.length === 0) commonHashes = undefined;
 	}
 
-	// Shallow fetches are never cached (boundary depends on client state)
+	// Shallow fetches are never cached (boundary depends on client state, and
+	// the want-walk may emit client-specific shallow-info alongside the pack).
 	const cacheKey =
-		!shallowBoundary && options?.cache && options.cacheKey
+		!shallowBoundary && !clientShallowSet && options?.cache && options.cacheKey
 			? PackCache.key(options.cacheKey, wants, haves)
 			: null;
 
@@ -469,18 +470,36 @@ export async function handleUploadPack(
 	};
 
 	if (options?.noDelta) {
-		const packChunks = await buildPackStreaming(packOpts);
-		if (!packChunks) {
+		const built = await buildPackStreaming(packOpts);
+		if (!built) {
 			const { data: emptyPack } = await writePackDeltified([]);
 			return buildUploadPackResponse(emptyPack, useSideband, commonHashes, shallowInfo);
 		}
+		const respShallow = mergeShallowInfo(shallowInfo, built.newShallows);
 		return asyncIterableToStream(
-			buildUploadPackResponseStreaming(packChunks, useSideband, commonHashes, shallowInfo),
+			buildUploadPackResponseStreaming(built.chunks, useSideband, commonHashes, respShallow),
 		);
 	}
 
-	const packData = await buildPackBuffered(packOpts);
-	return buildUploadPackResponse(packData, useSideband, commonHashes, shallowInfo);
+	const built = await buildPackBuffered(packOpts);
+	const respShallow = mergeShallowInfo(shallowInfo, built.newShallows);
+	return buildUploadPackResponse(built.packData, useSideband, commonHashes, respShallow);
+}
+
+/**
+ * Fold any want-walk-cut commits (`newShallows`) into the depth-based
+ * `shallow-info`. Returns the original when nothing was cut, so non-shallow and
+ * depth-only fetches are byte-for-byte unchanged.
+ */
+function mergeShallowInfo(
+	existing: ShallowUpdate | undefined,
+	newShallows: ObjectId[],
+): ShallowUpdate | undefined {
+	if (newShallows.length === 0) return existing;
+	return {
+		shallow: [...(existing?.shallow ?? []), ...newShallows],
+		unshallow: existing?.unshallow ?? [],
+	};
 }
 
 // ── Shared pack-building pipeline ───────────────────────────────────
@@ -524,10 +543,19 @@ async function collectIncludedTags(
 }
 
 /**
+ * Outcome of a pack build: the pack bytes plus any commits the want-walk cut at
+ * the client's shallow horizon (to be advertised back as `shallow-info`).
+ */
+interface PackBuildResult {
+	packData: Uint8Array;
+	newShallows: ObjectId[];
+}
+
+/**
  * Buffered pack builder: enumerates objects with content, computes deltas,
  * writes a deltified pack, and optionally caches the result.
  */
-async function buildPackBuffered(opts: PackBuildOptions): Promise<Uint8Array> {
+async function buildPackBuffered(opts: PackBuildOptions): Promise<PackBuildResult> {
 	const { repo, wants, haves, includeTag, shallowBoundary, clientShallowBoundary } = opts;
 
 	const enumResult = await enumerateObjectsWithContent(
@@ -540,9 +568,10 @@ async function buildPackBuffered(opts: PackBuildOptions): Promise<Uint8Array> {
 
 	if (enumResult.count === 0) {
 		const { data } = await writePackDeltified([]);
-		return data;
+		return { packData: data, newShallows: enumResult.newShallows ?? [] };
 	}
 
+	const newShallows = enumResult.newShallows ?? [];
 	const collected: WalkObjectWithContent[] = await collectEnumeration(enumResult);
 	const sentHashes = new Set(collected.map((o) => o.hash));
 
@@ -569,7 +598,7 @@ async function buildPackBuffered(opts: PackBuildOptions): Promise<Uint8Array> {
 		opts.cache.set(opts.cacheKey, { packData, objectCount: collected.length, deltaCount });
 	}
 
-	return packData;
+	return { packData, newShallows };
 }
 
 /**
@@ -578,16 +607,14 @@ async function buildPackBuffered(opts: PackBuildOptions): Promise<Uint8Array> {
  */
 async function buildPackStreaming(
 	opts: PackBuildOptions,
-): Promise<AsyncIterable<Uint8Array> | null> {
+): Promise<{ chunks: AsyncIterable<Uint8Array>; newShallows: ObjectId[] } | null> {
 	const { repo, wants, haves, includeTag, shallowBoundary, clientShallowBoundary } = opts;
 
-	const { count, objects: walkObjects } = await enumerateObjects(
-		repo,
-		wants,
-		haves,
-		shallowBoundary,
-		clientShallowBoundary,
-	);
+	const {
+		count,
+		objects: walkObjects,
+		newShallows,
+	} = await enumerateObjects(repo, wants, haves, shallowBoundary, clientShallowBoundary);
 
 	if (count === 0) return null;
 
@@ -613,7 +640,10 @@ async function buildPackStreaming(
 		}
 	}
 
-	return writePackStreaming(totalCount, streamObjects());
+	return {
+		chunks: writePackStreaming(totalCount, streamObjects()),
+		newShallows: newShallows ?? [],
+	};
 }
 
 function asyncIterableToStream(iterable: AsyncIterable<Uint8Array>): ReadableStream<Uint8Array> {
@@ -1200,7 +1230,7 @@ export async function handleV2Fetch(
 	}
 
 	const cacheKey =
-		!shallowBoundary && options?.cache && options.cacheKey
+		!shallowBoundary && !clientShallowSet && options?.cache && options.cacheKey
 			? PackCache.key(options.cacheKey, allWants, haves)
 			: null;
 
@@ -1228,16 +1258,24 @@ export async function handleV2Fetch(
 	};
 
 	if (options?.noDelta) {
-		const packChunks = await buildPackStreaming(packOpts);
-		if (!packChunks) {
+		const built = await buildPackStreaming(packOpts);
+		if (!built) {
 			const { data: emptyPack } = await writePackDeltified([]);
 			return buildV2FetchResponse(emptyPack, v2ResponseOpts);
 		}
-		return asyncIterableToStream(buildV2FetchResponseStreaming(packChunks, v2ResponseOpts));
+		const streamOpts: V2FetchResponseOptions = {
+			...v2ResponseOpts,
+			shallowInfo: mergeShallowInfo(shallowInfo, built.newShallows),
+		};
+		return asyncIterableToStream(buildV2FetchResponseStreaming(built.chunks, streamOpts));
 	}
 
-	const packData = await buildPackBuffered(packOpts);
-	return buildV2FetchResponse(packData, v2ResponseOpts);
+	const built = await buildPackBuffered(packOpts);
+	const bufferedOpts: V2FetchResponseOptions = {
+		...v2ResponseOpts,
+		shallowInfo: mergeShallowInfo(shallowInfo, built.newShallows),
+	};
+	return buildV2FetchResponse(built.packData, bufferedOpts);
 }
 
 function enforcePackLimits(packData: Uint8Array, limits?: ReceivePackLimitOptions): void {

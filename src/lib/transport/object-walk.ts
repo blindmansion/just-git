@@ -27,6 +27,15 @@ export interface WalkObjectWithContent {
 interface EnumerationResult<T> {
 	count: number;
 	objects: AsyncIterable<T>;
+	/**
+	 * Commits the server cut from the pack because a parent edge crossed into the
+	 * region below the client's advertised shallow boundary. Each becomes a new
+	 * shallow commit on the client (emit as `shallow <oid>` in shallow-info) — its
+	 * tree is fully sent, but its below-horizon parents are not. Empty unless
+	 * `clientShallowBoundary` was supplied without a server-side `shallowBoundary`
+	 * (the ongoing-sync case).
+	 */
+	newShallows?: ObjectId[];
 }
 
 // ── Public API ───────────────────────────────────────────────────────
@@ -72,15 +81,28 @@ export async function enumerateObjects(
 		}
 	}
 
+	const belowHorizon = await computeBelowHorizon(ctx, clientShallowBoundary, shallowBoundary);
+
 	const result: WalkObject[] = [];
+	const newShallows = new Set<ObjectId>();
 	const visited = new Set<ObjectId>();
 	for (const hash of effectiveWants) {
-		await collectMissing(ctx, hash, haveSet, visited, result, shallowBoundary);
+		await collectMissing(
+			ctx,
+			hash,
+			haveSet,
+			visited,
+			result,
+			shallowBoundary,
+			belowHorizon,
+			newShallows,
+		);
 	}
 
 	return {
 		count: result.length,
 		objects: yieldArray(result),
+		newShallows: [...newShallows],
 	};
 }
 
@@ -115,15 +137,28 @@ export async function enumerateObjectsWithContent(
 		}
 	}
 
+	const belowHorizon = await computeBelowHorizon(ctx, clientShallowBoundary, shallowBoundary);
+
 	const result: WalkObjectWithContent[] = [];
+	const newShallows = new Set<ObjectId>();
 	const visited = new Set<ObjectId>();
 	for (const hash of effectiveWants) {
-		await collectMissingWithContent(ctx, hash, haveSet, visited, result, shallowBoundary);
+		await collectMissingWithContent(
+			ctx,
+			hash,
+			haveSet,
+			visited,
+			result,
+			shallowBoundary,
+			belowHorizon,
+			newShallows,
+		);
 	}
 
 	return {
 		count: result.length,
 		objects: yieldArray(result),
+		newShallows: [...newShallows],
 	};
 }
 
@@ -144,6 +179,65 @@ export async function collectEnumeration<T>(result: EnumerationResult<T>): Promi
 }
 
 // ── Internal ─────────────────────────────────────────────────────────
+
+/**
+ * Compute the set of commits that lie strictly below the client's advertised
+ * shallow boundary — the history the client has pruned.
+ *
+ * This is the fetch-side analogue of the gc horizon frontier: the client sent
+ * `shallow <oid>` lines for the boundary commits it keeps; everything reachable
+ * only through those commits' *parents* is what it dropped. The want-walk uses
+ * this set to stop following parent edges into pruned history (and re-sending
+ * its whole closure), marking the entering commit shallow instead.
+ *
+ * Returned empty unless `clientShallowBoundary` is set and no server-side
+ * `shallowBoundary` is in play — when the server is itself deepening/unshallowing
+ * (`shallowBoundary` set) the want-walk must reach those parents, not cut them.
+ * Walks commit parent-edges only (no trees/blobs), so it is far cheaper than the
+ * closure re-send it replaces.
+ */
+async function computeBelowHorizon(
+	ctx: GitRepo,
+	clientShallowBoundary?: Set<ObjectId>,
+	shallowBoundary?: Set<ObjectId>,
+): Promise<Set<ObjectId> | undefined> {
+	if (!clientShallowBoundary || clientShallowBoundary.size === 0 || shallowBoundary) {
+		return undefined;
+	}
+
+	const below = new Set<ObjectId>();
+	const stack: ObjectId[] = [];
+
+	// Seed with the parents of each boundary commit: the boundary commits
+	// themselves are kept, but everything from their parents down is pruned.
+	for (const boundary of clientShallowBoundary) {
+		try {
+			const commit = await readCommit(ctx, boundary);
+			for (const parent of commit.parents) stack.push(parent);
+		} catch {
+			// Boundary commit absent on the server — nothing to seed from it.
+		}
+	}
+
+	while (stack.length > 0) {
+		const hash = stack.pop()!;
+		if (below.has(hash)) continue;
+		// A boundary commit reachable through another boundary's parents is still
+		// kept by the client (it advertised it), so never treat it as below-horizon.
+		if (clientShallowBoundary.has(hash)) continue;
+		below.add(hash);
+		try {
+			const commit = await readCommit(ctx, hash);
+			for (const parent of commit.parents) {
+				if (!below.has(parent)) stack.push(parent);
+			}
+		} catch {
+			// Not a commit (or already pruned on the server) — leaf of the walk.
+		}
+	}
+
+	return below;
+}
 
 /**
  * Walk all objects reachable from `hash`, adding them to `visited`.
@@ -195,6 +289,8 @@ async function collectMissingWithContent(
 	visited: Set<ObjectId>,
 	result: WalkObjectWithContent[],
 	shallowBoundary?: Set<ObjectId>,
+	belowHorizon?: Set<ObjectId>,
+	newShallows?: Set<ObjectId>,
 ): Promise<void> {
 	if (visited.has(hash) || haveSet.has(hash)) return;
 	visited.add(hash);
@@ -205,10 +301,34 @@ async function collectMissingWithContent(
 	switch (raw.type) {
 		case "commit": {
 			const commit = parseCommit(raw.content);
-			await collectMissingWithContent(ctx, commit.tree, haveSet, visited, result, shallowBoundary);
+			await collectMissingWithContent(
+				ctx,
+				commit.tree,
+				haveSet,
+				visited,
+				result,
+				shallowBoundary,
+				belowHorizon,
+				newShallows,
+			);
 			if (!shallowBoundary?.has(hash)) {
 				for (const parent of commit.parents) {
-					await collectMissingWithContent(ctx, parent, haveSet, visited, result, shallowBoundary);
+					// Parent edge crosses into pruned history: don't re-send its closure;
+					// mark this commit shallow so the client treats it as a new boundary.
+					if (belowHorizon?.has(parent) && !haveSet.has(parent)) {
+						newShallows?.add(hash);
+						continue;
+					}
+					await collectMissingWithContent(
+						ctx,
+						parent,
+						haveSet,
+						visited,
+						result,
+						shallowBoundary,
+						belowHorizon,
+						newShallows,
+					);
 				}
 			}
 			break;
@@ -216,13 +336,31 @@ async function collectMissingWithContent(
 		case "tree": {
 			const tree = parseTree(raw.content);
 			for (const entry of tree.entries) {
-				await collectMissingWithContent(ctx, entry.hash, haveSet, visited, result, shallowBoundary);
+				await collectMissingWithContent(
+					ctx,
+					entry.hash,
+					haveSet,
+					visited,
+					result,
+					shallowBoundary,
+					belowHorizon,
+					newShallows,
+				);
 			}
 			break;
 		}
 		case "tag": {
 			const tag = parseTag(raw.content);
-			await collectMissingWithContent(ctx, tag.object, haveSet, visited, result, shallowBoundary);
+			await collectMissingWithContent(
+				ctx,
+				tag.object,
+				haveSet,
+				visited,
+				result,
+				shallowBoundary,
+				belowHorizon,
+				newShallows,
+			);
 			break;
 		}
 		case "blob":
@@ -253,6 +391,8 @@ async function collectMissing(
 	visited: Set<ObjectId>,
 	result: WalkObject[],
 	shallowBoundary?: Set<ObjectId>,
+	belowHorizon?: Set<ObjectId>,
+	newShallows?: Set<ObjectId>,
 ): Promise<void> {
 	if (visited.has(hash) || haveSet.has(hash)) return;
 	visited.add(hash);
@@ -263,10 +403,34 @@ async function collectMissing(
 	switch (raw.type) {
 		case "commit": {
 			const commit = parseCommit(raw.content);
-			await collectMissing(ctx, commit.tree, haveSet, visited, result, shallowBoundary);
+			await collectMissing(
+				ctx,
+				commit.tree,
+				haveSet,
+				visited,
+				result,
+				shallowBoundary,
+				belowHorizon,
+				newShallows,
+			);
 			if (!shallowBoundary?.has(hash)) {
 				for (const parent of commit.parents) {
-					await collectMissing(ctx, parent, haveSet, visited, result, shallowBoundary);
+					// Parent edge crosses into pruned history: don't re-send its closure;
+					// mark this commit shallow so the client treats it as a new boundary.
+					if (belowHorizon?.has(parent) && !haveSet.has(parent)) {
+						newShallows?.add(hash);
+						continue;
+					}
+					await collectMissing(
+						ctx,
+						parent,
+						haveSet,
+						visited,
+						result,
+						shallowBoundary,
+						belowHorizon,
+						newShallows,
+					);
 				}
 			}
 			break;
@@ -274,13 +438,31 @@ async function collectMissing(
 		case "tree": {
 			const tree = parseTree(raw.content);
 			for (const entry of tree.entries) {
-				await collectMissing(ctx, entry.hash, haveSet, visited, result, shallowBoundary);
+				await collectMissing(
+					ctx,
+					entry.hash,
+					haveSet,
+					visited,
+					result,
+					shallowBoundary,
+					belowHorizon,
+					newShallows,
+				);
 			}
 			break;
 		}
 		case "tag": {
 			const tag = parseTag(raw.content);
-			await collectMissing(ctx, tag.object, haveSet, visited, result, shallowBoundary);
+			await collectMissing(
+				ctx,
+				tag.object,
+				haveSet,
+				visited,
+				result,
+				shallowBoundary,
+				belowHorizon,
+				newShallows,
+			);
 			break;
 		}
 		case "blob":
