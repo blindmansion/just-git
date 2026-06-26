@@ -8,6 +8,12 @@ import type { GitRepo, TransportResolver } from "./lib/types.ts";
 import { authHeaders, isHttpUrl, validateNetworkAccess } from "./lib/transport/remote.ts";
 import type { HttpAuth } from "./lib/transport/transport.ts";
 
+export {
+	createMemoryDiscoveryCache,
+	type MemoryDiscoveryCacheOptions,
+} from "./lib/transport/discovery-cache.ts";
+export type { DiscoveryCache, DiscoveryEntry, V2CapabilitiesSnapshot } from "./lib/types.ts";
+
 /** A fetch wrapper: takes the next fetch in the chain and returns a new fetch. */
 export type FetchWrapper = (next: FetchFunction) => FetchFunction;
 

@@ -150,10 +150,25 @@ export async function listRemoteRefs(
  */
 export async function fetch(
 	repo: GitRepo,
-	remote: { url: string; name?: string; refspecs?: string[]; refs?: string[] },
+	remote: {
+		url: string;
+		name?: string;
+		refspecs?: string[];
+		refs?: string[];
+		/**
+		 * Refs from a recent probe (e.g. a just-run `listRemoteRefs`) to reuse as
+		 * the advertisement, skipping the transport's own ref discovery. Applies
+		 * only to the advertise path (when `refs` is not given); the caller owns
+		 * the freshness decision. Ignored on the by-name `refs` path.
+		 */
+		knownRefs?: RemoteRef[];
+	},
 ): Promise<FetchResult> {
 	const remoteName = remote.name ?? DEFAULT_REMOTE;
 	const transport = await createTransportForUrl(repo, "fetch", remote.url);
+	if (remote.knownRefs && remote.knownRefs.length > 0) {
+		transport.seedRefs(remote.knownRefs);
+	}
 
 	const specs = (
 		remote.refspecs && remote.refspecs.length > 0
@@ -312,7 +327,10 @@ export async function push(repo: GitRepo, remote: PushRemote): Promise<PushResul
 	}
 
 	const transport = await createTransportForUrl(repo, "push", remote.url);
-	const remoteRefs = await transport.advertiseRefs();
+	// Read remote ref values from the receive-pack advertisement (which the
+	// subsequent push reuses) rather than the upload-pack one — on v2 the latter
+	// costs an extra cap GET + ls-refs that carries the same data.
+	const remoteRefs = await transport.advertisePushRefs();
 	const remoteMap = new Map<string, ObjectId>(remoteRefs.map((r) => [r.name, r.hash]));
 
 	const prepared: PreparedUpdate[] = [];

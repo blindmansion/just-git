@@ -102,13 +102,27 @@ export async function discoverV2Capabilities(
 
 function parseV2Capabilities(pktLines: PktLine[]): V2Capabilities {
 	const raw: string[] = [];
-	const features = new Map<string, string[]>();
-
 	for (const line of pktLines) {
 		if (line.type !== "data") continue;
 		const text = pktLineText(line);
 		if (!text || text === "version 2") continue;
 		raw.push(text);
+	}
+	return v2CapabilitiesFromRaw(raw);
+}
+
+/**
+ * Rebuild a {@link V2Capabilities} from its raw advertised capability lines
+ * (the `version 2` marker is ignored if present). Used both by live discovery
+ * and to restore a cached `V2CapabilitiesSnapshot` without a network round-trip.
+ */
+export function v2CapabilitiesFromRaw(raw: string[]): V2Capabilities {
+	const lines: string[] = [];
+	const features = new Map<string, string[]>();
+
+	for (const text of raw) {
+		if (!text || text === "version 2") continue;
+		lines.push(text);
 		const eq = text.indexOf("=");
 		if (eq === -1) {
 			features.set(text, []);
@@ -127,7 +141,7 @@ function parseV2Capabilities(pktLines: PktLine[]): V2Capabilities {
 	const objectFormat =
 		objectFormatValues && objectFormatValues.length > 0 ? objectFormatValues[0]! : "sha1";
 
-	return { raw, features, objectFormat };
+	return { raw: lines, features, objectFormat };
 }
 
 /** Whether the server advertised a specific value for the `fetch` capability. */

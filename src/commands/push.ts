@@ -70,8 +70,10 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 			const { transport, config } = resolved;
 			const force = args.force;
 
-			// Get remote refs for oldHash values
-			const remoteRefs = await transport.advertiseRefs();
+			// Get remote refs for oldHash values from the receive-pack
+			// advertisement (reused by the push itself), avoiding a redundant
+			// upload-pack cap GET + ls-refs on v2 that carries the same ref list.
+			const remoteRefs = await transport.advertisePushRefs();
 			const remoteRefMap = new Map<string, ObjectId>();
 			for (const r of remoteRefs) {
 				remoteRefMap.set(r.name, r.hash);

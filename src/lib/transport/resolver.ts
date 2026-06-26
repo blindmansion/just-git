@@ -209,6 +209,7 @@ export async function openTransport(
 					target.fetch,
 					handle.capabilities?.onProgress,
 					resolveProtocolPreference(ctx.config, env),
+					handle.capabilities?.discoveryCache,
 				)
 			: new LocalTransport(handle, target.repo);
 	}

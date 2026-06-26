@@ -7,7 +7,7 @@ import type { DeltaPackInput } from "../pack/packfile.ts";
 import { writePackDeltified } from "../pack/packfile.ts";
 import { listRefs, readHead, resolveRef } from "../refs.ts";
 import { computeShallowBoundary, type ShallowUpdate } from "../shallow.ts";
-import type { GitRepo, ObjectId } from "../types.ts";
+import type { DiscoveryCache, DiscoveryEntry, GitRepo, ObjectId } from "../types.ts";
 import { collectEnumeration, enumerateObjectsWithContent } from "./object-walk.ts";
 import {
 	type DiscoverResult,
@@ -22,6 +22,7 @@ import {
 	fetchPackV2,
 	fetchSupports,
 	lsRefs,
+	v2CapabilitiesFromRaw,
 } from "./smart-http-v2.ts";
 
 // ── Transport interface ──────────────────────────────────────────────
@@ -80,6 +81,31 @@ export interface Transport {
 	 * Get the list of refs the remote has.
 	 */
 	advertiseRefs(): Promise<RemoteRef[]>;
+
+	/**
+	 * Get the remote refs from the **push** (receive-pack) advertisement.
+	 *
+	 * A receive-pack ref advertisement already carries the full ref list (v1
+	 * advert format), so push consumers that only need remote ref *values* for
+	 * the compare-and-swap `oldHash` can read them here instead of via
+	 * `advertiseRefs()` — which on v2 costs an extra capability `GET` plus an
+	 * upload-pack `ls-refs` that the receive-pack advertisement duplicates. The
+	 * result is cached alongside the push capabilities, so the subsequent
+	 * `push()` reuses the same advertisement (no second receive-pack `GET`).
+	 */
+	advertisePushRefs(): Promise<RemoteRef[]>;
+
+	/**
+	 * Seed the advertised refs from a recent probe (e.g. a just-completed
+	 * `listRemoteRefs`), so a following `advertiseRefs()`/`fetch()` reuses them
+	 * instead of issuing its own ref discovery. The caller owns the freshness
+	 * decision — it just observed these refs — so this is an explicit, advisory
+	 * hint. Only the advertise path benefits (CLI `fetch`/`pull`, programmatic
+	 * `fetch` without `refs`); by-name `fetchRefs` resolves server-side and
+	 * ignores the seed. On protocol v2 it elides the `ls-refs` round-trip; on v1
+	 * the advertisement bundles refs with caps, so the seed is a no-op there.
+	 */
+	seedRefs(refs: RemoteRef[]): void;
 
 	/**
 	 * Fetch objects from the remote that are reachable from `wants`
@@ -168,6 +194,16 @@ export class LocalTransport implements Transport {
 		}
 
 		return result;
+	}
+
+	advertisePushRefs(): Promise<RemoteRef[]> {
+		// Local transport has no separate receive-pack advertisement and pays no
+		// round-trips, so the upload-pack ref list is the same data.
+		return this.advertiseRefs();
+	}
+
+	seedRefs(_refs: RemoteRef[]): void {
+		// In-process ref reads are free, so there is nothing to short-circuit.
 	}
 
 	async fetch(
@@ -329,16 +365,28 @@ export class SmartHttpTransport implements Transport {
 	private cachedFetchCaps: string[] | null = null;
 	private cachedPushCaps: string[] | null = null;
 	private cachedFetchRefs: RemoteRef[] | null = null;
+	private cachedPushRefs: RemoteRef[] | null = null;
 
 	/** Resolved upload-pack protocol version, null until first discovery. */
 	private protocolVersion: 1 | 2 | null = null;
 	/** v2 capabilities, populated only when `protocolVersion === 2`. */
 	private cachedV2Caps: V2Capabilities | null = null;
 
+	/** Remote origin (cache key), or null when the URL can't be parsed. */
+	private readonly origin: string | null;
+	/** True when the active discovery was restored from the cache, not the wire. */
+	private discoveryFromCache = false;
+	/** Guards evict-on-error so a stale entry triggers at most one re-discovery. */
+	private recoveredFromStaleCache = false;
+
 	/**
 	 * @param protocolPreference Whether to *request* protocol v2 on discovery.
 	 *   Defaults to v2 (matching modern git ≥2.26) with transparent v1 fallback
 	 *   when the server doesn't upgrade. Push (receive-pack) is always v1.
+	 * @param discoveryCache Optional cross-operation cache of stable discovery
+	 *   (version + caps). When present, a cached v2 entry lets discovery skip the
+	 *   capability `GET`; a protocol error on a cached entry evicts it and
+	 *   re-discovers once from the wire.
 	 */
 	constructor(
 		private local: GitRepo,
@@ -346,7 +394,10 @@ export class SmartHttpTransport implements Transport {
 		private fetchFn?: FetchFunction,
 		private onProgress?: ProgressCallback,
 		private protocolPreference: 1 | 2 = 2,
-	) {}
+		private discoveryCache?: DiscoveryCache,
+	) {
+		this.origin = originOf(url);
+	}
 
 	/**
 	 * Run upload-pack discovery once, resolving the protocol version. For v2,
@@ -356,21 +407,103 @@ export class SmartHttpTransport implements Transport {
 	private async ensureDiscovery(): Promise<void> {
 		if (this.protocolVersion !== null) return;
 
+		// Cache hit: restore v2 caps and skip the capability GET entirely. (A v1
+		// advertisement bundles refs *with* caps, so it can't be skipped on caps
+		// alone — that win needs the conditional GET; see DiscoveryEntry.etag.)
+		const cached = await this.readDiscoveryCache();
+		if (cached && this.protocolPreference === 2 && "v2" in cached.uploadPack) {
+			this.protocolVersion = 2;
+			this.cachedV2Caps = v2CapabilitiesFromRaw(cached.uploadPack.v2.raw);
+			// Flag the cache origin *before* validating, so even a poisoned entry
+			// (e.g. one claiming an unsupported object-format) self-corrects via
+			// evict + re-discover rather than hard-failing.
+			this.discoveryFromCache = true;
+			this.assertSupportedObjectFormat();
+			return;
+		}
+
 		if (this.protocolPreference === 2) {
 			const result = await discoverV2Capabilities(this.url, this.fetchFn);
 			if (result.version === 2) {
 				this.protocolVersion = 2;
 				this.cachedV2Caps = result.caps;
 				this.assertSupportedObjectFormat();
+				await this.writeUploadPackDiscovery();
 				return;
 			}
 			this.protocolVersion = 1;
 			this.applyV1Discovery(result.v1);
+			await this.writeUploadPackDiscovery();
 			return;
 		}
 
 		this.protocolVersion = 1;
 		this.applyV1Discovery(await discoverRefs(this.url, "git-upload-pack", this.fetchFn));
+		await this.writeUploadPackDiscovery();
+	}
+
+	private async readDiscoveryCache(): Promise<DiscoveryEntry | undefined> {
+		if (!this.discoveryCache || this.origin === null) return undefined;
+		return (await this.discoveryCache.get(this.origin)) ?? undefined;
+	}
+
+	/** Persist the just-discovered upload-pack version + caps, keeping any cached receive-pack caps. */
+	private async writeUploadPackDiscovery(): Promise<void> {
+		if (!this.discoveryCache || this.origin === null || this.protocolVersion === null) return;
+		const uploadPack: DiscoveryEntry["uploadPack"] =
+			this.protocolVersion === 2 && this.cachedV2Caps
+				? { v2: { raw: this.cachedV2Caps.raw, objectFormat: this.cachedV2Caps.objectFormat } }
+				: { v1: this.cachedFetchCaps ?? [], objectFormat: "sha1" };
+		const prev = await this.readDiscoveryCache();
+		await this.discoveryCache.set(this.origin, {
+			protocolVersion: this.protocolVersion,
+			uploadPack,
+			receivePack: prev?.receivePack,
+			fetchedAt: Date.now(),
+		});
+	}
+
+	/** Merge the just-discovered receive-pack caps into the cache entry. */
+	private async writeReceivePackDiscovery(): Promise<void> {
+		if (!this.discoveryCache || this.origin === null || !this.cachedPushCaps) return;
+		const prev = await this.readDiscoveryCache();
+		const base: DiscoveryEntry = prev ?? {
+			protocolVersion: 1,
+			uploadPack: { v1: [], objectFormat: "sha1" },
+			fetchedAt: Date.now(),
+		};
+		await this.discoveryCache.set(this.origin, {
+			...base,
+			receivePack: { caps: this.cachedPushCaps },
+			fetchedAt: Date.now(),
+		});
+	}
+
+	/** Forget the resolved upload-pack discovery so the next call re-runs it from the wire. */
+	private resetDiscovery(): void {
+		this.protocolVersion = null;
+		this.cachedV2Caps = null;
+		this.cachedFetchCaps = null;
+		this.cachedFetchRefs = null;
+		this.discoveryFromCache = false;
+	}
+
+	/**
+	 * Run an upload-pack operation, self-correcting a stale cache once: if the
+	 * operation fails *and* the discovery it relied on came from the cache, evict
+	 * that entry, re-discover from the wire, and retry exactly once. A failure on
+	 * fresh-from-wire discovery is a real error and propagates immediately.
+	 */
+	private async withStaleCacheRecovery<T>(op: () => Promise<T>): Promise<T> {
+		try {
+			return await op();
+		} catch (err) {
+			if (!this.discoveryFromCache || this.recoveredFromStaleCache) throw err;
+			this.recoveredFromStaleCache = true;
+			if (this.origin !== null) await this.discoveryCache?.evict?.(this.origin);
+			this.resetDiscovery();
+			return op();
+		}
 	}
 
 	private applyV1Discovery(result: DiscoverResult): void {
@@ -402,7 +535,18 @@ export class SmartHttpTransport implements Transport {
 		return result.refs;
 	}
 
-	async advertiseRefs(): Promise<RemoteRef[]> {
+	seedRefs(refs: RemoteRef[]): void {
+		// Reused by the v2 advertise path (ensureV2Refs returns these without an
+		// ls-refs POST). On v1 the discovery GET re-populates refs anyway, so this
+		// is harmless but ineffective there.
+		this.cachedFetchRefs = refs;
+	}
+
+	advertiseRefs(): Promise<RemoteRef[]> {
+		return this.withStaleCacheRecovery(() => this.advertiseRefsOnce());
+	}
+
+	private async advertiseRefsOnce(): Promise<RemoteRef[]> {
 		await this.ensureDiscovery();
 		if (this.protocolVersion === 2) {
 			return this.ensureV2Refs();
@@ -414,11 +558,25 @@ export class SmartHttpTransport implements Transport {
 		if (!this.cachedPushCaps) {
 			const result = await discoverRefs(this.url, "git-receive-pack", this.fetchFn);
 			this.cachedPushCaps = result.capabilities;
+			// The receive-pack advertisement already lists every ref; keep it so
+			// the push path reads remote `oldHash` values from here rather than
+			// from a redundant upload-pack advertisement.
+			this.cachedPushRefs = result.refs;
+			await this.writeReceivePackDiscovery();
 		}
 		return this.cachedPushCaps as string[];
 	}
 
-	async fetch(
+	async advertisePushRefs(): Promise<RemoteRef[]> {
+		await this.ensurePushDiscovery();
+		return this.cachedPushRefs as RemoteRef[];
+	}
+
+	fetch(wants: ObjectId[], haves: ObjectId[], shallow?: ShallowFetchOptions): Promise<FetchResult> {
+		return this.withStaleCacheRecovery(() => this.fetchOnce(wants, haves, shallow));
+	}
+
+	private async fetchOnce(
 		wants: ObjectId[],
 		haves: ObjectId[],
 		shallow?: ShallowFetchOptions,
@@ -485,7 +643,15 @@ export class SmartHttpTransport implements Transport {
 		return { remoteRefs: refs, objectCount, shallowUpdates };
 	}
 
-	async fetchRefs(
+	fetchRefs(
+		refNames: string[],
+		haves: ObjectId[],
+		shallow?: ShallowFetchOptions,
+	): Promise<FetchResult> {
+		return this.withStaleCacheRecovery(() => this.fetchRefsOnce(refNames, haves, shallow));
+	}
+
+	private async fetchRefsOnce(
 		refNames: string[],
 		haves: ObjectId[],
 		shallow?: ShallowFetchOptions,
@@ -637,6 +803,15 @@ async function fetchRefsViaAdvertisement(
 		objectCount: result.objectCount,
 		shallowUpdates: result.shallowUpdates,
 	};
+}
+
+/** Parse a URL's origin (the discovery-cache key), or null when it can't be parsed. */
+function originOf(url: string): string | null {
+	try {
+		return new URL(url).origin;
+	} catch {
+		return null;
+	}
 }
 
 function isNonDeleteUpdate(update: PushRefUpdate): update is NonDeletePushRefUpdate {

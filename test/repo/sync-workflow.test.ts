@@ -9,7 +9,7 @@
 import { describe, expect, test } from "bun:test";
 import { withCapabilities } from "../../src/lib/capabilities.ts";
 import type { GitRepo, Identity } from "../../src/lib/types.ts";
-import { httpTransport } from "../../src/transport.ts";
+import { createMemoryDiscoveryCache, httpTransport } from "../../src/transport.ts";
 import {
 	type ConflictedPath,
 	cloneInto,
@@ -527,17 +527,18 @@ describe("sync workflow: cheap divergence detection for the UI", () => {
  */
 function instrumentedNet(cloud: Cloud): {
 	net: ReturnType<ReturnType<typeof createServer>["asTransport"]>;
-	counts: { uploadPack: number; infoRefs: number };
+	counts: { uploadPack: number; receivePack: number; infoRefs: number };
 } {
 	const policy = cloud.server.asNetwork(BASE);
 	const baseFetch = policy.fetch!; // in-process asNetwork always supplies fetch
-	const counts = { uploadPack: 0, infoRefs: 0 };
+	const counts = { uploadPack: 0, receivePack: 0, infoRefs: 0 };
 	const countingFetch = (input: string | URL | Request, init?: RequestInit) => {
 		const url = input instanceof Request ? input.url : String(input);
-		// Discovery is a GET to `/info/refs?service=git-upload-pack`; match it
-		// first so its `git-upload-pack` query param isn't mistaken for a POST.
+		// Discovery is a GET to `/info/refs?service=git-{upload,receive}-pack`;
+		// match it first so its service query param isn't mistaken for a POST.
 		if (url.includes("/info/refs")) counts.infoRefs++;
 		else if (url.includes("git-upload-pack")) counts.uploadPack++;
+		else if (url.includes("git-receive-pack")) counts.receivePack++;
 		return baseFetch(input, init);
 	};
 	const net = httpTransport({ allowed: policy.allowed, fetch: countingFetch });
@@ -567,6 +568,72 @@ describe("sync workflow: round-trip accounting", () => {
 		// upload-pack POST — no separate `ls-refs`. The advertise+fetch path would
 		// have issued two POSTs here.
 		expect(counts.uploadPack).toBe(1);
+	});
+
+	test("a push reuses the receive-pack advertisement (no upload-pack ls-refs)", async () => {
+		const cloud = await makeCloud();
+		const ws = await openWorkspace("alice", cloud);
+		const { net, counts } = instrumentedNet(cloud);
+
+		// Local work to publish.
+		await edit(ws, person("Alice"), { "a.md": "a\n" }, "local work");
+
+		const pushed = await push(withCapabilities(ws.repo, { transport: net }), {
+			url: cloud.url,
+			branch: BRANCH,
+		});
+		expect(pushed.ok).toBe(true);
+		expect(await cloudTip(cloud)).toBe((await localTip(ws)) as string);
+
+		// Remote `oldHash` values come from the receive-pack advertisement that
+		// the push needs anyway, so the upload-pack side is never touched: no cap
+		// GET, no `ls-refs`. Exactly one receive-pack GET (advert) + one POST.
+		expect(counts.uploadPack).toBe(0);
+		expect(counts.infoRefs).toBe(1);
+		expect(counts.receivePack).toBe(1);
+	});
+
+	test("a shared discovery cache skips the capability GET on later cycles", async () => {
+		const cloud = await makeCloud();
+		const ws = await openWorkspace("alice", cloud);
+		const { net, counts } = instrumentedNet(cloud);
+		const discoveryCache = createMemoryDiscoveryCache();
+		const repo = withCapabilities(ws.repo, { transport: net, discoveryCache });
+
+		// Cycle 1: discovery from the wire — one cap GET + one want-ref POST.
+		await cloudCommit(cloud, { "doc.md": "# Project\n\nv2\n" }, "remote v2");
+		await pull(repo, { url: cloud.url, branch: BRANCH, committer: ENGINE });
+		expect(counts.infoRefs).toBe(1);
+		expect(counts.uploadPack).toBe(1);
+
+		// Cycle 2: caps restored from the shared cache — the cap GET is skipped,
+		// leaving just the want-ref fetch POST.
+		await cloudCommit(cloud, { "doc.md": "# Project\n\nv3\n" }, "remote v3");
+		await pull(repo, { url: cloud.url, branch: BRANCH, committer: ENGINE });
+		expect(counts.infoRefs).toBe(1); // unchanged — GET suppressed
+		expect(counts.uploadPack).toBe(2); // one more want-ref fetch
+	});
+
+	test("knownRefs from a probe lets a (advertise-path) fetch skip ls-refs", async () => {
+		const cloud = await makeCloud();
+		const ws = await openWorkspace("alice", cloud);
+		const { net, counts } = instrumentedNet(cloud);
+		await cloudCommit(cloud, { "doc.md": "# Project\n\nv2\n" }, "remote v2");
+
+		// A drift probe runs its own discovery; hand its refs to the follow-up
+		// fetch so it doesn't re-advertise.
+		const refs = await listRemoteRefs(cloud.url, { transport: net });
+		const before = counts.uploadPack;
+
+		const result = await fetch(withCapabilities(ws.repo, { transport: net }), {
+			url: cloud.url,
+			knownRefs: refs,
+		});
+		expect(result.objectCount).toBeGreaterThan(0);
+
+		// The advertise path normally costs ls-refs + the object fetch (two
+		// POSTs); seeding the probe's refs drops the ls-refs, leaving just one.
+		expect(counts.uploadPack - before).toBe(1);
 	});
 
 	test("pull of a non-existent remote branch errors clearly (named ref not returned)", async () => {

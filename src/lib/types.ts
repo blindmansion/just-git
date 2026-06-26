@@ -243,6 +243,56 @@ export interface ObjectStore {
 	invalidatePacks?(): void;
 }
 
+// ── Transport discovery cache ───────────────────────────────────────
+
+/**
+ * Serializable snapshot of a v2 capability advertisement. Holds only the raw
+ * capability lines (`fetch=…`, `ls-refs=…`, `object-format=…`) plus the
+ * resolved hash format, from which a full `V2Capabilities` is rebuilt — no
+ * `Map` to serialize, so a host can persist this to shared storage.
+ */
+export interface V2CapabilitiesSnapshot {
+	/** Raw capability lines as advertised (excluding `version 2`). */
+	raw: string[];
+	/** The server's resolved `object-format` (defaults to `sha1`). */
+	objectFormat: string;
+}
+
+/**
+ * A cached discovery result for one remote origin: the protocol version the
+ * server agreed to plus its (stable) capabilities. Deliberately holds **no ref
+ * values** — ref churn is the point of syncing, so refs are only ever reused
+ * behind an HTTP validator (see `etag`). Capabilities are advisory: a stale
+ * entry costs at most one wasted request, never a wrong answer.
+ */
+export interface DiscoveryEntry {
+	protocolVersion: 1 | 2;
+	/** Upload-pack capabilities: a v2 snapshot, or a v1 cap list + object-format. */
+	uploadPack: { v2: V2CapabilitiesSnapshot } | { v1: string[]; objectFormat: string };
+	/** Receive-pack (push) capabilities, present once push discovery has run. */
+	receivePack?: { caps: string[] };
+	/** HTTP validator from the `info/refs` response, for conditional `GET`. */
+	etag?: string;
+	/** Wall-clock fetch time in epoch ms, for TTL bounding. */
+	fetchedAt: number;
+}
+
+/**
+ * Cross-operation cache of stable per-remote protocol discovery (version +
+ * capabilities), keyed by `new URL(url).origin`. Injected via
+ * {@link RepoCapabilities.discoveryCache}; the host owns its lifetime so it can
+ * survive a whole sync loop. Absent ⇒ today's per-instance behavior. The
+ * transport only reads/writes it to *suppress* requests whose answer it already
+ * holds — nothing here is ever sent on the wire, so third-party servers
+ * (GitHub/GitLab) are unaffected.
+ */
+export interface DiscoveryCache {
+	get(origin: string): DiscoveryEntry | undefined | Promise<DiscoveryEntry | undefined>;
+	set(origin: string, entry: DiscoveryEntry): void | Promise<void>;
+	/** Drop a stale entry after a protocol error, forcing one re-discovery. */
+	evict?(origin: string): void | Promise<void>;
+}
+
 // ── Repository context ──────────────────────────────────────────────
 
 /**
@@ -283,6 +333,20 @@ export interface RepoCapabilities {
 	transport?: TransportResolver;
 	/** Receives server progress messages (sideband band-2). */
 	onProgress?: ProgressCallback;
+
+	/**
+	 * Cross-operation cache of stable per-remote protocol discovery (version +
+	 * capabilities). When set, a {@link SmartHttpTransport} consults it before
+	 * issuing the capability `GET /info/refs` and skips that round-trip on a hit,
+	 * so a tight sync loop stops re-discovering the same server every cycle.
+	 *
+	 * Purely advisory and safe by default: it caches only version + caps (never
+	 * ref values), is TTL-bounded, and self-corrects by evicting + re-discovering
+	 * on any protocol error — so a stale entry costs at most one wasted request,
+	 * never a wrong result. Absent ⇒ per-instance discovery only (today's
+	 * behavior). Build the shipped default with `createMemoryDiscoveryCache()`.
+	 */
+	discoveryCache?: DiscoveryCache;
 	/**
 	 * Injected clock. Supplies the "current time" for author/committer
 	 * timestamps (when no `GIT_AUTHOR_DATE`/`GIT_COMMITTER_DATE` is given),
