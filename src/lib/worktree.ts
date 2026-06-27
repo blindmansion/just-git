@@ -1,5 +1,5 @@
+import { resolveAttributes } from "./bound-attributes.ts";
 import { comparePaths } from "./command-utils.ts";
-import { resolveFilters } from "./filters.ts";
 import { type IgnoreStack, isIgnored, loadBaseIgnore, pushDirIgnore } from "./ignore.ts";
 import { addEntry, defaultStat } from "./index.ts";
 import { hashObject, readObject, writeObject } from "./object-db.ts";
@@ -62,7 +62,7 @@ export async function diffIndexToWorkTree(ctx: GitContext, index: Index): Promis
 		// Compare against the *cleaned* worktree blob so a clean filter does not
 		// make files look perpetually modified. Symlinks are never filtered.
 		let workTreeHash: string;
-		const filters = st.isSymbolicLink ? undefined : await resolveFilters(ctx, "status");
+		const filters = st.isSymbolicLink ? undefined : await resolveAttributes(ctx, "status");
 		if (filters) {
 			const raw = await ctx.fs.readFileBuffer(fullPath);
 			workTreeHash = await hashObject("blob", await filters.clean(entry.path, raw));
@@ -165,7 +165,7 @@ export async function checkoutEntry(
 		}
 		// Smudge: convert the stored blob to its worktree form (object → worktree).
 		let content = raw.content;
-		const filters = await resolveFilters(ctx, "checkout");
+		const filters = await resolveAttributes(ctx, "checkout");
 		if (filters) content = await filters.smudge(entry.path, content, entry.hash);
 		await ctx.fs.writeFile(fullPath, content);
 	}
@@ -228,7 +228,7 @@ export async function stageFile(
 	const content = await ctx.fs.readFileBuffer(fullPath);
 	// Clean: convert the worktree bytes to the blob form that gets stored
 	// (worktree → object). The index stat size stays the worktree file size.
-	const filters = await resolveFilters(ctx, "add");
+	const filters = await resolveAttributes(ctx, "add");
 	const blobContent = filters ? await filters.clean(path, content) : content;
 	const hash = await writeObject(ctx, "blob", blobContent);
 

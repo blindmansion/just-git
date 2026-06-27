@@ -25,12 +25,8 @@ import { getConfigValue } from "../lib/config.ts";
 import { formatDate } from "../lib/date.ts";
 import { getConflictedPaths, getStage0Entries, readIndex } from "../lib/index.ts";
 import { buildMergeMessage, findAllMergeBases, handleFastForward } from "../lib/merge.ts";
-import {
-	type ApplyMergeFailure,
-	applyMergeResult,
-	bindMergeDriver,
-	mergeOrtRecursive,
-} from "../lib/merge-ort.ts";
+import { bindAttributes } from "../lib/bound-attributes.ts";
+import { type ApplyMergeFailure, applyMergeResult, mergeOrtRecursive } from "../lib/merge-ort.ts";
 import { peelToCommit, readCommit } from "../lib/object-db.ts";
 import {
 	clearMergeState,
@@ -278,7 +274,7 @@ async function handleThreeWayMerge(
 		headHash,
 		theirsHash,
 		labels,
-		await bindMergeDriver(gitCtx, "merge"),
+		(await bindAttributes(gitCtx, "merge"))?.merge,
 	);
 
 	// Step 2: Apply merge result to index and worktree
@@ -467,7 +463,7 @@ async function handleSquashMerge(
 		headHash,
 		theirsHash,
 		labels,
-		await bindMergeDriver(gitCtx, "merge"),
+		(await bindAttributes(gitCtx, "merge"))?.merge,
 	);
 
 	const applyResult = await applyMergeResult(gitCtx, result, headCommit.tree, {

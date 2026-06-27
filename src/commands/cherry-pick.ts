@@ -22,10 +22,10 @@ import {
 import { formatCommitSummary } from "../lib/commit-summary.ts";
 import { getConfigValue } from "../lib/config.ts";
 import { getStage0Entries, readIndex, writeIndex } from "../lib/index.ts";
+import { bindAttributes } from "../lib/bound-attributes.ts";
 import {
 	type ApplyMergeFailure,
 	applyMergeResult,
-	bindMergeDriver,
 	mergeOrtNonRecursive,
 } from "../lib/merge-ort.ts";
 import { readCommit } from "../lib/object-db.ts";
@@ -236,7 +236,7 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 				headCommit.tree,
 				theirsCommit.tree,
 				labels,
-				await bindMergeDriver(gitCtx, "cherry-pick"),
+				(await bindAttributes(gitCtx, "cherry-pick"))?.merge,
 			);
 
 			// ── Empty cherry-pick detection ───────────────────────────

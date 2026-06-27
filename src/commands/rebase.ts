@@ -6,7 +6,7 @@ import {
 	requireGitContext,
 	requireHead,
 } from "../lib/command-utils.ts";
-import { bindMergeDriver } from "../lib/merge-ort.ts";
+import { bindAttributes } from "../lib/bound-attributes.ts";
 import { handleAbort, handleContinue, handleSkip, performRebase } from "../lib/rebase-engine.ts";
 import { isRebaseInProgress } from "../lib/rebase.ts";
 import { readHead } from "../lib/refs.ts";
@@ -37,10 +37,10 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 				return handleAbort(gitCtx, ctx.env);
 			}
 			if (args.continue) {
-				return handleContinue(gitCtx, ctx.env, await bindMergeDriver(gitCtx, "rebase"));
+				return handleContinue(gitCtx, ctx.env, (await bindAttributes(gitCtx, "rebase"))?.merge);
 			}
 			if (args.skip) {
-				return handleSkip(gitCtx, ctx.env, await bindMergeDriver(gitCtx, "rebase"));
+				return handleSkip(gitCtx, ctx.env, (await bindAttributes(gitCtx, "rebase"))?.merge);
 			}
 
 			// ── Starting a new rebase ────────────────────────────────

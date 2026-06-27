@@ -17,6 +17,7 @@ import {
 	stripCommentLines,
 	writeCommitAndAdvance,
 } from "./command-utils.ts";
+import { bindAttributes } from "./bound-attributes.ts";
 import { formatCommitSummary } from "./commit-summary.ts";
 import { getConfigValue } from "./config.ts";
 import {
@@ -26,7 +27,7 @@ import {
 	readIndex,
 	writeIndex,
 } from "./index.ts";
-import { bindMergeDriver, type ContentMergeFn, mergeOrtNonRecursive } from "./merge-ort.ts";
+import { type ContentMergeFn, mergeOrtNonRecursive } from "./merge-ort.ts";
 import { readCommit } from "./object-db.ts";
 import type { Signer } from "./signing.ts";
 import {
@@ -539,7 +540,7 @@ export async function performRebase(
 	const pickResult = await runPickLoop(
 		gitCtx,
 		env,
-		await bindMergeDriver(gitCtx, "rebase"),
+		(await bindAttributes(gitCtx, "rebase"))?.merge,
 		signer,
 	);
 	if (skipStderr) {

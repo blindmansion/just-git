@@ -1,5 +1,6 @@
+import { bindAttributes } from "../lib/bound-attributes.ts";
 import { type MergeConflict } from "../lib/merge.ts";
-import { bindMergeDriver, mergeOrtRecursive, mergeOrtNonRecursive } from "../lib/merge-ort.ts";
+import { mergeOrtRecursive, mergeOrtNonRecursive } from "../lib/merge-ort.ts";
 import type { MergeDriver, MergeDriverResult } from "../lib/merge-ort.ts";
 import type { GitRepo, IndexEntry } from "../lib/types.ts";
 
@@ -44,7 +45,7 @@ export async function mergeTrees(
 		oursCommit,
 		theirsCommit,
 		mergeLabels,
-		await bindMergeDriver(repo, "merge"),
+		(await bindAttributes(repo, "merge"))?.merge,
 	);
 
 	return {
@@ -77,7 +78,7 @@ export async function mergeTreesFromTreeHashes(
 		oursTree,
 		theirsTree,
 		mergeLabels,
-		await bindMergeDriver(repo, "merge"),
+		(await bindAttributes(repo, "merge"))?.merge,
 	);
 
 	return {
@@ -149,7 +150,7 @@ export async function mergeTreesDetailed(
 		oursCommit,
 		theirsCommit,
 		mergeLabels,
-		await bindMergeDriver(repo, "merge"),
+		(await bindAttributes(repo, "merge"))?.merge,
 	);
 
 	return toDetailedResult(result);
@@ -179,7 +180,7 @@ export async function mergeTreesDetailedFromTreeHashes(
 		oursTree,
 		theirsTree,
 		mergeLabels,
-		await bindMergeDriver(repo, "merge"),
+		(await bindAttributes(repo, "merge"))?.merge,
 	);
 
 	return toDetailedResult(result);

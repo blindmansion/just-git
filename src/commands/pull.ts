@@ -16,6 +16,7 @@ import {
 	sequencerDirtyWorktreeError,
 	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
+import { bindAttributes } from "../lib/bound-attributes.ts";
 import { formatDiffStat } from "../lib/commit-summary.ts";
 import { getConfigValue, readConfig } from "../lib/config.ts";
 import {
@@ -28,7 +29,7 @@ import {
 import { getReflogIdentity } from "../lib/identity.ts";
 import { getConflictedPaths, hasConflicts, readIndex } from "../lib/index.ts";
 import { buildMergeMessage, findAllMergeBases, handleFastForward } from "../lib/merge.ts";
-import { applyMergeResult, bindMergeDriver, mergeOrtRecursive } from "../lib/merge-ort.ts";
+import { applyMergeResult, mergeOrtRecursive } from "../lib/merge-ort.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { deleteStateFile, writeStateFile } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";
@@ -531,7 +532,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				headHash,
 				theirsHash,
 				labels,
-				await bindMergeDriver(gitCtx, "pull"),
+				(await bindAttributes(gitCtx, "pull"))?.merge,
 			);
 
 			const headCommit = await readCommit(gitCtx, headHash);

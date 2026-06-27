@@ -23,10 +23,10 @@ import {
 import { formatCommitSummary } from "../lib/commit-summary.ts";
 import { getConfigValue } from "../lib/config.ts";
 import { getStage0Entries, readIndex, writeIndex } from "../lib/index.ts";
+import { bindAttributes } from "../lib/bound-attributes.ts";
 import {
 	type ApplyMergeFailure,
 	applyMergeResult,
-	bindMergeDriver,
 	mergeOrtNonRecursive,
 } from "../lib/merge-ort.ts";
 import { readCommit } from "../lib/object-db.ts";
@@ -209,7 +209,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				headCommit.tree,
 				parentTree,
 				labels,
-				await bindMergeDriver(gitCtx, "revert"),
+				(await bindAttributes(gitCtx, "revert"))?.merge,
 			);
 
 			// ── Empty revert detection ────────────────────────────────

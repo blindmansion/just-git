@@ -62,3 +62,45 @@ export async function bindAttributes(
 		merge,
 	};
 }
+
+// ── Cached resolution for worktree seams (Pattern B) ────────────────
+
+/**
+ * Per-context, per-operation memo of {@link bindAttributes} — the unified
+ * successor to `resolveFilters`. The worktree engine (`status`/`checkout`/
+ * `add`) touches many files through the same `ctx`; caching the bound form
+ * means the capability context and each `.gitattributes` file are built/read
+ * once per command rather than once per file.
+ */
+const attributesCache = new WeakMap<
+	GitContext,
+	Map<GitOperation, Promise<BoundAttributes | undefined>>
+>();
+
+/**
+ * Resolve {@link BoundAttributes} for a worktree seam, memoized per `ctx`
+ * (Pattern B: pull-on-demand). The synchronous capability check keeps the
+ * no-capability path allocation-free; only when filters or a merge driver are
+ * configured do we build (and cache) the bound form. Worktree leaves read only
+ * `.clean`/`.smudge` from it — `.merge` is unused there but harmless to bind.
+ */
+export function resolveAttributes(
+	ctx: GitContext,
+	operation: GitOperation,
+): Promise<BoundAttributes | undefined> {
+	if (!ctx.capabilities?.filters && !ctx.capabilities?.mergeDriver) {
+		return Promise.resolve(undefined);
+	}
+
+	let byOp = attributesCache.get(ctx);
+	if (!byOp) {
+		byOp = new Map();
+		attributesCache.set(ctx, byOp);
+	}
+	let pending = byOp.get(operation);
+	if (!pending) {
+		pending = bindAttributes(ctx, operation);
+		byOp.set(operation, pending);
+	}
+	return pending;
+}
