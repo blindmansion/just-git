@@ -19,6 +19,7 @@ Commands:
   push         Update remote refs along with associated objects
   add          Add file contents to the index
   blame        Show what revision and author last modified each line of a file
+  check-attr   Display gitattributes information for paths
   commit       Record changes to the repository
   status       Show the working tree status
   log          Show commit logs
@@ -295,6 +296,23 @@ Options:
   --show-current                  Print the current branch name
   -u, --set-upstream-to <string>  Set upstream tracking branch
   -v, --verbose                   Show hash and subject (counted)
+```
+
+## git check-attr
+
+```
+git check-attr - Display gitattributes information for paths
+
+Usage:
+  git check-attr [options] [args...]
+
+Arguments:
+  args...
+
+Options:
+  -a, --all            List all attributes set on each path
+  --stdin              Read pathnames from stdin (NUL-separated with -z)
+  -z, --nul-terminate  Use \0 line termination on input and output
 ```
 
 ## git checkout

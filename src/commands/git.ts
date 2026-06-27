@@ -5,6 +5,7 @@ import { registerAddCommand } from "./add.ts";
 import { registerBisectCommand } from "./bisect.ts";
 import { registerBlameCommand } from "./blame.ts";
 import { registerBranchCommand } from "./branch.ts";
+import { registerCheckAttrCommand } from "./check-attr.ts";
 import { registerCheckoutCommand } from "./checkout.ts";
 import { registerCherryPickCommand } from "./cherry-pick.ts";
 import { registerCleanCommand } from "./clean.ts";
@@ -126,6 +127,7 @@ const COMMAND_REGISTRY: Record<GitCommandName, (git: Command, ext?: GitExtension
 	push: (g, e) => registerPushCommand(g, e),
 	add: (g, e) => registerAddCommand(g, e),
 	blame: (g, e) => registerBlameCommand(g, e),
+	"check-attr": (g, e) => registerCheckAttrCommand(g, e),
 	commit: (g, e) => registerCommitCommand(g, e),
 	status: (g, e) => registerStatusCommand(g, e),
 	log: (g, e) => registerLogCommand(g, e),

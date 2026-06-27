@@ -116,6 +116,33 @@ export function everyPath(behaviors: ResolvedAttributes): AttributeResolver {
 	return () => behaviors;
 }
 
+/**
+ * Compose resolvers into one, first-set-wins per field — the {@link AttributeResolver}
+ * analog of transport's `pipe`. For each behavior (`filter`, `merge`, …) the
+ * earliest resolver that supplies it wins; later resolvers only fill the gaps.
+ *
+ * This is how host policy layers over project defaults at the *impl* level:
+ * `pipeAttributes(everyPath({ filter: hostLocked }), gitAttributes({…}))` lets a
+ * host pin a filter no in-tree `.gitattributes` can displace, while still
+ * deferring every un-pinned field to the git-faithful resolver. (Value-level
+ * layering — forcing a `filter=<name>` *selection* rather than an impl — is the
+ * `locked` / `defaults` options on {@link gitAttributes}.)
+ */
+export function pipeAttributes(...resolvers: AttributeResolver[]): AttributeResolver {
+	return async (ctx, path) => {
+		const merged: ResolvedAttributes = {};
+		for (const resolve of resolvers) {
+			const part = await resolve(ctx, path);
+			for (const key of Object.keys(part) as (keyof ResolvedAttributes)[]) {
+				if (merged[key] === undefined && part[key] !== undefined) {
+					merged[key] = part[key] as never;
+				}
+			}
+		}
+		return merged;
+	};
+}
+
 // ── Built-in merge drivers ──────────────────────────────────────────
 
 const decoder = new TextDecoder();

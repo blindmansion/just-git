@@ -75,7 +75,7 @@ export {
 	withRetry,
 } from "./transport.ts";
 export { mergeCapabilities, withCapabilities } from "./lib/capabilities.ts";
-export { everyPath, gitAttributes } from "./lib/attribute-resolver.ts";
+export { everyPath, gitAttributes, pipeAttributes } from "./lib/attribute-resolver.ts";
 export type {
 	AttributeResolver,
 	GitAttributesOptions,

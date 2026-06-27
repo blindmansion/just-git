@@ -117,6 +117,25 @@ function lookupInFile(file: AttrFile, path: string, attr: string): AttrValue {
 	return undefined;
 }
 
+/**
+ * Every attribute this file decides for `path`, last-matching-line-wins (the
+ * multi-attribute form of {@link lookupInFile}). Used by the `--all`
+ * introspection path; the engine's hot path stays on the single-attr `get`.
+ */
+function collectInFile(file: AttrFile, path: string): Map<string, AttrValue> {
+	const decided = new Map<string, AttrValue>();
+	// Walk lines bottom-up so the first value we record per attr is the last
+	// matching line — git's precedence within one file.
+	for (let i = file.patterns.length - 1; i >= 0; i--) {
+		const pat = file.patterns[i]!;
+		if (!matches(path, pat, file.base)) continue;
+		for (const [name, value] of pat.attrs) {
+			if (!decided.has(name)) decided.set(name, value);
+		}
+	}
+	return decided;
+}
+
 /** A path+attr lookup over a single in-memory `.gitattributes`-format string. */
 export type AttrLookup = (path: string, attr: string) => AttrValue;
 
@@ -142,6 +161,13 @@ export function parseAttributesText(content: string): AttrLookup {
 export interface AttributesProvider {
 	/** Resolve a single attribute for a work-tree-relative path. */
 	get(path: string, attr: string): Promise<AttrValue>;
+	/**
+	 * Resolve *every* decided attribute for a work-tree-relative path, applying
+	 * the same precedence as {@link get}. Attributes no rule decides are absent
+	 * (never present with an `undefined` value). Backs `git check-attr --all`;
+	 * the engine itself only ever needs single-attr `get`.
+	 */
+	getAll(path: string): Promise<Map<string, AttrValue>>;
 }
 
 /** List a path's ancestor directories, deepest first, ending with the root `""`. */
@@ -208,6 +234,24 @@ export function createAttributesProvider(ctx: GitContext): AttributesProvider {
 			}
 			return undefined;
 		},
+		async getAll(path) {
+			// Same file precedence as `get`, but accumulate across files: a
+			// higher-precedence file's decision for an attr is never overwritten
+			// by a lower one.
+			const out = new Map<string, AttrValue>();
+			const absorb = (file: AttrFile) => {
+				for (const [name, value] of collectInFile(file, path)) {
+					if (!out.has(name)) out.set(name, value);
+				}
+			};
+			const info = await loadInfo();
+			if (info) absorb(info);
+			for (const dir of ancestorDirs(path)) {
+				const file = await loadDir(dir);
+				if (file) absorb(file);
+			}
+			return out;
+		},
 	};
 }
 
@@ -219,4 +263,5 @@ export function createAttributesProvider(ctx: GitContext): AttributesProvider {
  */
 export const emptyAttributesProvider: AttributesProvider = {
 	get: () => Promise.resolve(undefined),
+	getAll: () => Promise.resolve(new Map()),
 };
