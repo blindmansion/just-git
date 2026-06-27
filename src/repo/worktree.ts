@@ -5,7 +5,7 @@ import { flattenTree as _flattenTree, type FlatTreeEntry } from "../lib/tree-ops
 import type { GitContext, GitRepo } from "../lib/types.ts";
 import type { FileSystem } from "../fs.ts";
 import { TreeBackedFs } from "../tree-backed-fs.ts";
-import { materializeEntries } from "./materialize.ts";
+import { createTreeSmudge, materializeEntries } from "./materialize.ts";
 import { revParse } from "./reading.ts";
 import { overlayRepo } from "./safety.ts";
 
@@ -54,7 +54,13 @@ export async function extractTree(
 	const commitHash = await resolveToCommitHash(repo, refOrHash);
 	const commit = await _readCommit(repo, commitHash);
 	const entries = await _flattenTree(repo, commit.tree);
-	const filesWritten = await materializeEntries(repo, entries, fs, targetDir);
+	const filesWritten = await materializeEntries(
+		repo,
+		entries,
+		fs,
+		targetDir,
+		createTreeSmudge(repo, commit.tree),
+	);
 
 	return { commitHash, treeHash: commit.tree, filesWritten };
 }
@@ -125,7 +131,13 @@ export async function createWorktree(
 		workTree,
 	};
 
-	const filesWritten = await materializeEntries(repo, entries, fs, workTree);
+	const filesWritten = await materializeEntries(
+		repo,
+		entries,
+		fs,
+		workTree,
+		createTreeSmudge(repo, commit.tree),
+	);
 	await writeIndex(ctx, indexFromEntries(entries));
 
 	return { ctx, commitHash, treeHash: commit.tree, filesWritten };

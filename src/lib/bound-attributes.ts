@@ -1,3 +1,4 @@
+import type { AttributesProvider } from "./attributes.ts";
 import { buildCapabilityContext } from "./config.ts";
 import { FilterError } from "./filters.ts";
 import type { ContentMergeFn } from "./merge-ort.ts";
@@ -43,15 +44,23 @@ export interface BoundAttributes {
  * in-tree `.gitattributes`-selected behavior requires a `GitContext` (the core
  * reads it into `ctx.attributes` at bind time). Commands hold a `gitCtx`, so
  * that is where in-tree selection is wired.
+ *
+ * `opts.attributes` overrides the in-tree lookup the core would otherwise build
+ * from the handle. The SDK materialization seams use this to supply a
+ * *tree-backed* {@link AttributesProvider} (`createTreeAttributesProvider`) so a
+ * bare `GitRepo` with no worktree fs can still select filters from the
+ * `.gitattributes` committed in the tree being written out.
  */
 export async function bindAttributes(
 	handle: GitRepo | GitContext,
 	operation: GitOperation,
+	opts?: { attributes?: AttributesProvider },
 ): Promise<BoundAttributes | undefined> {
 	const resolver = handle.capabilities?.attributes;
 	if (!resolver) return undefined;
 
-	const ctx = await buildCapabilityContext(handle, operation);
+	const base = await buildCapabilityContext(handle, operation);
+	const ctx = opts?.attributes ? { ...base, attributes: opts.attributes } : base;
 
 	async function runFilter(
 		direction: "clean" | "smudge",

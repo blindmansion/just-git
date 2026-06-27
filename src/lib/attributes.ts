@@ -1,6 +1,15 @@
+import { parseTree } from "./objects/tree.ts";
 import { join } from "./path.ts";
-import type { GitContext } from "./types.ts";
+import {
+	FileMode,
+	type GitContext,
+	type ObjectId,
+	type ObjectStore,
+	type TreeEntry,
+} from "./types.ts";
 import { WM_MATCH, WM_PATHNAME, wildmatch } from "./wildmatch.ts";
+
+const decoder = new TextDecoder();
 
 // ── Attribute values ────────────────────────────────────────────────
 
@@ -265,3 +274,86 @@ export const emptyAttributesProvider: AttributesProvider = {
 	get: () => Promise.resolve(undefined),
 	getAll: () => Promise.resolve(new Map()),
 };
+
+/**
+ * An {@link AttributesProvider} that resolves `.gitattributes` by walking a git
+ * **tree** in the object store instead of reading a work tree from disk. This is
+ * how the SDK materialization seams (`materialize` / `TreeBackedFs`) select
+ * filters for a tree they are about to write out, where no worktree fs exists
+ * yet (the `.gitattributes` lives only in the committed tree).
+ *
+ * Same per-directory precedence as {@link createAttributesProvider} (deepest
+ * `.gitattributes` up to the root wins), but there is no `$GIT_DIR/info/attributes`
+ * layer — a tree has no git dir.
+ */
+export function createTreeAttributesProvider(
+	objectStore: ObjectStore,
+	rootTreeHash: ObjectId,
+): AttributesProvider {
+	// dir-relative path ("" = root) → parsed .gitattributes (or null if absent).
+	const dirCache = new Map<string, AttrFile | null>();
+	// dir-relative path → that directory's tree entries (or null if not a dir).
+	const treeCache = new Map<string, TreeEntry[] | null>();
+
+	async function readTree(hash: ObjectId): Promise<TreeEntry[] | null> {
+		const raw = await objectStore.read(hash);
+		return raw.type === "tree" ? parseTree(raw.content).entries : null;
+	}
+
+	async function loadTreeDir(dirRel: string): Promise<TreeEntry[] | null> {
+		const cached = treeCache.get(dirRel);
+		if (cached !== undefined) return cached;
+
+		let entries: TreeEntry[] | null;
+		if (dirRel === "") {
+			entries = await readTree(rootTreeHash);
+		} else {
+			const slash = dirRel.lastIndexOf("/");
+			const parentRel = slash === -1 ? "" : dirRel.slice(0, slash);
+			const name = slash === -1 ? dirRel : dirRel.slice(slash + 1);
+			const parent = await loadTreeDir(parentRel);
+			const dir = parent?.find((e) => e.name === name && e.mode === FileMode.DIRECTORY);
+			entries = dir ? await readTree(dir.hash) : null;
+		}
+		treeCache.set(dirRel, entries);
+		return entries;
+	}
+
+	async function loadDir(dirRel: string): Promise<AttrFile | null> {
+		const cached = dirCache.get(dirRel);
+		if (cached !== undefined) return cached;
+
+		let file: AttrFile | null = null;
+		const entries = await loadTreeDir(dirRel);
+		const ga = entries?.find((e) => e.name === ".gitattributes" && e.mode !== FileMode.DIRECTORY);
+		if (ga) {
+			const raw = await objectStore.read(ga.hash);
+			if (raw.type === "blob") file = parseAttrFile(decoder.decode(raw.content), dirRel);
+		}
+		dirCache.set(dirRel, file);
+		return file;
+	}
+
+	return {
+		async get(path, attr) {
+			for (const dir of ancestorDirs(path)) {
+				const file = await loadDir(dir);
+				if (!file) continue;
+				const v = lookupInFile(file, path, attr);
+				if (v !== undefined) return v;
+			}
+			return undefined;
+		},
+		async getAll(path) {
+			const out = new Map<string, AttrValue>();
+			for (const dir of ancestorDirs(path)) {
+				const file = await loadDir(dir);
+				if (!file) continue;
+				for (const [name, value] of collectInFile(file, path)) {
+					if (!out.has(name)) out.set(name, value);
+				}
+			}
+			return out;
+		},
+	};
+}

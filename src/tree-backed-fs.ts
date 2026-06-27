@@ -27,6 +27,17 @@ type OverlayEntry =
 	| { type: "directory"; mode: number; mtime: Date }
 	| { type: "symlink"; target: string; mode: number; mtime: Date };
 
+/**
+ * Optional smudge applied to a tree blob's bytes when read out (object →
+ * worktree form). Decoupled from the capability layer — the caller supplies an
+ * already-bound function so this file stays object-store-only.
+ */
+export type BlobSmudge = (
+	relPath: string,
+	content: Uint8Array,
+	blobOid: ObjectId,
+) => Promise<Uint8Array>;
+
 function normalize(path: string): string {
 	const parts: string[] = [];
 	for (const seg of path.split("/")) {
@@ -73,6 +84,8 @@ export class TreeBackedFs implements FileSystem {
 		private rootTreeHash: ObjectId,
 		/** Absolute path prefix for the worktree root (e.g. "/" or "/repo"). */
 		private rootPath: string = "/",
+		/** Optional smudge for tree blobs read out (see {@link BlobSmudge}). */
+		private smudge?: BlobSmudge,
 	) {
 		// Ensure root directory exists in overlay
 		const normRoot = normalize(rootPath);
@@ -222,6 +235,11 @@ export class TreeBackedFs implements FileSystem {
 			throw new Error(`ENOENT: no such file or directory, open '${path}'`);
 		}
 
+		// Smudge regular-file blobs to their worktree form; symlinks (whose
+		// "content" is the link target) are never filtered.
+		if (this.smudge && result.entry.mode !== FM.SYMLINK) {
+			return this.smudge(rel, raw.content, result.entry.hash);
+		}
 		return raw.content;
 	}
 

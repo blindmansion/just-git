@@ -2,7 +2,7 @@ import { flattenTree } from "../lib/tree-ops.ts";
 import type { FileSystem } from "../fs.ts";
 import type { GitRepo } from "../lib/types.ts";
 import { TreeBackedFs } from "../tree-backed-fs.ts";
-import { materializeEntries, type MaterializeTarget } from "./materialize.ts";
+import { createTreeSmudge, materializeEntries, type MaterializeTarget } from "./materialize.ts";
 
 /**
  * Lazy accessor for the worktree contents at a specific tree.
@@ -52,10 +52,13 @@ export interface TreeAccessor {
 export function createTreeAccessor(repo: GitRepo, treeHash: string): TreeAccessor {
 	let fsCache: FileSystem | null = null;
 	let fsCacheRoot: string | undefined;
+	// Applies `filter=` smudge when the repo has an `attributes` capability;
+	// undefined otherwise, so reads/materialize stay raw byte copies.
+	const smudge = createTreeSmudge(repo, treeHash);
 
 	function getFs(root = "/"): TreeBackedFs {
 		if (fsCache && fsCacheRoot === root) return fsCache as TreeBackedFs;
-		fsCache = new TreeBackedFs(repo.objectStore, treeHash, root);
+		fsCache = new TreeBackedFs(repo.objectStore, treeHash, root, smudge);
 		fsCacheRoot = root;
 		return fsCache as TreeBackedFs;
 	}
@@ -83,7 +86,7 @@ export function createTreeAccessor(repo: GitRepo, treeHash: string): TreeAccesso
 		},
 		async materialize(target: MaterializeTarget, targetDir = "/"): Promise<number> {
 			const entries = await flattenTree(repo, treeHash);
-			return materializeEntries(repo, entries, target, targetDir);
+			return materializeEntries(repo, entries, target, targetDir, smudge);
 		},
 	};
 }
