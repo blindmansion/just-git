@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { everyPath } from "../../src/lib/attribute-resolver.ts";
 import { withCapabilities } from "../../src/lib/capabilities.ts";
-import type { MergeDriver } from "../../src/lib/merge-ort.ts";
 import type { GitRepo, Identity } from "../../src/lib/types.ts";
+import { textMergeDriver } from "../fixtures.ts";
 import { merge, rebase } from "../../src/repo/operations.ts";
 import { readCommit, resolveRef } from "../../src/repo/reading.ts";
 import { createTreeAccessor } from "../../src/repo/tree-accessor.ts";
@@ -418,10 +419,11 @@ describe("rebase: conflicts and resume", () => {
 
 	test("a merge driver auto-resolves conflicts during replay", async () => {
 		const { repo } = await setupConflict();
-		const driver: MergeDriver = (_ctx, { path }) =>
-			path === "shared.txt" ? { content: "auto\n", conflict: false } : null;
+		const driver = textMergeDriver((_ctx, { path }) =>
+			path === "shared.txt" ? { content: "auto\n", conflict: false } : null,
+		);
 
-		const res = await rebase(withCapabilities(repo, { mergeDriver: driver }), {
+		const res = await rebase(withCapabilities(repo, { attributes: everyPath({ merge: driver }) }), {
 			rebase: "feature",
 			upstream: "main",
 			branch: "feature",

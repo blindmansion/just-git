@@ -15,7 +15,6 @@
  */
 
 import { comparePaths } from "./command-utils.ts";
-import { buildCapabilityContext } from "./config.ts";
 import type { MergeLabels } from "./diff3.ts";
 import {
 	merge as diff3Merge,
@@ -35,7 +34,6 @@ import { checkoutEntry } from "./worktree.ts";
 import type {
 	CapabilityContext,
 	GitContext,
-	GitOperation,
 	GitRepo,
 	Identity,
 	Index,
@@ -109,61 +107,48 @@ interface MergeOrtResult extends MergeTreeResult {
 }
 
 /**
- * Custom content merge callback. Called during three-way merge before the
+ * Custom content merge driver. Called during three-way merge before the
  * default line-based diff3 algorithm. Analogous to git's `.gitattributes`
- * `merge=` drivers, but as an async callback rather than a shell command.
+ * `merge=` drivers, but as an async callback rather than a shell command;
+ * selected per-path by the {@link AttributeResolver} seam.
  *
  * Return a result to override the default merge, or `null` to fall back
  * to diff3. When `conflict` is `false`, the content is written as a clean
  * stage-0 entry. When `conflict` is `true`, the original base/ours/theirs
  * blobs are preserved as index stages 1/2/3 (so `--ours`/`--theirs`
  * checkout still works) and the returned content becomes the worktree blob.
+ *
+ * Inputs and the result `content` are raw bytes ({@link Uint8Array}) so binary
+ * and non-UTF-8 formats round-trip losslessly (e.g. `merge=lfs`).
  */
 export type MergeDriver = (
 	ctx: CapabilityContext,
 	input: MergeDriverInput,
 ) => MergeDriverResult | null | Promise<MergeDriverResult | null>;
 
-/** The per-path data for one content-merge decision. */
+/** The per-path data for one content-merge decision (raw bytes per side). */
 export interface MergeDriverInput {
 	path: string;
-	base: string | null;
-	ours: string;
-	theirs: string;
+	base: Uint8Array | null;
+	ours: Uint8Array;
+	theirs: Uint8Array;
 }
 
 /** Result from a {@link MergeDriver} callback. */
 export interface MergeDriverResult {
-	content: string;
+	content: Uint8Array;
 	conflict: boolean;
 }
 
 /**
  * Internal, context-bound form of a merge driver threaded through the engine.
- * {@link bindMergeDriver} has already captured the {@link CapabilityContext},
- * so the engine only supplies the per-path {@link MergeDriverInput}.
+ * `bindAttributes` has already captured the {@link CapabilityContext} and the
+ * per-path resolution, so the engine only supplies the per-path
+ * {@link MergeDriverInput}.
  */
 export type ContentMergeFn = (
 	input: MergeDriverInput,
 ) => MergeDriverResult | null | Promise<MergeDriverResult | null>;
-
-/**
- * Read the `mergeDriver` capability off a handle and bind it to a freshly
- * snapshotted {@link CapabilityContext}, yielding the context-free form the
- * merge engine threads internally. Returns `undefined` — and skips building the
- * context entirely — when no driver is configured, so the common no-driver path
- * keeps its current zero overhead. Call once per operation at the capability
- * boundary; the bound function is then reused for every conflicted path.
- */
-export async function bindMergeDriver(
-	handle: GitRepo | GitContext,
-	operation: GitOperation,
-): Promise<ContentMergeFn | undefined> {
-	const driver = handle.capabilities?.mergeDriver;
-	if (!driver) return undefined;
-	const ctx = await buildCapabilityContext(handle, operation);
-	return (input) => driver(ctx, input);
-}
 
 /** Sortable message buffer entry. */
 interface SortableMsg {
@@ -1377,12 +1362,12 @@ async function mergeRenameContent(
 	if (mergeDriver) {
 		const driverResult = await mergeDriver({
 			path: base.path ?? ours.path ?? theirs.path ?? "",
-			base: baseText,
-			ours: oursText,
-			theirs: theirsText,
+			base: (await readObject(ctx, base.hash)).content,
+			ours: (await readObject(ctx, ours.hash)).content,
+			theirs: (await readObject(ctx, theirs.hash)).content,
 		});
 		if (driverResult !== null) {
-			const hash = await writeObject(ctx, "blob", encoder.encode(driverResult.content));
+			const hash = await writeObject(ctx, "blob", driverResult.content);
 			return { hash, conflict: driverResult.conflict };
 		}
 	}
@@ -1587,11 +1572,11 @@ async function processEntry(
 			const driverResult = await mergeDriver({
 				path,
 				base: null,
-				ours: oursText,
-				theirs: theirsText,
+				ours: (await readObject(ctx, oh)).content,
+				theirs: (await readObject(ctx, th)).content,
 			});
 			if (driverResult !== null) {
-				const driverHash = await writeObject(ctx, "blob", encoder.encode(driverResult.content));
+				const driverHash = await writeObject(ctx, "blob", driverResult.content);
 				if (!driverResult.conflict) {
 					entries.push(makeEntry(path, driverHash, ours!.mode));
 					return;
@@ -1694,12 +1679,12 @@ async function processEntry(
 		if (mergeDriver) {
 			const driverResult = await mergeDriver({
 				path,
-				base: baseText,
-				ours: oursText,
-				theirs: theirsText,
+				base: (await readObject(ctx, bh)).content,
+				ours: (await readObject(ctx, oh)).content,
+				theirs: (await readObject(ctx, th)).content,
 			});
 			if (driverResult !== null) {
-				const driverHash = await writeObject(ctx, "blob", encoder.encode(driverResult.content));
+				const driverHash = await writeObject(ctx, "blob", driverResult.content);
 				if (!driverResult.conflict) {
 					entries.push(makeEntry(path, driverHash, ours!.mode));
 					return;

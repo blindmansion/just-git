@@ -1,4 +1,48 @@
 import type { InitialFiles } from "just-bash";
+import type { MergeDriver } from "../src/lib/merge-ort.ts";
+import type { CapabilityContext } from "../src/lib/types.ts";
+
+// ── Merge driver test ergonomics ────────────────────────────────────
+
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+/** Text view of a `MergeDriverInput` for string-based test drivers. */
+export interface TextMergeInput {
+	path: string;
+	base: string | null;
+	ours: string;
+	theirs: string;
+}
+
+/** Result of a string-based test merge driver. */
+export interface TextMergeResult {
+	content: string;
+	conflict: boolean;
+}
+
+/**
+ * Wrap a string-based merge driver into the bytes-contract {@link MergeDriver}.
+ * Decodes each side to text on the way in and encodes the result on the way out,
+ * so tests keep expressing merges in plain strings.
+ */
+export function textMergeDriver(
+	fn: (
+		ctx: CapabilityContext,
+		input: TextMergeInput,
+	) => TextMergeResult | null | Promise<TextMergeResult | null>,
+): MergeDriver {
+	return async (ctx, input) => {
+		const result = await fn(ctx, {
+			path: input.path,
+			base: input.base === null ? null : dec.decode(input.base),
+			ours: dec.decode(input.ours),
+			theirs: dec.decode(input.theirs),
+		});
+		if (result === null) return null;
+		return { content: enc.encode(result.content), conflict: result.conflict };
+	};
+}
 
 // ── Common test env ─────────────────────────────────────────────────
 

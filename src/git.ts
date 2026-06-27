@@ -12,9 +12,8 @@ import {
 	type ProgressCallback,
 	isRejection,
 } from "./hooks.ts";
+import type { AttributeResolver } from "./lib/attribute-resolver.ts";
 import { withCapabilities } from "./lib/capabilities.ts";
-import type { FilterConfig } from "./lib/filters.ts";
-import type { MergeDriver } from "./lib/merge-ort.ts";
 import { findRepo as findRepoOnFs } from "./lib/repo.ts";
 import type { SigningCapability } from "./lib/signing.ts";
 import { makeDefaultTransport } from "./lib/transport/resolver.ts";
@@ -164,23 +163,16 @@ export interface GitOptions {
 	 */
 	onProgress?: ProgressCallback;
 	/**
-	 * Custom merge driver for content conflicts. Called during
-	 * `git merge`, `git cherry-pick`, `git revert`, `git rebase`,
-	 * and `git pull` when both sides modify the same file.
-	 *
-	 * Return `{ content, conflict: false }` for a clean resolution,
-	 * or `null` to fall back to the default diff3 algorithm.
+	 * The single `.gitattributes`-driven seam, resolving which behaviors apply
+	 * to a path: content filters (`filter=`), merge drivers (`merge=`), and more.
+	 * Build one with `gitAttributes({ filters, mergeDrivers, locked, defaults })`
+	 * (in-tree `.gitattributes` selection + `name → impl` registries) or
+	 * `everyPath({ merge })` / `everyPath({ filter })` to apply one behavior to
+	 * every path (the legacy global merge-driver / filters ergonomic). Drivers
+	 * fire on `merge` / `cherry-pick` / `revert` / `rebase` / `pull`; filters on
+	 * check-in (`add`, `commit -a`, `status`) and check-out (`checkout`, merge).
 	 */
-	mergeDriver?: MergeDriver;
-	/**
-	 * Clean/smudge content filters, keyed by `.gitattributes` driver name.
-	 * The host registers the trusted `name → driver` half; `.gitattributes`
-	 * in the repo supplies the untrusted `path → name` half. `clean` runs on
-	 * check-in (`git add`, `commit -a`, `status`), `smudge` on check-out
-	 * (`git checkout`, merge, ...). A `filter=<name>` attribute with no
-	 * registered driver is passthrough, matching git.
-	 */
-	filters?: FilterConfig;
+	attributes?: AttributeResolver;
 	/**
 	 * Pluggable commit/tag signing and verification. Both halves are
 	 * independent and optional:
@@ -348,8 +340,7 @@ export class Git {
 		const capabilities: RepoCapabilities = {
 			hooks: options?.hooks,
 			signing: options?.signing,
-			mergeDriver: options?.mergeDriver,
-			filters: options?.filters,
+			attributes: options?.attributes,
 			identity: options?.identity,
 			config: configOverrides,
 			// The ergonomic network/credentials/resolveRemote options are sugar:

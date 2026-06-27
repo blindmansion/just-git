@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
+import { gitAttributes } from "../../src/lib/attribute-resolver.ts";
 import { createAttributesProvider } from "../../src/lib/attributes.ts";
+import { bindAttributes } from "../../src/lib/bound-attributes.ts";
 import { withCapabilities } from "../../src/lib/capabilities.ts";
-import { bindFilters, type FilterConfig, type FilterInput } from "../../src/lib/filters.ts";
+import type { FilterConfig, FilterInput } from "../../src/lib/filters.ts";
 import { readCommit } from "../../src/lib/object-db.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import type { GitContext, GitRepo } from "../../src/lib/types.ts";
@@ -47,7 +49,9 @@ async function setupRepo(opts: {
 	files: Record<string, string>;
 }): Promise<{ bash: Bash; fs: InMemoryFs }> {
 	const fs = new InMemoryFs();
-	const git = createGit(opts.filters ? { filters: opts.filters } : undefined);
+	const git = createGit(
+		opts.filters ? { attributes: gitAttributes({ filters: opts.filters }) } : undefined,
+	);
 	const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
 	for (const [path, content] of Object.entries(opts.files)) {
 		await bash.writeFile(`/repo/${path}`, content);
@@ -121,7 +125,7 @@ describe("filters — clean/smudge round trip", () => {
 				},
 			},
 		};
-		const git = createGit({ filters });
+		const git = createGit({ attributes: gitAttributes({ filters }) });
 		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
 		await bash.writeFile("/repo/.gitattributes", "*.bin filter=tap\n");
 		await bash.writeFile("/repo/a.bin", "data\n");
@@ -216,15 +220,15 @@ describe("filters — required / passthrough semantics", () => {
 	});
 });
 
-describe("filters — bindFilters", () => {
-	test("returns undefined when no filters are configured", async () => {
+describe("filters — bindAttributes", () => {
+	test("returns undefined when no attributes resolver is configured", async () => {
 		const fs = new InMemoryFs();
 		const git = createGit();
 		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
 		await bash.exec("git init", { env: TEST_ENV });
 		const repo = (await findRepo(fs, "/repo"))!;
 
-		expect(await bindFilters(repo as GitContext, "add")).toBeUndefined();
+		expect(await bindAttributes(repo as GitContext, "add")).toBeUndefined();
 	});
 
 	test("bound clean/smudge resolve via .gitattributes and registry", async () => {
@@ -243,9 +247,11 @@ describe("filters — bindFilters", () => {
 		await bash.writeFile("/repo/.gitattributes", "*.md filter=up\n");
 		await bash.exec("git init", { env: TEST_ENV });
 		// lib `findRepo` does not attach capabilities; wire them explicitly.
-		const repo = withCapabilities((await findRepo(fs, "/repo"))!, { filters });
+		const repo = withCapabilities((await findRepo(fs, "/repo"))!, {
+			attributes: gitAttributes({ filters }),
+		});
 
-		const bound = (await bindFilters(repo, "add"))!;
+		const bound = (await bindAttributes(repo, "add"))!;
 		expect(bound).toBeDefined();
 
 		const out = await bound.clean("readme.md", enc.encode("hello"));

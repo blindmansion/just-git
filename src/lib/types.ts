@@ -6,8 +6,8 @@ import type {
 	IdentityOverride,
 	ProgressCallback,
 } from "../hooks.ts";
-import type { FilterConfig } from "./filters.ts";
-import type { MergeDriver } from "./merge-ort.ts";
+import type { AttributeResolver } from "./attribute-resolver.ts";
+import type { AttributesProvider } from "./attributes.ts";
 import type { PackObject } from "./pack/packfile.ts";
 import type { SigningCapability } from "./signing.ts";
 
@@ -313,8 +313,18 @@ export interface RepoCapabilities {
 	hooks?: GitHooks;
 	/** Commit/tag signing (write) + verification (read). */
 	signing?: SigningCapability;
-	/** Custom content-merge driver (merge / rebase / cherry-pick / revert / pull). */
-	mergeDriver?: MergeDriver;
+	/**
+	 * The single `.gitattributes`-driven seam: resolve which behaviors (content
+	 * filter, merge driver, …) apply to a path. The sole attribute capability on
+	 * a handle — registries (`filter=`/`merge=` name → impl), host-locked policy,
+	 * defaults, and computed rules are all composed *into* the resolver, not
+	 * carried as separate fields. Build one with the shipped `gitAttributes({…})`
+	 * helper (in-tree `.gitattributes` selection + registries) or `everyPath({…})`
+	 * (apply one behavior to all paths — the legacy global merge-driver/filters
+	 * ergonomic). When absent, no attribute-driven behavior applies (plain diff3
+	 * merges, no content filtering).
+	 */
+	attributes?: AttributeResolver;
 	/** Author/committer identity override (locked or fallback). */
 	identity?: IdentityOverride;
 	/** Locked + default git config values. */
@@ -357,14 +367,6 @@ export interface RepoCapabilities {
 	 * timezone of recorded timestamps is unchanged (still derived as today).
 	 */
 	now?: () => Date;
-
-	/**
-	 * Clean/smudge content filters, keyed by `.gitattributes` driver name. The
-	 * host registers the trusted `name → driver` half; the in-tree
-	 * `.gitattributes` supplies the untrusted `path → name` half. A name with
-	 * no registered driver is passthrough, matching git.
-	 */
-	filters?: FilterConfig;
 }
 
 /**
@@ -471,6 +473,15 @@ export interface CapabilityContext {
 	};
 	/** Effective config view; an empty view for bare, config-less handles. */
 	config: ConfigView;
+	/**
+	 * In-tree `.gitattributes` lookup, built by the core at the bind boundary
+	 * from the handle's work tree (`info/attributes` > `.gitattributes`
+	 * deep→shallow). This is how an {@link AttributeResolver} reads on-disk
+	 * attributes without the seam carrying an `fs`: a bare, fs-less handle gets
+	 * an empty provider (every lookup resolves to "unspecified"), so a resolver
+	 * driven purely by host policy / computed rules stays GitRepo-portable.
+	 */
+	attributes: AttributesProvider;
 	/** CLI env, when driven through the front door; absent on the bare SDK path. */
 	env?: ReadonlyMap<string, string>;
 	/** Target URL — present only for transport operations. */

@@ -1,30 +1,34 @@
-// Phase 0 baseline guardrails for the attribute-resolver seam.
-// See local-docs/plans/attribute-resolver-phase0-baseline.md (§2 C1–C5, §3).
+// Command-layer guardrails for the attribute-resolver seam.
 //
-// These lock the COMMAND-LAYER `bindMergeDriver` boundaries (merge, cherry-pick,
-// revert, rebase, pull) — the repo/SDK boundaries are already covered by
-// test/repo/merge-driver.test.ts. They must stay green byte-for-byte through
-// Phases 1–2 (which collapse these onto a single `bindAttributes`).
+// These lock the COMMAND-LAYER merge-driver boundaries (merge, cherry-pick,
+// revert, rebase, pull) now that they resolve through the single `attributes`
+// seam (`bindAttributes`) — the repo/SDK boundaries are covered by
+// test/repo/merge-driver.test.ts. A driver applied to every path uses
+// `everyPath({ merge })`; `.gitattributes merge=<name>` selection uses
+// `gitAttributes()`.
 
 import { describe, expect, test } from "bun:test";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
+import { everyPath, gitAttributes } from "../../src/lib/attribute-resolver.ts";
 import type { MergeDriver } from "../../src/lib/merge-ort.ts";
 import { resolveHead } from "../../src/lib/refs.ts";
 import { findRepo } from "../../src/lib/repo.ts";
-import { TEST_ENV } from "../fixtures.ts";
+import { TEST_ENV, textMergeDriver } from "../fixtures.ts";
 
-/** A Bash whose git carries a custom `mergeDriver` capability. */
+/** A Bash whose git applies a custom merge driver to every path. */
 function bashWithDriver(driver: MergeDriver): { bash: Bash; fs: InMemoryFs } {
 	const fs = new InMemoryFs();
-	const git = createGit({ mergeDriver: driver });
+	const git = createGit({ attributes: everyPath({ merge: driver }) });
 	const bash = new Bash({ fs, cwd: "/repo", env: TEST_ENV, customCommands: [git] });
 	return { bash, fs };
 }
 
 /** Resolve a path through the driver, otherwise decline (diff3 fallback). */
 function resolvePath(path: string, content: string): MergeDriver {
-	return (_ctx, input) => (input.path === path ? { content, conflict: false } : null);
+	return textMergeDriver((_ctx, input) =>
+		input.path === path ? { content, conflict: false } : null,
+	);
 }
 
 describe("merge driver — command-layer boundaries (Phase 0 baseline)", () => {
@@ -155,14 +159,13 @@ describe("merge driver — command-layer boundaries (Phase 0 baseline)", () => {
 	});
 });
 
-describe("merge driver — documented gap (flips at Phase 3)", () => {
-	// §3: `.gitattributes merge=<name>` is not honored today. Per-path,
-	// attribute-selected merge does not exist yet — there is only the single
-	// global `mergeDriver` capability. This `test.failing` proves the gap and
-	// will flip the suite red once Phase 3 lands the AttributeResolver seam.
-	test.failing("`.gitattributes merge=union` auto-resolves without a global driver", async () => {
+describe("merge driver — `.gitattributes merge=<name>` selection (Phase 3)", () => {
+	// §3: with the AttributeResolver seam, `gitAttributes()` reads in-tree
+	// `.gitattributes` and selects a per-path merge driver — here the built-in
+	// `merge=union` — with no global driver configured.
+	test("`.gitattributes merge=union` auto-resolves without a global driver", async () => {
 		const fs = new InMemoryFs();
-		const git = createGit();
+		const git = createGit({ attributes: gitAttributes() });
 		const bash = new Bash({ fs, cwd: "/repo", env: TEST_ENV, customCommands: [git] });
 
 		await bash.writeFile("/repo/.gitattributes", "*.txt merge=union\n");

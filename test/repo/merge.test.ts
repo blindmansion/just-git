@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { everyPath } from "../../src/lib/attribute-resolver.ts";
 import { withCapabilities } from "../../src/lib/capabilities.ts";
 import type { GitRepo, Identity } from "../../src/lib/types.ts";
 import { merge } from "../../src/repo/operations.ts";
+import { textMergeDriver } from "../fixtures.ts";
 import { readCommit, resolveRef } from "../../src/repo/reading.ts";
 import { createTreeAccessor } from "../../src/repo/tree-accessor.ts";
 import { commit, writeBlob } from "../../src/repo/writing.ts";
@@ -447,8 +449,11 @@ describe("merge: mergeDriver auto-resolution", () => {
 		const { repo } = await setupConflict();
 		const res = await merge(
 			withCapabilities(repo, {
-				mergeDriver: (_ctx, { path }) =>
-					path === "shared.txt" ? { content: "driver-merged\n", conflict: false } : null,
+				attributes: everyPath({
+					merge: textMergeDriver((_ctx, { path }) =>
+						path === "shared.txt" ? { content: "driver-merged\n", conflict: false } : null,
+					),
+				}),
 			}),
 			{
 				ours: "main",

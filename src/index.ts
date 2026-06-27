@@ -75,14 +75,15 @@ export {
 	withRetry,
 } from "./transport.ts";
 export { mergeCapabilities, withCapabilities } from "./lib/capabilities.ts";
-export { bindFilters, FilterError } from "./lib/filters.ts";
+export { everyPath, gitAttributes } from "./lib/attribute-resolver.ts";
 export type {
-	BoundFilters,
-	FilterConfig,
-	FilterDriver,
-	FilterFn,
-	FilterInput,
-} from "./lib/filters.ts";
+	AttributeResolver,
+	GitAttributesOptions,
+	ResolvedAttributes,
+} from "./lib/attribute-resolver.ts";
+export type { AttributesProvider, AttrValue } from "./lib/attributes.ts";
+export { FilterError } from "./lib/filters.ts";
+export type { FilterConfig, FilterDriver, FilterFn, FilterInput } from "./lib/filters.ts";
 export type { MergeDriver, MergeDriverInput, MergeDriverResult } from "./lib/merge-ort.ts";
 export type { PackObject } from "./lib/pack/packfile.ts";
 export {

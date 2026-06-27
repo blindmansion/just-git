@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { FetchFunction } from "../../src/hooks.ts";
+import { emptyAttributesProvider } from "../../src/lib/attributes.ts";
 import type { CapabilityContext } from "../../src/lib/types.ts";
 import { allowlist, httpTransport, pipe, withAuth, withRetry } from "../../src/transport.ts";
 
@@ -13,6 +14,7 @@ function ctxFor(url: string): CapabilityContext {
 		operation: "fetch",
 		repo: { objectStore: {} as never, refStore: {} as never },
 		config: { get: () => undefined, getAll: () => [] },
+		attributes: emptyAttributesProvider,
 		url,
 	};
 }

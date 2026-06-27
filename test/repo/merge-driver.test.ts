@@ -1,15 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
+import { everyPath } from "../../src/lib/attribute-resolver.ts";
 import { withCapabilities } from "../../src/lib/capabilities.ts";
 import { findRepo } from "../../src/lib/repo.ts";
-import type { GitRepo } from "../../src/lib/types.ts";
+import type { CapabilityContext, GitRepo } from "../../src/lib/types.ts";
 import { readBlobText } from "../../src/repo/reading.ts";
 import { flattenTree } from "../../src/repo/diffing.ts";
 import { mergeTrees, mergeTreesFromTreeHashes } from "../../src/repo/merging.ts";
-import type { MergeDriver } from "../../src/repo/merging.ts";
 import { readCommit } from "../../src/lib/object-db.ts";
-import { TEST_ENV } from "../fixtures.ts";
+import { type TextMergeInput, TEST_ENV, textMergeDriver } from "../fixtures.ts";
 
 function envAt(ts: number) {
 	return { ...TEST_ENV, GIT_AUTHOR_DATE: String(ts), GIT_COMMITTER_DATE: String(ts) };
@@ -66,12 +66,12 @@ describe("mergeDriver", () => {
 	test("driver resolves a conflict cleanly", async () => {
 		const { repo, oursHash, theirsHash } = await setupDivergent();
 
-		const driver: MergeDriver = (_ctx, { ours, theirs }) => {
+		const driver = textMergeDriver((_ctx, { ours, theirs }) => {
 			return { content: `${ours.trim()}\n${theirs.trim()}\n`, conflict: false };
-		};
+		});
 
 		const result = await mergeTrees(
-			withCapabilities(repo, { mergeDriver: driver }),
+			withCapabilities(repo, { attributes: everyPath({ merge: driver }) }),
 			oursHash,
 			theirsHash,
 		);
@@ -86,12 +86,12 @@ describe("mergeDriver", () => {
 	test("driver returns conflict: true preserves index stages", async () => {
 		const { repo, oursHash, theirsHash } = await setupDivergent();
 
-		const driver: MergeDriver = (_ctx, { ours, theirs }) => {
+		const driver = textMergeDriver((_ctx, { ours, theirs }) => {
 			return { content: `CUSTOM-CONFLICT\n${ours}${theirs}`, conflict: true };
-		};
+		});
 
 		const result = await mergeTrees(
-			withCapabilities(repo, { mergeDriver: driver }),
+			withCapabilities(repo, { attributes: everyPath({ merge: driver }) }),
 			oursHash,
 			theirsHash,
 		);
@@ -105,13 +105,13 @@ describe("mergeDriver", () => {
 		const { repo, oursHash, theirsHash } = await setupDivergent();
 
 		let called = false;
-		const driver: MergeDriver = () => {
+		const driver = textMergeDriver(() => {
 			called = true;
 			return null;
-		};
+		});
 
 		const result = await mergeTrees(
-			withCapabilities(repo, { mergeDriver: driver }),
+			withCapabilities(repo, { attributes: everyPath({ merge: driver }) }),
 			oursHash,
 			theirsHash,
 		);
@@ -147,13 +147,13 @@ describe("mergeDriver", () => {
 		const theirsHash = await getRefHash(repo, "refs/heads/feature");
 
 		const calledPaths: string[] = [];
-		const driver: MergeDriver = (_ctx, { path }) => {
+		const driver = textMergeDriver((_ctx, { path }) => {
 			calledPaths.push(path);
 			return null;
-		};
+		});
 
 		const result = await mergeTrees(
-			withCapabilities(repo, { mergeDriver: driver }),
+			withCapabilities(repo, { attributes: everyPath({ merge: driver }) }),
 			oursHash,
 			theirsHash,
 		);
@@ -165,13 +165,13 @@ describe("mergeDriver", () => {
 	test("selective driver: only handle certain file extensions", async () => {
 		const { repo, oursHash, theirsHash } = await setupDivergent({ path: "code.ts" });
 
-		const driver: MergeDriver = (_ctx, { path, ours, theirs }) => {
+		const driver = textMergeDriver((_ctx, { path, ours, theirs }) => {
 			if (!path.endsWith(".ts")) return null;
 			return { content: `// merged\n${ours}${theirs}`, conflict: false };
-		};
+		});
 
 		const result = await mergeTrees(
-			withCapabilities(repo, { mergeDriver: driver }),
+			withCapabilities(repo, { attributes: everyPath({ merge: driver }) }),
 			oursHash,
 			theirsHash,
 		);
@@ -184,13 +184,13 @@ describe("mergeDriver", () => {
 	test("async driver", async () => {
 		const { repo, oursHash, theirsHash } = await setupDivergent();
 
-		const driver: MergeDriver = async () => {
+		const driver = textMergeDriver(async () => {
 			await new Promise((r) => setTimeout(r, 1));
 			return { content: "async-merged\n", conflict: false };
-		};
+		});
 
 		const result = await mergeTrees(
-			withCapabilities(repo, { mergeDriver: driver }),
+			withCapabilities(repo, { attributes: everyPath({ merge: driver }) }),
 			oursHash,
 			theirsHash,
 		);
@@ -224,13 +224,13 @@ describe("mergeDriver", () => {
 		const oursHash = await getRefHash(repo, "refs/heads/main");
 		const theirsHash = await getRefHash(repo, "refs/heads/feature");
 
-		const driver: MergeDriver = (_ctx, { base, ours, theirs }) => {
+		const driver = textMergeDriver((_ctx, { base, ours, theirs }) => {
 			expect(base).toBeNull();
 			return { content: `${ours.trim()}+${theirs.trim()}\n`, conflict: false };
-		};
+		});
 
 		const result = await mergeTrees(
-			withCapabilities(repo, { mergeDriver: driver }),
+			withCapabilities(repo, { attributes: everyPath({ merge: driver }) }),
 			oursHash,
 			theirsHash,
 		);
@@ -247,12 +247,12 @@ describe("mergeDriver", () => {
 		const theirsCommit = await readCommit(repo, theirsHash);
 		const baseCommit = await readCommit(repo, oursCommit.parents[0]!);
 
-		const driver: MergeDriver = () => {
+		const driver = textMergeDriver(() => {
 			return { content: "from-tree-hashes\n", conflict: false };
-		};
+		});
 
 		const result = await mergeTreesFromTreeHashes(
-			withCapabilities(repo, { mergeDriver: driver }),
+			withCapabilities(repo, { attributes: everyPath({ merge: driver }) }),
 			baseCommit.tree,
 			oursCommit.tree,
 			theirsCommit.tree,
@@ -274,13 +274,17 @@ describe("mergeDriver", () => {
 			theirsContent,
 		});
 
-		let capturedInput: Parameters<MergeDriver>[1] | null = null;
-		const driver: MergeDriver = (_ctx, input) => {
+		let capturedInput: TextMergeInput | null = null;
+		const driver = textMergeDriver((_ctx, input) => {
 			capturedInput = input;
 			return null;
-		};
+		});
 
-		await mergeTrees(withCapabilities(repo, { mergeDriver: driver }), oursHash, theirsHash);
+		await mergeTrees(
+			withCapabilities(repo, { attributes: everyPath({ merge: driver }) }),
+			oursHash,
+			theirsHash,
+		);
 
 		expect(capturedInput).not.toBeNull();
 		expect(capturedInput!.path).toBe("file.txt");
@@ -292,13 +296,17 @@ describe("mergeDriver", () => {
 	test("driver receives a CapabilityContext with operation and a config view", async () => {
 		const { repo, oursHash, theirsHash } = await setupDivergent();
 
-		let capturedCtx: Parameters<MergeDriver>[0] | null = null;
-		const driver: MergeDriver = (ctx) => {
+		let capturedCtx: CapabilityContext | null = null;
+		const driver = textMergeDriver((ctx) => {
 			capturedCtx = ctx;
 			return null;
-		};
+		});
 
-		await mergeTrees(withCapabilities(repo, { mergeDriver: driver }), oursHash, theirsHash);
+		await mergeTrees(
+			withCapabilities(repo, { attributes: everyPath({ merge: driver }) }),
+			oursHash,
+			theirsHash,
+		);
 
 		expect(capturedCtx).not.toBeNull();
 		expect(capturedCtx!.operation).toBe("merge");
@@ -312,14 +320,14 @@ describe("mergeDriver", () => {
 		const { repo, oursHash, theirsHash } = await setupDivergent();
 
 		let lockedValue: string | undefined;
-		const driver: MergeDriver = (ctx) => {
+		const driver = textMergeDriver((ctx) => {
 			lockedValue = ctx.config.get("merge.mydriver");
 			return null;
-		};
+		});
 
 		await mergeTrees(
 			withCapabilities(repo, {
-				mergeDriver: driver,
+				attributes: everyPath({ merge: driver }),
 				config: { locked: { "merge.mydriver": "on" } },
 			}),
 			oursHash,
@@ -365,13 +373,13 @@ describe("mergeDriver", () => {
 		const theirsHash = await getRefHash(repo, "refs/heads/feature");
 
 		const calledPaths: string[] = [];
-		const driver: MergeDriver = (_ctx, { path }) => {
+		const driver = textMergeDriver((_ctx, { path }) => {
 			calledPaths.push(path);
 			return { content: "rename-merged\n", conflict: false };
-		};
+		});
 
 		const result = await mergeTrees(
-			withCapabilities(repo, { mergeDriver: driver }),
+			withCapabilities(repo, { attributes: everyPath({ merge: driver }) }),
 			oursHash,
 			theirsHash,
 		);

@@ -1,4 +1,5 @@
 import type { ConfigOverrides } from "../hooks.ts";
+import { createAttributesProvider, emptyAttributesProvider } from "./attributes.ts";
 import { join } from "./path.ts";
 import type { CapabilityContext, ConfigView, GitContext, GitOperation, GitRepo } from "./types.ts";
 
@@ -744,6 +745,7 @@ export async function buildCapabilityContext(
 			refStore: handle.refStore,
 		},
 		config: makeConfigView(disk, overrides),
+		attributes: fsBound ? createAttributesProvider(handle) : emptyAttributesProvider,
 		env: opts?.env,
 		url: opts?.url,
 	};

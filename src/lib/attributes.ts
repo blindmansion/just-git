@@ -117,6 +117,20 @@ function lookupInFile(file: AttrFile, path: string, attr: string): AttrValue {
 	return undefined;
 }
 
+/** A path+attr lookup over a single in-memory `.gitattributes`-format string. */
+export type AttrLookup = (path: string, attr: string) => AttrValue;
+
+/**
+ * Parse a standalone `.gitattributes`-format string into a path+attr lookup,
+ * rooted at the work-tree root (`base = ""`). Used for the host-policy
+ * `locked` / `defaults` layers in `gitAttributes(...)`, which wrap around the
+ * on-disk in-tree provider rather than living on disk themselves.
+ */
+export function parseAttributesText(content: string): AttrLookup {
+	const file = parseAttrFile(content, "");
+	return (path, attr) => lookupInFile(file, path, attr);
+}
+
 // ── Provider ────────────────────────────────────────────────────────
 
 /**
@@ -196,3 +210,13 @@ export function createAttributesProvider(ctx: GitContext): AttributesProvider {
 		},
 	};
 }
+
+/**
+ * An {@link AttributesProvider} that never resolves any attribute — the in-tree
+ * lookup for a bare, fs-less {@link GitRepo} (no work tree to read
+ * `.gitattributes` from). The {@link CapabilityContext} always carries a
+ * provider; this is the one it gets when there is no filesystem.
+ */
+export const emptyAttributesProvider: AttributesProvider = {
+	get: () => Promise.resolve(undefined),
+};

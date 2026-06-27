@@ -1,8 +1,6 @@
-import { createAttributesProvider } from "./attributes.ts";
-import { buildCapabilityContext } from "./config.ts";
-import type { CapabilityContext, GitContext, GitOperation, ObjectId } from "./types.ts";
+import type { CapabilityContext, ObjectId } from "./types.ts";
 
-// ── Capability shape ────────────────────────────────────────────────
+// ── Driver shape ────────────────────────────────────────────────────
 
 /**
  * A single named clean/smudge driver — the host-provided, trusted half of a
@@ -53,17 +51,11 @@ export interface FilterInput {
 }
 
 /**
- * The filters capability: a registry of named drivers. `.gitattributes`
- * resolves a path to a name; the engine fires the matching driver if (and only
- * if) it is registered here.
- *
- * Filtering needs BOTH halves and fails *silently* (passthrough, never an
- * error) when either is missing — matching git. So a registered driver does
- * nothing on its own: if no `.gitattributes` maps the path to its name (e.g.
- * the file is absent, or has no `filter=<name>` line for that path), the
- * content is passed through untouched. Likewise a `filter=<name>` attribute
- * whose name is not in this registry is passthrough. When debugging "my filter
- * never ran", check the `.gitattributes` mapping first.
+ * A registry of named clean/smudge drivers, selected by `.gitattributes`
+ * `filter=<name>`. Pass to `gitAttributes({ filters })`: the in-tree
+ * `.gitattributes` resolves a path to a name, and the matching driver fires if
+ * (and only if) it is registered here. A `filter=<name>` whose name is not in
+ * the registry is passthrough, matching git.
  */
 export type FilterConfig = Record<string, FilterDriver>;
 
@@ -73,73 +65,4 @@ export class FilterError extends Error {
 		super(message, options);
 		this.name = "FilterError";
 	}
-}
-
-// ── Bound form ──────────────────────────────────────────────────────
-
-/**
- * The context-bound filter chokepoints threaded through the worktree engine.
- * Both always resolve to bytes — attribute lookup, missing drivers, `null`
- * returns, and non-required failures are all handled internally as
- * passthrough — so a seam is just `content = await filters.clean(path, bytes)`.
- */
-export interface BoundFilters {
-	clean(path: string, content: Uint8Array): Promise<Uint8Array>;
-	smudge(path: string, content: Uint8Array, blobOid?: ObjectId): Promise<Uint8Array>;
-}
-
-/**
- * Read the `filters` capability off a handle and bind it to a freshly
- * snapshotted {@link CapabilityContext} plus an attribute resolver, yielding
- * the context-free {@link BoundFilters} the engine uses. Returns `undefined` —
- * and skips building the context entirely — when no filters are configured, so
- * the common no-filter path keeps zero overhead. Mirrors `bindMergeDriver`.
- *
- * The bound `clean`/`smudge` always resolve to bytes: a path with no matching
- * `.gitattributes` `filter=<name>`, a name with no registered driver, a driver
- * missing that direction, and a `null` return are all silent passthrough. Only
- * a thrown error from a `required` driver surfaces (as {@link FilterError}).
- */
-export async function bindFilters(
-	handle: GitContext,
-	operation: GitOperation,
-): Promise<BoundFilters | undefined> {
-	const filters = handle.capabilities?.filters;
-	if (!filters || Object.keys(filters).length === 0) return undefined;
-
-	const cap = await buildCapabilityContext(handle, operation);
-	const attrs = createAttributesProvider(handle);
-
-	async function run(
-		direction: "clean" | "smudge",
-		path: string,
-		content: Uint8Array,
-		blobOid?: ObjectId,
-	): Promise<Uint8Array> {
-		const name = await attrs.get(path, "filter");
-		if (typeof name !== "string" || name === "") return content;
-
-		const driver = filters![name];
-		if (!driver) return content;
-
-		const fn = direction === "clean" ? driver.clean : driver.smudge;
-		if (!fn) return content;
-
-		try {
-			const out = await fn(cap, { path, content, direction, blobOid });
-			return out == null ? content : out;
-		} catch (err) {
-			if (driver.required) {
-				throw new FilterError(`${direction} filter '${name}' failed for '${path}'`, {
-					cause: err,
-				});
-			}
-			return content;
-		}
-	}
-
-	return {
-		clean: (path, content) => run("clean", path, content),
-		smudge: (path, content, blobOid) => run("smudge", path, content, blobOid),
-	};
 }
