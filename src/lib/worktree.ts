@@ -7,7 +7,14 @@ import { isInsideWorkTree, verifyPath, verifySymlinkTarget } from "./path-safety
 import { dirname, join } from "./path.ts";
 import { hashWorktreeEntry, isSubmoduleMode, isSymlinkMode, lstatSafe } from "./symlink.ts";
 import { flattenTree } from "./tree-ops.ts";
-import type { GitContext, Index, IndexEntry, ObjectId, WorkTreeDiff } from "./types.ts";
+import type {
+	GitContext,
+	GitOperation,
+	Index,
+	IndexEntry,
+	ObjectId,
+	WorkTreeDiff,
+} from "./types.ts";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -90,6 +97,29 @@ export async function diffIndexToWorkTree(ctx: GitContext, index: Index): Promis
 	}
 
 	return results.sort((a, b) => comparePaths(a.path, b.path));
+}
+
+/**
+ * Read a worktree file normalized to its blob (clean) form — the representation
+ * git diffs and hashes against the index/tree. Mirrors {@link readWorktreeContent}
+ * but runs the path's `.clean` filter when an `attributes` capability resolves
+ * one, so a clean filter neither surfaces spurious diffs nor leaks
+ * un-normalized worktree bytes. Symlinks are never filtered (their "content" is
+ * the link target). The no-capability path stays a plain read.
+ */
+export async function readCleanedWorktreeContent(
+	ctx: GitContext,
+	fullPath: string,
+	relPath: string,
+	operation: GitOperation,
+): Promise<Uint8Array> {
+	const st = await lstatSafe(ctx.fs, fullPath);
+	if (st.isSymbolicLink && ctx.fs.readlink) {
+		return encoder.encode(await ctx.fs.readlink(fullPath));
+	}
+	const raw = await ctx.fs.readFileBuffer(fullPath);
+	const filters = await resolveAttributes(ctx, operation);
+	return filters ? filters.clean(relPath, raw) : raw;
 }
 
 // ── Checkout ────────────────────────────────────────────────────────

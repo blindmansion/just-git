@@ -26,12 +26,11 @@ import {
 import { join } from "../lib/path.ts";
 import { matchPathspecs, type Pathspec, parsePathspec } from "../lib/pathspec.ts";
 import { parseRangeSyntax } from "../lib/range-syntax.ts";
-import { readWorktreeContent } from "../lib/symlink.ts";
 import { resolveHead } from "../lib/refs.ts";
 import { detectRenames, formatRenamePath, type RenamePair } from "../lib/rename-detection.ts";
 import { diffTrees, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, IndexEntry, ObjectId, TreeDiffEntry } from "../lib/types.ts";
-import { diffIndexToWorkTree } from "../lib/worktree.ts";
+import { diffIndexToWorkTree, readCleanedWorktreeContent } from "../lib/worktree.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 
 const decoder = new TextDecoder();
@@ -227,7 +226,7 @@ async function collectUnstaged(
 		let newHash: string | undefined;
 		if (diff.status === "modified" && gitCtx.workTree) {
 			const fullPath = join(gitCtx.workTree, diff.path);
-			const bytes = await gitCtx.fs.readFileBuffer(fullPath);
+			const bytes = await readCleanedWorktreeContent(gitCtx, fullPath, diff.path, "status");
 			newHash = await hashObject("blob", bytes);
 		}
 
@@ -276,7 +275,7 @@ async function collectUnmergedItems(
 	if (workTree && s2 && s3) {
 		const mode2 = fmtMode(s2.mode);
 		const mode3 = fmtMode(s3.mode);
-		const { exists: wtExists, hash: wtHash } = await hashWorkTreeFile(gitCtx.fs, workTree, path);
+		const { exists: wtExists, hash: wtHash } = await hashWorkTreeFile(gitCtx, workTree, path);
 
 		items.push({
 			path,
@@ -296,19 +295,19 @@ async function collectUnmergedItems(
 
 	if (workTree && s2) {
 		const mode = fmtMode(s2.mode);
-		const { exists: wtExists, hash: wtHash } = await hashWorkTreeFile(gitCtx.fs, workTree, path);
+		const { exists: wtExists, hash: wtHash } = await hashWorkTreeFile(gitCtx, workTree, path);
 		appendWorkTreeDelta(items, path, s2.hash, mode, wtExists, wtHash);
 	}
 }
 
 async function hashWorkTreeFile(
-	fs: GitContext["fs"],
+	gitCtx: GitContext,
 	workTree: string,
 	relPath: string,
 ): Promise<{ exists: boolean; hash?: string }> {
 	const fullPath = join(workTree, relPath);
-	if (!(await fs.exists(fullPath))) return { exists: false };
-	const bytes = await readWorktreeContent(fs, fullPath);
+	if (!(await gitCtx.fs.exists(fullPath))) return { exists: false };
+	const bytes = await readCleanedWorktreeContent(gitCtx, fullPath, relPath, "status");
 	return { exists: true, hash: await hashObject("blob", bytes) };
 }
 
@@ -516,7 +515,7 @@ async function collectCommitToWorkTree(
 			continue;
 		}
 
-		const content = await gitCtx.fs.readFileBuffer(fullPath);
+		const content = await readCleanedWorktreeContent(gitCtx, fullPath, path, "status");
 		const workTreeHash = await hashObject("blob", content);
 
 		if (workTreeHash !== entry.hash) {
@@ -538,7 +537,7 @@ async function collectCommitToWorkTree(
 		const fullPath = join(workTree, path);
 		if (!(await gitCtx.fs.exists(fullPath))) continue;
 
-		const content = await gitCtx.fs.readFileBuffer(fullPath);
+		const content = await readCleanedWorktreeContent(gitCtx, fullPath, path, "status");
 		const newHash = await hashObject("blob", content);
 
 		items.push({
@@ -817,7 +816,7 @@ async function readNewContentStr(gitCtx: GitContext, item: DiffFileResult): Prom
 	if (!item.newHash) return "";
 	if (item.newFromWorkTree && gitCtx.workTree) {
 		const fullPath = join(gitCtx.workTree, item.path);
-		const bytes = await readWorktreeContent(gitCtx.fs, fullPath);
+		const bytes = await readCleanedWorktreeContent(gitCtx, fullPath, item.path, "status");
 		return decoder.decode(bytes);
 	}
 	return readBlobContent(gitCtx, item.newHash);
@@ -827,7 +826,7 @@ async function readNewContentBytes(gitCtx: GitContext, item: DiffFileResult): Pr
 	if (!item.newHash) return new Uint8Array(0);
 	if (item.newFromWorkTree && gitCtx.workTree) {
 		const fullPath = join(gitCtx.workTree, item.path);
-		return readWorktreeContent(gitCtx.fs, fullPath);
+		return readCleanedWorktreeContent(gitCtx, fullPath, item.path, "status");
 	}
 	return readBlobBytes(gitCtx, item.newHash);
 }

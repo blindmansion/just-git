@@ -265,6 +265,45 @@ describe("filters — bindAttributes", () => {
 	});
 });
 
+describe("filters — diff normalizes worktree content (Seam E)", () => {
+	test("no spurious diff: cleaned worktree matches the stored blob", async () => {
+		const { bash } = await setupRepo({
+			filters: secretFilters,
+			files: { ".gitattributes": "*.conf filter=secret\n", "app.conf": "SECRET=hunter2\n" },
+		});
+		await bash.exec("git add .", { env: TEST_ENV });
+		await bash.exec('git commit -m "init"', { env: TEST_ENV });
+
+		// The worktree still holds the secret form (hunter2); the blob is
+		// redacted. Without cleaning the worktree side, diff would report a
+		// bogus modification.
+		const res = await bash.exec("git diff", { env: TEST_ENV });
+		expect(res.stdout.trim()).toBe("");
+
+		// Same for commit↔worktree (collectCommitToWorkTree).
+		const head = await bash.exec("git diff HEAD", { env: TEST_ENV });
+		expect(head.stdout.trim()).toBe("");
+	});
+
+	test("diff shows the cleaned representation, never the raw secret", async () => {
+		const { bash } = await setupRepo({
+			filters: secretFilters,
+			files: { ".gitattributes": "*.conf filter=secret\n", "app.conf": "SECRET=hunter2\n" },
+		});
+		await bash.exec("git add .", { env: TEST_ENV });
+		await bash.exec('git commit -m "init"', { env: TEST_ENV });
+
+		// Add a new secret-bearing line in the worktree.
+		await bash.writeFile("/repo/app.conf", "SECRET=hunter2\nNEW=hunter2\n");
+		const res = await bash.exec("git diff", { env: TEST_ENV });
+
+		// The added line is shown in its cleaned (redacted) form…
+		expect(res.stdout).toContain("+NEW=__REDACTED__");
+		// …and the raw secret never leaks into diff output.
+		expect(res.stdout).not.toContain("hunter2");
+	});
+});
+
 describe("attributes provider", () => {
 	async function providerFor(files: Record<string, string>) {
 		const fs = new InMemoryFs();
