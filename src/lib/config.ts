@@ -749,7 +749,7 @@ export async function buildCapabilityContext(
 	};
 }
 
-function isGitContext(handle: GitRepo | GitContext): handle is GitContext {
+export function isGitContext(handle: GitRepo | GitContext): handle is GitContext {
 	return "fs" in handle && "gitDir" in handle;
 }
 
