@@ -4,6 +4,8 @@ import { FilterError } from "./filters.ts";
 import type { ContentMergeFn } from "./merge-ort.ts";
 import type { GitContext, GitOperation, GitRepo, ObjectId } from "./types.ts";
 
+const encoder = new TextEncoder();
+
 /**
  * The context-bound, path-aware accessor threaded through the engine — the one
  * handle both threading patterns read (merge threads it as a param; the
@@ -32,6 +34,28 @@ export interface BoundAttributes {
 	 * `path` it needs is already carried in the `MergeDriverInput`.
 	 */
 	merge?: ContentMergeFn;
+	/**
+	 * Resolve the path's `diff=<driver>` presentation — the display-only half of
+	 * attributes. Returns `undefined` when no diff driver applies (the formatter
+	 * keeps its built-in binariness/funcname defaults). The returned
+	 * {@link BoundDiff} carries the binary override and funcname regex as plain
+	 * data, plus a ctx-bound {@link BoundDiff.textconv} runner.
+	 */
+	diff(path: string): Promise<BoundDiff | undefined>;
+}
+
+/**
+ * The resolved, ctx-bound diff presentation for one path (the display-only
+ * fields of a {@link DiffDriver}). `binary` overrides content sniffing
+ * (`true` ⇒ "Binary files differ", `false` ⇒ force textual); `funcname` overrides
+ * the hunk-header scan; `textconv` (present only when the driver defines one)
+ * converts a blob to its display text with the capability context baked in.
+ */
+export interface BoundDiff {
+	binary?: boolean;
+	funcname?: RegExp;
+	/** Run the driver's textconv (blob → display bytes); identity if it declines. */
+	textconv?: (content: Uint8Array, blobOid?: ObjectId) => Promise<Uint8Array>;
 }
 
 /**
@@ -88,10 +112,28 @@ export async function bindAttributes(
 		return driver(ctx, input);
 	};
 
+	const diff = async (path: string): Promise<BoundDiff | undefined> => {
+		const { diff: driver } = await resolver!(ctx, path);
+		if (!driver) return undefined;
+		const convert = driver.textconv;
+		return {
+			binary: driver.binary,
+			funcname: driver.funcname,
+			textconv: convert
+				? async (content, blobOid) => {
+						const out = await convert(ctx, { path, content, blobOid });
+						if (out == null) return content;
+						return typeof out === "string" ? encoder.encode(out) : out;
+					}
+				: undefined,
+		};
+	};
+
 	return {
 		clean: (path, content) => runFilter("clean", path, content),
 		smudge: (path, content, blobOid) => runFilter("smudge", path, content, blobOid),
 		merge,
+		diff,
 	};
 }
 

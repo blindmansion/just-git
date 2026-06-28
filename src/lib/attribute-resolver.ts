@@ -3,7 +3,7 @@ import { parseAttributesText } from "./attributes.ts";
 import { diff3Merge, splitLinesWithSentinel, stripSentinel } from "./diff3.ts";
 import type { FilterDriver } from "./filters.ts";
 import type { MergeDriver, MergeDriverInput, MergeDriverResult } from "./merge-ort.ts";
-import type { CapabilityContext } from "./types.ts";
+import type { CapabilityContext, ObjectId } from "./types.ts";
 
 // ── The seam ────────────────────────────────────────────────────────
 
@@ -36,7 +36,61 @@ export interface ResolvedAttributes {
 	filter?: FilterDriver;
 	/** Attribute-selected merge driver (per-path). */
 	merge?: MergeDriver;
-	// diff / text / eol / ident … land here as consumers arrive (later phases).
+	/** Display-only diff customization (textconv / binariness / hunk headers). */
+	diff?: DiffDriver;
+	// text / eol / ident … land here as consumers arrive (later phases).
+}
+
+// ── Diff drivers (display-only) ─────────────────────────────────────
+
+/**
+ * A `diff=<name>` driver — the **read-only / display-only** half of attributes.
+ * Unlike a {@link FilterDriver} (which rewrites stored bytes), nothing here
+ * changes content: it only customizes how a diff is *rendered*. Selected by the
+ * `diff` attribute (`diff=<name>` for a named driver; the boolean forms `diff` /
+ * `-diff` map onto {@link binary} below).
+ *
+ * The high-value field for agent workflows is {@link textconv}: convert an
+ * opaque/noisy blob to a compact, stable text form before diffing (LFS pointer →
+ * metadata, minified bundle → pretty, generated file → digest), shrinking the
+ * diff a reader has to consume. (`command` / `wordRegex` — external diff and
+ * `--word-diff` tokenization — are not executed yet; they land when a consumer
+ * exists.)
+ */
+export interface DiffDriver {
+	/**
+	 * Force binariness, overriding content sniffing. `true` ⇒ treat as binary
+	 * (`Binary files differ`, the `-diff` attribute); `false` ⇒ force a textual
+	 * diff even if the bytes look binary (the `diff` attribute); `undefined` ⇒
+	 * auto-detect as usual.
+	 */
+	binary?: boolean;
+	/**
+	 * Convert a blob to its text representation *before* diffing — git's
+	 * `diff.<name>.textconv`. Display-only and cacheable by `blobOid`. Return the
+	 * converted bytes/text, or `null` to decline (use the raw content unchanged).
+	 */
+	textconv?: (
+		ctx: CapabilityContext,
+		input: DiffTextconvInput,
+	) => Uint8Array | string | null | Promise<Uint8Array | string | null>;
+	/**
+	 * Hunk-header pattern — git's `diff.<name>.xfuncname`. Lines matching this
+	 * regex become the `@@ … <here> @@` context shown above each hunk, giving an
+	 * agent semantic locality without reading the surrounding body. Overrides the
+	 * built-in default funcname scan.
+	 */
+	funcname?: RegExp;
+}
+
+/** Per-blob input to a {@link DiffDriver.textconv}. */
+export interface DiffTextconvInput {
+	/** Repo-relative path — the `.gitattributes` lookup key. */
+	path: string;
+	/** Blob bytes to convert. */
+	content: Uint8Array;
+	/** Blob OID, when diffing a stored object (absent for worktree content). */
+	blobOid?: ObjectId;
 }
 
 // ── The shipped default: a helper that PRODUCES a resolver ───────────
@@ -51,6 +105,11 @@ export interface GitAttributesOptions {
 	 * of the same name.
 	 */
 	mergeDrivers?: Record<string, MergeDriver>;
+	/**
+	 * `name → diff driver` registry, selected by `diff=<name>`. The boolean
+	 * attribute forms need no registry: `-diff` ⇒ binary, `diff` ⇒ force textual.
+	 */
+	diffDrivers?: Record<string, DiffDriver>;
 	/**
 	 * Host policy in `.gitattributes` format, layered ABOVE in-tree attributes —
 	 * an untrusted in-tree `.gitattributes` cannot override it.
@@ -77,6 +136,7 @@ export function gitAttributes(opts: GitAttributesOptions = {}): AttributeResolve
 		: undefined;
 	const filters = opts.filters ?? {};
 	const mergeDrivers = { ...BUILTIN_MERGE_DRIVERS, ...opts.mergeDrivers };
+	const diffDrivers = opts.diffDrivers ?? {};
 
 	return async (ctx, path) => {
 		const attr = async (name: string): Promise<AttrValue> => {
@@ -99,6 +159,17 @@ export function gitAttributes(opts: GitAttributesOptions = {}): AttributeResolve
 		const mergeName = await attr("merge");
 		if (typeof mergeName === "string" && mergeDrivers[mergeName]) {
 			resolved.merge = mergeDrivers[mergeName];
+		}
+
+		const diffAttr = await attr("diff");
+		if (diffAttr === false) {
+			// `-diff`: treat the path as binary.
+			resolved.diff = { binary: true };
+		} else if (diffAttr === true) {
+			// `diff`: force a textual diff regardless of content sniffing.
+			resolved.diff = { binary: false };
+		} else if (typeof diffAttr === "string" && diffDrivers[diffAttr]) {
+			resolved.diff = diffDrivers[diffAttr];
 		}
 
 		return resolved;

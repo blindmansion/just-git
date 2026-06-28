@@ -12,13 +12,21 @@ import {
 import { computeDiffStats, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
 import { formatDate } from "../lib/date.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algorithm.ts";
+import { boundDiffAttributes, resolveDiffPresentation } from "../lib/diff-driver.ts";
 import {
 	expandFormat,
 	type FormatContext,
 	formatPreset,
 	parseFormatArg,
 } from "../lib/log-format.ts";
-import { isBinaryStr, readBlobContent, readCommit, readObject, readTag } from "../lib/object-db.ts";
+import {
+	isBinaryStr,
+	readBlobBytes,
+	readBlobContent,
+	readCommit,
+	readObject,
+	readTag,
+} from "../lib/object-db.ts";
 import { detectRenames, formatRenamePath, type RenamePair } from "../lib/rename-detection.ts";
 import { parseRevPath } from "../lib/rev-parse.ts";
 import { parseTree } from "../lib/objects/tree.ts";
@@ -417,34 +425,48 @@ async function showNumstat(
 // ── Patch formatting helpers ────────────────────────────────────────
 
 async function formatTreeDiff(ctx: GitRepo, diff: TreeDiffEntry): Promise<string> {
-	const oldContent = diff.oldHash ? await readBlobContent(ctx, diff.oldHash) : "";
-	const newContent = diff.newHash ? await readBlobContent(ctx, diff.newHash) : "";
+	const oldBytes = diff.oldHash ? await readBlobBytes(ctx, diff.oldHash) : new Uint8Array(0);
+	const newBytes = diff.newHash ? await readBlobBytes(ctx, diff.newHash) : new Uint8Array(0);
+	const pres = await resolveDiffPresentation(
+		await boundDiffAttributes(ctx),
+		diff.path,
+		oldBytes,
+		diff.oldHash,
+		newBytes,
+		diff.newHash,
+	);
 
 	return formatUnifiedDiff({
 		path: diff.path,
-		oldContent,
-		newContent,
 		oldMode: diff.oldMode,
 		newMode: diff.newMode,
 		oldHash: diff.oldHash,
 		newHash: diff.newHash,
+		...pres,
 	});
 }
 
 async function formatRenameDiff(ctx: GitRepo, rename: RenamePair): Promise<string> {
-	const oldContent = rename.oldHash ? await readBlobContent(ctx, rename.oldHash) : "";
-	const newContent = rename.newHash ? await readBlobContent(ctx, rename.newHash) : "";
+	const oldBytes = rename.oldHash ? await readBlobBytes(ctx, rename.oldHash) : new Uint8Array(0);
+	const newBytes = rename.newHash ? await readBlobBytes(ctx, rename.newHash) : new Uint8Array(0);
+	const pres = await resolveDiffPresentation(
+		await boundDiffAttributes(ctx),
+		rename.newPath,
+		oldBytes,
+		rename.oldHash,
+		newBytes,
+		rename.newHash,
+	);
 
 	return formatUnifiedDiff({
 		path: rename.oldPath,
-		oldContent,
-		newContent,
 		oldMode: rename.oldMode,
 		newMode: rename.newMode,
 		oldHash: rename.oldHash,
 		newHash: rename.newHash,
 		renameTo: rename.newPath,
 		similarity: rename.similarity,
+		...pres,
 	});
 }
 

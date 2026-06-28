@@ -1161,6 +1161,35 @@ interface FormatOptions {
 	isDeleted?: boolean;
 	/** Number of context lines around each change (default 3). */
 	contextLines?: number;
+	/**
+	 * Hunk-header funcname pattern (a `diff=<driver>`'s `funcname`). When set,
+	 * replaces the built-in default scan for the `@@ … <ctx> @@` context line.
+	 */
+	funcnameRegex?: RegExp;
+	/**
+	 * Force "Binary files differ" regardless of content (the `-diff` attribute).
+	 * Takes precedence over {@link forceTextual}.
+	 */
+	forceBinary?: boolean;
+	/**
+	 * Force a textual diff, skipping binary sniffing (the `diff` attribute, or a
+	 * textconv driver whose output is always text).
+	 */
+	forceTextual?: boolean;
+}
+
+/** Built-in funcname scan: a line starting with a letter, `$`, or `_`. */
+const DEFAULT_FUNCNAME_REGEX = /^[a-zA-Z$_]/;
+
+/**
+ * Decide whether one side renders as binary, honoring a diff driver's override
+ * (`forceBinary` ⇒ always binary, `forceTextual` ⇒ never) before falling back to
+ * git's content sniffing.
+ */
+function resolveBinariness(opts: FormatOptions, content: string): boolean {
+	if (opts.forceBinary) return true;
+	if (opts.forceTextual) return false;
+	return isBinaryStr(content);
 }
 
 function formatHashForIndexLine(hash?: string): string {
@@ -1238,8 +1267,8 @@ export function formatUnifiedDiff(opts: FormatOptions): string {
 	const isRename = opts.renameTo !== undefined;
 	const newPath = opts.renameTo ?? path;
 
-	const oldIsBinary = isBinaryStr(oldContent);
-	const newIsBinary = isBinaryStr(newContent);
+	const oldIsBinary = resolveBinariness(opts, oldContent);
+	const newIsBinary = resolveBinariness(opts, newContent);
 
 	if (oldIsBinary || newIsBinary) {
 		return formatBinaryDiff(opts, oldIsBinary, newIsBinary);
@@ -1334,14 +1363,15 @@ export function formatUnifiedDiff(opts: FormatOptions): string {
 		const oldRange = hunk.oldCount === 1 ? `${hunk.oldStart}` : `${hunk.oldStart},${hunk.oldCount}`;
 		const newRange = hunk.newCount === 1 ? `${hunk.newStart}` : `${hunk.newStart},${hunk.newCount}`;
 
-		// Funcname context: scan backward from hunk start for a line
-		// that begins with a letter, $, or _ (git's default funcname pattern).
+		// Funcname context: scan backward from hunk start for a line matching the
+		// funcname pattern (a `diff=<driver>`'s `funcname`, else git's default).
 		// Git uses XDL_MAX_FUNCNAME (80), showing up to 79 chars.
+		const funcnameRegex = opts.funcnameRegex ?? DEFAULT_FUNCNAME_REGEX;
 		let funcCtx = "";
 		const scanFrom = hunk.oldCount === 0 ? hunk.oldStart - 1 : hunk.oldStart - 2;
 		for (let i = scanFrom; i >= 0; i--) {
 			const line = oldLines[i];
-			if (line && /^[a-zA-Z$_]/.test(line)) {
+			if (line && funcnameRegex.test(line)) {
 				funcCtx = ` ${line.trimEnd().slice(0, 79)}`;
 				break;
 			}

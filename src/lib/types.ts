@@ -430,7 +430,9 @@ export type GitOperation =
 	// Worktree-conversion operations that drive content filters.
 	| "checkout"
 	| "add"
-	| "status";
+	| "status"
+	// Display-only diff rendering (textconv / binariness / hunk headers).
+	| "diff";
 
 /**
  * Read-only view over resolved config: parsed `.git/config` merged with the

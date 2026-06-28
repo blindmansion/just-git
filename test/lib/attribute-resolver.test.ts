@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { everyPath, pipeAttributes } from "../../src/lib/attribute-resolver.ts";
+import {
+	type DiffDriver,
+	everyPath,
+	gitAttributes,
+	pipeAttributes,
+} from "../../src/lib/attribute-resolver.ts";
+import type { AttrValue } from "../../src/lib/attributes.ts";
 import type { FilterDriver } from "../../src/lib/filters.ts";
 import type { MergeDriver } from "../../src/lib/merge-ort.ts";
 import type { CapabilityContext } from "../../src/lib/types.ts";
@@ -46,5 +52,43 @@ describe("pipeAttributes", () => {
 	test("empty pipe resolves to git defaults (no behaviors)", async () => {
 		const resolver = pipeAttributes();
 		expect(await resolver(ctx, "x")).toEqual({});
+	});
+});
+
+describe("gitAttributes — diff= resolution", () => {
+	const upper: DiffDriver = { textconv: (_c, i) => i.content };
+
+	/** A ctx whose in-tree provider reports a fixed value for the `diff` attribute. */
+	const ctxWithDiff = (value: AttrValue): CapabilityContext =>
+		({
+			attributes: {
+				get: async (_p: string, attr: string) => (attr === "diff" ? value : undefined),
+				getAll: async () => new Map(),
+			},
+		}) as unknown as CapabilityContext;
+
+	test("diff=<name> selects the registered driver", async () => {
+		const resolver = gitAttributes({ diffDrivers: { upper } });
+		expect((await resolver(ctxWithDiff("upper"), "f.txt")).diff).toBe(upper);
+	});
+
+	test("diff=<unknown> is passthrough (no driver)", async () => {
+		const resolver = gitAttributes({ diffDrivers: { upper } });
+		expect((await resolver(ctxWithDiff("nope"), "f.txt")).diff).toBeUndefined();
+	});
+
+	test("-diff (false) maps to a force-binary driver", async () => {
+		const resolver = gitAttributes({});
+		expect((await resolver(ctxWithDiff(false), "f.txt")).diff).toEqual({ binary: true });
+	});
+
+	test("diff (true) maps to a force-textual driver", async () => {
+		const resolver = gitAttributes({});
+		expect((await resolver(ctxWithDiff(true), "f.txt")).diff).toEqual({ binary: false });
+	});
+
+	test("unspecified diff resolves to no driver", async () => {
+		const resolver = gitAttributes({ diffDrivers: { upper } });
+		expect((await resolver(ctxWithDiff(undefined), "f.txt")).diff).toBeUndefined();
 	});
 });

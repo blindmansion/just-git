@@ -11,8 +11,10 @@ import {
 	requireGitContext,
 	requireWorkTree,
 } from "../lib/command-utils.ts";
+import { resolveAttributes } from "../lib/bound-attributes.ts";
 import { type FileStat, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algorithm.ts";
+import { resolveDiffPresentation } from "../lib/diff-driver.ts";
 import { getStage0Entries, readIndex } from "../lib/index.ts";
 import { findAllMergeBases } from "../lib/merge.ts";
 import {
@@ -640,18 +642,26 @@ async function formatAsUnified(
 
 	// Pass 2: regular diffs — skip unmerged entries and worktree-vs-stage2
 	// diffs whose path already got a combined diff above.
+	const bound = await resolveAttributes(gitCtx, "diff");
 	for (const item of items) {
 		if (item.status === "U") continue;
 		if (combinedDiffPaths.has(item.path)) continue;
 
-		const oldContent = item.oldHash ? await readBlobContent(gitCtx, item.oldHash) : "";
-		const newContent = await readNewContentStr(gitCtx, item);
+		const oldBytes = item.oldHash ? await readBlobBytes(gitCtx, item.oldHash) : new Uint8Array(0);
+		const newBytes = await readNewContentBytes(gitCtx, item);
+		const newOid = item.newFromWorkTree ? undefined : item.newHash;
+		const pres = await resolveDiffPresentation(
+			bound,
+			item.path,
+			oldBytes,
+			item.oldHash,
+			newBytes,
+			newOid,
+		);
 
 		if (item.status === "R" && item.oldPath) {
 			output += formatUnifiedDiff({
 				path: item.oldPath,
-				oldContent,
-				newContent,
 				oldMode: item.oldMode,
 				newMode: item.newMode,
 				oldHash: abbreviateDiffHash(item.oldHash, hashAbbrevs),
@@ -659,12 +669,11 @@ async function formatAsUnified(
 				renameTo: item.path,
 				similarity: item.similarity,
 				contextLines,
+				...pres,
 			});
 		} else {
 			output += formatUnifiedDiff({
 				path: item.path,
-				oldContent,
-				newContent,
 				oldMode: item.oldMode,
 				newMode: item.newMode,
 				oldHash: abbreviateDiffHash(item.oldHash, hashAbbrevs),
@@ -672,6 +681,7 @@ async function formatAsUnified(
 				isNew: item.status === "A",
 				isDeleted: item.status === "D",
 				contextLines,
+				...pres,
 			});
 		}
 	}
