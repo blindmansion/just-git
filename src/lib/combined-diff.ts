@@ -20,7 +20,11 @@ interface CombinedDiffEntryOpts {
 	resultHash: string | null;
 	resultMode: string | null;
 	resultContent: string;
+	/** Hunk-header pattern from a `diff=<driver>` funcname; defaults to the built-in. */
+	funcnameRegex?: RegExp;
 }
+
+const DEFAULT_FUNCNAME_REGEX = /^[a-zA-Z$_]/;
 
 /**
  * Format a single file's combined diff (`diff --cc`) entry.
@@ -69,7 +73,12 @@ export function formatCombinedDiffEntry(opts: CombinedDiffEntryOpts): string {
 
 	const combinedLines = buildCombinedLines(parentContentLines, resultContentLines, edits);
 
-	const hunks = buildCombinedHunks(combinedLines, parentContentLines.length, resultContentLines);
+	const hunks = buildCombinedHunks(
+		combinedLines,
+		parentContentLines.length,
+		resultContentLines,
+		opts.funcnameRegex ?? DEFAULT_FUNCNAME_REGEX,
+	);
 	if (hunks.length === 0) return "";
 	for (const hunk of hunks) {
 		lines.push(hunk);
@@ -249,6 +258,7 @@ function buildCombinedHunks(
 	combinedLines: CombinedLine[],
 	numParents: number,
 	resultContent: string[],
+	funcnameRegex: RegExp,
 ): string[] {
 	const CONTEXT = 3;
 
@@ -311,7 +321,7 @@ function buildCombinedHunks(
 		let funcCtx = "";
 		for (let i = resultStart - 2; i >= 0; i--) {
 			const line = resultContent[i];
-			if (line && /^[a-zA-Z$_]/.test(line)) {
+			if (line && funcnameRegex.test(line)) {
 				funcCtx = ` ${line.trimEnd().slice(0, 79)}`;
 				break;
 			}

@@ -2,9 +2,11 @@
  * Shared commit summary formatting (shortstat + mode lines).
  * Used by git commit, git cherry-pick, and git merge.
  */
+import type { BoundAttributes } from "./bound-attributes.ts";
 import { formatDate } from "./date.ts";
 import { myersDiff, splitLinesWithNL } from "./diff-algorithm.ts";
-import { isBinaryBytes, isBinaryStr, readBlobBytes, readBlobContent } from "./object-db.ts";
+import { resolveDiffStat } from "./diff-driver.ts";
+import { readBlobBytes } from "./object-db.ts";
 import { detectRenames, formatRenamePath, type RenamePair } from "./rename-detection.ts";
 import { diffTrees } from "./tree-ops.ts";
 import type { GitRepo, Identity, ObjectId, TreeDiffEntry } from "./types.ts";
@@ -46,24 +48,44 @@ export function formatShortstatParts(
 	return ` ${parts.join(", ")}`;
 }
 
+/** Count insertions/deletions between two decoded sides. */
+function countEdits(oldText: string, newText: string): { ins: number; del: number } {
+	const edits = myersDiff(splitLinesWithNL(oldText), splitLinesWithNL(newText));
+	let ins = 0;
+	let del = 0;
+	for (const edit of edits) {
+		if (edit.type === "insert") ins++;
+		else if (edit.type === "delete") del++;
+	}
+	return { ins, del };
+}
+
 /**
  * Compute per-file diff stats (insertions/deletions/binary info) and
  * mode lines for a set of tree diffs and renames. Shared by
  * formatCommitSummary and formatDiffStat.
+ *
+ * `bound` (optional) routes binariness + textconv through the path's
+ * `diff=<driver>`, so `git diff`/`show`/`log` `--stat`/`--numstat` honor the
+ * driver. Callers that summarize *committed* bytes (commit/merge summaries) pass
+ * nothing and stay raw.
  */
 export async function computeDiffStats(
 	ctx: GitRepo,
 	diffs: TreeDiffEntry[],
 	renames: RenamePair[],
+	bound?: BoundAttributes,
 ): Promise<{ fileStats: FileStat[]; modeLines: string[] }> {
 	const fileStats: FileStat[] = [];
 	const createModes: { path: string; mode: string }[] = [];
 	const deleteModes: { path: string; mode: string }[] = [];
+	const empty = new Uint8Array(0);
 
 	for (const diff of diffs) {
 		if (diff.status === "added" && diff.newHash && diff.newMode) {
-			const bytes = await readBlobBytes(ctx, diff.newHash);
-			if (isBinaryBytes(bytes)) {
+			const raw = await readBlobBytes(ctx, diff.newHash);
+			const st = await resolveDiffStat(bound, diff.path, empty, undefined, raw, diff.newHash);
+			if (st.binary) {
 				fileStats.push({
 					path: diff.path,
 					sortKey: diff.path,
@@ -71,27 +93,28 @@ export async function computeDiffStats(
 					deletions: 0,
 					isBinary: true,
 					oldSize: 0,
-					newSize: bytes.byteLength,
+					newSize: st.newBytes.byteLength,
 				});
 			} else {
 				fileStats.push({
 					path: diff.path,
 					sortKey: diff.path,
-					insertions: countLines(textDecoder.decode(bytes)),
+					insertions: countLines(textDecoder.decode(st.newBytes)),
 					deletions: 0,
 				});
 			}
 			createModes.push({ path: diff.path, mode: diff.newMode });
 		} else if (diff.status === "deleted" && diff.oldHash && diff.oldMode) {
-			const bytes = await readBlobBytes(ctx, diff.oldHash);
-			if (isBinaryBytes(bytes)) {
+			const raw = await readBlobBytes(ctx, diff.oldHash);
+			const st = await resolveDiffStat(bound, diff.path, raw, diff.oldHash, empty, undefined);
+			if (st.binary) {
 				fileStats.push({
 					path: diff.path,
 					sortKey: diff.path,
 					insertions: 0,
 					deletions: 0,
 					isBinary: true,
-					oldSize: bytes.byteLength,
+					oldSize: st.oldBytes.byteLength,
 					newSize: 0,
 				});
 			} else {
@@ -99,33 +122,36 @@ export async function computeDiffStats(
 					path: diff.path,
 					sortKey: diff.path,
 					insertions: 0,
-					deletions: countLines(textDecoder.decode(bytes)),
+					deletions: countLines(textDecoder.decode(st.oldBytes)),
 				});
 			}
 			deleteModes.push({ path: diff.path, mode: diff.oldMode });
 		} else if (diff.status === "modified" && diff.oldHash && diff.newHash) {
-			const oldBytes = await readBlobBytes(ctx, diff.oldHash);
-			const newBytes = await readBlobBytes(ctx, diff.newHash);
-			if (isBinaryBytes(oldBytes) || isBinaryBytes(newBytes)) {
+			const oldRaw = await readBlobBytes(ctx, diff.oldHash);
+			const newRaw = await readBlobBytes(ctx, diff.newHash);
+			const st = await resolveDiffStat(
+				bound,
+				diff.path,
+				oldRaw,
+				diff.oldHash,
+				newRaw,
+				diff.newHash,
+			);
+			if (st.binary) {
 				fileStats.push({
 					path: diff.path,
 					sortKey: diff.path,
 					insertions: 0,
 					deletions: 0,
 					isBinary: true,
-					oldSize: oldBytes.byteLength,
-					newSize: newBytes.byteLength,
+					oldSize: st.oldBytes.byteLength,
+					newSize: st.newBytes.byteLength,
 				});
 			} else {
-				const oldLines = splitLinesWithNL(textDecoder.decode(oldBytes));
-				const newLines = splitLinesWithNL(textDecoder.decode(newBytes));
-				const edits = myersDiff(oldLines, newLines);
-				let ins = 0;
-				let del = 0;
-				for (const edit of edits) {
-					if (edit.type === "insert") ins++;
-					else if (edit.type === "delete") del++;
-				}
+				const { ins, del } = countEdits(
+					textDecoder.decode(st.oldBytes),
+					textDecoder.decode(st.newBytes),
+				);
 				fileStats.push({
 					path: diff.path,
 					sortKey: diff.path,
@@ -145,16 +171,21 @@ export async function computeDiffStats(
 		let ins = 0;
 		let del = 0;
 		if (rename.similarity < 100 && rename.oldHash && rename.newHash) {
-			const oldContent = await readBlobContent(ctx, rename.oldHash);
-			const newContent = await readBlobContent(ctx, rename.newHash);
-			if (!isBinaryStr(oldContent) && !isBinaryStr(newContent)) {
-				const oldLines = splitLinesWithNL(oldContent);
-				const newLines = splitLinesWithNL(newContent);
-				const edits = myersDiff(oldLines, newLines);
-				for (const edit of edits) {
-					if (edit.type === "insert") ins++;
-					else if (edit.type === "delete") del++;
-				}
+			const oldRaw = await readBlobBytes(ctx, rename.oldHash);
+			const newRaw = await readBlobBytes(ctx, rename.newHash);
+			const st = await resolveDiffStat(
+				bound,
+				rename.newPath,
+				oldRaw,
+				rename.oldHash,
+				newRaw,
+				rename.newHash,
+			);
+			if (!st.binary) {
+				({ ins, del } = countEdits(
+					textDecoder.decode(st.oldBytes),
+					textDecoder.decode(st.newBytes),
+				));
 			}
 		}
 		fileStats.push({

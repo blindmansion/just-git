@@ -145,3 +145,83 @@ describe("diff drivers — funcname (Phase 6)", () => {
 		expect(res.stdout).not.toContain("# Heading");
 	});
 });
+
+describe("diff drivers — summary formats honor the driver (Phase 6 follow-up)", () => {
+	test("--numstat reports '-' for a -diff (binary) path, matching the patch", async () => {
+		const bash = await setup({ ".gitattributes": "*.txt -diff\n", "f.txt": "one\n" }, {});
+		await bash.exec("git add .", { env: TEST_ENV });
+		await bash.exec("git commit -m init", { env: TEST_ENV });
+		await bash.writeFile("/repo/f.txt", "two\n");
+
+		const res = await bash.exec("git diff --numstat", { env: TEST_ENV });
+		// -diff ⇒ treated as binary ⇒ "-\t-", not real line counts.
+		expect(res.stdout).toBe("-\t-\tf.txt\n");
+	});
+
+	test("--numstat counts real lines for a forced-textual (diff) NUL path", async () => {
+		const bash = await setup({ ".gitattributes": "*.bin diff\n", "f.bin": "a\u0000b\n" }, {});
+		await bash.exec("git add .", { env: TEST_ENV });
+		await bash.exec("git commit -m init", { env: TEST_ENV });
+		await bash.writeFile("/repo/f.bin", "a\u0000c\n");
+
+		const res = await bash.exec("git diff --numstat", { env: TEST_ENV });
+		// Forced textual ⇒ real 1/1 counts instead of the binary "-\t-".
+		expect(res.stdout).toBe("1\t1\tf.bin\n");
+	});
+
+	test("--numstat counts the textconv'd content, agreeing with the patch", async () => {
+		// mask collapses both SECRET values to the same masked form ⇒ no real change.
+		const bash = await setup(
+			{ ".gitattributes": "*.env diff=mask\n", "app.env": "SECRET=old\n" },
+			{ mask },
+		);
+		await bash.exec("git add .", { env: TEST_ENV });
+		await bash.exec("git commit -m init", { env: TEST_ENV });
+		await bash.writeFile("/repo/app.env", "SECRET=brandnew\n");
+
+		const res = await bash.exec("git diff --numstat", { env: TEST_ENV });
+		// Masked form identical on both sides ⇒ 0/0, matching the empty patch.
+		expect(res.stdout).toBe("0\t0\tapp.env\n");
+	});
+
+	test("--stat shows a Bin line for a -diff path", async () => {
+		const bash = await setup({ ".gitattributes": "*.txt -diff\n", "f.txt": "one\n" }, {});
+		await bash.exec("git add .", { env: TEST_ENV });
+		await bash.exec("git commit -m init", { env: TEST_ENV });
+		await bash.writeFile("/repo/f.txt", "two\n");
+
+		const res = await bash.exec("git diff --stat", { env: TEST_ENV });
+		expect(res.stdout).toContain("Bin");
+		expect(res.stdout).not.toContain("| 2 +-");
+	});
+});
+
+describe("diff drivers — combined diff honors the driver (Phase 6 follow-up)", () => {
+	test("git diff --cc masks a conflicting secret instead of leaking it", async () => {
+		const bash = await setup(
+			{ ".gitattributes": "*.env diff=mask\n", "app.env": "SECRET=base\n" },
+			{ mask },
+		);
+		await bash.exec("git add .", { env: TEST_ENV });
+		await bash.exec("git commit -m init", { env: TEST_ENV });
+
+		await bash.exec("git checkout -b feature", { env: TEST_ENV });
+		await bash.writeFile("/repo/app.env", "SECRET=fromFeature\n");
+		await bash.exec("git commit -am feature", { env: TEST_ENV });
+
+		await bash.exec("git checkout main", { env: TEST_ENV });
+		await bash.writeFile("/repo/app.env", "SECRET=fromMain\n");
+		await bash.exec("git commit -am main", { env: TEST_ENV });
+
+		// Conflicting merge leaves app.env unmerged ⇒ `git diff` emits a combined diff.
+		await bash.exec("git merge feature", { env: TEST_ENV });
+
+		const res = await bash.exec("git diff", { env: TEST_ENV });
+		expect(res.stdout).toContain("diff --cc app.env");
+		// The raw conflicting secret values never reach the combined diff output.
+		expect(res.stdout).not.toContain("fromFeature");
+		expect(res.stdout).not.toContain("fromMain");
+		// The masked form is what appears instead.
+		expect(res.stdout).toContain("SECRET=***");
+	});
+});

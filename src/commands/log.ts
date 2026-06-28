@@ -10,7 +10,11 @@ import { computeDiffStats, formatShortstatParts, renderStatLines } from "../lib/
 import { CommitHeap, walkCommits } from "../lib/commit-walk.ts";
 import { parseDate } from "../lib/date.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algorithm.ts";
-import { boundDiffAttributes, resolveDiffPresentation } from "../lib/diff-driver.ts";
+import {
+	boundDiffAttributes,
+	resolveDiffPresentation,
+	resolveDiffStat,
+} from "../lib/diff-driver.ts";
 import { CommitGraph } from "../lib/graph.ts";
 import {
 	type DateMode,
@@ -20,13 +24,7 @@ import {
 	parseFormatArg,
 } from "../lib/log-format.ts";
 import { findAllMergeBases } from "../lib/merge.ts";
-import {
-	isBinaryStr,
-	peelToCommit,
-	readBlobBytes,
-	readBlobContent,
-	readCommit,
-} from "../lib/object-db.ts";
+import { peelToCommit, readBlobBytes, readCommit } from "../lib/object-db.ts";
 import type { Pathspec } from "../lib/pathspec.ts";
 import { matchPathspecs, parsePathspec } from "../lib/pathspec.ts";
 import { parseRangeSyntax } from "../lib/range-syntax.ts";
@@ -36,6 +34,8 @@ import { resolveRevision } from "../lib/rev-parse.ts";
 import { diffTrees } from "../lib/tree-ops.ts";
 import type { Commit, GitRepo, ObjectId, TreeDiffEntry } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+
+const decoder = new TextDecoder();
 
 type LogDiffFormat =
 	| "name-status"
@@ -725,7 +725,12 @@ async function logStat(
 	renames: RenamePair[],
 	statWidth?: number,
 ): Promise<string> {
-	const { fileStats } = await computeDiffStats(ctx, remaining, renames);
+	const { fileStats } = await computeDiffStats(
+		ctx,
+		remaining,
+		renames,
+		await boundDiffAttributes(ctx),
+	);
 	fileStats.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
 	return renderStatLines(fileStats, statWidth);
 }
@@ -735,7 +740,12 @@ async function logShortstat(
 	remaining: TreeDiffEntry[],
 	renames: RenamePair[],
 ): Promise<string> {
-	const { fileStats } = await computeDiffStats(ctx, remaining, renames);
+	const { fileStats } = await computeDiffStats(
+		ctx,
+		remaining,
+		renames,
+		await boundDiffAttributes(ctx),
+	);
 	let totalIns = 0;
 	let totalDel = 0;
 	for (const s of fileStats) {
@@ -765,15 +775,24 @@ async function logNumstat(
 	}
 	items.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 
+	const bound = await boundDiffAttributes(ctx);
 	let out = "";
 	for (const item of items) {
-		const oldContent = item.oldHash ? await readBlobContent(ctx, item.oldHash) : "";
-		const newContent = item.newHash ? await readBlobContent(ctx, item.newHash) : "";
-		if (isBinaryStr(oldContent) || isBinaryStr(newContent)) {
+		const oldBytes = item.oldHash ? await readBlobBytes(ctx, item.oldHash) : new Uint8Array(0);
+		const newBytes = item.newHash ? await readBlobBytes(ctx, item.newHash) : new Uint8Array(0);
+		const st = await resolveDiffStat(
+			bound,
+			item.key,
+			oldBytes,
+			item.oldHash,
+			newBytes,
+			item.newHash,
+		);
+		if (st.binary) {
 			out += `-\t-\t${item.display}\n`;
 		} else {
-			const oldLines = splitLinesWithNL(oldContent);
-			const newLines = splitLinesWithNL(newContent);
+			const oldLines = splitLinesWithNL(decoder.decode(st.oldBytes));
+			const newLines = splitLinesWithNL(decoder.decode(st.newBytes));
 			const edits = myersDiff(oldLines, newLines);
 			let ins = 0;
 			let del = 0;

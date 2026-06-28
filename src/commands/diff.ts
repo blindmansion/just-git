@@ -14,17 +14,15 @@ import {
 import { resolveAttributes } from "../lib/bound-attributes.ts";
 import { type FileStat, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algorithm.ts";
-import { resolveDiffPresentation } from "../lib/diff-driver.ts";
+import {
+	boundDiffAttributes,
+	resolveCombinedDiffPresentation,
+	resolveDiffPresentation,
+	resolveDiffStat,
+} from "../lib/diff-driver.ts";
 import { getStage0Entries, readIndex } from "../lib/index.ts";
 import { findAllMergeBases } from "../lib/merge.ts";
-import {
-	hashObject,
-	isBinaryBytes,
-	isBinaryStr,
-	readBlobBytes,
-	readBlobContent,
-	readCommit,
-} from "../lib/object-db.ts";
+import { hashObject, readBlobBytes, readCommit } from "../lib/object-db.ts";
 import { join } from "../lib/path.ts";
 import { matchPathspecs, type Pathspec, parsePathspec } from "../lib/pathspec.ts";
 import { parseRangeSyntax } from "../lib/range-syntax.ts";
@@ -598,18 +596,28 @@ async function formatAsUnified(
 	let output = "";
 	const combinedDiffPaths = new Set<string>();
 	const hashAbbrevs = await buildRepoAwareDiffHashAbbrevs(gitCtx, items);
+	const bound = await resolveAttributes(gitCtx, "diff");
 
 	// Pass 1: combined diffs for unmerged paths (real git outputs these first)
 	for (const item of items) {
 		if (item.status !== "U") continue;
 		if (item.combinedParentHashes) {
-			const parentContents = await Promise.all(
-				item.combinedParentHashes.map(async (h) => (h ? await readBlobContent(gitCtx, h) : "")),
+			const parents = await Promise.all(
+				item.combinedParentHashes.map(async (h) => ({
+					bytes: h ? await readBlobBytes(gitCtx, h) : new Uint8Array(0),
+					oid: h ?? undefined,
+				})),
 			);
-			const newContent = await readNewContentStr(gitCtx, item);
+			const newBytes = await readNewContentBytes(gitCtx, item);
+			const cc = await resolveCombinedDiffPresentation(
+				bound,
+				item.path,
+				parents,
+				newBytes,
+				item.newFromWorkTree ? undefined : item.newHash,
+			);
 
-			const hasBinary = parentContents.some((c) => isBinaryStr(c)) || isBinaryStr(newContent);
-			if (hasBinary) {
+			if (cc.binary) {
 				const parentHashAbbrevs = item.combinedParentHashes.map((h) =>
 					h ? abbreviateHash(h) : "0000000",
 				);
@@ -619,17 +627,18 @@ async function formatAsUnified(
 					`Binary files differ\n`;
 				combinedDiffPaths.add(item.path);
 			} else {
-				const cc = formatCombinedDiffEntry({
+				const entry = formatCombinedDiffEntry({
 					path: item.path,
 					parentHashes: item.combinedParentHashes,
 					parentModes: item.combinedParentModes ?? [],
-					parentContents,
+					parentContents: cc.parentContents,
 					resultHash: null,
 					resultMode: item.newMode ?? null,
-					resultContent: newContent,
+					resultContent: cc.resultContent,
+					funcnameRegex: cc.funcnameRegex,
 				});
-				if (cc) {
-					output += cc;
+				if (entry) {
+					output += entry;
 					combinedDiffPaths.add(item.path);
 				} else {
 					output += `* Unmerged path ${item.path}\n`;
@@ -642,7 +651,6 @@ async function formatAsUnified(
 
 	// Pass 2: regular diffs — skip unmerged entries and worktree-vs-stage2
 	// diffs whose path already got a combined diff above.
-	const bound = await resolveAttributes(gitCtx, "diff");
 	for (const item of items) {
 		if (item.status === "U") continue;
 		if (combinedDiffPaths.has(item.path)) continue;
@@ -764,23 +772,28 @@ function formatAsNameStatus(items: DiffFileResult[]): string {
 
 async function formatAsNumstat(gitCtx: GitContext, items: DiffFileResult[]): Promise<string> {
 	let output = "";
+	const bound = await boundDiffAttributes(gitCtx);
 	for (const item of items) {
 		if (item.status === "U") {
 			output += `0\t0\t${item.path}\n`;
 			continue;
 		}
 
-		const oldContent = item.oldHash ? await readBlobContent(gitCtx, item.oldHash) : "";
-		const newContent = await readNewContentStr(gitCtx, item);
+		const oldBytes = item.oldHash ? await readBlobBytes(gitCtx, item.oldHash) : new Uint8Array(0);
+		const newBytes = await readNewContentBytes(gitCtx, item);
+		const newOid = item.newFromWorkTree ? undefined : item.newHash;
+		const st = await resolveDiffStat(bound, item.path, oldBytes, item.oldHash, newBytes, newOid);
 
-		const binary = isBinaryStr(oldContent) || isBinaryStr(newContent);
 		let insStr: string;
 		let delStr: string;
-		if (binary) {
+		if (st.binary) {
 			insStr = "-";
 			delStr = "-";
 		} else {
-			const { ins, del } = countInsertionsDeletions(oldContent, newContent);
+			const { ins, del } = countInsertionsDeletions(
+				decoder.decode(st.oldBytes),
+				decoder.decode(st.newBytes),
+			);
 			insStr = String(ins);
 			delStr = String(del);
 		}
@@ -822,16 +835,6 @@ async function formatAsShortstat(gitCtx: GitContext, items: DiffFileResult[]): P
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-async function readNewContentStr(gitCtx: GitContext, item: DiffFileResult): Promise<string> {
-	if (!item.newHash) return "";
-	if (item.newFromWorkTree && gitCtx.workTree) {
-		const fullPath = join(gitCtx.workTree, item.path);
-		const bytes = await readCleanedWorktreeContent(gitCtx, fullPath, item.path, "status");
-		return decoder.decode(bytes);
-	}
-	return readBlobContent(gitCtx, item.newHash);
-}
-
 async function readNewContentBytes(gitCtx: GitContext, item: DiffFileResult): Promise<Uint8Array> {
 	if (!item.newHash) return new Uint8Array(0);
 	if (item.newFromWorkTree && gitCtx.workTree) {
@@ -859,6 +862,7 @@ function countInsertionsDeletions(
 
 async function buildFileStats(gitCtx: GitContext, items: DiffFileResult[]): Promise<FileStat[]> {
 	const stats: FileStat[] = [];
+	const bound = await boundDiffAttributes(gitCtx);
 	for (const item of items) {
 		if (item.status === "U") {
 			stats.push({
@@ -876,21 +880,24 @@ async function buildFileStats(gitCtx: GitContext, items: DiffFileResult[]): Prom
 
 		const oldBytes = item.oldHash ? await readBlobBytes(gitCtx, item.oldHash) : new Uint8Array(0);
 		const newBytes = await readNewContentBytes(gitCtx, item);
+		const newOid = item.newFromWorkTree ? undefined : item.newHash;
+		const st = await resolveDiffStat(bound, item.path, oldBytes, item.oldHash, newBytes, newOid);
 
-		if (isBinaryBytes(oldBytes) || isBinaryBytes(newBytes)) {
+		if (st.binary) {
 			stats.push({
 				path: displayPath,
 				sortKey: item.path,
 				insertions: 0,
 				deletions: 0,
 				isBinary: true,
-				oldSize: oldBytes.byteLength,
-				newSize: newBytes.byteLength,
+				oldSize: st.oldBytes.byteLength,
+				newSize: st.newBytes.byteLength,
 			});
 		} else {
-			const oldContent = decoder.decode(oldBytes);
-			const newContent = decoder.decode(newBytes);
-			const { ins, del } = countInsertionsDeletions(oldContent, newContent);
+			const { ins, del } = countInsertionsDeletions(
+				decoder.decode(st.oldBytes),
+				decoder.decode(st.newBytes),
+			);
 			stats.push({
 				path: displayPath,
 				sortKey: item.path,

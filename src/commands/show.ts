@@ -12,21 +12,19 @@ import {
 import { computeDiffStats, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
 import { formatDate } from "../lib/date.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algorithm.ts";
-import { boundDiffAttributes, resolveDiffPresentation } from "../lib/diff-driver.ts";
+import {
+	boundDiffAttributes,
+	resolveCombinedDiffPresentation,
+	resolveDiffPresentation,
+	resolveDiffStat,
+} from "../lib/diff-driver.ts";
 import {
 	expandFormat,
 	type FormatContext,
 	formatPreset,
 	parseFormatArg,
 } from "../lib/log-format.ts";
-import {
-	isBinaryStr,
-	readBlobBytes,
-	readBlobContent,
-	readCommit,
-	readObject,
-	readTag,
-} from "../lib/object-db.ts";
+import { readBlobBytes, readCommit, readObject, readTag } from "../lib/object-db.ts";
 import { detectRenames, formatRenamePath, type RenamePair } from "../lib/rename-detection.ts";
 import { parseRevPath } from "../lib/rev-parse.ts";
 import { parseTree } from "../lib/objects/tree.ts";
@@ -360,7 +358,7 @@ async function showStat(
 	diffs: TreeDiffEntry[],
 	renames: RenamePair[],
 ): Promise<string> {
-	const { fileStats } = await computeDiffStats(ctx, diffs, renames);
+	const { fileStats } = await computeDiffStats(ctx, diffs, renames, await boundDiffAttributes(ctx));
 	fileStats.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
 	return renderStatLines(fileStats);
 }
@@ -370,7 +368,7 @@ async function showShortstat(
 	diffs: TreeDiffEntry[],
 	renames: RenamePair[],
 ): Promise<string> {
-	const { fileStats } = await computeDiffStats(ctx, diffs, renames);
+	const { fileStats } = await computeDiffStats(ctx, diffs, renames, await boundDiffAttributes(ctx));
 	let totalIns = 0;
 	let totalDel = 0;
 	for (const s of fileStats) {
@@ -400,15 +398,24 @@ async function showNumstat(
 	}
 	items.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 
+	const bound = await boundDiffAttributes(ctx);
 	let out = "";
 	for (const item of items) {
-		const oldContent = item.oldHash ? await readBlobContent(ctx, item.oldHash) : "";
-		const newContent = item.newHash ? await readBlobContent(ctx, item.newHash) : "";
-		if (isBinaryStr(oldContent) || isBinaryStr(newContent)) {
+		const oldBytes = item.oldHash ? await readBlobBytes(ctx, item.oldHash) : new Uint8Array(0);
+		const newBytes = item.newHash ? await readBlobBytes(ctx, item.newHash) : new Uint8Array(0);
+		const st = await resolveDiffStat(
+			bound,
+			item.key,
+			oldBytes,
+			item.oldHash,
+			newBytes,
+			item.newHash,
+		);
+		if (st.binary) {
 			out += `-\t-\t${item.display}\n`;
 		} else {
-			const oldLines = splitLinesWithNL(oldContent);
-			const newLines = splitLinesWithNL(newContent);
+			const oldLines = splitLinesWithNL(decoder.decode(st.oldBytes));
+			const newLines = splitLinesWithNL(decoder.decode(st.newBytes));
 			const edits = myersDiff(oldLines, newLines);
 			let ins = 0;
 			let del = 0;
@@ -560,18 +567,39 @@ async function formatCombinedEntry(
 	const parentHashes = parentEntries.map((e) => e?.hash ?? null);
 	const parentModes = parentEntries.map((e) => e?.mode ?? null);
 
-	const parentContents = await Promise.all(
-		parentHashes.map(async (h) => (h ? await readBlobContent(ctx, h) : "")),
+	const parents = await Promise.all(
+		parentHashes.map(async (h) => ({
+			bytes: h ? await readBlobBytes(ctx, h) : new Uint8Array(0),
+			oid: h ?? undefined,
+		})),
 	);
-	const resultContent = resultHash ? await readBlobContent(ctx, resultHash) : "";
+	const resultBytes = resultHash ? await readBlobBytes(ctx, resultHash) : new Uint8Array(0);
+	const cc = await resolveCombinedDiffPresentation(
+		await boundDiffAttributes(ctx),
+		path,
+		parents,
+		resultBytes,
+		resultHash ?? undefined,
+	);
+
+	if (cc.binary) {
+		const parentHashAbbrevs = parentHashes.map((h) => (h ? abbreviateHash(h) : "0000000"));
+		const resultHashAbbrev = resultHash ? abbreviateHash(resultHash) : "0000000";
+		return (
+			`diff --cc ${path}\n` +
+			`index ${parentHashAbbrevs.join(",")}..${resultHashAbbrev}\n` +
+			`Binary files differ\n`
+		);
+	}
 
 	return formatCombinedDiffEntry({
 		path,
 		parentHashes,
 		parentModes,
-		parentContents,
+		parentContents: cc.parentContents,
 		resultHash,
 		resultMode,
-		resultContent,
+		resultContent: cc.resultContent,
+		funcnameRegex: cc.funcnameRegex,
 	});
 }
