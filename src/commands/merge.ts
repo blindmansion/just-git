@@ -441,6 +441,10 @@ async function handleSquashMerge(
 		errorExitCode: isFF ? 1 : 2,
 		operationName: "merge",
 		skipStagedChangeCheck: isFF,
+		// A fast-forward squash uses git's atomic checkout_fast_forward: on a
+		// worktree-overwrite failure nothing is written, so we must not restore
+		// staged additions that were already deleted from disk.
+		atomicCheckout: isFF,
 	});
 
 	if (!applyResult.ok) {

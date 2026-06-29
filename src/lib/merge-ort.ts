@@ -2087,6 +2087,16 @@ interface ApplyMergeOptions {
 	 * twoway merge is still used for actual worktree ops.
 	 */
 	preflightOnewayCheck?: boolean;
+	/**
+	 * Marks this as an atomic fast-forward/checkout-style update (git's
+	 * checkout_fast_forward). Such updates verify every path up front and write
+	 * nothing on failure, so on a precondition failure the worktree is left
+	 * exactly as-is — staged additions previously deleted from disk are NOT
+	 * restored. Real 3-way merges (merge-recursive/ort) instead materialize the
+	 * index into the worktree as they go, which is why their failure path does
+	 * restore such additions.
+	 */
+	atomicCheckout?: boolean;
 }
 
 interface ApplyMergeSuccess {
@@ -2147,7 +2157,7 @@ export async function applyMergeResult(
 		}
 		if (stagedChangeErrors.length > 0) {
 			const sorted = [...stagedChangeErrors].sort();
-			await restoreStagedAdditions(ctx, currentIndex, headMap);
+			if (!options.atomicCheckout) await restoreStagedAdditions(ctx, currentIndex, headMap);
 			const opName = options.operationName ?? "merge";
 			const caller = options.callerCommand ?? "merge";
 			return {
@@ -2178,7 +2188,7 @@ export async function applyMergeResult(
 			},
 		);
 		if (!preflightResult.success) {
-			await restoreStagedAdditions(ctx, currentIndex, headMap);
+			if (!options.atomicCheckout) await restoreStagedAdditions(ctx, currentIndex, headMap);
 			const opName = options.operationName ?? "merge";
 			const caller = options.callerCommand ?? "merge";
 			const localFiles = preflightResult.errors
@@ -2234,7 +2244,7 @@ export async function applyMergeResult(
 		);
 
 		if (!checkoutResult.success) {
-			await restoreStagedAdditions(ctx, currentIndex, headMap);
+			if (!options.atomicCheckout) await restoreStagedAdditions(ctx, currentIndex, headMap);
 			const opName = options.operationName ?? "merge";
 			const caller = options.callerCommand ?? "merge";
 
