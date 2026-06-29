@@ -25,6 +25,7 @@ import {
 	readIndex,
 	writeIndex,
 } from "./index.ts";
+import { findAllMergeBases, isAncestor } from "./merge.ts";
 import { type MergeDriver, mergeOrtNonRecursive } from "./merge-ort.ts";
 import { readCommit } from "./object-db.ts";
 import {
@@ -417,22 +418,45 @@ export async function performRebase(
 	}
 
 	if (filteredCommits.length === 0) {
-		if (ontoHash !== origHead) {
-			const ffErr = await fastForwardTo(gitCtx, ontoHash, currentIndex, headName);
-			if (ffErr) {
-				ffErr.stderr = skipStderr + ffErr.stderr;
-				return ffErr;
+		// Every commit in the range was already applied on the target. If `onto`
+		// is already contained in HEAD, HEAD *is* the rebased result: git keeps
+		// it where it is — fast-forwarding to `onto` here would move HEAD
+		// backwards and drop commits.
+		if (await isAncestor(gitCtx, ontoHash, origHead)) {
+			// git only short-circuits to "Current branch is up to date" (skipping the
+			// replay entirely, so no cherry-pick warnings) when it can fast-forward:
+			// the branch's single merge-base with upstream is `onto`. Otherwise it
+			// runs the replay — a no-op here since everything was already applied —
+			// and reports success with the skip warnings, leaving HEAD untouched.
+			const upstreamBases = await findAllMergeBases(gitCtx, upstreamHash, origHead);
+			const canFastForward = upstreamBases.length === 1 && upstreamBases[0] === ontoHash;
+			if (canFastForward) {
+				return {
+					stdout: upToDateMessage(branchName),
+					stderr: "",
+					exitCode: 0,
+				};
 			}
-			await writeRebaseFfReflog(
-				gitCtx,
-				env,
-				origHead,
-				ontoHash,
-				headName,
-				checkoutLabel,
-				reflogAction,
-			);
+			return {
+				stdout: "",
+				stderr: `${skipStderr}Successfully rebased and updated ${headName}.\n`,
+				exitCode: 0,
+			};
 		}
+		const ffErr = await fastForwardTo(gitCtx, ontoHash, currentIndex, headName);
+		if (ffErr) {
+			ffErr.stderr = skipStderr + ffErr.stderr;
+			return ffErr;
+		}
+		await writeRebaseFfReflog(
+			gitCtx,
+			env,
+			origHead,
+			ontoHash,
+			headName,
+			checkoutLabel,
+			reflogAction,
+		);
 		return {
 			stdout: "",
 			stderr: `${skipStderr}Successfully rebased and updated ${headName}.\n`,
