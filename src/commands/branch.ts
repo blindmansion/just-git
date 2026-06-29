@@ -20,6 +20,7 @@ import {
 	branchNameFromRef,
 	createSymbolicRef,
 	deleteRef,
+	FileSystemRefStore,
 	isValidBranchName,
 	listRefs,
 	readHead,
@@ -28,8 +29,13 @@ import {
 	updateRef,
 } from "../lib/refs.ts";
 import { formatBranchTrackingInfo, getTrackingInfo } from "../lib/status-format.ts";
-import type { ObjectId } from "../lib/types.ts";
-import { branchCheckedOutAt, listWorktrees, setWorktreeHead } from "../lib/worktree-admin.ts";
+import type { GitContext, ObjectId } from "../lib/types.ts";
+import {
+	branchCheckedOutAt,
+	branchRebasingAt,
+	listWorktrees,
+	setWorktreeHead,
+} from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 
 /** The leading marker `git branch` shows: current, checked out elsewhere, or plain. */
@@ -151,11 +157,11 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 					return fatal(`no branch named '${oldName}'`);
 				}
 
-				if (await isRebaseInProgress(gitCtx)) {
-					const state = await readRebaseState(gitCtx);
-					if (state?.headName === oldRef) {
-						return fatal(`branch ${oldRef} is being rebased at ${gitCtx.workTree}`);
-					}
+				// A branch being rebased in *any* worktree (not just this one)
+				// can't be renamed; its HEAD is detached mid-rewrite there.
+				const rebasingAt = await branchRebasingAt(gitCtx, oldRef);
+				if (rebasingAt) {
+					return fatal(`branch ${oldRef} is being rebased at ${rebasingAt}`);
 				}
 
 				const existingNewRef = await resolveRef(gitCtx, newRef);
@@ -175,19 +181,27 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 				}
 
 				// Repoint any sibling worktree that had the old branch checked
-				// out. Its HEAD is private, so write it directly rather than via
-				// the shared ref store (which would target the current worktree).
+				// out, and log the rename in that worktree's private HEAD reflog
+				// (a single `0…0 -> tip` entry, as git does). Both its HEAD and
+				// its reflog are private, so target its admin dir directly rather
+				// than the shared ref store (which would hit the current worktree).
+				const renameMsg = `Branch: renamed ${oldRef} to ${newRef}`;
 				for (const wt of await listWorktrees(gitCtx)) {
 					if (wt.adminDir === gitCtx.gitDir) continue;
-					if (wt.branch === oldRef) {
-						await setWorktreeHead(gitCtx, wt.adminDir, { type: "branch", ref: newRef });
-					}
+					if (wt.branch !== oldRef) continue;
+					await setWorktreeHead(gitCtx, wt.adminDir, { type: "branch", ref: newRef });
+					const siblingCtx: GitContext = {
+						...gitCtx,
+						gitDir: wt.adminDir,
+						workTree: wt.path,
+						refStore: new FileSystemRefStore(gitCtx.fs, wt.adminDir, gitCtx.commonDir),
+					};
+					await logRef(siblingCtx, ctx.env, "HEAD", ZERO_HASH, hash, renameMsg);
 				}
 
 				if (oldEntries.length > 0) {
 					await writeReflog(gitCtx, newRef, oldEntries);
 				}
-				const renameMsg = `Branch: renamed ${oldRef} to ${newRef}`;
 				await logRef(gitCtx, ctx.env, newRef, hash, hash, renameMsg);
 				if (oldName === currentBranch) {
 					const ident = await getReflogIdentity(gitCtx, ctx.env);

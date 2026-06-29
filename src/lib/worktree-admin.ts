@@ -242,9 +242,30 @@ export async function worktreeHeadCommits(ctx: GitContext): Promise<string[]> {
 }
 
 /**
+ * The branch a worktree is mid-rebase on, read from its `rebase-merge` /
+ * `rebase-apply` state. During a rebase the worktree's HEAD is detached, but
+ * git still considers the original branch "used by" that worktree (it is being
+ * rewritten), so claim checks must see it. Returns null when no rebase is in
+ * progress or the rebase was started from a detached HEAD.
+ */
+async function rebaseBranchAt(ctx: GitContext, adminDir: string): Promise<string | null> {
+	for (const sub of ["rebase-merge", "rebase-apply"]) {
+		const headNameFile = join(adminDir, sub, "head-name");
+		if (!(await ctx.fs.exists(headNameFile))) continue;
+		const name = (await ctx.fs.readFile(headNameFile)).trim();
+		// A detached-HEAD rebase records the literal "detached HEAD", not a ref.
+		if (name.startsWith("refs/")) return name;
+	}
+	return null;
+}
+
+/**
  * Find the worktree currently holding `branchRef` checked out, if any. Scans
  * the main worktree and every linked worktree, optionally skipping one admin
- * dir (the worktree being created or operated on).
+ * dir (the worktree being created or operated on). A worktree counts as holding
+ * the branch when its HEAD is attached to it *or* it is mid-rebase on it (HEAD
+ * detached but the branch is being rewritten) — matching git's "used by
+ * worktree" guard for branch deletion / checkout / `worktree add`.
  */
 export async function branchCheckedOutAt(
 	ctx: GitContext,
@@ -254,6 +275,19 @@ export async function branchCheckedOutAt(
 	for (const wt of await listWorktrees(ctx)) {
 		if (wt.adminDir === skipAdminDir) continue;
 		if (wt.branch === branchRef) return wt.path;
+		if ((await rebaseBranchAt(ctx, wt.adminDir)) === branchRef) return wt.path;
+	}
+	return null;
+}
+
+/**
+ * Find the worktree (if any) currently rebasing `branchRef`, scanning the main
+ * worktree and every linked one. git refuses to rename a branch being rebased
+ * anywhere with "branch <ref> is being rebased at <path>".
+ */
+export async function branchRebasingAt(ctx: GitContext, branchRef: string): Promise<string | null> {
+	for (const wt of await listWorktrees(ctx)) {
+		if ((await rebaseBranchAt(ctx, wt.adminDir)) === branchRef) return wt.path;
 	}
 	return null;
 }

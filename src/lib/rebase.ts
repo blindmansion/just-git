@@ -33,7 +33,7 @@ export interface RebaseState {
 
 // ── Paths ───────────────────────────────────────────────────────────
 
-function rebaseMergeDir(gitCtx: GitContext): string {
+export function rebaseMergeDir(gitCtx: GitContext): string {
 	return join(gitCtx.gitDir, "rebase-merge");
 }
 

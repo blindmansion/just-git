@@ -284,6 +284,9 @@ export class BatchChecker {
 			[/used by worktree at '[^']+'/g, "used by worktree at '<path>'"],
 			[/checked out at '[^']+'/g, "checked out at '<path>'"],
 			[/is being rebased at \S+/g, "is being rebased at <path>"],
+			// "already a rebase-merge directory" prints `rm -fr "<abs path>"`;
+			// oracle uses a real temp dir, impl the VFS root.
+			[/rm -fr "[^"]*rebase-merge"/g, 'rm -fr "<path>/rebase-merge"'],
 		];
 		const norm = (s: string) => {
 			let r = s;

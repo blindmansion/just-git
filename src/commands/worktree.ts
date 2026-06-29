@@ -216,9 +216,12 @@ async function handleAdd(
 	const adminDir = await writeWorktreeAdmin(gitCtx, id, worktreePath, plan.head);
 	await writeGitFile(gitCtx, worktreePath, adminDir);
 
-	if (!args.noCheckout && plan.checkoutCommit) {
+	const noCheckout = !!args.noCheckout;
+	if (!noCheckout && plan.checkoutCommit) {
 		await materializeWorktree(gitCtx, adminDir, worktreePath, plan.checkoutCommit);
 	}
+
+	await seedWorktreeReflog(gitCtx, ctx, adminDir, worktreePath, plan, noCheckout);
 
 	if (args.lock) {
 		await lockWorktree(gitCtx, adminDir, args.reason as string | undefined);
@@ -382,6 +385,50 @@ async function materializeWorktree(
 			})),
 		),
 	);
+}
+
+/**
+ * Seed the new worktree's HEAD reflog the way real git does on `worktree add`.
+ *
+ * git writes the new checkout's `logs/HEAD` before any in-worktree command runs:
+ *   - an initial entry creating HEAD (`0…0 → <commit>`) with an empty message,
+ *     written whenever HEAD lands on a real commit (skipped for an orphan/unborn
+ *     HEAD), and
+ *   - a `reset: moving to HEAD` entry from populating the checkout, written only
+ *     when HEAD is attached to a branch *and* the tree is actually checked out
+ *     (a detached add or `--no-checkout` gets just the creation entry).
+ *
+ * Reflogs are per-worktree, so this must target the new worktree's admin dir,
+ * not the context the command was invoked from.
+ */
+async function seedWorktreeReflog(
+	gitCtx: GitContext,
+	ctx: CommandContext,
+	adminDir: string,
+	worktreePath: string,
+	plan: HeadPlan,
+	noCheckout: boolean,
+): Promise<void> {
+	if (!plan.checkoutCommit) return;
+
+	const wtCtx: GitContext = {
+		...gitCtx,
+		gitDir: adminDir,
+		workTree: worktreePath,
+		refStore: new FileSystemRefStore(gitCtx.fs, adminDir, gitCtx.commonDir),
+	};
+
+	await logRef(wtCtx, ctx.env, "HEAD", ZERO_HASH, plan.checkoutCommit, "");
+	if (!noCheckout && plan.head.type === "branch") {
+		await logRef(
+			wtCtx,
+			ctx.env,
+			"HEAD",
+			plan.checkoutCommit,
+			plan.checkoutCommit,
+			"reset: moving to HEAD",
+		);
+	}
 }
 
 async function pathExistsNonEmpty(gitCtx: GitContext, path: string): Promise<boolean> {
