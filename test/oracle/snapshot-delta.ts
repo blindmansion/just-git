@@ -9,6 +9,7 @@ export const EMPTY_SNAPSHOT: GitSnapshot = {
 	operation: { operation: null, stateHash: null },
 	workTreeHash: "",
 	stashHashes: [],
+	worktrees: [],
 };
 
 const SNAPSHOT_KEYS: (keyof GitSnapshot)[] = [
@@ -18,6 +19,7 @@ const SNAPSHOT_KEYS: (keyof GitSnapshot)[] = [
 	"operation",
 	"workTreeHash",
 	"stashHashes",
+	"worktrees",
 ];
 
 export function diffSnapshot(prev: GitSnapshot, curr: GitSnapshot): SnapshotDelta {

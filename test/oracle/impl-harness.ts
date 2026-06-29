@@ -24,7 +24,7 @@ import {
 } from "../random/file-gen";
 import { DEFAULT_TEST_ENV } from "../random/harness";
 import { BatchChecker } from "./checker";
-import { normalizeRebaseField, type ImplState } from "./compare";
+import { normalizeRebaseField, type ImplState, type WorktreeSnapshot } from "./compare";
 import {
 	isCommitCommand,
 	isFileOpBatch,
@@ -136,17 +136,20 @@ async function captureImplState(fs: IFileSystem): Promise<ImplState> {
 			activeOperation: null,
 			operationStateHash: null,
 			stashHashes: [],
+			worktrees: [],
 		};
 	}
 
-	const [headState, refs, index, operation, workTreeHash, stashHashes] = await Promise.all([
-		captureVirtualHead(gitCtx),
-		captureVirtualRefs(gitCtx),
-		captureVirtualIndex(gitCtx),
-		captureVirtualOperation(fs, gitCtx.gitDir),
-		virtualHashWorkTree(fs, VFS_ROOT),
-		captureVirtualStash(gitCtx),
-	]);
+	const [headState, refs, index, operation, workTreeHash, stashHashes, worktrees] =
+		await Promise.all([
+			captureVirtualHead(gitCtx),
+			captureVirtualRefs(gitCtx),
+			captureVirtualIndex(gitCtx),
+			captureVirtualOperation(fs, gitCtx.gitDir),
+			virtualHashWorkTree(fs, VFS_ROOT),
+			captureVirtualStash(gitCtx),
+			captureVirtualWorktrees(fs, gitCtx),
+		]);
 
 	return {
 		...headState,
@@ -154,6 +157,7 @@ async function captureImplState(fs: IFileSystem): Promise<ImplState> {
 		index,
 		workTreeHash,
 		stashHashes,
+		worktrees,
 		...operation,
 	};
 }
@@ -304,6 +308,37 @@ async function captureVirtualStash(ctx: GitContext): Promise<string[]> {
 		if (entry) hashes.push(entry.newHash);
 	}
 	return hashes;
+}
+
+// ── Linked worktrees ─────────────────────────────────────────────
+
+/**
+ * Capture each linked worktree's private HEAD from the virtual common dir,
+ * keyed by admin-dir id. Mirrors capture.ts captureWorktrees: a branch HEAD
+ * resolves the (shared) branch tip, a detached HEAD reports its commit.
+ */
+async function captureVirtualWorktrees(
+	fs: IFileSystem,
+	ctx: GitContext,
+): Promise<WorktreeSnapshot[]> {
+	const worktreesDir = `${ctx.commonDir}/worktrees`;
+	if (!(await fs.exists(worktreesDir))) return [];
+
+	const snapshots: WorktreeSnapshot[] = [];
+	for (const id of (await fs.readdir(worktreesDir)).sort()) {
+		const headPath = `${worktreesDir}/${id}/HEAD`;
+		if (!(await fs.exists(headPath))) continue;
+		const head = (await fs.readFile(headPath)).trim();
+
+		if (!head.startsWith("ref: ")) {
+			snapshots.push({ id, headRef: null, headSha: head });
+			continue;
+		}
+
+		const headSha = await resolveRef(ctx, head.slice("ref: ".length));
+		snapshots.push({ id, headRef: head, headSha });
+	}
+	return snapshots;
 }
 
 // ── Worktree hash ────────────────────────────────────────────────

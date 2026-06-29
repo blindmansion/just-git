@@ -37,6 +37,7 @@ import { formatLongTrackingInfo, getTrackingInfo } from "../lib/status-format.ts
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { applyWorktreeOps, checkoutTrees } from "../lib/unpack-trees.ts";
 import { checkoutEntry } from "../lib/worktree.ts";
+import { branchCheckedOutAt } from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 
 export function registerCheckoutCommand(parent: Command, ext?: GitExtensions) {
@@ -56,6 +57,7 @@ export function registerCheckoutCommand(parent: Command, ext?: GitExtensions) {
 			orphan: f().describe("Create a new orphan branch"),
 			ours: f().describe("Checkout our version for unmerged files"),
 			theirs: f().describe("Checkout their version for unmerged files"),
+			ignoreOtherWorktrees: f().describe("Allow checking out a branch used by another worktree"),
 		},
 		handler: async (args, ctx, meta) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
@@ -125,7 +127,15 @@ export function registerCheckoutCommand(parent: Command, ext?: GitExtensions) {
 			// ── Create + switch (-b / -B) ───────────────────────────────
 			if (args.branch || args.forceBranch) {
 				const branchName = (args.branch || args.forceBranch) as string;
-				return createAndSwitch(gitCtx, branchName, target, ctx.env, ext, !!args.forceBranch);
+				return createAndSwitch(
+					gitCtx,
+					branchName,
+					target,
+					ctx.env,
+					ext,
+					!!args.forceBranch,
+					!!args.ignoreOtherWorktrees,
+				);
 			}
 
 			if (!target) {
@@ -142,6 +152,10 @@ export function registerCheckoutCommand(parent: Command, ext?: GitExtensions) {
 			const branchHash = await resolveRef(gitCtx, refName);
 
 			if (branchHash) {
+				if (!args.ignoreOtherWorktrees) {
+					const usedAt = await branchCheckedOutAt(gitCtx, refName, gitCtx.gitDir);
+					if (usedAt) return fatal(`'${target}' is already used by worktree at '${usedAt}'`);
+				}
 				return switchBranch(gitCtx, target, refName, branchHash, ctx.env, ext);
 			}
 
@@ -256,6 +270,7 @@ async function createAndSwitch(
 	env: Map<string, string>,
 	ext?: GitExtensions,
 	force = false,
+	ignoreOtherWorktrees = false,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
 	if (!isValidBranchName(branchName)) {
 		return fatal(`'${branchName}' is not a valid branch name`);
@@ -274,6 +289,13 @@ async function createAndSwitch(
 	const existing = await resolveRef(gitCtx, refName);
 	if (existing && !force) {
 		return fatal(`a branch named '${branchName}' already exists`);
+	}
+
+	// Resetting an existing branch (-B) that lives in another worktree is
+	// refused just like a plain switch to it.
+	if (existing && !ignoreOtherWorktrees) {
+		const usedAt = await branchCheckedOutAt(gitCtx, refName, gitCtx.gitDir);
+		if (usedAt) return fatal(`'${branchName}' is already used by worktree at '${usedAt}'`);
 	}
 
 	let targetHash: ObjectId | null;

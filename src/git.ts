@@ -12,6 +12,7 @@ import {
 	isRejection,
 } from "./hooks.ts";
 import type { MergeDriver } from "./lib/merge-ort.ts";
+import { contextFromExtensions } from "./lib/command-utils.ts";
 import { findRepo as findRepoOnFs } from "./lib/repo.ts";
 import type { CredentialCache } from "./lib/transport/remote.ts";
 import type { GitContext, ObjectStore, RefStore, RemoteResolver } from "./lib/types.ts";
@@ -89,7 +90,8 @@ export type GitCommandName =
 	| "gc"
 	| "bisect"
 	| "grep"
-	| "shortlog";
+	| "shortlog"
+	| "worktree";
 
 /**
  * Configuration for a {@link Git} instance.
@@ -143,6 +145,13 @@ export interface GitOptions {
 	 */
 	gitDir?: string;
 	/**
+	 * Explicit shared common directory. Defaults to `gitDir` when omitted.
+	 * Set this distinct from `gitDir` to embed a linked worktree, routing
+	 * objects, shared refs, and config to the common dir while HEAD, the
+	 * index, and reflogs stay under `gitDir`.
+	 */
+	commonDir?: string;
+	/**
 	 * Config overrides. `locked` values always win over `.git/config`;
 	 * `defaults` supply fallbacks when a key is absent from config.
 	 */
@@ -184,6 +193,8 @@ export interface GitExtensions {
 	 * filesystem discovery (`findRepo`) entirely.
 	 */
 	gitDir?: string;
+	/** Pre-resolved shared common dir. Defaults to `gitDir` when omitted. */
+	commonDir?: string;
 	/** Pre-resolved worktree root. Used with `gitDir` to skip discovery. */
 	workTree?: string;
 	/** In-memory credential cache for URL-extracted auth, keyed by origin. */
@@ -278,7 +289,13 @@ export class Git {
 
 		const configOverrides = mergeIdentityIntoConfig(options?.identity, options?.config);
 
-		const gitDirExt = options?.gitDir ? { gitDir: options.gitDir, workTree: this.defaultCwd } : {};
+		const gitDirExt = options?.gitDir
+			? {
+					gitDir: options.gitDir,
+					workTree: this.defaultCwd,
+					...(options.commonDir ? { commonDir: options.commonDir } : {}),
+				}
+			: {};
 
 		const extensions: GitExtensions = {
 			hooks: options?.hooks,
@@ -325,19 +342,12 @@ export class Git {
 		const cwd = ctx?.cwd ?? this.defaultCwd;
 
 		if (this.ext.objectStore && this.ext.refStore && this.ext.gitDir) {
-			return {
-				fs,
-				gitDir: this.ext.gitDir,
-				workTree: this.ext.workTree ?? cwd,
-				objectStore: this.ext.objectStore,
-				refStore: this.ext.refStore,
-				...this.ext,
-			};
+			return contextFromExtensions(fs, cwd, this.ext);
 		}
 
 		const found = await findRepoOnFs(fs, cwd);
 		if (!found) return null;
-		return { ...found, ...this.ext };
+		return { ...found, ...this.ext, commonDir: this.ext.commonDir ?? found.commonDir };
 	}
 
 	/**

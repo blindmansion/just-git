@@ -469,7 +469,7 @@ export function unsetConfigValueRaw(
 
 /** Read and parse .git/config. Returns empty config if file doesn't exist. */
 export async function readConfig(ctx: GitContext): Promise<GitConfig> {
-	const path = join(ctx.gitDir, "config");
+	const path = join(ctx.commonDir, "config");
 	if (!(await ctx.fs.exists(path))) return {};
 	const text = await ctx.fs.readFile(path);
 	return parseConfig(text);
@@ -477,14 +477,14 @@ export async function readConfig(ctx: GitContext): Promise<GitConfig> {
 
 /** Read raw .git/config text. Returns empty string if file doesn't exist. */
 async function readConfigRaw(ctx: GitContext): Promise<string> {
-	const path = join(ctx.gitDir, "config");
+	const path = join(ctx.commonDir, "config");
 	if (!(await ctx.fs.exists(path))) return "";
 	return ctx.fs.readFile(path);
 }
 
 /** Serialize and write .git/config. */
 export async function writeConfig(ctx: GitContext, config: GitConfig): Promise<void> {
-	const path = join(ctx.gitDir, "config");
+	const path = join(ctx.commonDir, "config");
 	await ctx.fs.writeFile(path, serializeConfig(config));
 }
 
@@ -529,7 +529,7 @@ export async function setConfigValue(
 	const raw = await readConfigRaw(ctx);
 	const { section, key } = parseDottedKey(dottedKey);
 	const updated = setConfigValueRaw(raw, section, key, value);
-	const path = join(ctx.gitDir, "config");
+	const path = join(ctx.commonDir, "config");
 	await ctx.fs.writeFile(path, updated);
 }
 
@@ -598,7 +598,7 @@ export async function addConfigValue(
 	const raw = await readConfigRaw(ctx);
 	const { section, key } = parseDottedKey(dottedKey);
 	const updated = addConfigValueRaw(raw, section, key, value);
-	const path = join(ctx.gitDir, "config");
+	const path = join(ctx.commonDir, "config");
 	await ctx.fs.writeFile(path, updated);
 }
 
@@ -611,7 +611,7 @@ export async function unsetConfigValue(ctx: GitContext, dottedKey: string): Prom
 	const { section, key } = parseDottedKey(dottedKey);
 	const result = unsetConfigValueRaw(raw, section, key);
 	if (!result.found) return false;
-	const path = join(ctx.gitDir, "config");
+	const path = join(ctx.commonDir, "config");
 	await ctx.fs.writeFile(path, result.text);
 	return true;
 }

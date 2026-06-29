@@ -19,8 +19,10 @@ import { STAGING_ACTIONS } from "./staging";
 import { STASH_ACTIONS } from "./stash";
 import { SWITCH_ACTIONS } from "./switch";
 import { TAG_ACTIONS } from "./tag";
+import { WORKTREE_ACTIONS } from "./worktree";
 
 export { NETWORK_ACTIONS } from "./network";
+export { WORKTREE_ACTIONS } from "./worktree";
 
 export const ALL_ACTIONS: readonly Action[] = [
 	...FILE_OPS_ACTIONS,
@@ -43,4 +45,5 @@ export const ALL_ACTIONS: readonly Action[] = [
 	...RESTORE_ACTIONS,
 	...DIAGNOSTIC_ACTIONS,
 	...MAINTENANCE_ACTIONS,
+	...WORKTREE_ACTIONS,
 ];

@@ -2,6 +2,7 @@ import type { FileSystem } from "../fs.ts";
 import { readObject } from "./object-db.ts";
 import { parseTag } from "./objects/tag.ts";
 import { join } from "./path.ts";
+import { isPerWorktreeRef } from "./ref-classify.ts";
 import { deleteReflog } from "./reflog.ts";
 import { ensureParentDir } from "./repo.ts";
 import {
@@ -160,14 +161,23 @@ const MAX_SYMREF_DEPTH = 10;
  */
 export class FileSystemRefStore implements RefStore {
 	private casLocks = new Map<string, Promise<boolean>>();
+	private commonDir: string;
 
 	constructor(
 		private fs: FileSystem,
 		private gitDir: string,
-	) {}
+		commonDir?: string,
+	) {
+		this.commonDir = commonDir ?? gitDir;
+	}
+
+	/** The directory a ref lives in: private gitDir or shared commonDir. */
+	private dirFor(name: string): string {
+		return isPerWorktreeRef(name) ? this.gitDir : this.commonDir;
+	}
 
 	async readRef(name: string): Promise<Ref | null> {
-		const path = join(this.gitDir, name);
+		const path = join(this.dirFor(name), name);
 		if (await this.fs.exists(path)) {
 			const raw = (await this.fs.readFile(path)).trim();
 			if (raw.startsWith(SYMBOLIC_PREFIX)) {
@@ -179,6 +189,9 @@ export class FileSystemRefStore implements RefStore {
 			return { type: "direct", hash: raw } satisfies DirectRef;
 		}
 
+		// Per-worktree refs are loose-only; they are never packed.
+		if (isPerWorktreeRef(name)) return null;
+
 		const packed = await this.readPackedRefs();
 		const hash = packed.get(name);
 		if (hash) return { type: "direct", hash } satisfies DirectRef;
@@ -188,7 +201,7 @@ export class FileSystemRefStore implements RefStore {
 
 	async writeRef(name: string, refOrHash: Ref | string): Promise<void> {
 		const ref = normalizeRef(refOrHash);
-		const path = join(this.gitDir, name);
+		const path = join(this.dirFor(name), name);
 		await ensureParentDir(this.fs, path);
 		if (ref.type === "symbolic") {
 			await this.fs.writeFile(path, `${SYMBOLIC_PREFIX}${ref.target}\n`);
@@ -198,7 +211,7 @@ export class FileSystemRefStore implements RefStore {
 	}
 
 	async deleteRef(name: string): Promise<void> {
-		const path = join(this.gitDir, name);
+		const path = join(this.dirFor(name), name);
 		if (await this.fs.exists(path)) {
 			await this.fs.rm(path);
 		}
@@ -207,18 +220,41 @@ export class FileSystemRefStore implements RefStore {
 
 	async listRefs(prefix: string = "refs"): Promise<RefEntry[]> {
 		const results: RefEntry[] = [];
-		const dir = join(this.gitDir, prefix);
+		const seen = new Set<string>();
 
-		if (await this.fs.exists(dir)) {
-			await this.walkRefs(dir, prefix, results);
+		const walkDir = async (base: string) => {
+			const dir = join(base, prefix);
+			if (!(await this.fs.exists(dir))) return;
+			const found: RefEntry[] = [];
+			await this.walkRefs(dir, prefix, found);
+			for (const ref of found) {
+				// A ref counts only from the directory it routes to, so a linked
+				// worktree never lists the main worktree's per-worktree refs (and
+				// vice versa) even though both walk the common dir.
+				if (this.dirFor(ref.name) !== base) continue;
+				if (seen.has(ref.name)) continue;
+				seen.add(ref.name);
+				results.push(ref);
+			}
+		};
+
+		// Shared refs come from the common dir; the per-worktree namespaces add
+		// from the private dir. They only differ inside a linked worktree.
+		await walkDir(this.commonDir);
+		if (this.gitDir !== this.commonDir) {
+			await walkDir(this.gitDir);
 		}
 
+		// packed-refs lives in the common dir and holds only shared refs. Skip
+		// any per-worktree name so the listing matches readRef, which never
+		// resolves a per-worktree ref from packed-refs.
 		const packed = await this.readPackedRefs();
 		if (packed.size > 0) {
-			const looseNames = new Set(results.map((r) => r.name));
 			const prefixSlash = `${prefix}/`;
 			for (const [name, hash] of packed) {
-				if (name.startsWith(prefixSlash) && !looseNames.has(name)) {
+				if (isPerWorktreeRef(name)) continue;
+				if (name.startsWith(prefixSlash) && !seen.has(name)) {
+					seen.add(name);
 					results.push({ name, hash });
 				}
 			}
@@ -281,7 +317,7 @@ export class FileSystemRefStore implements RefStore {
 	}
 
 	private async readPackedRefs(): Promise<Map<string, ObjectId>> {
-		const path = join(this.gitDir, "packed-refs");
+		const path = join(this.commonDir, "packed-refs");
 		if (!(await this.fs.exists(path))) return new Map();
 
 		const content = await this.fs.readFile(path);
@@ -302,7 +338,7 @@ export class FileSystemRefStore implements RefStore {
 	}
 
 	private async removePackedRef(name: string): Promise<void> {
-		const packedPath = join(this.gitDir, "packed-refs");
+		const packedPath = join(this.commonDir, "packed-refs");
 		if (!(await this.fs.exists(packedPath))) return;
 
 		const content = await this.fs.readFile(packedPath);
@@ -512,13 +548,15 @@ export async function advanceBranchRef(ctx: GitRepo, hash: ObjectId): Promise<vo
 export async function writePackedRefs(ctx: GitContext): Promise<void> {
 	if (ctx.refStore && !(ctx.refStore instanceof FileSystemRefStore)) return;
 
-	const refs = await listRefs(ctx, "refs");
+	// Per-worktree refs are loose-only and live in the private dir; only the
+	// shared refs are packed, and only the common dir's packed-refs is written.
+	const refs = (await listRefs(ctx, "refs")).filter((ref) => !isPerWorktreeRef(ref.name));
 	if (refs.length === 0) return;
 
 	const lines: string[] = ["# pack-refs with: peeled fully-peeled sorted"];
 	const packed: string[] = [];
 	for (const ref of refs) {
-		const loosePath = join(ctx.gitDir, ref.name);
+		const loosePath = join(ctx.commonDir, ref.name);
 		if (await ctx.fs.exists(loosePath)) {
 			const raw = (await ctx.fs.readFile(loosePath)).trim();
 			if (raw.startsWith("ref: ")) continue;
@@ -543,18 +581,18 @@ export async function writePackedRefs(ctx: GitContext): Promise<void> {
 		}
 	}
 
-	await ctx.fs.writeFile(join(ctx.gitDir, "packed-refs"), `${lines.join("\n")}\n`);
+	await ctx.fs.writeFile(join(ctx.commonDir, "packed-refs"), `${lines.join("\n")}\n`);
 
 	for (const name of packed) {
-		const loosePath = join(ctx.gitDir, name);
+		const loosePath = join(ctx.commonDir, name);
 		if (await ctx.fs.exists(loosePath)) {
 			await ctx.fs.rm(loosePath);
 		}
 	}
 
-	await cleanEmptyRefDirs(ctx, join(ctx.gitDir, "refs"));
+	await cleanEmptyRefDirs(ctx, join(ctx.commonDir, "refs"));
 
-	const refsDir = join(ctx.gitDir, "refs");
+	const refsDir = join(ctx.commonDir, "refs");
 	await ctx.fs.mkdir(refsDir, { recursive: true });
 	await ctx.fs.mkdir(join(refsDir, "heads"), { recursive: true });
 	await ctx.fs.mkdir(join(refsDir, "tags"), { recursive: true });
