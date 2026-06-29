@@ -66,7 +66,7 @@ describe("git worktree add", () => {
 	});
 
 	test("refuses an existing non-empty target path, quoting the path as typed", async () => {
-		const { results } = await runScenario(
+		const { results, bash } = await runScenario(
 			[
 				...SETUP,
 				"mkdir -p /repo/occupied",
@@ -76,8 +76,56 @@ describe("git worktree add", () => {
 			{ files: FILES, env: TEST_ENV },
 		);
 
-		expect(results[5].exitCode).not.toBe(0);
-		expect(results[5].stderr).toBe("fatal: 'occupied' already exists\n");
+		expect(results[5].exitCode).toBe(128);
+		// git prints the progress line before validating the path, and the `-b`
+		// branch it creates first leaks even though the add aborts.
+		expect(results[5].stderr).toBe(
+			"Preparing worktree (new branch 'b')\nfatal: 'occupied' already exists\n",
+		);
+		expect(await pathExists(bash.fs, "/repo/.git/refs/heads/b")).toBe(true);
+	});
+
+	test("-b on an existing branch fails with exit 255 after the progress line", async () => {
+		const { results, bash } = await runScenario([...SETUP, "git worktree add /wt -b main"], {
+			files: FILES,
+			env: TEST_ENV,
+		});
+		expect(results[3].exitCode).toBe(255);
+		expect(results[3].stderr).toBe(
+			"Preparing worktree (new branch 'main')\nfatal: a branch named 'main' already exists\n",
+		);
+		// The failed add must not register a worktree.
+		expect(await pathExists(bash.fs, "/wt")).toBe(false);
+	});
+
+	test("a refused add still prints the progress line first", async () => {
+		const { results } = await runScenario(
+			[...SETUP, "git worktree add /wt-a -b shared", "git worktree add /wt-b shared"],
+			{ files: FILES, env: TEST_ENV },
+		);
+		expect(results[4].exitCode).toBe(128);
+		expect(results[4].stderr).toBe(
+			"Preparing worktree (checking out 'shared')\n" +
+				"fatal: 'shared' is already used by worktree at '/wt-a'\n",
+		);
+	});
+
+	test("a bare add onto an occupied path leaks the DWIM branch", async () => {
+		const { results, bash } = await runScenario(
+			[
+				...SETUP,
+				// Occupy the target path with a detached worktree (no branch created).
+				"git worktree add --detach /wt-leak HEAD",
+				"git worktree add /wt-leak",
+			],
+			{ files: FILES, env: TEST_ENV },
+		);
+		expect(results[4].exitCode).toBe(128);
+		expect(results[4].stderr).toBe(
+			"Preparing worktree (new branch 'wt-leak')\nfatal: '/wt-leak' already exists\n",
+		);
+		// git creates the DWIM branch before validating the path, so it survives.
+		expect(await pathExists(bash.fs, "/repo/.git/refs/heads/wt-leak")).toBe(true);
 	});
 
 	test("prints the Preparing / HEAD-is-now-at confirmation", async () => {
@@ -494,13 +542,22 @@ describe("git worktree remove / prune / lock / unlock", () => {
 		expect(await pathExists(bash.fs, "/repo/.git/worktrees/lk/locked")).toBe(false);
 	});
 
-	test("remove refuses the main worktree", async () => {
+	test("remove refuses the main worktree, quoting the path as typed", async () => {
 		const { results } = await runScenario([...SETUP, "git worktree remove /repo"], {
 			files: FILES,
 			env: TEST_ENV,
 		});
-		expect(results[3].exitCode).not.toBe(0);
-		expect(results[3].stderr).toContain("cannot remove the main working tree");
+		expect(results[3].exitCode).toBe(128);
+		expect(results[3].stderr).toBe("fatal: '/repo' is a main working tree\n");
+	});
+
+	test("remove refuses the main worktree given as '.'", async () => {
+		const { results } = await runScenario([...SETUP, "git worktree remove ."], {
+			files: FILES,
+			env: TEST_ENV,
+		});
+		expect(results[3].exitCode).toBe(128);
+		expect(results[3].stderr).toBe("fatal: '.' is a main working tree\n");
 	});
 
 	test("remove refuses a dirty worktree without --force", async () => {

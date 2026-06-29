@@ -151,10 +151,6 @@ async function handleAdd(
 	const worktreePath = resolve(ctx.cwd, args.path as string);
 	const force = ((args.force as number) ?? 0) > 0;
 
-	if (!force && (await pathExistsNonEmpty(gitCtx, worktreePath))) {
-		return fatal(`'${args.path}' already exists`);
-	}
-
 	const commitish = (args.commitish as string | undefined) ?? "HEAD";
 	const baseCommit = await resolveRevision(gitCtx, commitish);
 
@@ -169,14 +165,28 @@ async function handleAdd(
 		branchName,
 		resetBranch,
 		explicitCommitish: args.commitish !== undefined,
-		force,
 	});
 	if (isCommandError(plan)) return plan;
 
-	const id = await deriveWorktreeId(gitCtx, worktreePath);
-	const adminDir = await writeWorktreeAdmin(gitCtx, id, worktreePath, plan.head);
-	await writeGitFile(gitCtx, worktreePath, adminDir);
+	// git emits the progress line before the steps that can fail, so a refused
+	// add still shows it. Errors after this point are prefixed accordingly.
+	const quiet = !!args.quiet;
+	const orphanPrefix = plan.orphan ? "No possible source branch, inferring '--orphan'\n" : "";
+	const preparing = quiet ? "" : `${orphanPrefix}Preparing worktree (${plan.summary})\n`;
+	const fail = (msg: string, exitCode = 128): CommandResult => ({
+		stdout: "",
+		stderr: `${preparing}fatal: ${msg}\n`,
+		exitCode,
+	});
 
+	// `git worktree add -b <name>` delegates branch creation; when the branch
+	// already exists that sub-step dies and worktree add exits 255.
+	if (plan.requireBranchAbsent && (await resolveRef(gitCtx, plan.requireBranchAbsent.ref))) {
+		return fail(`a branch named '${plan.requireBranchAbsent.name}' already exists`, 255);
+	}
+
+	// The DWIM/`-b` branch is created before the destination is validated, so it
+	// persists even when the add later aborts on an existing path (matches git).
 	if (plan.createBranchRef && plan.checkoutCommit) {
 		await updateRef(gitCtx, plan.createBranchRef, plan.checkoutCommit);
 		await logRef(
@@ -192,6 +202,20 @@ async function handleAdd(
 		}
 	}
 
+	// git validates the destination path before the cross-worktree claim check.
+	if (!force && (await pathExistsNonEmpty(gitCtx, worktreePath))) {
+		return fail(`'${args.path}' already exists`);
+	}
+
+	if (!force && plan.claimCheck) {
+		const usedAt = await branchCheckedOutAt(gitCtx, plan.claimCheck.ref);
+		if (usedAt) return fail(`'${plan.claimCheck.name}' is already used by worktree at '${usedAt}'`);
+	}
+
+	const id = await deriveWorktreeId(gitCtx, worktreePath);
+	const adminDir = await writeWorktreeAdmin(gitCtx, id, worktreePath, plan.head);
+	await writeGitFile(gitCtx, worktreePath, adminDir);
+
 	if (!args.noCheckout && plan.checkoutCommit) {
 		await materializeWorktree(gitCtx, adminDir, worktreePath, plan.checkoutCommit);
 	}
@@ -200,15 +224,14 @@ async function handleAdd(
 		await lockWorktree(gitCtx, adminDir, args.reason as string | undefined);
 	}
 
-	if (args.quiet) return { stdout: "", stderr: "", exitCode: 0 };
+	if (quiet) return { stdout: "", stderr: "", exitCode: 0 };
 
 	let stdout = "";
 	if (plan.checkoutCommit) {
 		const subject = (await readCommit(gitCtx, plan.checkoutCommit)).message.split("\n", 1)[0];
 		stdout = `HEAD is now at ${plan.checkoutCommit.slice(0, 7)} ${subject}\n`;
 	}
-	const prefix = plan.orphan ? "No possible source branch, inferring '--orphan'\n" : "";
-	return { stdout, stderr: `${prefix}Preparing worktree (${plan.summary})\n`, exitCode: 0 };
+	return { stdout, stderr: preparing, exitCode: 0 };
 }
 
 interface HeadPlan {
@@ -222,6 +245,10 @@ interface HeadPlan {
 	orphan?: boolean;
 	/** Remote-tracking ref to set as upstream for a DWIM'd local branch. */
 	trackingRef?: string;
+	/** Plain `-b <name>`: error (exit 255) if this branch already exists. */
+	requireBranchAbsent?: { name: string; ref: string };
+	/** Existing branch being checked out: refuse if claimed by another worktree. */
+	claimCheck?: { name: string; ref: string };
 }
 
 /** Plan for a new branch on an unborn HEAD: no checkout, no ref yet. */
@@ -245,10 +272,9 @@ async function planHead(
 		branchName: string | undefined;
 		resetBranch: boolean;
 		explicitCommitish: boolean;
-		force: boolean;
 	},
 ): Promise<HeadPlan | CommandResult> {
-	const { baseCommit, detach, branchName, resetBranch, explicitCommitish, force } = opts;
+	const { baseCommit, detach, branchName, resetBranch, explicitCommitish } = opts;
 
 	if (detach) {
 		if (!baseCommit) return fatal(`invalid reference: ${opts.commitish}`);
@@ -262,11 +288,6 @@ async function planHead(
 
 	if (branchName) {
 		const ref = `refs/heads/${branchName}`;
-		if (!resetBranch && (await resolveRef(gitCtx, ref))) {
-			return fatal(`a branch named '${branchName}' already exists`);
-		}
-		const refusal = await refuseIfCheckedOut(gitCtx, ref, branchName, force);
-		if (refusal) return refusal;
 		if (!baseCommit) {
 			if (explicitCommitish) return fatal(`invalid reference: ${opts.commitish}`);
 			return orphanPlan(ref, branchName);
@@ -276,6 +297,9 @@ async function planHead(
 			createBranchRef: ref,
 			checkoutCommit: baseCommit,
 			summary: `new branch '${branchName}'`,
+			// Plain -b must not clobber an existing branch; -B (reset) may.
+			requireBranchAbsent: resetBranch ? undefined : { name: branchName, ref },
+			claimCheck: { name: branchName, ref },
 		};
 	}
 
@@ -286,13 +310,12 @@ async function planHead(
 	const branchTip = await resolveRef(gitCtx, ref);
 
 	if (branchTip) {
-		const refusal = await refuseIfCheckedOut(gitCtx, ref, dwimName, force);
-		if (refusal) return refusal;
 		return {
 			head: { type: "branch", ref },
 			createBranchRef: null,
 			checkoutCommit: branchTip,
 			summary: `checking out '${dwimName}'`,
+			claimCheck: { name: dwimName, ref },
 		};
 	}
 
@@ -327,18 +350,6 @@ async function planHead(
 		checkoutCommit: baseCommit,
 		summary: `new branch '${dwimName}'`,
 	};
-}
-
-async function refuseIfCheckedOut(
-	gitCtx: GitContext,
-	ref: string,
-	name: string,
-	force: boolean,
-): Promise<CommandResult | null> {
-	if (force) return null;
-	const usedAt = await branchCheckedOutAt(gitCtx, ref);
-	if (usedAt) return fatal(`'${name}' is already used by worktree at '${usedAt}'`);
-	return null;
 }
 
 async function materializeWorktree(
@@ -437,7 +448,7 @@ async function handleRemove(
 ): Promise<CommandResult> {
 	const wt = await resolveWorktreeArg(gitCtx, ctx, arg);
 	if (!wt) return fatal(`'${arg}' is not a working tree`);
-	if (wt.isMain) return fatal("'remove' cannot remove the main working tree");
+	if (wt.isMain) return fatal(`'${arg}' is a main working tree`);
 	if (wt.locked && force < 2) {
 		const reason = await readLockReason(gitCtx, wt.adminDir);
 		const firstLine = reason
