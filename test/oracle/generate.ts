@@ -59,7 +59,7 @@ export interface TraceConfig {
  */
 class RecordingHarness implements WalkHarness {
 	/** Accumulated commands for the current walker step. */
-	private buffer: { command: string; result: ExecResult | null }[] = [];
+	private buffer: { command: string; result: ExecResult | null; cwd: string | null }[] = [];
 	/** Previous full snapshot for computing deltas. */
 	private prevSnapshot: GitSnapshot = EMPTY_SNAPSHOT;
 
@@ -70,7 +70,11 @@ class RecordingHarness implements WalkHarness {
 		private seq: number = 0,
 	) {}
 
-	async git(command: string, envOverride?: Record<string, string>): Promise<ExecResult> {
+	async git(
+		command: string,
+		envOverride?: Record<string, string>,
+		cwd?: string,
+	): Promise<ExecResult> {
 		// Commit-creating commands need incrementing timestamps to match replay
 		let env = envOverride;
 		if (!env && isCommitCommand(command)) {
@@ -78,8 +82,8 @@ class RecordingHarness implements WalkHarness {
 			const ts = `${1000000000 + this.inner.commitCounter} +0000`;
 			env = { GIT_AUTHOR_DATE: ts, GIT_COMMITTER_DATE: ts };
 		}
-		const result = await this.inner.git(command, env);
-		this.buffer.push({ command: `git ${command}`, result });
+		const result = await this.inner.git(command, env, cwd);
+		this.buffer.push({ command: `git ${command}`, result, cwd: cwd ?? null });
 		return result;
 	}
 
@@ -88,19 +92,20 @@ class RecordingHarness implements WalkHarness {
 		this.buffer.push({
 			command: `git commit -m "${message}"`,
 			result,
+			cwd: null,
 		});
 		return result;
 	}
 
 	// ── Individual file ops (for conflict resolution writes) ─────
 
-	async writeFile(relPath: string, content: string): Promise<void> {
-		await this.inner.writeFile(relPath, content);
-		this.buffer.push({ command: write(relPath, content), result: null });
+	async writeFile(relPath: string, content: string, cwd?: string): Promise<void> {
+		await this.inner.writeFile(relPath, content, cwd);
+		this.buffer.push({ command: write(relPath, content), result: null, cwd: cwd ?? null });
 	}
 
-	async readFile(relPath: string): Promise<string> {
-		return this.inner.readFile(relPath);
+	async readFile(relPath: string, cwd?: string): Promise<string> {
+		return this.inner.readFile(relPath, cwd);
 	}
 
 	async spliceFile(
@@ -108,38 +113,42 @@ class RecordingHarness implements WalkHarness {
 		content: string,
 		offset: number,
 		deleteCount: number,
+		cwd?: string,
 	): Promise<void> {
-		await this.inner.spliceFile(relPath, content, offset, deleteCount);
+		await this.inner.spliceFile(relPath, content, offset, deleteCount, cwd);
 		this.buffer.push({
 			command: write(relPath, content, offset, deleteCount),
 			result: null,
+			cwd: cwd ?? null,
 		});
 	}
 
-	async deleteFile(relPath: string): Promise<void> {
-		await this.inner.deleteFile(relPath);
-		this.buffer.push({ command: del(relPath), result: null });
+	async deleteFile(relPath: string, cwd?: string): Promise<void> {
+		await this.inner.deleteFile(relPath, cwd);
+		this.buffer.push({ command: del(relPath), result: null, cwd: cwd ?? null });
 	}
 
 	// ── Seed-based batch (the common path) ───────────────────────
 
-	async applyFileOpBatch(seed: number, files: string[]): Promise<void> {
+	async applyFileOpBatch(seed: number, files: string[], cwd?: string): Promise<void> {
 		// Apply ops on the real harness (bypasses recording of individual ops)
-		await this.inner.applyFileOpBatch(seed, files);
+		await this.inner.applyFileOpBatch(seed, files, cwd);
 		// Record just the seed
 		this.buffer.push({
 			command: serializeFileOpBatch(seed),
 			result: null,
+			cwd: cwd ?? null,
 		});
 	}
 
 	// ── Seed-based resolve (conflict resolution) ─────────────────
 
-	async resolveFiles(seed: number): Promise<void> {
-		await this.inner.resolveFiles(seed);
+	async resolveFiles(seed: number, cwd?: string): Promise<void> {
+		await this.inner.resolveFiles(seed, cwd);
 		this.buffer.push({
 			command: serializeFileResolve(seed),
 			result: null,
+			cwd: cwd ?? null,
 		});
 	}
 
@@ -150,6 +159,7 @@ class RecordingHarness implements WalkHarness {
 		this.buffer.push({
 			command: serializeServerCommit(seed, branch),
 			result: null,
+			cwd: null,
 		});
 	}
 
@@ -175,7 +185,7 @@ class RecordingHarness implements WalkHarness {
 		let snapshot: GitSnapshot | null = null;
 
 		for (let i = 0; i < this.buffer.length; i++) {
-			const { command, result } = this.buffer[i];
+			const { command, result, cwd } = this.buffer[i];
 
 			if (i === snapshotIdx) {
 				snapshot = await captureSnapshot(this.inner.repoDir);
@@ -190,6 +200,7 @@ class RecordingHarness implements WalkHarness {
 						stderr: result?.stderr ?? "",
 					},
 					delta,
+					cwd,
 				);
 				this.prevSnapshot = snapshot;
 			} else {
@@ -204,6 +215,7 @@ class RecordingHarness implements WalkHarness {
 						stderr: result?.stderr ?? "",
 					},
 					EMPTY_SNAPSHOT,
+					cwd,
 				);
 			}
 			this.seq++;
@@ -213,8 +225,8 @@ class RecordingHarness implements WalkHarness {
 
 	// ── State queries delegate directly ──────────────────────────
 
-	listWorkTreeFiles() {
-		return this.inner.listWorkTreeFiles();
+	listWorkTreeFiles(cwd?: string) {
+		return this.inner.listWorkTreeFiles(cwd);
 	}
 	listBranches() {
 		return this.inner.listBranches();
@@ -574,16 +586,40 @@ export const PRESETS: Record<string, Preset> = {
 	},
 
 	/**
-	 * Worktree-focused: core daily-use commands plus worktree add/remove/prune,
+	 * Worktree-focused: core daily-use commands plus the worktree actions
+	 * (add/remove/prune, cross-worktree guards, and in-worktree commit/merge),
 	 * with the worktree category boosted so linked worktrees are created and
-	 * operated on frequently. Exercises per-worktree HEAD state and the
-	 * cross-worktree porcelain guards (a branch checked out in a sibling
-	 * worktree refusing checkout/switch/delete in the main one).
+	 * operated on frequently. Exercises per-worktree HEAD/index/operation state,
+	 * the cross-worktree porcelain guards (a branch checked out in a sibling
+	 * worktree refusing checkout/switch/delete in the main one), and cwd-routed
+	 * work inside linked checkouts.
 	 */
 	worktree: {
 		actions: boostCategory([...CORE_ACTIONS, ...WORKTREE_ACTIONS], "worktree", 4),
 		chaosRate: 0.05,
 		fuzz: FUZZ_LIGHT,
+	},
+
+	/**
+	 * Worktree-deep: like `worktree` but with the category boosted harder and
+	 * gitignore'd file generation, so linked worktrees are not just created but
+	 * *worked in* (commit/merge inside the checkout). Stresses the per-worktree
+	 * index/HEAD/operation state captured in Tier 1 and the cwd-routed commands
+	 * and file ops added in Tier 2 — the genuinely worktree-specific hazard of an
+	 * operation in progress in worktree B over a shared object store.
+	 */
+	"worktree-deep": {
+		actions: boostCategory([...CORE_ACTIONS, ...WORKTREE_ACTIONS], "worktree", 8),
+		chaosRate: 0.05,
+		fuzz: FUZZ_LIGHT,
+		fileGen: {
+			...DEFAULT_FILE_GEN_CONFIG,
+			gitignore: {
+				rate: 0.05,
+				subdirRate: 0.3,
+				patterns: DEFAULT_GITIGNORE_PATTERNS,
+			},
+		},
 	},
 
 	/** Cherry-pick focused. */

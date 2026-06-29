@@ -4,7 +4,18 @@ import {
 	pickAnyBranch,
 	pickClaimedWorktreeBranch,
 } from "../pickers";
+import type { SeededRNG } from "../rng";
 import type { Action } from "../types";
+
+/** Worktree-relative execution context (e.g. "../wt-abc") for a linked checkout. */
+function worktreeCwd(id: string): string {
+	return `../${id}`;
+}
+
+/** Pick a random linked worktree from state (caller guarantees non-empty). */
+function pickWorktree(rng: SeededRNG, worktrees: { id: string; branch: string | null }[]) {
+	return worktrees[rng.int(0, worktrees.length - 1)]!;
+}
 
 /**
  * Worktree paths are siblings of the repo (`../wt-<id>`) so the basename — and
@@ -211,6 +222,81 @@ const worktreeRemoveForce: Action = {
 	},
 };
 
+// ── Tier D: work *inside* a linked worktree ──────────────────────────
+// These drive commands with a worktree-relative `cwd`, so the operation runs
+// against the linked checkout's private HEAD / index / operation state over the
+// shared object store. Tier 1 capture verifies the per-worktree contents, index,
+// HEAD, and operation state these produce — invisible to the cross-worktree
+// guards above, which only see the primary tree.
+
+const worktreeRemoveDirty: Action = {
+	name: "worktreeRemoveDirty",
+	category: "worktree",
+	canRun: (state) => state.worktrees.length > 0,
+	precondition: () => true,
+	weight: () => 1,
+	async execute(harness, rng, state) {
+		const wt = pickWorktree(rng, state.worktrees);
+		const cwd = worktreeCwd(wt.id);
+		// Dirty the linked checkout with an untracked file so plain `remove`
+		// refuses; `-f` overrides the dirty guard.
+		await harness.writeFile(
+			`dirty-${rng.alphanumeric(6)}.txt`,
+			`dirt-${rng.alphanumeric(8)}\n`,
+			cwd,
+		);
+		const force = rng.bool() ? "-f " : "";
+		const cmd = `worktree remove ${force}../${wt.id}`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+const worktreeCommit: Action = {
+	name: "worktreeCommit",
+	category: "worktree",
+	canRun: (state) => state.worktrees.length > 0 && state.hasCommits,
+	precondition: (state) => !inConflict(state),
+	weight: () => 3,
+	async execute(harness, rng, state) {
+		const wt = pickWorktree(rng, state.worktrees);
+		const cwd = worktreeCwd(wt.id);
+		const seed = rng.int(0, 2 ** 31 - 1);
+		// `files` is ignored for a worktree batch — the harness re-lists the
+		// linked checkout's own files (record/replay determinism invariant).
+		await harness.applyFileOpBatch(seed, [], cwd);
+		await harness.git("add -A", undefined, cwd);
+		const msg = `wt-${rng.alphanumeric(6)}`;
+		const cmd = `commit -m "${msg}"`;
+		const result = await harness.git(cmd, undefined, cwd);
+		return { description: `(in ${wt.id}) git ${cmd}`, result };
+	},
+};
+
+const worktreeMerge: Action = {
+	name: "worktreeMerge",
+	category: "worktree",
+	canRun: (state) => state.worktrees.length > 0 && state.branches.length > 1,
+	precondition: (state) => !inConflict(state),
+	weight: () => 1,
+	async execute(harness, rng, state) {
+		const wt = pickWorktree(rng, state.worktrees);
+		const cwd = worktreeCwd(wt.id);
+		// Merge a branch other than the one checked out here (own branch merges
+		// are a no-op "Already up to date").
+		const others = state.branches.filter((b) => b !== wt.branch);
+		const branch = others.length > 0 ? rng.pick(others) : rng.pick(state.branches);
+		// Run the merge and stop. A clean merge produces a comparable commit; a
+		// conflicting one *leaves the checkout mid-merge* — exactly the
+		// per-worktree operation/conflicted-index state Tier 1 verifies and the
+		// genuinely worktree-specific hazard this tier targets. The conflict is
+		// concluded later by `worktreeCommit` (with an explicit message) or
+		// cleared by `worktreeRemoveForce`.
+		const result = await harness.git(`merge ${branch}`, undefined, cwd);
+		return { description: `(in ${wt.id}) git merge ${branch}`, result };
+	},
+};
+
 export const WORKTREE_ACTIONS: readonly Action[] = [
 	worktreeAddDetached,
 	worktreeAddNewBranch,
@@ -225,4 +311,7 @@ export const WORKTREE_ACTIONS: readonly Action[] = [
 	worktreeRemoveMain,
 	worktreeRemoveLocked,
 	worktreeRemoveForce,
+	worktreeRemoveDirty,
+	worktreeCommit,
+	worktreeMerge,
 ];

@@ -9,9 +9,11 @@ import { dirname, join } from "node:path";
 import {
 	DEFAULT_FILE_GEN_CONFIG,
 	type FileGenConfig,
+	type FileOpTarget,
 	generateAndApplyFileOps,
 	generateServerCommitFiles,
 	resolveAllFiles,
+	resolveWorktreeRoot,
 } from "../random/file-gen";
 import {
 	DEFAULT_TEST_ENV,
@@ -96,7 +98,16 @@ export class RealGitHarness implements WalkHarness {
 
 	// ── WalkHarness: commands ────────────────────────────────────
 
-	async git(command: string, envOverride?: Record<string, string>): Promise<ExecResult> {
+	/** Resolve a worktree-relative selector against the repo root. */
+	private rootFor(cwd?: string): string {
+		return resolveWorktreeRoot(this.repoDir, cwd);
+	}
+
+	async git(
+		command: string,
+		envOverride?: Record<string, string>,
+		cwd?: string,
+	): Promise<ExecResult> {
 		let env: Record<string, string>;
 		if (envOverride) {
 			env = { ...this.env, ...envOverride };
@@ -108,7 +119,7 @@ export class RealGitHarness implements WalkHarness {
 			env = this.env;
 		}
 		const proc = Bun.spawn(["sh", "-c", `git ${command}`], {
-			cwd: this.repoDir,
+			cwd: this.rootFor(cwd),
 			env,
 			stdout: "pipe",
 			stderr: "pipe",
@@ -130,14 +141,14 @@ export class RealGitHarness implements WalkHarness {
 		});
 	}
 
-	async writeFile(relPath: string, content: string): Promise<void> {
-		const fullPath = join(this.repoDir, relPath);
+	async writeFile(relPath: string, content: string, cwd?: string): Promise<void> {
+		const fullPath = join(this.rootFor(cwd), relPath);
 		await mkdir(join(fullPath, ".."), { recursive: true });
 		await writeFile(fullPath, content);
 	}
 
-	async readFile(relPath: string): Promise<string> {
-		return readFile(join(this.repoDir, relPath), "utf-8");
+	async readFile(relPath: string, cwd?: string): Promise<string> {
+		return readFile(join(this.rootFor(cwd), relPath), "utf-8");
 	}
 
 	async spliceFile(
@@ -145,17 +156,18 @@ export class RealGitHarness implements WalkHarness {
 		content: string,
 		offset: number,
 		deleteCount: number,
+		cwd?: string,
 	): Promise<void> {
-		const fullPath = join(this.repoDir, relPath);
+		const fullPath = join(this.rootFor(cwd), relPath);
 		const existing = await readFile(fullPath, "utf-8");
 		const before = existing.slice(0, offset);
 		const after = existing.slice(offset + deleteCount);
 		await writeFile(fullPath, before + content + after);
 	}
 
-	async deleteFile(relPath: string): Promise<void> {
+	async deleteFile(relPath: string, cwd?: string): Promise<void> {
 		try {
-			await unlink(join(this.repoDir, relPath));
+			await unlink(join(this.rootFor(cwd), relPath));
 		} catch {
 			// File may not exist
 		}
@@ -163,13 +175,42 @@ export class RealGitHarness implements WalkHarness {
 
 	// ── WalkHarness: seed-based batch ────────────────────────────
 
-	async applyFileOpBatch(seed: number, files: string[]): Promise<void> {
-		await generateAndApplyFileOps(this, seed, files, this.fileGenConfig);
+	/** Build a FileOpTarget rooted at a worktree-relative selector. */
+	private targetFor(cwd?: string): FileOpTarget {
+		const root = this.rootFor(cwd);
+		return {
+			async writeFile(relPath, content) {
+				const fullPath = join(root, relPath);
+				await mkdir(join(fullPath, ".."), { recursive: true });
+				await writeFile(fullPath, content);
+			},
+			readFile: (relPath) => readFile(join(root, relPath), "utf-8"),
+			async spliceFile(relPath, content, offset, deleteCount) {
+				const fullPath = join(root, relPath);
+				const existing = await readFile(fullPath, "utf-8");
+				await writeFile(
+					fullPath,
+					existing.slice(0, offset) + content + existing.slice(offset + deleteCount),
+				);
+			},
+			async deleteFile(relPath) {
+				try {
+					await unlink(join(root, relPath));
+				} catch {
+					// File may not exist
+				}
+			},
+		};
 	}
 
-	async resolveFiles(seed: number): Promise<void> {
-		const files = await this.listWorkTreeFiles();
-		await resolveAllFiles(this, seed, files, this.fileGenConfig);
+	async applyFileOpBatch(seed: number, files: string[], cwd?: string): Promise<void> {
+		const list = cwd ? await this.listWorkTreeFiles(cwd) : files;
+		await generateAndApplyFileOps(this.targetFor(cwd), seed, list, this.fileGenConfig);
+	}
+
+	async resolveFiles(seed: number, cwd?: string): Promise<void> {
+		const files = await this.listWorkTreeFiles(cwd);
+		await resolveAllFiles(this.targetFor(cwd), seed, files, this.fileGenConfig);
 	}
 
 	// ── WalkHarness: server-side commit ──────────────────────────
@@ -191,9 +232,9 @@ export class RealGitHarness implements WalkHarness {
 
 	// ── WalkHarness: state queries ───────────────────────────────
 
-	async listWorkTreeFiles(): Promise<string[]> {
+	async listWorkTreeFiles(cwd?: string): Promise<string[]> {
 		const files: string[] = [];
-		await this.walkDir(this.repoDir, "", files);
+		await this.walkDir(this.rootFor(cwd), "", files);
 		return files.sort();
 	}
 

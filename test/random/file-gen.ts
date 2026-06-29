@@ -109,6 +109,35 @@ export const STRESS_FILE_GEN_CONFIG: FileGenConfig = {
 	editWeights: [30, 60, 10],
 };
 
+// ── Worktree execution context ───────────────────────────────────────
+
+/**
+ * Resolve a step's worktree-relative execution context against a repo root.
+ *
+ * The `cwd` selector is a path relative to the repo root (e.g. "../wt-abc123"
+ * for a sibling linked worktree); `null`/`undefined` means the primary
+ * worktree. Both the real-git temp tree and the in-memory VFS interpret it the
+ * same way because linked worktrees are created as `../<id>` siblings on both
+ * sides. POSIX-only (oracle runs under bun on posix), so `/`-normalization is
+ * sufficient for both real temp dirs and VFS paths.
+ */
+export function resolveWorktreeRoot(repoRoot: string, cwd: string | null | undefined): string {
+	if (!cwd) return repoRoot;
+	const combined = `${repoRoot}/${cwd}`;
+	const segments = combined.split("/");
+	const out: string[] = [];
+	for (const seg of segments) {
+		if (seg === "" || seg === ".") continue;
+		if (seg === "..") {
+			out.pop();
+			continue;
+		}
+		out.push(seg);
+	}
+	const prefix = combined.startsWith("/") ? "/" : "";
+	return prefix + out.join("/");
+}
+
 // ── FileOpTarget ─────────────────────────────────────────────────────
 
 /** Minimal interface for applying file operations to a filesystem. */

@@ -3,8 +3,10 @@ import { createGitCommand } from "../../src/commands/git";
 import {
 	DEFAULT_FILE_GEN_CONFIG,
 	type FileGenConfig,
+	type FileOpTarget,
 	generateAndApplyFileOps,
 	resolveAllFiles,
+	resolveWorktreeRoot,
 } from "./file-gen";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -65,26 +67,37 @@ export interface QueryState {
  * so any implementation (virtual-only, oracle dual, etc.) can be plugged in.
  */
 export interface WalkHarness {
-	git(command: string, envOverride?: Record<string, string>): Promise<ExecResult>;
+	/**
+	 * Run a git command. `cwd` is a worktree-relative execution context (e.g.
+	 * "../wt-x" to run inside a linked worktree); omit/undefined = primary.
+	 */
+	git(command: string, envOverride?: Record<string, string>, cwd?: string): Promise<ExecResult>;
 	gitCommit(message: string): Promise<ExecResult>;
 
-	// File operations (used by conflict resolution actions)
-	writeFile(relPath: string, content: string): Promise<void>;
-	readFile(relPath: string): Promise<string>;
-	spliceFile(relPath: string, content: string, offset: number, deleteCount: number): Promise<void>;
-	deleteFile(relPath: string): Promise<void>;
+	// File operations (used by conflict resolution actions). `cwd` targets a
+	// linked worktree's checkout; omit/undefined = primary.
+	writeFile(relPath: string, content: string, cwd?: string): Promise<void>;
+	readFile(relPath: string, cwd?: string): Promise<string>;
+	spliceFile(
+		relPath: string,
+		content: string,
+		offset: number,
+		deleteCount: number,
+		cwd?: string,
+	): Promise<void>;
+	deleteFile(relPath: string, cwd?: string): Promise<void>;
 
-	/** Apply a seed-determined batch of random file ops. */
-	applyFileOpBatch(seed: number, files: string[]): Promise<void>;
+	/** Apply a seed-determined batch of random file ops (optionally in a worktree). */
+	applyFileOpBatch(seed: number, files: string[], cwd?: string): Promise<void>;
 
 	/** Resolve all worktree files with deterministic random content. */
-	resolveFiles(seed: number): Promise<void>;
+	resolveFiles(seed: number, cwd?: string): Promise<void>;
 
 	/** Create a commit directly on the remote server. No-op when no server is available. */
 	serverCommit?(seed: number, branch?: string): Promise<void>;
 
-	// State queries
-	listWorkTreeFiles(): Promise<string[]>;
+	// State queries. `cwd` lists files within a linked worktree's checkout.
+	listWorkTreeFiles(cwd?: string): Promise<string[]>;
 	listBranches(): Promise<string[]>;
 	getCurrentBranch(): Promise<string | null>;
 	isInMergeConflict(): Promise<boolean>;
@@ -134,14 +147,26 @@ export class VirtualHarness implements WalkHarness {
 		this.fileGenConfig = options?.fileGenConfig ?? DEFAULT_FILE_GEN_CONFIG;
 	}
 
-	async git(command: string, envOverride?: Record<string, string>): Promise<ExecResult> {
+	/** Resolve a worktree-relative selector against the VFS root. */
+	private rootFor(cwd?: string): string {
+		return resolveWorktreeRoot(this.vfsRoot, cwd);
+	}
+
+	async git(
+		command: string,
+		envOverride?: Record<string, string>,
+		cwd?: string,
+	): Promise<ExecResult> {
 		let env = envOverride;
 		if (!env && VirtualHarness.isCommitLikeCommand(command)) {
 			this.commitCounter++;
 			const ts = `${1000000000 + this.commitCounter} +0000`;
 			env = { GIT_AUTHOR_DATE: ts, GIT_COMMITTER_DATE: ts };
 		}
-		const result = await this.bash.exec(`git ${command}`, { env });
+		const result = await this.bash.exec(`git ${command}`, {
+			env,
+			cwd: cwd ? this.rootFor(cwd) : undefined,
+		});
 		return {
 			stdout: result.stdout,
 			stderr: result.stderr,
@@ -175,8 +200,8 @@ export class VirtualHarness implements WalkHarness {
 		});
 	}
 
-	async writeFile(relPath: string, content: string): Promise<void> {
-		const vfsPath = `${this.vfsRoot}/${relPath}`;
+	async writeFile(relPath: string, content: string, cwd?: string): Promise<void> {
+		const vfsPath = `${this.rootFor(cwd)}/${relPath}`;
 		const dir = vfsPath.slice(0, vfsPath.lastIndexOf("/"));
 		if (!(await this.bash.fs.exists(dir))) {
 			await this.bash.fs.mkdir(dir, { recursive: true });
@@ -184,8 +209,8 @@ export class VirtualHarness implements WalkHarness {
 		await this.bash.fs.writeFile(vfsPath, content);
 	}
 
-	async readFile(relPath: string): Promise<string> {
-		return this.bash.fs.readFile(`${this.vfsRoot}/${relPath}`);
+	async readFile(relPath: string, cwd?: string): Promise<string> {
+		return this.bash.fs.readFile(`${this.rootFor(cwd)}/${relPath}`);
 	}
 
 	async spliceFile(
@@ -193,30 +218,43 @@ export class VirtualHarness implements WalkHarness {
 		content: string,
 		offset: number,
 		deleteCount: number,
+		cwd?: string,
 	): Promise<void> {
-		const vfsPath = `${this.vfsRoot}/${relPath}`;
+		const vfsPath = `${this.rootFor(cwd)}/${relPath}`;
 		const existing = await this.bash.fs.readFile(vfsPath);
 		const before = existing.slice(0, offset);
 		const after = existing.slice(offset + deleteCount);
 		await this.bash.fs.writeFile(vfsPath, before + content + after);
 	}
 
-	async deleteFile(relPath: string): Promise<void> {
-		await this.bash.fs.rm(`${this.vfsRoot}/${relPath}`);
+	async deleteFile(relPath: string, cwd?: string): Promise<void> {
+		await this.bash.fs.rm(`${this.rootFor(cwd)}/${relPath}`);
 	}
 
-	async applyFileOpBatch(seed: number, files: string[]): Promise<void> {
-		await generateAndApplyFileOps(this, seed, files, this.fileGenConfig);
+	/** Build a FileOpTarget rooted at a worktree-relative selector. */
+	private targetFor(cwd?: string): FileOpTarget {
+		return {
+			writeFile: (relPath, content) => this.writeFile(relPath, content, cwd),
+			readFile: (relPath) => this.readFile(relPath, cwd),
+			spliceFile: (relPath, content, offset, deleteCount) =>
+				this.spliceFile(relPath, content, offset, deleteCount, cwd),
+			deleteFile: (relPath) => this.deleteFile(relPath, cwd),
+		};
 	}
 
-	async resolveFiles(seed: number): Promise<void> {
-		const files = await this.listWorkTreeFiles();
-		await resolveAllFiles(this, seed, files, this.fileGenConfig);
+	async applyFileOpBatch(seed: number, files: string[], cwd?: string): Promise<void> {
+		const list = cwd ? await this.listWorkTreeFiles(cwd) : files;
+		await generateAndApplyFileOps(this.targetFor(cwd), seed, list, this.fileGenConfig);
 	}
 
-	async listWorkTreeFiles(): Promise<string[]> {
+	async resolveFiles(seed: number, cwd?: string): Promise<void> {
+		const files = await this.listWorkTreeFiles(cwd);
+		await resolveAllFiles(this.targetFor(cwd), seed, files, this.fileGenConfig);
+	}
+
+	async listWorkTreeFiles(cwd?: string): Promise<string[]> {
 		const files: string[] = [];
-		await this.walkDir(this.vfsRoot, "", files);
+		await this.walkDir(this.rootFor(cwd), "", files);
 		return files.sort();
 	}
 

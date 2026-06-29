@@ -37,6 +37,8 @@ interface StepData {
 	exitCode: number;
 	stdout: string;
 	stderr: string;
+	/** Worktree-relative execution context (e.g. "../wt-x"); null = primary. */
+	cwd: string | null;
 	oracle: OracleState;
 }
 
@@ -77,7 +79,7 @@ export class BatchChecker {
 
 		const rows = db
 			.prepare(
-				`SELECT seq, command, exit_code, stdout, stderr, snapshot FROM steps
+				`SELECT seq, command, exit_code, stdout, stderr, snapshot, cwd FROM steps
          WHERE trace_id = ? ORDER BY seq`,
 			)
 			.all(traceId) as {
@@ -87,6 +89,7 @@ export class BatchChecker {
 			stdout: string;
 			stderr: string;
 			snapshot: string;
+			cwd: string | null;
 		}[];
 
 		let currentFull: GitSnapshot = EMPTY_SNAPSHOT;
@@ -101,6 +104,7 @@ export class BatchChecker {
 					exitCode: row.exit_code,
 					stdout: row.stdout,
 					stderr: row.stderr ?? "",
+					cwd: row.cwd ?? null,
 					oracle: toOracleState(delta as GitSnapshot),
 				};
 			}
@@ -111,6 +115,7 @@ export class BatchChecker {
 				exitCode: row.exit_code,
 				stdout: row.stdout,
 				stderr: row.stderr ?? "",
+				cwd: row.cwd ?? null,
 				oracle: toOracleState(currentFull),
 			};
 		});
@@ -146,11 +151,12 @@ export class BatchChecker {
 	}
 
 	/** All commands in order, for replay. */
-	getCommands(): { seq: number; command: string; exitCode: number }[] {
+	getCommands(): { seq: number; command: string; exitCode: number; cwd: string | null }[] {
 		return this.steps.map((s) => ({
 			seq: s.seq,
 			command: s.command,
 			exitCode: s.exitCode,
+			cwd: s.cwd,
 		}));
 	}
 

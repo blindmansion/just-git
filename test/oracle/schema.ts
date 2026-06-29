@@ -19,8 +19,11 @@ import { Database } from "bun:sqlite";
  *       per-worktree HEADs).
  *   2 — per-worktree snapshot (each worktree carries its own index, worktree
  *       hash, operation, lock, prunable, and existence state).
+ *   3 — per-step execution context: `steps.cwd` records the worktree a command
+ *       and its file ops ran inside (NULL = the primary worktree). Additive and
+ *       nullable, but bumped to keep the one-version-per-shape-change rule.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** Read `PRAGMA user_version`. Pre-versioning DBs report 0. */
 function readUserVersion(db: Database): number {
@@ -67,6 +70,7 @@ export function initDb(path: string): Database {
       stdout TEXT,
       stderr TEXT,
       snapshot TEXT NOT NULL,
+      cwd TEXT,
       UNIQUE(trace_id, seq)
     );
 

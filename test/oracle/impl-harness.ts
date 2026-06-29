@@ -22,6 +22,7 @@ import {
 	generateAndApplyFileOps,
 	generateServerCommitFiles,
 	resolveAllFiles,
+	resolveWorktreeRoot,
 } from "../random/file-gen";
 import { DEFAULT_TEST_ENV } from "../random/harness";
 import { BatchChecker } from "./checker";
@@ -465,11 +466,15 @@ async function walkVirtualDirCollect(
 
 // ── Individual file op dispatch (for conflict resolution writes) ─
 
-async function applyIndividualFileOp(fs: IFileSystem, command: string): Promise<void> {
+async function applyIndividualFileOp(
+	fs: IFileSystem,
+	command: string,
+	root: string,
+): Promise<void> {
 	const op = parseFileOp(command);
 	switch (op.type) {
 		case "write": {
-			const fullPath = `${VFS_ROOT}/${op.path}`;
+			const fullPath = `${root}/${op.path}`;
 			const dir = fullPath.slice(0, fullPath.lastIndexOf("/"));
 			if (!(await fs.exists(dir))) {
 				await fs.mkdir(dir, { recursive: true });
@@ -488,8 +493,8 @@ async function applyIndividualFileOp(fs: IFileSystem, command: string): Promise<
 			break;
 		}
 		case "delete":
-			if (await fs.exists(`${VFS_ROOT}/${op.path}`)) {
-				await fs.rm(`${VFS_ROOT}/${op.path}`);
+			if (await fs.exists(`${root}/${op.path}`)) {
+				await fs.rm(`${root}/${op.path}`);
 			}
 			break;
 	}
@@ -518,17 +523,19 @@ async function executeCommand(
 	commitCounter: { value: number },
 	fileGenConfig: FileGenConfig = DEFAULT_FILE_GEN_CONFIG,
 	server?: GitServer,
+	cwd: string | null = null,
 ): Promise<CommandOutput> {
+	const root = resolveWorktreeRoot(VFS_ROOT, cwd);
 	if (isFileOpBatch(command)) {
 		const seed = parseFileOpBatchSeed(command);
-		const files = await listVirtualWorkTreeFiles(bash.fs, VFS_ROOT);
-		const target = createVfsTarget(bash.fs, VFS_ROOT);
+		const files = await listVirtualWorkTreeFiles(bash.fs, root);
+		const target = createVfsTarget(bash.fs, root);
 		await generateAndApplyFileOps(target, seed, files, fileGenConfig);
 		return NO_OUTPUT;
 	} else if (isFileResolve(command)) {
 		const seed = parseFileResolveSeed(command);
-		const files = await listVirtualWorkTreeFiles(bash.fs, VFS_ROOT);
-		const target = createVfsTarget(bash.fs, VFS_ROOT);
+		const files = await listVirtualWorkTreeFiles(bash.fs, root);
+		const target = createVfsTarget(bash.fs, root);
 		await resolveAllFiles(target, seed, files, fileGenConfig);
 		return NO_OUTPUT;
 	} else if (isServerCommit(command)) {
@@ -547,7 +554,7 @@ async function executeCommand(
 		});
 		return NO_OUTPUT;
 	} else if (isIndividualFileOp(command)) {
-		await applyIndividualFileOp(bash.fs, command);
+		await applyIndividualFileOp(bash.fs, command, root);
 		return NO_OUTPUT;
 	} else {
 		let envOverride: Record<string, string> | undefined;
@@ -559,7 +566,10 @@ async function executeCommand(
 				GIT_COMMITTER_DATE: ts,
 			};
 		}
-		const result = await bash.exec(command, { env: envOverride });
+		const result = await bash.exec(command, {
+			env: envOverride,
+			cwd: cwd ? root : undefined,
+		});
 		return {
 			stdout: result.stdout,
 			stderr: result.stderr,
@@ -617,11 +627,11 @@ export async function replayAndCheck(
 	let totalSteps = 0;
 	let firstWarning: StepDivergence | null = null;
 
-	for (const { seq, command } of commands) {
+	for (const { seq, command, cwd } of commands) {
 		if (options?.stopAt != null && seq > options.stopAt) break;
 		totalSteps++;
 
-		const output = await executeCommand(bash, command, commitCounter, fileGenConfig, server);
+		const output = await executeCommand(bash, command, commitCounter, fileGenConfig, server, cwd);
 
 		const isPlaceholder = checker.isPlaceholder(seq);
 		let stateWarn = false;
@@ -712,9 +722,16 @@ export async function replayToVirtual(
 	const commands = replay.checker.getCommands();
 	const commitCounter = { value: 0 };
 
-	for (const { seq, command } of commands) {
+	for (const { seq, command, cwd } of commands) {
 		if (seq > stopAt) break;
-		await executeCommand(replay.bash, command, commitCounter, replay.fileGenConfig, replay.server);
+		await executeCommand(
+			replay.bash,
+			command,
+			commitCounter,
+			replay.fileGenConfig,
+			replay.server,
+			cwd,
+		);
 	}
 
 	return replay;
@@ -734,7 +751,7 @@ export async function replayToStateAndOutput(
 	const commitCounter = { value: 0 };
 	let lastOutput: CommandOutput = NO_OUTPUT;
 
-	for (const { seq, command } of commands) {
+	for (const { seq, command, cwd } of commands) {
 		if (seq > stopAt) break;
 		lastOutput = await executeCommand(
 			replay.bash,
@@ -742,6 +759,7 @@ export async function replayToStateAndOutput(
 			commitCounter,
 			replay.fileGenConfig,
 			replay.server,
+			cwd,
 		);
 	}
 
@@ -767,9 +785,9 @@ export async function replayWithTiming(dbPath: string, traceId: number): Promise
 	const commitCounter = { value: 0 };
 	const timings: CommandTiming[] = [];
 
-	for (const { seq, command } of commands) {
+	for (const { seq, command, cwd } of commands) {
 		const start = performance.now();
-		await executeCommand(bash, command, commitCounter, fileGenConfig, server);
+		await executeCommand(bash, command, commitCounter, fileGenConfig, server, cwd);
 		const elapsed = performance.now() - start;
 		timings.push({ seq, command, elapsedMs: elapsed });
 	}
@@ -806,8 +824,8 @@ export async function replayWithSize(
 	const samples: SizeSample[] = [];
 	const totalSteps = commands.length;
 
-	for (const { seq, command } of commands) {
-		await executeCommand(bash, command, commitCounter, fileGenConfig, server);
+	for (const { seq, command, cwd } of commands) {
+		await executeCommand(bash, command, commitCounter, fileGenConfig, server, cwd);
 
 		if (seq % sampleEvery === 0 || seq === totalSteps - 1) {
 			const sample = await measureRepoSize(bash.fs, seq, command);

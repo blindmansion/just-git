@@ -24,8 +24,8 @@ export class OracleStore {
 			`INSERT INTO traces (seed, description, config) VALUES ($seed, $description, $config)`,
 		);
 		this.insertStep = db.prepare(
-			`INSERT INTO steps (trace_id, seq, command, exit_code, stdout, stderr, snapshot)
-       VALUES ($traceId, $seq, $command, $exitCode, $stdout, $stderr, $snapshot)`,
+			`INSERT INTO steps (trace_id, seq, command, exit_code, stdout, stderr, snapshot, cwd)
+       VALUES ($traceId, $seq, $command, $exitCode, $stdout, $stderr, $snapshot, $cwd)`,
 		);
 	}
 
@@ -52,6 +52,8 @@ export class OracleStore {
 		seq: number,
 		stepResult: StepResult,
 		snapshot: SnapshotDelta,
+		/** Worktree-relative execution context (e.g. "../wt-x"); null = primary. */
+		cwd: string | null = null,
 	): number {
 		const result = this.insertStep.run({
 			$traceId: traceId,
@@ -61,16 +63,17 @@ export class OracleStore {
 			$stdout: stepResult.stdout,
 			$stderr: stepResult.stderr,
 			$snapshot: JSON.stringify(snapshot),
+			$cwd: cwd,
 		});
 		return Number(result.lastInsertRowid);
 	}
 
 	getTraceSteps(
 		traceId: number,
-	): { step_id: number; seq: number; command: string; exit_code: number }[] {
+	): { step_id: number; seq: number; command: string; exit_code: number; cwd: string | null }[] {
 		return this.db
 			.prepare(
-				`SELECT step_id, seq, command, exit_code
+				`SELECT step_id, seq, command, exit_code, cwd
          FROM steps WHERE trace_id = $traceId ORDER BY seq`,
 			)
 			.all({ $traceId: traceId }) as {
@@ -78,6 +81,7 @@ export class OracleStore {
 			seq: number;
 			command: string;
 			exit_code: number;
+			cwd: string | null;
 		}[];
 	}
 

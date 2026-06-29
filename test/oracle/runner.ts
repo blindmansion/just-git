@@ -17,6 +17,7 @@ import {
 	generateAndApplyFileOps,
 	generateServerCommitFiles,
 	resolveAllFiles,
+	resolveWorktreeRoot,
 } from "../random/file-gen";
 import { createServer, MemoryStorage, type GitServer } from "../../src/server/index";
 import {
@@ -138,18 +139,20 @@ export async function replayTo(
 		for (const step of steps) {
 			if (step.seq > stopAtSeq) break;
 
+			const root = resolveWorktreeRoot(repoDir, step.cwd);
+
 			if (isFileOpBatch(step.command)) {
 				const seed = parseFileOpBatchSeed(step.command);
-				const files = await listRealWorkTreeFiles(repoDir);
-				const target = createRealFsTarget(repoDir);
+				const files = await listRealWorkTreeFiles(root);
+				const target = createRealFsTarget(root);
 				await generateAndApplyFileOps(target, seed, files, fileGenConfig);
 			} else if (isFileResolve(step.command)) {
 				const seed = parseFileResolveSeed(step.command);
-				const files = await listRealWorkTreeFiles(repoDir);
-				const target = createRealFsTarget(repoDir);
+				const files = await listRealWorkTreeFiles(root);
+				const target = createRealFsTarget(root);
 				await resolveAllFiles(target, seed, files, fileGenConfig);
 			} else if (isIndividualFileOp(step.command)) {
-				await execIndividualFileOp(repoDir, step.command);
+				await execIndividualFileOp(root, step.command);
 			} else if (isServerCommit(step.command)) {
 				const { seed, branch } = parseServerCommit(step.command);
 				const files = generateServerCommitFiles(seed, fileGenConfig);
@@ -178,7 +181,7 @@ export async function replayTo(
 				if (storedBaseUrl && newBaseUrl) {
 					cmd = cmd.replaceAll(storedBaseUrl, newBaseUrl);
 				}
-				await execShell(repoDir, cmd, stepEnv);
+				await execShell(root, cmd, stepEnv);
 			}
 		}
 	} catch (err) {
