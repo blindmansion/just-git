@@ -20,6 +20,7 @@ import {
 	type ExecResult,
 	type WalkHarness,
 	type WorktreeInfo,
+	worktreeIdFromCwd,
 } from "../random/harness";
 import { isolatedGitEnv } from "../real-git";
 import { isCommitCommand } from "./fileops";
@@ -103,6 +104,16 @@ export class RealGitHarness implements WalkHarness {
 		return resolveWorktreeRoot(this.repoDir, cwd);
 	}
 
+	/**
+	 * The git/admin dir holding a worktree's private HEAD + operation state.
+	 * Primary → `<repo>/.git`; a linked checkout → `<repo>/.git/worktrees/<id>`,
+	 * where `<id>` is the selector basename (the sibling-path convention).
+	 */
+	private gitDirFor(cwd?: string): string {
+		if (!cwd) return join(this.repoDir, ".git");
+		return join(this.repoDir, ".git", "worktrees", worktreeIdFromCwd(cwd));
+	}
+
 	async git(
 		command: string,
 		envOverride?: Record<string, string>,
@@ -132,13 +143,17 @@ export class RealGitHarness implements WalkHarness {
 		return { stdout, stderr, exitCode };
 	}
 
-	async gitCommit(message: string): Promise<ExecResult> {
+	async gitCommit(message: string, cwd?: string): Promise<ExecResult> {
 		this.commitCounter++;
 		const ts = `${1000000000 + this.commitCounter} +0000`;
-		return this.git(`commit -m "${message}"`, {
-			GIT_AUTHOR_DATE: ts,
-			GIT_COMMITTER_DATE: ts,
-		});
+		return this.git(
+			`commit -m "${message}"`,
+			{
+				GIT_AUTHOR_DATE: ts,
+				GIT_COMMITTER_DATE: ts,
+			},
+			cwd,
+		);
 	}
 
 	async writeFile(relPath: string, content: string, cwd?: string): Promise<void> {
@@ -276,8 +291,8 @@ export class RealGitHarness implements WalkHarness {
 		);
 	}
 
-	async getCurrentBranch(): Promise<string | null> {
-		const headPath = join(this.repoDir, ".git", "HEAD");
+	async getCurrentBranch(cwd?: string): Promise<string | null> {
+		const headPath = join(this.gitDirFor(cwd), "HEAD");
 		try {
 			const content = (await readFile(headPath, "utf-8")).trim();
 			return content.startsWith("ref: refs/heads/")
@@ -288,27 +303,28 @@ export class RealGitHarness implements WalkHarness {
 		}
 	}
 
-	async isInMergeConflict(): Promise<boolean> {
-		return fileExists(join(this.repoDir, ".git", "MERGE_HEAD"));
+	async isInMergeConflict(cwd?: string): Promise<boolean> {
+		return fileExists(join(this.gitDirFor(cwd), "MERGE_HEAD"));
 	}
 
-	async isInCherryPickConflict(): Promise<boolean> {
-		return fileExists(join(this.repoDir, ".git", "CHERRY_PICK_HEAD"));
+	async isInCherryPickConflict(cwd?: string): Promise<boolean> {
+		return fileExists(join(this.gitDirFor(cwd), "CHERRY_PICK_HEAD"));
 	}
 
-	async isInRevertConflict(): Promise<boolean> {
-		return fileExists(join(this.repoDir, ".git", "REVERT_HEAD"));
+	async isInRevertConflict(cwd?: string): Promise<boolean> {
+		return fileExists(join(this.gitDirFor(cwd), "REVERT_HEAD"));
 	}
 
-	async isInRebaseConflict(): Promise<boolean> {
+	async isInRebaseConflict(cwd?: string): Promise<boolean> {
+		const gitDir = this.gitDirFor(cwd);
 		return (
-			(await fileExists(join(this.repoDir, ".git", "rebase-merge"))) ||
-			(await fileExists(join(this.repoDir, ".git", "rebase-apply")))
+			(await fileExists(join(gitDir, "rebase-merge"))) ||
+			(await fileExists(join(gitDir, "rebase-apply")))
 		);
 	}
 
-	async hasCommits(): Promise<boolean> {
-		const result = await this.git("rev-parse HEAD");
+	async hasCommits(cwd?: string): Promise<boolean> {
+		const result = await this.git("rev-parse HEAD", undefined, cwd);
 		return result.exitCode === 0;
 	}
 

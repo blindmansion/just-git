@@ -22,7 +22,12 @@ import {
 import type { ExecResult, WalkHarness } from "../random/harness";
 import { SeededRNG } from "../random/rng";
 import type { Action, ActionCategory, FuzzConfig } from "../random/types";
-import { pickAction, queryState } from "../random/walker";
+import {
+	pickAction,
+	queryState,
+	selectWorktreeTarget,
+	worktreeSafeActions,
+} from "../random/walker";
 import { captureSnapshot, type GitSnapshot } from "./capture";
 import {
 	del,
@@ -87,12 +92,12 @@ class RecordingHarness implements WalkHarness {
 		return result;
 	}
 
-	async gitCommit(message: string): Promise<ExecResult> {
-		const result = await this.inner.gitCommit(message);
+	async gitCommit(message: string, cwd?: string): Promise<ExecResult> {
+		const result = await this.inner.gitCommit(message, cwd);
 		this.buffer.push({
 			command: `git commit -m "${message}"`,
 			result,
-			cwd: null,
+			cwd: cwd ?? null,
 		});
 		return result;
 	}
@@ -231,23 +236,23 @@ class RecordingHarness implements WalkHarness {
 	listBranches() {
 		return this.inner.listBranches();
 	}
-	getCurrentBranch() {
-		return this.inner.getCurrentBranch();
+	getCurrentBranch(cwd?: string) {
+		return this.inner.getCurrentBranch(cwd);
 	}
-	isInMergeConflict() {
-		return this.inner.isInMergeConflict();
+	isInMergeConflict(cwd?: string) {
+		return this.inner.isInMergeConflict(cwd);
 	}
-	isInCherryPickConflict() {
-		return this.inner.isInCherryPickConflict();
+	isInCherryPickConflict(cwd?: string) {
+		return this.inner.isInCherryPickConflict(cwd);
 	}
-	isInRevertConflict() {
-		return this.inner.isInRevertConflict();
+	isInRevertConflict(cwd?: string) {
+		return this.inner.isInRevertConflict(cwd);
 	}
-	isInRebaseConflict() {
-		return this.inner.isInRebaseConflict();
+	isInRebaseConflict(cwd?: string) {
+		return this.inner.isInRebaseConflict(cwd);
 	}
-	hasCommits() {
-		return this.inner.hasCommits();
+	hasCommits(cwd?: string) {
+		return this.inner.hasCommits(cwd);
 	}
 	getStashCount() {
 		return this.inner.getStashCount();
@@ -275,6 +280,11 @@ interface GenerateConfig {
 	chaosRate?: number;
 	/** Per-picker-type probability of injecting wrong values. */
 	fuzz?: FuzzConfig;
+	/**
+	 * Probability (0-1) that a step runs inside a randomly chosen linked
+	 * worktree instead of the primary one. Default 0.
+	 */
+	worktreeRate?: number;
 	/** File generation config. Defaults to DEFAULT_FILE_GEN_CONFIG. */
 	fileGen?: FileGenConfig;
 	/** Optional description stored in the trace metadata. */
@@ -294,6 +304,7 @@ export async function generateTraces(config: GenerateConfig): Promise<void> {
 	const { dbPath, seeds, steps, description, cloneUrl, fuzz, withRemote } = config;
 	const actions = config.actions ?? ALL_ACTIONS;
 	const chaosRate = config.chaosRate ?? 0;
+	const worktreeRate = config.worktreeRate ?? 0;
 	const fileGen = config.fileGen ?? DEFAULT_FILE_GEN_CONFIG;
 
 	const db = initDb(dbPath);
@@ -346,6 +357,7 @@ export async function generateTraces(config: GenerateConfig): Promise<void> {
 					steps,
 					actions,
 					chaosRate,
+					worktreeRate,
 					cloneUrl,
 					fuzz,
 					harness.remoteBaseUrl ?? undefined,
@@ -377,6 +389,7 @@ async function runRecordedWalk(
 	steps: number,
 	actions: readonly Action[],
 	chaosRate: number,
+	worktreeRate: number,
 	cloneUrl?: string,
 	fuzz?: FuzzConfig,
 	remoteBaseUrl?: string,
@@ -409,11 +422,16 @@ async function runRecordedWalk(
 	}
 
 	for (let step = 1; step <= steps; step++) {
-		const state = await queryState(recorder);
-		const action = pickAction(rng, state, actions, chaosRate);
+		const target = await selectWorktreeTarget(recorder, rng, worktreeRate);
+		const view = target ?? recorder;
+		const state = await queryState(view);
+		const eligible = target ? worktreeSafeActions(actions) : actions;
+		const action = pickAction(rng, state, eligible, chaosRate);
 		if (!action) continue;
 
-		await action.execute(recorder, rng, state, fuzz);
+		await action.execute(view, rng, state, fuzz);
+		// Commands buffer on the recorder regardless of the view; flush persists
+		// them (each carries its worktree cwd).
 		await recorder.flush();
 	}
 }
@@ -423,6 +441,13 @@ async function runRecordedWalk(
 interface Preset {
 	actions: readonly Action[];
 	chaosRate?: number;
+	/**
+	 * Probability (0-1) that a step runs inside a randomly chosen linked
+	 * worktree. The walk binds the harness to that checkout and picks from the
+	 * worktree-safe action subset, so the whole catalog exercises per-worktree
+	 * HEAD/index/operation state. Default 0 (always primary).
+	 */
+	worktreeRate?: number;
 	fuzz?: FuzzConfig;
 	fileGen?: FileGenConfig;
 	cloneUrl?: string;
@@ -597,20 +622,24 @@ export const PRESETS: Record<string, Preset> = {
 	worktree: {
 		actions: boostCategory([...CORE_ACTIONS, ...WORKTREE_ACTIONS], "worktree", 4),
 		chaosRate: 0.05,
+		worktreeRate: 0.25,
 		fuzz: FUZZ_LIGHT,
 	},
 
 	/**
-	 * Worktree-deep: like `worktree` but with the category boosted harder and
-	 * gitignore'd file generation, so linked worktrees are not just created but
-	 * *worked in* (commit/merge inside the checkout). Stresses the per-worktree
-	 * index/HEAD/operation state captured in Tier 1 and the cwd-routed commands
-	 * and file ops added in Tier 2 — the genuinely worktree-specific hazard of an
-	 * operation in progress in worktree B over a shared object store.
+	 * Worktree-deep: like `worktree` but with more worktrees created (category
+	 * boosted harder), a high `worktreeRate` so most steps run *inside* a linked
+	 * checkout, and gitignore'd file generation. The whole worktree-safe action
+	 * catalog (commit/branch/merge/rebase/stash/reset/...) runs against the
+	 * checkout, stressing the per-worktree index/HEAD/operation state captured in
+	 * Tier 1 and the cwd routing added in Tier 2 — including the genuinely
+	 * worktree-specific hazard of an operation in progress in worktree B over a
+	 * shared object store.
 	 */
 	"worktree-deep": {
 		actions: boostCategory([...CORE_ACTIONS, ...WORKTREE_ACTIONS], "worktree", 8),
 		chaosRate: 0.05,
+		worktreeRate: 0.5,
 		fuzz: FUZZ_LIGHT,
 		fileGen: {
 			...DEFAULT_FILE_GEN_CONFIG,

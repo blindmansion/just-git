@@ -72,7 +72,7 @@ export interface WalkHarness {
 	 * "../wt-x" to run inside a linked worktree); omit/undefined = primary.
 	 */
 	git(command: string, envOverride?: Record<string, string>, cwd?: string): Promise<ExecResult>;
-	gitCommit(message: string): Promise<ExecResult>;
+	gitCommit(message: string, cwd?: string): Promise<ExecResult>;
 
 	// File operations (used by conflict resolution actions). `cwd` targets a
 	// linked worktree's checkout; omit/undefined = primary.
@@ -96,15 +96,18 @@ export interface WalkHarness {
 	/** Create a commit directly on the remote server. No-op when no server is available. */
 	serverCommit?(seed: number, branch?: string): Promise<void>;
 
-	// State queries. `cwd` lists files within a linked worktree's checkout.
+	// State queries. Methods that take `cwd` are *per-worktree* (HEAD, operation
+	// state, working-tree files); pass a worktree-relative selector to query a
+	// linked checkout. The rest (branches, stash, remotes, worktree list) are
+	// shared common-dir state and ignore any execution context.
 	listWorkTreeFiles(cwd?: string): Promise<string[]>;
 	listBranches(): Promise<string[]>;
-	getCurrentBranch(): Promise<string | null>;
-	isInMergeConflict(): Promise<boolean>;
-	isInCherryPickConflict(): Promise<boolean>;
-	isInRevertConflict(): Promise<boolean>;
-	isInRebaseConflict(): Promise<boolean>;
-	hasCommits(): Promise<boolean>;
+	getCurrentBranch(cwd?: string): Promise<string | null>;
+	isInMergeConflict(cwd?: string): Promise<boolean>;
+	isInCherryPickConflict(cwd?: string): Promise<boolean>;
+	isInRevertConflict(cwd?: string): Promise<boolean>;
+	isInRebaseConflict(cwd?: string): Promise<boolean>;
+	hasCommits(cwd?: string): Promise<boolean>;
 	getStashCount(): Promise<number>;
 	listRemotes(): Promise<string[]>;
 	/** Linked worktrees (admin dirs under .git/worktrees), sorted by id. */
@@ -125,6 +128,14 @@ export const DEFAULT_TEST_ENV: Record<string, string> = {
 	GIT_AUTHOR_DATE: "1000000000 +0000",
 	GIT_COMMITTER_DATE: "1000000000 +0000",
 };
+
+/**
+ * The admin-dir id for a worktree-relative selector. By the sibling-path
+ * convention (`../wt-x`) the id is just the final path segment.
+ */
+export function worktreeIdFromCwd(cwd: string): string {
+	return cwd.slice(cwd.lastIndexOf("/") + 1);
+}
 
 // ── VirtualHarness ───────────────────────────────────────────────────
 
@@ -150,6 +161,16 @@ export class VirtualHarness implements WalkHarness {
 	/** Resolve a worktree-relative selector against the VFS root. */
 	private rootFor(cwd?: string): string {
 		return resolveWorktreeRoot(this.vfsRoot, cwd);
+	}
+
+	/**
+	 * The git/admin dir holding a worktree's private HEAD + operation state.
+	 * Primary → `<root>/.git`; a linked checkout → `<root>/.git/worktrees/<id>`,
+	 * where `<id>` is the selector basename (the sibling-path convention).
+	 */
+	private gitDirFor(cwd?: string): string {
+		if (!cwd) return `${this.vfsRoot}/.git`;
+		return `${this.vfsRoot}/.git/worktrees/${worktreeIdFromCwd(cwd)}`;
 	}
 
 	async git(
@@ -191,13 +212,17 @@ export class VirtualHarness implements WalkHarness {
 		);
 	}
 
-	async gitCommit(message: string): Promise<ExecResult> {
+	async gitCommit(message: string, cwd?: string): Promise<ExecResult> {
 		this.commitCounter++;
 		const ts = `${1000000000 + this.commitCounter} +0000`;
-		return this.git(`commit -m "${message}"`, {
-			GIT_AUTHOR_DATE: ts,
-			GIT_COMMITTER_DATE: ts,
-		});
+		return this.git(
+			`commit -m "${message}"`,
+			{
+				GIT_AUTHOR_DATE: ts,
+				GIT_COMMITTER_DATE: ts,
+			},
+			cwd,
+		);
 	}
 
 	async writeFile(relPath: string, content: string, cwd?: string): Promise<void> {
@@ -313,35 +338,36 @@ export class VirtualHarness implements WalkHarness {
 		}
 	}
 
-	async getCurrentBranch(): Promise<string | null> {
-		const headPath = `${this.vfsRoot}/.git/HEAD`;
+	async getCurrentBranch(cwd?: string): Promise<string | null> {
+		const headPath = `${this.gitDirFor(cwd)}/HEAD`;
 		if (!(await this.bash.fs.exists(headPath))) return null;
 		const content = (await this.bash.fs.readFile(headPath)).trim();
 		return content.startsWith("ref: refs/heads/") ? content.slice("ref: refs/heads/".length) : null;
 	}
 
-	async isInMergeConflict(): Promise<boolean> {
-		return this.bash.fs.exists(`${this.vfsRoot}/.git/MERGE_HEAD`);
+	async isInMergeConflict(cwd?: string): Promise<boolean> {
+		return this.bash.fs.exists(`${this.gitDirFor(cwd)}/MERGE_HEAD`);
 	}
 
-	async isInCherryPickConflict(): Promise<boolean> {
-		return this.bash.fs.exists(`${this.vfsRoot}/.git/CHERRY_PICK_HEAD`);
+	async isInCherryPickConflict(cwd?: string): Promise<boolean> {
+		return this.bash.fs.exists(`${this.gitDirFor(cwd)}/CHERRY_PICK_HEAD`);
 	}
 
-	async isInRevertConflict(): Promise<boolean> {
-		return this.bash.fs.exists(`${this.vfsRoot}/.git/REVERT_HEAD`);
+	async isInRevertConflict(cwd?: string): Promise<boolean> {
+		return this.bash.fs.exists(`${this.gitDirFor(cwd)}/REVERT_HEAD`);
 	}
 
-	async isInRebaseConflict(): Promise<boolean> {
-		return this.bash.fs.exists(`${this.vfsRoot}/.git/rebase-merge`);
+	async isInRebaseConflict(cwd?: string): Promise<boolean> {
+		return this.bash.fs.exists(`${this.gitDirFor(cwd)}/rebase-merge`);
 	}
 
-	async hasCommits(): Promise<boolean> {
-		const headPath = `${this.vfsRoot}/.git/HEAD`;
+	async hasCommits(cwd?: string): Promise<boolean> {
+		const headPath = `${this.gitDirFor(cwd)}/HEAD`;
 		if (!(await this.bash.fs.exists(headPath))) return false;
 		const content = (await this.bash.fs.readFile(headPath)).trim();
 		if (content.startsWith("ref: ")) {
 			const refName = content.slice(5);
+			// Branch refs live in the shared common-dir, not the per-worktree dir.
 			if (await this.bash.fs.exists(`${this.vfsRoot}/.git/${refName}`)) return true;
 			return this.refExistsInPackedRefs(refName);
 		}
@@ -393,5 +419,88 @@ export class VirtualHarness implements WalkHarness {
 			infos.push({ id, branch, locked });
 		}
 		return infos;
+	}
+}
+
+// ── WorktreeView ─────────────────────────────────────────────────────
+
+/**
+ * A {@link WalkHarness} bound to a single linked worktree. Every command, file
+ * op, and per-worktree state query is forwarded to the wrapped harness with a
+ * fixed `cwd` selector, so an ordinary (worktree-unaware) action runs entirely
+ * *inside* that checkout. Shared common-dir state (branches, stash, remotes,
+ * the worktree list itself) is forwarded without a context.
+ *
+ * This is the mechanism behind the walk's worktree targeting: pick a worktree,
+ * wrap the harness in a view, and the existing action catalog operates on it
+ * unchanged — no per-action `cwd` plumbing required.
+ */
+export class WorktreeView implements WalkHarness {
+	constructor(
+		private readonly inner: WalkHarness,
+		private readonly cwd: string,
+	) {}
+
+	// Per-worktree: commands + file ops route into the checkout.
+	git(command: string, envOverride?: Record<string, string>): Promise<ExecResult> {
+		return this.inner.git(command, envOverride, this.cwd);
+	}
+	gitCommit(message: string): Promise<ExecResult> {
+		return this.inner.gitCommit(message, this.cwd);
+	}
+	writeFile(relPath: string, content: string): Promise<void> {
+		return this.inner.writeFile(relPath, content, this.cwd);
+	}
+	readFile(relPath: string): Promise<string> {
+		return this.inner.readFile(relPath, this.cwd);
+	}
+	spliceFile(relPath: string, content: string, offset: number, deleteCount: number): Promise<void> {
+		return this.inner.spliceFile(relPath, content, offset, deleteCount, this.cwd);
+	}
+	deleteFile(relPath: string): Promise<void> {
+		return this.inner.deleteFile(relPath, this.cwd);
+	}
+	applyFileOpBatch(seed: number, files: string[]): Promise<void> {
+		return this.inner.applyFileOpBatch(seed, files, this.cwd);
+	}
+	resolveFiles(seed: number): Promise<void> {
+		return this.inner.resolveFiles(seed, this.cwd);
+	}
+
+	// Per-worktree state queries.
+	listWorkTreeFiles(): Promise<string[]> {
+		return this.inner.listWorkTreeFiles(this.cwd);
+	}
+	getCurrentBranch(): Promise<string | null> {
+		return this.inner.getCurrentBranch(this.cwd);
+	}
+	isInMergeConflict(): Promise<boolean> {
+		return this.inner.isInMergeConflict(this.cwd);
+	}
+	isInCherryPickConflict(): Promise<boolean> {
+		return this.inner.isInCherryPickConflict(this.cwd);
+	}
+	isInRevertConflict(): Promise<boolean> {
+		return this.inner.isInRevertConflict(this.cwd);
+	}
+	isInRebaseConflict(): Promise<boolean> {
+		return this.inner.isInRebaseConflict(this.cwd);
+	}
+	hasCommits(): Promise<boolean> {
+		return this.inner.hasCommits(this.cwd);
+	}
+
+	// Shared common-dir state: context-independent.
+	listBranches(): Promise<string[]> {
+		return this.inner.listBranches();
+	}
+	getStashCount(): Promise<number> {
+		return this.inner.getStashCount();
+	}
+	listRemotes(): Promise<string[]> {
+		return this.inner.listRemotes();
+	}
+	listWorktrees(): Promise<WorktreeInfo[]> {
+		return this.inner.listWorktrees();
 	}
 }

@@ -1,7 +1,8 @@
 import { ALL_ACTIONS } from "./actions/index";
 import type { ExecResult, QueryState, WalkHarness } from "./harness";
+import { WorktreeView } from "./harness";
 import { SeededRNG } from "./rng";
-import type { Action, FuzzConfig } from "./types";
+import type { Action, ActionCategory, FuzzConfig } from "./types";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -25,6 +26,11 @@ interface WalkConfig {
 	chaosRate?: number;
 	/** Per-picker-type probability of injecting wrong values. */
 	fuzz?: FuzzConfig;
+	/**
+	 * Probability (0-1) that a step runs inside a randomly chosen linked
+	 * worktree instead of the primary one. Default 0 (always primary).
+	 */
+	worktreeRate?: number;
 }
 
 /** Optional callbacks that let consumers inject behavior into the walk. */
@@ -92,6 +98,46 @@ export async function queryState(harness: WalkHarness): Promise<QueryState> {
 	};
 }
 
+// ── Worktree targeting ───────────────────────────────────────────────
+
+/**
+ * Action categories that only make sense from the primary worktree: worktree
+ * management (`worktree add/remove/...` resolves sibling paths and `remove .`
+ * relative to the main repo) and remote/network transport (base-URL wiring).
+ * Everything else — staging, commit, branch, merge, rebase, stash, reset,
+ * conflict resolution, diagnostics — operates on the current checkout and runs
+ * unchanged inside a linked worktree.
+ */
+const PRIMARY_ONLY_CATEGORIES: ReadonlySet<ActionCategory> = new Set<ActionCategory>([
+	"worktree",
+	"remote",
+]);
+
+/** Actions that can run inside a linked worktree (excludes primary-only ones). */
+export function worktreeSafeActions(actions: readonly Action[]): readonly Action[] {
+	return actions.filter((a) => !PRIMARY_ONLY_CATEGORIES.has(a.category));
+}
+
+/**
+ * With probability `worktreeRate`, bind the harness to a randomly chosen linked
+ * worktree so this step runs *inside* that checkout; otherwise the primary
+ * worktree. Returns a {@link WorktreeView} (or null for primary). `rng` is only
+ * consumed once linked worktrees exist, so a rate of 0 leaves the walk stream
+ * untouched.
+ */
+export async function selectWorktreeTarget(
+	harness: WalkHarness,
+	rng: SeededRNG,
+	worktreeRate: number,
+): Promise<WorktreeView | null> {
+	if (worktreeRate <= 0) return null;
+	const worktrees = await harness.listWorktrees();
+	if (worktrees.length === 0) return null;
+	if (rng.next() >= worktreeRate) return null;
+	const wt = worktrees[rng.int(0, worktrees.length - 1)]!;
+	return new WorktreeView(harness, `../${wt.id}`);
+}
+
 /** Pick an eligible action using weighted random selection. */
 export function pickAction(
 	rng: SeededRNG,
@@ -129,6 +175,7 @@ export async function runWalk(
 ): Promise<StepEvent[]> {
 	const { seed, steps, chaosRate, fuzz } = config;
 	const actionSet = config.actions ?? ALL_ACTIONS;
+	const worktreeRate = config.worktreeRate ?? 0;
 	const rng = new SeededRNG(seed);
 	const log: StepEvent[] = [];
 
@@ -153,8 +200,11 @@ export async function runWalk(
 	});
 
 	for (let step = 1; step <= steps; step++) {
-		const state = await queryState(harness);
-		const action = pickAction(rng, state, actionSet, chaosRate);
+		const target = await selectWorktreeTarget(harness, rng, worktreeRate);
+		const view = target ?? harness;
+		const state = await queryState(view);
+		const eligible = target ? worktreeSafeActions(actionSet) : actionSet;
+		const action = pickAction(rng, state, eligible, chaosRate);
 
 		if (!action) {
 			log.push({
@@ -166,7 +216,7 @@ export async function runWalk(
 			continue;
 		}
 
-		const outcome = await action.execute(harness, rng, state, fuzz);
+		const outcome = await action.execute(view, rng, state, fuzz);
 		const event: StepEvent = {
 			step,
 			action: action.name,
