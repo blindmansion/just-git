@@ -15,6 +15,7 @@ import type { Action } from "../types";
 const worktreeAddDetached: Action = {
 	name: "worktreeAddDetached",
 	category: "worktree",
+	createsWorktree: true,
 	canRun: (state) => state.hasCommits,
 	precondition: (state) => !inConflict(state),
 	weight: () => 2,
@@ -29,6 +30,7 @@ const worktreeAddDetached: Action = {
 const worktreeAddNewBranch: Action = {
 	name: "worktreeAddNewBranch",
 	category: "worktree",
+	createsWorktree: true,
 	canRun: (state) => state.hasCommits,
 	precondition: (state) => !inConflict(state),
 	weight: () => 2,
@@ -212,7 +214,7 @@ const worktreeRemoveForce: Action = {
 };
 
 // Work *inside* a linked worktree is no longer driven by bespoke actions: the
-// walk's worktree targeting (see `selectWorktreeTarget` / `WorktreeView` in
+// walk's worktree targeting (see `WorktreeTargeter` / `WorktreeView` in
 // walker.ts + harness.ts) binds the harness to a chosen checkout and runs the
 // ordinary worktree-safe action catalog (commit/branch/merge/rebase/stash/...)
 // against it, exercising per-worktree HEAD/index/operation state for free. The

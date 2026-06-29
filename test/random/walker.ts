@@ -31,6 +31,18 @@ interface WalkConfig {
 	 * worktree instead of the primary one. Default 0 (always primary).
 	 */
 	worktreeRate?: number;
+	/**
+	 * Cap on concurrent linked worktrees. Worktree-creating actions are
+	 * suppressed at/above this count so the walk builds a few deep checkouts
+	 * rather than many shallow ones. Default Infinity (uncapped).
+	 */
+	maxWorktrees?: number;
+	/**
+	 * `[min, max]` consecutive steps to stay in a worktree once entered, so
+	 * multi-step workflows (start op → resolve → continue → commit) complete in
+	 * the same checkout. Default `[1, 1]` (independent per-step reselection).
+	 */
+	worktreeStickiness?: [number, number];
 }
 
 /** Optional callbacks that let consumers inject behavior into the walk. */
@@ -119,23 +131,59 @@ export function worktreeSafeActions(actions: readonly Action[]): readonly Action
 }
 
 /**
- * With probability `worktreeRate`, bind the harness to a randomly chosen linked
- * worktree so this step runs *inside* that checkout; otherwise the primary
- * worktree. Returns a {@link WorktreeView} (or null for primary). `rng` is only
- * consumed once linked worktrees exist, so a rate of 0 leaves the walk stream
- * untouched.
+ * Drop worktree-creating actions once the live-worktree count reaches `max`.
+ * Keeps the worktree-management catalog (remove/prune/lock/guards/error paths)
+ * eligible so churn and cross-worktree assertions still happen; only *growth*
+ * is gated. A no-op below the cap.
  */
-export async function selectWorktreeTarget(
-	harness: WalkHarness,
-	rng: SeededRNG,
-	worktreeRate: number,
-): Promise<WorktreeView | null> {
-	if (worktreeRate <= 0) return null;
-	const worktrees = await harness.listWorktrees();
-	if (worktrees.length === 0) return null;
-	if (rng.next() >= worktreeRate) return null;
-	const wt = worktrees[rng.int(0, worktrees.length - 1)]!;
-	return new WorktreeView(harness, `../${wt.id}`);
+export function applyWorktreeCap(
+	actions: readonly Action[],
+	state: QueryState,
+	max: number,
+): readonly Action[] {
+	if (state.worktrees.length < max) return actions;
+	return actions.filter((a) => !a.createsWorktree);
+}
+
+/**
+ * Per-step execution-target selector for the walk. With probability `rate` a
+ * fresh decision enters a randomly chosen linked worktree (returning a
+ * {@link WorktreeView}); otherwise the primary worktree (null). Once entered, a
+ * worktree is held for a sticky run of `stickiness` steps so multi-step
+ * workflows complete in place. The rng is only consumed once linked worktrees
+ * exist, so a rate of 0 leaves the walk stream untouched.
+ */
+export class WorktreeTargeter {
+	private sticky: { id: string; remaining: number } | null = null;
+
+	constructor(
+		private readonly rng: SeededRNG,
+		private readonly rate: number,
+		private readonly stickiness: [number, number] = [1, 1],
+	) {}
+
+	async select(harness: WalkHarness): Promise<WorktreeView | null> {
+		if (this.rate <= 0) return null;
+		const worktrees = await harness.listWorktrees();
+		if (worktrees.length === 0) {
+			this.sticky = null;
+			return null;
+		}
+		// Continue an active sticky run if its worktree still exists.
+		const active = this.sticky;
+		if (active && active.remaining > 0 && worktrees.some((w) => w.id === active.id)) {
+			active.remaining -= 1;
+			return new WorktreeView(harness, `../${active.id}`);
+		}
+		// Otherwise decide afresh whether to enter a worktree this step.
+		this.sticky = null;
+		if (this.rng.next() >= this.rate) return null;
+		const wt = worktrees[this.rng.int(0, worktrees.length - 1)]!;
+		const [lo, hi] = this.stickiness;
+		const run = hi > 1 ? this.rng.int(lo, hi) : 1;
+		this.sticky = { id: wt.id, remaining: run - 1 };
+		return new WorktreeView(harness, `../${wt.id}`);
+	}
 }
 
 /** Pick an eligible action using weighted random selection. */
@@ -176,7 +224,9 @@ export async function runWalk(
 	const { seed, steps, chaosRate, fuzz } = config;
 	const actionSet = config.actions ?? ALL_ACTIONS;
 	const worktreeRate = config.worktreeRate ?? 0;
+	const maxWorktrees = config.maxWorktrees ?? Number.POSITIVE_INFINITY;
 	const rng = new SeededRNG(seed);
+	const targeter = new WorktreeTargeter(rng, worktreeRate, config.worktreeStickiness);
 	const log: StepEvent[] = [];
 
 	// Initialize the repo
@@ -200,10 +250,11 @@ export async function runWalk(
 	});
 
 	for (let step = 1; step <= steps; step++) {
-		const target = await selectWorktreeTarget(harness, rng, worktreeRate);
+		const target = await targeter.select(harness);
 		const view = target ?? harness;
 		const state = await queryState(view);
-		const eligible = target ? worktreeSafeActions(actionSet) : actionSet;
+		const base = target ? worktreeSafeActions(actionSet) : actionSet;
+		const eligible = applyWorktreeCap(base, state, maxWorktrees);
 		const action = pickAction(rng, state, eligible, chaosRate);
 
 		if (!action) {

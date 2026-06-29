@@ -23,10 +23,11 @@ import type { ExecResult, WalkHarness } from "../random/harness";
 import { SeededRNG } from "../random/rng";
 import type { Action, ActionCategory, FuzzConfig } from "../random/types";
 import {
+	applyWorktreeCap,
 	pickAction,
 	queryState,
-	selectWorktreeTarget,
 	worktreeSafeActions,
+	WorktreeTargeter,
 } from "../random/walker";
 import { captureSnapshot, type GitSnapshot } from "./capture";
 import {
@@ -285,6 +286,10 @@ interface GenerateConfig {
 	 * worktree instead of the primary one. Default 0.
 	 */
 	worktreeRate?: number;
+	/** Cap on concurrent linked worktrees (suppresses growth at/above it). Default Infinity. */
+	maxWorktrees?: number;
+	/** `[min, max]` consecutive steps to stay in a worktree once entered. Default `[1, 1]`. */
+	worktreeStickiness?: [number, number];
 	/** File generation config. Defaults to DEFAULT_FILE_GEN_CONFIG. */
 	fileGen?: FileGenConfig;
 	/** Optional description stored in the trace metadata. */
@@ -305,6 +310,8 @@ export async function generateTraces(config: GenerateConfig): Promise<void> {
 	const actions = config.actions ?? ALL_ACTIONS;
 	const chaosRate = config.chaosRate ?? 0;
 	const worktreeRate = config.worktreeRate ?? 0;
+	const maxWorktrees = config.maxWorktrees ?? Number.POSITIVE_INFINITY;
+	const worktreeStickiness = config.worktreeStickiness;
 	const fileGen = config.fileGen ?? DEFAULT_FILE_GEN_CONFIG;
 
 	const db = initDb(dbPath);
@@ -361,6 +368,8 @@ export async function generateTraces(config: GenerateConfig): Promise<void> {
 					cloneUrl,
 					fuzz,
 					harness.remoteBaseUrl ?? undefined,
+					maxWorktrees,
+					worktreeStickiness,
 				);
 			} finally {
 				await harness.cleanup();
@@ -393,8 +402,11 @@ async function runRecordedWalk(
 	cloneUrl?: string,
 	fuzz?: FuzzConfig,
 	remoteBaseUrl?: string,
+	maxWorktrees: number = Number.POSITIVE_INFINITY,
+	worktreeStickiness?: [number, number],
 ): Promise<void> {
 	const rng = new SeededRNG(seed);
+	const targeter = new WorktreeTargeter(rng, worktreeRate, worktreeStickiness);
 
 	if (cloneUrl) {
 		await recorder.git(`clone ${cloneUrl} .`);
@@ -422,10 +434,11 @@ async function runRecordedWalk(
 	}
 
 	for (let step = 1; step <= steps; step++) {
-		const target = await selectWorktreeTarget(recorder, rng, worktreeRate);
+		const target = await targeter.select(recorder);
 		const view = target ?? recorder;
 		const state = await queryState(view);
-		const eligible = target ? worktreeSafeActions(actions) : actions;
+		const base = target ? worktreeSafeActions(actions) : actions;
+		const eligible = applyWorktreeCap(base, state, maxWorktrees);
 		const action = pickAction(rng, state, eligible, chaosRate);
 		if (!action) continue;
 
@@ -448,6 +461,19 @@ interface Preset {
 	 * HEAD/index/operation state. Default 0 (always primary).
 	 */
 	worktreeRate?: number;
+	/**
+	 * Cap on concurrent linked worktrees. Worktree-creating actions are
+	 * suppressed at/above it, keeping the walk on a few *deep* checkouts rather
+	 * than many shallow ones (worktree bugs are state-depth bugs, not count
+	 * bugs). Default Infinity (uncapped).
+	 */
+	maxWorktrees?: number;
+	/**
+	 * `[min, max]` consecutive steps to stay in a worktree once entered, so
+	 * multi-step in-worktree workflows complete in place. Default `[1, 1]`
+	 * (independent per-step reselection — favors dangling cross-worktree ops).
+	 */
+	worktreeStickiness?: [number, number];
 	fuzz?: FuzzConfig;
 	fileGen?: FileGenConfig;
 	cloneUrl?: string;
@@ -620,26 +646,34 @@ export const PRESETS: Record<string, Preset> = {
 	 * work inside linked checkouts.
 	 */
 	worktree: {
-		actions: boostCategory([...CORE_ACTIONS, ...WORKTREE_ACTIONS], "worktree", 4),
+		// Depth over breadth: a low worktree boost (management is rare), a small
+		// cap, and sticky in-worktree runs so a few checkouts accumulate real
+		// per-worktree index/HEAD/operation/reflog state instead of churning
+		// many shallow ones.
+		actions: boostCategory([...CORE_ACTIONS, ...WORKTREE_ACTIONS], "worktree", 2),
 		chaosRate: 0.05,
-		worktreeRate: 0.25,
+		worktreeRate: 0.3,
+		maxWorktrees: 3,
+		worktreeStickiness: [3, 8],
 		fuzz: FUZZ_LIGHT,
 	},
 
 	/**
-	 * Worktree-deep: like `worktree` but with more worktrees created (category
-	 * boosted harder), a high `worktreeRate` so most steps run *inside* a linked
-	 * checkout, and gitignore'd file generation. The whole worktree-safe action
-	 * catalog (commit/branch/merge/rebase/stash/reset/...) runs against the
-	 * checkout, stressing the per-worktree index/HEAD/operation state captured in
-	 * Tier 1 and the cwd routing added in Tier 2 — including the genuinely
-	 * worktree-specific hazard of an operation in progress in worktree B over a
-	 * shared object store.
+	 * Worktree-deep: high `worktreeRate` with *independent* per-step reselection
+	 * (no stickiness) and gitignore'd file generation. Where `worktree` favors
+	 * deep, completed in-worktree workflows, this preset favors the
+	 * worktree-specific *hazard* the independence produces — an operation left
+	 * in progress in worktree B (a dangling rebase/merge) while later steps
+	 * operate elsewhere over the shared object store. The live count is still
+	 * capped (a handful of worktrees suffices for that hazard; more only inflates
+	 * capture cost), just higher than `worktree`.
 	 */
 	"worktree-deep": {
-		actions: boostCategory([...CORE_ACTIONS, ...WORKTREE_ACTIONS], "worktree", 8),
+		actions: boostCategory([...CORE_ACTIONS, ...WORKTREE_ACTIONS], "worktree", 3),
 		chaosRate: 0.05,
 		worktreeRate: 0.5,
+		maxWorktrees: 4,
+		worktreeStickiness: [1, 1],
 		fuzz: FUZZ_LIGHT,
 		fileGen: {
 			...DEFAULT_FILE_GEN_CONFIG,
@@ -723,6 +757,13 @@ export const PRESETS: Record<string, Preset> = {
 	kitchen: {
 		actions: excludeNames(ALL_ACTIONS, "cherryPickNoCommit", "revertNoCommit"),
 		chaosRate: 0.12,
+		// A kitchen sink should also *work inside* the worktrees it creates, not
+		// just create and tear them down. Modest rate + cap + stickiness so a
+		// few worktrees see real work without dominating the mix or inflating
+		// capture cost.
+		worktreeRate: 0.2,
+		maxWorktrees: 4,
+		worktreeStickiness: [2, 5],
 		fuzz: FUZZ_LIGHT,
 		fileGen: {
 			...DEFAULT_FILE_GEN_CONFIG,
@@ -771,6 +812,10 @@ export const PRESETS: Record<string, Preset> = {
 	"remote-kitchen": {
 		actions: excludeNames(ALL_ACTIONS, "cherryPickNoCommit", "revertNoCommit"),
 		chaosRate: 0.12,
+		// Same in-worktree work as `kitchen`, plus the remote transport mix.
+		worktreeRate: 0.2,
+		maxWorktrees: 4,
+		worktreeStickiness: [2, 5],
 		fuzz: FUZZ_LIGHT,
 		fileGen: {
 			...DEFAULT_FILE_GEN_CONFIG,

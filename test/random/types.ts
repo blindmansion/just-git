@@ -43,6 +43,15 @@ export interface Action {
 	/** Category for preset filtering/boosting. */
 	category: ActionCategory;
 	/**
+	 * Whether a successful run of this action adds a linked worktree. The walk
+	 * suppresses these once the live-worktree count reaches `maxWorktrees`, so
+	 * the budget stays on depth (work *inside* a few worktrees) rather than
+	 * breadth (many shallow checkouts). Error-path "add" actions that are
+	 * expected to fail (duplicate branch / existing path / claimed branch) do
+	 * not set this — they never grow the count.
+	 */
+	createsWorktree?: boolean;
+	/**
 	 * Hard precondition: the action's execute code won't crash.
 	 * Checks structural requirements (e.g., needs files to pick from,
 	 * needs at least 2 branches). Always checked.
