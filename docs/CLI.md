@@ -48,6 +48,7 @@ Commands:
   gc           Cleanup unnecessary files and optimize the local repository
   bisect       Use binary search to find the commit that introduced a bug
   grep         Print lines matching a pattern
+  worktree     Manage multiple working trees
   help         Display help information
 ```
 
@@ -315,6 +316,7 @@ Options:
   --orphan                     Create a new orphan branch
   --ours                       Checkout our version for unmerged files
   --theirs                     Checkout their version for unmerged files
+  --ignore-other-worktrees     Allow checking out a branch used by another worktree
 ```
 
 ## git cherry-pick
@@ -1133,6 +1135,7 @@ Options:
   -d, --detach                 Detach HEAD at named commit
   --orphan <string>            Create a new orphan branch
   --guess                      Guess branch from remote tracking (default: true)
+  --ignore-other-worktrees     Allow checking out a branch used by another worktree
 ```
 
 ## git tag
@@ -1154,4 +1157,137 @@ Options:
   -f, --force             Replace an existing tag
   -l, --list              List tags matching pattern
   --sort <string>         Sort order (e.g. creatordate, -creatordate, refname, -refname, version:refname, -version:refname)
+```
+
+## git worktree
+
+```
+git worktree - Manage multiple working trees
+
+Usage:
+  git worktree <command>
+
+Commands:
+  add     Create a new working tree
+  list    List details of each working tree
+  remove  Remove a working tree
+  prune   Prune working tree information
+  lock    Lock a working tree to prevent pruning
+  unlock  Unlock a working tree
+  move    (move is not yet implemented)
+  repair  (repair is not yet implemented)
+```
+
+### git worktree add
+
+```
+git worktree add - Create a new working tree
+
+Usage:
+  git worktree add [options] <path> [commitish]
+
+Arguments:
+  path       Path for the new worktree (required)
+  commitish  Commit-ish to check out
+
+Options:
+  -b, --new-branch <string>        Create a new branch
+  -B, --force-new-branch <string>  Create or reset a branch
+  -d, --detach                     Detach HEAD in the new worktree
+  -f, --force                      Override safety checks (counted)
+  --lock                           Keep the worktree locked after creation
+  --reason <string>                Reason for locking
+  --no-checkout                    Do not populate the new worktree
+  -q, --quiet                      Suppress progress output
+```
+
+### git worktree list
+
+```
+git worktree list - List details of each working tree
+
+Usage:
+  git worktree list [options]
+
+Options:
+  --porcelain  Machine-readable output
+```
+
+### git worktree lock
+
+```
+git worktree lock - Lock a working tree to prevent pruning
+
+Usage:
+  git worktree lock [options] <worktree>
+
+Arguments:
+  worktree  Worktree to lock (required)
+
+Options:
+  --reason <string>  Reason for locking
+```
+
+### git worktree move
+
+```
+git worktree move - (move is not yet implemented)
+
+Usage:
+  git worktree move [args...]
+
+Arguments:
+  args...
+```
+
+### git worktree prune
+
+```
+git worktree prune - Prune working tree information
+
+Usage:
+  git worktree prune [options]
+
+Options:
+  -n, --dry-run  Do not remove, just report
+  -v, --verbose  Report pruned worktrees
+```
+
+### git worktree remove
+
+```
+git worktree remove - Remove a working tree
+
+Usage:
+  git worktree remove [options] <worktree>
+
+Arguments:
+  worktree  Worktree to remove (required)
+
+Options:
+  -f, --force  Override safety checks (counted)
+```
+
+### git worktree repair
+
+```
+git worktree repair - (repair is not yet implemented)
+
+Usage:
+  git worktree repair [args...]
+
+Arguments:
+  args...
+```
+
+### git worktree unlock
+
+```
+git worktree unlock - Unlock a working tree
+
+Usage:
+  git worktree unlock <worktree>
+
+Arguments:
+  worktree  Worktree to unlock (required)
 ```
