@@ -107,9 +107,7 @@ describe("FileSystemRefStore routing (split gitDir/commonDir)", () => {
 		// The listing must match readRef: only this worktree's own bisect ref,
 		// never the common dir's loose ref or a packed per-worktree ref.
 		expect(await store.readRef("refs/bisect/packed")).toBeNull();
-		expect((await store.listRefs("refs/bisect")).map((r) => r.name)).toEqual([
-			"refs/bisect/good",
-		]);
+		expect((await store.listRefs("refs/bisect")).map((r) => r.name)).toEqual(["refs/bisect/good"]);
 		expect((await store.listRefs("refs")).map((r) => r.name)).toEqual([
 			"refs/bisect/good",
 			"refs/heads/main",

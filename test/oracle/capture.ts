@@ -16,7 +16,7 @@ import { normalizeRebaseField, type WorktreeSnapshot } from "./compare";
 async function run(
 	args: string[],
 	cwd: string,
-	env?: Record<string, string>
+	env?: Record<string, string>,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
 	try {
 		return await RealGit.in(cwd, env ? { env } : undefined).execAsync(args);
@@ -35,10 +35,7 @@ export interface HeadState {
 	headSha: string | null;
 }
 
-async function captureHead(
-	repoDir: string,
-	env?: Record<string, string>
-): Promise<HeadState> {
+async function captureHead(repoDir: string, env?: Record<string, string>): Promise<HeadState> {
 	// Read raw HEAD to determine if symbolic or detached
 	const headContent = (await Bun.file(`${repoDir}/.git/HEAD`).text()).trim();
 
@@ -57,15 +54,8 @@ export interface RefEntry {
 	sha: string;
 }
 
-async function captureRefs(
-	repoDir: string,
-	env?: Record<string, string>
-): Promise<RefEntry[]> {
-	const result = await run(
-		["for-each-ref", "--format=%(objectname) %(refname)"],
-		repoDir,
-		env
-	);
+async function captureRefs(repoDir: string, env?: Record<string, string>): Promise<RefEntry[]> {
+	const result = await run(["for-each-ref", "--format=%(objectname) %(refname)"], repoDir, env);
 	if (result.exitCode !== 0 || !result.stdout.trim()) return [];
 
 	return result.stdout
@@ -92,7 +82,7 @@ export interface IndexEntry {
 
 export async function captureIndex(
 	repoDir: string,
-	env?: Record<string, string>
+	env?: Record<string, string>,
 ): Promise<IndexEntry[]> {
 	const result = await run(["ls-files", "--stage"], repoDir, env);
 	if (result.exitCode !== 0 || !result.stdout.trim()) return [];
@@ -235,7 +225,7 @@ async function hashWorkTree(repoDir: string): Promise<string> {
 async function walkDirHash(
 	dirPath: string,
 	prefix: string,
-	hash: ReturnType<typeof createHash>
+	hash: ReturnType<typeof createHash>,
 ): Promise<void> {
 	let entries: string[];
 	try {
@@ -263,9 +253,7 @@ async function walkDirHash(
  * Capture all working tree files with full content (excluding .git/).
  * Only needed on mismatch — call hashWorkTree for the fast path.
  */
-export async function captureWorkTree(
-	repoDir: string
-): Promise<WorkTreeFile[]> {
+export async function captureWorkTree(repoDir: string): Promise<WorkTreeFile[]> {
 	const files: WorkTreeFile[] = [];
 	await walkDirCollect(repoDir, "", files);
 	return files;
@@ -274,7 +262,7 @@ export async function captureWorkTree(
 async function walkDirCollect(
 	dirPath: string,
 	prefix: string,
-	files: WorkTreeFile[]
+	files: WorkTreeFile[],
 ): Promise<void> {
 	let entries: string[];
 	try {
@@ -305,7 +293,7 @@ async function walkDirCollect(
  */
 async function captureStashHashes(
 	repoDir: string,
-	env?: Record<string, string>
+	env?: Record<string, string>,
 ): Promise<string[]> {
 	const result = await run(["stash", "list", "--format=%H"], repoDir, env);
 	if (result.exitCode !== 0 || !result.stdout.trim()) return [];
@@ -323,7 +311,7 @@ async function captureStashHashes(
  */
 async function captureWorktrees(
 	repoDir: string,
-	env?: Record<string, string>
+	env?: Record<string, string>,
 ): Promise<WorktreeSnapshot[]> {
 	const worktreesDir = `${repoDir}/.git/worktrees`;
 	let ids: string[];
@@ -377,17 +365,16 @@ export interface GitSnapshot {
  */
 export async function captureSnapshot(
 	repoDir: string,
-	env?: Record<string, string>
+	env?: Record<string, string>,
 ): Promise<GitSnapshot> {
-	const [head, refs, index, operation, workTreeHash, stashHashes, worktrees] =
-		await Promise.all([
-			captureHead(repoDir, env),
-			captureRefs(repoDir, env),
-			captureIndex(repoDir, env),
-			captureOperation(repoDir),
-			hashWorkTree(repoDir),
-			captureStashHashes(repoDir, env),
-			captureWorktrees(repoDir, env),
-		]);
+	const [head, refs, index, operation, workTreeHash, stashHashes, worktrees] = await Promise.all([
+		captureHead(repoDir, env),
+		captureRefs(repoDir, env),
+		captureIndex(repoDir, env),
+		captureOperation(repoDir),
+		hashWorkTree(repoDir),
+		captureStashHashes(repoDir, env),
+		captureWorktrees(repoDir, env),
+	]);
 	return { head, refs, index, operation, workTreeHash, stashHashes, worktrees };
 }
