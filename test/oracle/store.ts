@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { TraceConfig } from "./generate";
+import { assertSchemaVersion } from "./schema";
 import type { SnapshotDelta } from "./snapshot-delta";
 
 interface StepResult {
@@ -15,6 +16,9 @@ export class OracleStore {
 	private insertStep;
 
 	constructor(db: Database) {
+		// Refuse to read/write a DB whose stored shape the current code can't
+		// interpret (a stale on-disk trace set). initDb stamps fresh DBs.
+		assertSchemaVersion(db);
 		this.db = db;
 		this.insertTrace = db.prepare(
 			`INSERT INTO traces (seed, description, config) VALUES ($seed, $description, $config)`,

@@ -11,9 +11,10 @@ import { createGitCommand } from "../../src/commands/git";
 import { createServer, MemoryStorage, type GitServer } from "../../src/server/index";
 import { readIndex } from "../../src/lib/index";
 import { readReflog } from "../../src/lib/reflog";
-import { listRefs, readHead, resolveRef } from "../../src/lib/refs";
+import { FileSystemRefStore, listRefs, readHead, resolveRef } from "../../src/lib/refs";
 import { findRepo } from "../../src/lib/repo";
 import type { GitContext } from "../../src/lib/types";
+import { listWorktrees } from "../../src/lib/worktree-admin";
 import {
 	DEFAULT_FILE_GEN_CONFIG,
 	type FileGenConfig,
@@ -24,7 +25,7 @@ import {
 } from "../random/file-gen";
 import { DEFAULT_TEST_ENV } from "../random/harness";
 import { BatchChecker } from "./checker";
-import { normalizeRebaseField, type ImplState, type WorktreeSnapshot } from "./compare";
+import { normalizeRebaseField, type ImplState, type ImplWorktreeState } from "./compare";
 import {
 	isCommitCommand,
 	isFileOpBatch,
@@ -128,38 +129,34 @@ async function captureImplState(fs: IFileSystem): Promise<ImplState> {
 
 	if (!gitCtx) {
 		return {
-			headRef: null,
-			headSha: null,
 			refs: new Map(),
-			index: new Map(),
-			workTreeHash: await virtualHashWorkTree(fs, VFS_ROOT),
-			activeOperation: null,
-			operationStateHash: null,
 			stashHashes: [],
-			worktrees: [],
+			worktrees: [
+				{
+					id: "main",
+					path: ".",
+					headRef: null,
+					headSha: null,
+					index: new Map(),
+					workTreeHash: await virtualHashWorkTree(fs, VFS_ROOT),
+					operation: null,
+					operationStateHash: null,
+					locked: false,
+					lockReason: null,
+					prunable: null,
+					checkoutExists: true,
+				},
+			],
 		};
 	}
 
-	const [headState, refs, index, operation, workTreeHash, stashHashes, worktrees] =
-		await Promise.all([
-			captureVirtualHead(gitCtx),
-			captureVirtualRefs(gitCtx),
-			captureVirtualIndex(gitCtx),
-			captureVirtualOperation(fs, gitCtx.gitDir),
-			virtualHashWorkTree(fs, VFS_ROOT),
-			captureVirtualStash(gitCtx),
-			captureVirtualWorktrees(fs, gitCtx),
-		]);
+	const [refs, stashHashes, worktrees] = await Promise.all([
+		captureVirtualRefs(gitCtx),
+		captureVirtualStash(gitCtx),
+		captureVirtualWorktrees(fs, gitCtx),
+	]);
 
-	return {
-		...headState,
-		refs,
-		index,
-		workTreeHash,
-		stashHashes,
-		worktrees,
-		...operation,
-	};
+	return { refs, stashHashes, worktrees };
 }
 
 // ── HEAD ─────────────────────────────────────────────────────────
@@ -310,35 +307,75 @@ async function captureVirtualStash(ctx: GitContext): Promise<string[]> {
 	return hashes;
 }
 
-// ── Linked worktrees ─────────────────────────────────────────────
+// ── Worktrees ────────────────────────────────────────────────────
 
 /**
- * Capture each linked worktree's private HEAD from the virtual common dir,
- * keyed by admin-dir id. Mirrors capture.ts captureWorktrees: a branch HEAD
- * resolves the (shared) branch tip, a detached HEAD reports its commit.
+ * Capture every worktree's full state from the virtual filesystem — the main
+ * worktree first (id "main"), then each linked worktree. Drives off the impl's
+ * own `listWorktrees`, mirroring how the real capture walks the admin dirs, so
+ * lock/prunable/existence and per-worktree head/index/operation/hash are
+ * compared on both sides.
  */
 async function captureVirtualWorktrees(
 	fs: IFileSystem,
 	ctx: GitContext,
-): Promise<WorktreeSnapshot[]> {
-	const worktreesDir = `${ctx.commonDir}/worktrees`;
-	if (!(await fs.exists(worktreesDir))) return [];
+): Promise<ImplWorktreeState[]> {
+	const result: ImplWorktreeState[] = [];
 
-	const snapshots: WorktreeSnapshot[] = [];
-	for (const id of (await fs.readdir(worktreesDir)).sort()) {
-		const headPath = `${worktreesDir}/${id}/HEAD`;
-		if (!(await fs.exists(headPath))) continue;
-		const head = (await fs.readFile(headPath)).trim();
-
-		if (!head.startsWith("ref: ")) {
-			snapshots.push({ id, headRef: null, headSha: head });
+	for (const info of await listWorktrees(ctx)) {
+		if (info.isMain) {
+			const [head, index, operation] = await Promise.all([
+				captureVirtualHead(ctx),
+				captureVirtualIndex(ctx),
+				captureVirtualOperation(fs, ctx.gitDir),
+			]);
+			result.push({
+				id: "main",
+				path: ".",
+				headRef: head.headRef,
+				headSha: head.headSha,
+				index,
+				workTreeHash: await virtualHashWorkTree(fs, ctx.workTree ?? VFS_ROOT),
+				operation: operation.activeOperation,
+				operationStateHash: operation.operationStateHash,
+				locked: false,
+				lockReason: null,
+				prunable: null,
+				checkoutExists: true,
+			});
 			continue;
 		}
 
-		const headSha = await resolveRef(ctx, head.slice("ref: ".length));
-		snapshots.push({ id, headRef: head, headSha });
+		const id = info.adminDir.slice(info.adminDir.lastIndexOf("/") + 1);
+		// Scope a context at this worktree's private admin dir: HEAD/index live
+		// there, while objects and shared refs stay rooted at the common dir.
+		const wtCtx: GitContext = {
+			...ctx,
+			gitDir: info.adminDir,
+			refStore: new FileSystemRefStore(fs, info.adminDir, ctx.commonDir),
+		};
+		const wtPath = info.path || "";
+		const [index, operation] = await Promise.all([
+			captureVirtualIndex(wtCtx),
+			captureVirtualOperation(fs, info.adminDir),
+		]);
+		result.push({
+			id,
+			path: wtPath,
+			headRef: info.branch ? `ref: ${info.branch}` : null,
+			headSha: info.head,
+			index,
+			workTreeHash: await virtualHashWorkTree(fs, wtPath),
+			operation: operation.activeOperation,
+			operationStateHash: operation.operationStateHash,
+			locked: info.locked,
+			lockReason: info.lockReason,
+			prunable: info.prunable,
+			checkoutExists: wtPath ? await fs.exists(wtPath) : false,
+		});
 	}
-	return snapshots;
+
+	return result;
 }
 
 // ── Worktree hash ────────────────────────────────────────────────

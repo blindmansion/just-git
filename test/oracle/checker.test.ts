@@ -37,31 +37,34 @@ async function createTempDb(): Promise<{
 
 function implStateToSnapshot(state: ImplState): GitSnapshot {
 	return {
-		head: {
-			headRef: state.headRef,
-			headSha: state.headSha,
-		},
 		refs: [...state.refs.entries()]
 			.sort(([a], [b]) => a.localeCompare(b))
 			.map(([refName, sha]) => ({ refName, sha })),
-		index: [...state.index.entries()]
-			.sort(([a], [b]) => a.localeCompare(b))
-			.map(([key, value]) => {
-				const split = key.lastIndexOf(":");
-				return {
-					path: key.slice(0, split),
-					stage: Number(key.slice(split + 1)),
-					mode: value.mode,
-					sha: value.sha,
-				};
-			}),
-		operation: {
-			operation: state.activeOperation,
-			stateHash: state.operationStateHash,
-		},
-		workTreeHash: state.workTreeHash,
 		stashHashes: [...state.stashHashes],
-		worktrees: [...state.worktrees],
+		worktrees: state.worktrees.map((w) => ({
+			id: w.id,
+			path: w.path,
+			headRef: w.headRef,
+			headSha: w.headSha,
+			index: [...w.index.entries()]
+				.sort(([a], [b]) => a.localeCompare(b))
+				.map(([key, value]) => {
+					const split = key.lastIndexOf(":");
+					return {
+						path: key.slice(0, split),
+						stage: Number(key.slice(split + 1)),
+						mode: value.mode,
+						sha: value.sha,
+					};
+				}),
+			workTreeHash: w.workTreeHash,
+			operation: w.operation,
+			operationStateHash: w.operationStateHash,
+			locked: w.locked,
+			lockReason: w.lockReason,
+			prunable: w.prunable,
+			checkoutExists: w.checkoutExists,
+		})),
 	};
 }
 

@@ -1,43 +1,68 @@
 import { describe, expect, test } from "bun:test";
-import { compare, hasErrors, type ImplState, type OracleState } from "./compare";
+import {
+	compare,
+	hasErrors,
+	type ImplState,
+	type ImplWorktreeState,
+	type OracleState,
+	type OracleWorktreeState,
+} from "./compare";
+
+function oracleMain(): OracleWorktreeState {
+	return {
+		id: "main",
+		path: ".",
+		headRef: "ref: refs/heads/main",
+		headSha: "a".repeat(40),
+		index: [],
+		workTreeHash: "tree-hash",
+		operation: null,
+		operationStateHash: null,
+		locked: false,
+		lockReason: null,
+		prunable: null,
+		checkoutExists: true,
+	};
+}
+
+function implMain(): ImplWorktreeState {
+	return {
+		id: "main",
+		path: ".",
+		headRef: "ref: refs/heads/main",
+		headSha: "a".repeat(40),
+		index: new Map(),
+		workTreeHash: "tree-hash",
+		operation: null,
+		operationStateHash: null,
+		locked: false,
+		lockReason: null,
+		prunable: null,
+		checkoutExists: true,
+	};
+}
 
 function baseOracleState(): OracleState {
 	return {
-		head: {
-			headRef: "ref: refs/heads/main",
-			headSha: "a".repeat(40),
-		},
 		refs: [
 			{ refName: "refs/heads/main", sha: "a".repeat(40) },
 			{ refName: "refs/heads/topic", sha: "c".repeat(40) },
 			{ refName: "refs/remotes/origin/HEAD", sha: "d".repeat(40) },
 		],
-		index: [],
-		operation: {
-			operation: null,
-			stateHash: null,
-		},
-		workTreeHash: "tree-hash",
 		stashHashes: [],
-		worktrees: [],
+		worktrees: [oracleMain()],
 	};
 }
 
 function baseImplState(): ImplState {
 	return {
-		headRef: "ref: refs/heads/main",
-		headSha: "a".repeat(40),
 		refs: new Map([
 			["refs/heads/main", "a".repeat(40)],
 			["refs/heads/topic", "c".repeat(40)],
 			["refs/remotes/origin/HEAD", "d".repeat(40)],
 		]),
-		index: new Map(),
-		workTreeHash: "tree-hash",
-		activeOperation: null,
-		operationStateHash: null,
 		stashHashes: [],
-		worktrees: [],
+		worktrees: [implMain()],
 	};
 }
 
@@ -57,7 +82,7 @@ describe("oracle compare severity", () => {
 	test("treats attached head_sha drift as an error", () => {
 		const oracle = baseOracleState();
 		const impl = baseImplState();
-		impl.headSha = "b".repeat(40);
+		impl.worktrees[0]!.headSha = "b".repeat(40);
 		impl.refs.set("refs/heads/main", "b".repeat(40));
 
 		const divergences = compare(oracle, impl);
@@ -82,9 +107,9 @@ describe("oracle compare severity", () => {
 	test("keeps detached head_sha drift as a warning", () => {
 		const oracle = baseOracleState();
 		const impl = baseImplState();
-		oracle.head.headRef = null;
-		impl.headRef = null;
-		impl.headSha = "b".repeat(40);
+		oracle.worktrees[0]!.headRef = null;
+		impl.worktrees[0]!.headRef = null;
+		impl.worktrees[0]!.headSha = "b".repeat(40);
 		oracle.refs = [{ refName: "refs/heads/main", sha: "a".repeat(40) }];
 		impl.refs = new Map([["refs/heads/main", "a".repeat(40)]]);
 

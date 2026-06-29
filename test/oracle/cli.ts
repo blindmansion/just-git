@@ -48,7 +48,13 @@ import {
 import { runPlannerInspect } from "./planner-inspect";
 import { runPostMortem } from "./post-mortem";
 import { replayTo } from "./runner";
-import { applyDelta, EMPTY_SNAPSHOT, type SnapshotDelta } from "./snapshot-delta";
+import { assertSchemaVersion } from "./schema";
+import {
+	applyDelta,
+	EMPTY_SNAPSHOT,
+	isPlaceholderDelta,
+	type SnapshotDelta,
+} from "./snapshot-delta";
 
 const DATA_DIR = join(dirname(import.meta.path), "data");
 
@@ -472,6 +478,7 @@ Examples:
 	const seq = parseInt(stepArg, 10);
 
 	const conn = new Database(db, { readonly: true });
+	assertSchemaVersion(conn);
 
 	// Get the target step (without snapshot — we'll reconstruct it from deltas)
 	const step = conn
@@ -546,50 +553,55 @@ Examples:
 	let snap: GitSnapshot = EMPTY_SNAPSHOT;
 	for (const row of deltaRows) {
 		const delta: SnapshotDelta = JSON.parse(row.snapshot);
-		if (delta.workTreeHash !== "") {
+		if (!isPlaceholderDelta(delta)) {
 			snap = applyDelta(snap, delta);
 		}
 	}
 	// Check if the target step itself is a placeholder
 	const targetDelta: SnapshotDelta = JSON.parse(deltaRows[deltaRows.length - 1].snapshot);
-	if (targetDelta.workTreeHash === "") {
+	if (isPlaceholderDelta(targetDelta)) {
 		console.log("\nSnapshot: (placeholder — intermediate step of multi-command action)");
 		console.log("");
 		return;
 	}
 
+	const oracleMain = snap.worktrees.find((w) => w.id === "main") ?? snap.worktrees[0];
+	const implMain = implState.worktrees.find((w) => w.id === "main") ?? implState.worktrees[0];
+
 	console.log("\nOracle state:");
 	printState({
-		headRef: snap.head.headRef,
-		headSha: snap.head.headSha,
-		operation: snap.operation.operation,
-		operationHash: snap.operation.stateHash,
+		headRef: oracleMain?.headRef ?? null,
+		headSha: oracleMain?.headSha ?? null,
+		operation: oracleMain?.operation ?? null,
+		operationHash: oracleMain?.operationStateHash ?? null,
 		refCount: snap.refs.length,
-		indexCount: snap.index.filter((e) => e.stage === 0).length,
-		conflictCount: snap.index.filter((e) => e.stage > 0).length,
-		workTreeHash: snap.workTreeHash,
+		indexCount: (oracleMain?.index ?? []).filter((e) => e.stage === 0).length,
+		conflictCount: (oracleMain?.index ?? []).filter((e) => e.stage > 0).length,
+		workTreeHash: oracleMain?.workTreeHash ?? "",
 	});
 
 	console.log("\nImpl state:");
 	printState({
-		headRef: implState.headRef,
-		headSha: implState.headSha,
-		operation: implState.activeOperation,
-		operationHash: implState.operationStateHash,
+		headRef: implMain?.headRef ?? null,
+		headSha: implMain?.headSha ?? null,
+		operation: implMain?.operation ?? null,
+		operationHash: implMain?.operationStateHash ?? null,
 		refCount: implState.refs.size,
-		indexCount: [...implState.index.keys()].filter((k) => k.endsWith(":0")).length,
-		conflictCount: [...implState.index.keys()].filter((k) => !k.endsWith(":0")).length,
-		workTreeHash: implState.workTreeHash,
+		indexCount: [...(implMain?.index.keys() ?? [])].filter((k) => k.endsWith(":0")).length,
+		conflictCount: [...(implMain?.index.keys() ?? [])].filter((k) => !k.endsWith(":0")).length,
+		workTreeHash: implMain?.workTreeHash ?? "",
 	});
+
+	// Note any linked worktrees so the divergence field prefixes make sense.
+	const linked = snap.worktrees.filter((w) => w.id !== "main");
+	if (linked.length > 0) {
+		console.log(`\nLinked worktrees: ${linked.map((w) => w.id).join(", ")}`);
+	}
 
 	// ── State divergences ────────────────────────────────────────
 
 	const oracleState: OracleState = {
-		head: snap.head,
 		refs: snap.refs,
-		index: snap.index,
-		operation: snap.operation,
-		workTreeHash: snap.workTreeHash,
 		stashHashes: snap.stashHashes ?? [],
 		worktrees: snap.worktrees ?? [],
 	};
