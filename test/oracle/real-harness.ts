@@ -13,7 +13,12 @@ import {
 	generateServerCommitFiles,
 	resolveAllFiles,
 } from "../random/file-gen";
-import { DEFAULT_TEST_ENV, type ExecResult, type WalkHarness } from "../random/harness";
+import {
+	DEFAULT_TEST_ENV,
+	type ExecResult,
+	type WalkHarness,
+	type WorktreeInfo,
+} from "../random/harness";
 import { isolatedGitEnv } from "../real-git";
 import { isCommitCommand } from "./fileops";
 import { createServer, MemoryStorage, type GitServer } from "../../src/server/index";
@@ -278,13 +283,30 @@ export class RealGitHarness implements WalkHarness {
 		return result.stdout.trim().split("\n").filter(Boolean);
 	}
 
-	async listWorktrees(): Promise<string[]> {
+	async listWorktrees(): Promise<WorktreeInfo[]> {
 		const worktreesDir = join(this.repoDir, ".git", "worktrees");
+		let ids: string[];
 		try {
-			return (await readdir(worktreesDir)).sort();
+			ids = (await readdir(worktreesDir)).sort();
 		} catch {
 			return [];
 		}
+		const infos: WorktreeInfo[] = [];
+		for (const id of ids) {
+			const adminDir = join(worktreesDir, id);
+			let branch: string | null = null;
+			try {
+				const content = (await readFile(join(adminDir, "HEAD"), "utf-8")).trim();
+				if (content.startsWith("ref: refs/heads/")) {
+					branch = content.slice("ref: refs/heads/".length);
+				}
+			} catch {
+				// HEAD missing — treat as detached/unknown.
+			}
+			const locked = await fileExists(join(adminDir, "locked"));
+			infos.push({ id, branch, locked });
+		}
+		return infos;
 	}
 
 	// ── Cleanup ──────────────────────────────────────────────────

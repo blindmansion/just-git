@@ -15,6 +15,22 @@ export interface ExecResult {
 	exitCode: number;
 }
 
+/**
+ * A linked worktree as seen from the main repo, derived from the admin dir
+ * under `.git/worktrees/<id>`. `id` is the admin-dir basename (path-agnostic,
+ * so real-git temp paths and the in-memory VFS agree). The sibling path is
+ * always reconstructable as `../<id>` because the walk creates worktrees at
+ * `../wt-<rand>` and git names the admin dir after the path basename.
+ */
+export interface WorktreeInfo {
+	/** Admin-dir id (basename under `.git/worktrees`), e.g. "wt-abc123". */
+	id: string;
+	/** Short branch name checked out here, or null when detached. */
+	branch: string | null;
+	/** Whether the worktree is locked. */
+	locked: boolean;
+}
+
 /** Snapshot of repo state used by actions to check preconditions. */
 export interface QueryState {
 	/** Working tree file paths (relative to repo root). */
@@ -37,8 +53,8 @@ export interface QueryState {
 	stashCount: number;
 	/** Configured remote names (e.g. ["origin"]). */
 	remotes: string[];
-	/** Linked worktree ids (admin-dir names under .git/worktrees), sorted. */
-	worktrees: string[];
+	/** Linked worktrees (admin dirs under .git/worktrees), sorted by id. */
+	worktrees: WorktreeInfo[];
 }
 
 // ── WalkHarness interface ────────────────────────────────────────────
@@ -78,8 +94,8 @@ export interface WalkHarness {
 	hasCommits(): Promise<boolean>;
 	getStashCount(): Promise<number>;
 	listRemotes(): Promise<string[]>;
-	/** Linked worktree ids (admin-dir names under .git/worktrees), sorted. */
-	listWorktrees(): Promise<string[]>;
+	/** Linked worktrees (admin dirs under .git/worktrees), sorted by id. */
+	listWorktrees(): Promise<WorktreeInfo[]>;
 }
 
 // ── Default environment ──────────────────────────────────────────────
@@ -320,9 +336,24 @@ export class VirtualHarness implements WalkHarness {
 		return result.stdout.trim().split("\n").filter(Boolean);
 	}
 
-	async listWorktrees(): Promise<string[]> {
+	async listWorktrees(): Promise<WorktreeInfo[]> {
 		const worktreesDir = `${this.vfsRoot}/.git/worktrees`;
 		if (!(await this.bash.fs.exists(worktreesDir))) return [];
-		return (await this.bash.fs.readdir(worktreesDir)).sort();
+		const ids = (await this.bash.fs.readdir(worktreesDir)).sort();
+		const infos: WorktreeInfo[] = [];
+		for (const id of ids) {
+			const adminDir = `${worktreesDir}/${id}`;
+			let branch: string | null = null;
+			const headPath = `${adminDir}/HEAD`;
+			if (await this.bash.fs.exists(headPath)) {
+				const content = (await this.bash.fs.readFile(headPath)).trim();
+				if (content.startsWith("ref: refs/heads/")) {
+					branch = content.slice("ref: refs/heads/".length);
+				}
+			}
+			const locked = await this.bash.fs.exists(`${adminDir}/locked`);
+			infos.push({ id, branch, locked });
+		}
+		return infos;
 	}
 }
