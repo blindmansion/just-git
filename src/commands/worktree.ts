@@ -15,7 +15,7 @@ import { FileSystemRefStore, resolveHead, resolveRef, updateRef } from "../lib/r
 import { resolveRevision } from "../lib/rev-parse.ts";
 import { flattenTree, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext } from "../lib/types.ts";
-import { diffIndexToWorkTree } from "../lib/worktree.ts";
+import { checkoutEntry, diffIndexToWorkTree } from "../lib/worktree.ts";
 import {
 	branchCheckedOutAt,
 	deriveWorktreeId,
@@ -29,7 +29,6 @@ import {
 	writeGitFile,
 	writeWorktreeAdmin,
 } from "../lib/worktree-admin.ts";
-import { materializeEntries } from "../repo/materialize.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 
 const USAGE =
@@ -357,7 +356,9 @@ async function materializeWorktree(
 
 	const commit = await readCommit(wtCtx, commitHash);
 	const entries = await flattenTree(wtCtx, commit.tree);
-	await materializeEntries(wtCtx, entries, gitCtx.fs, worktreePath);
+	for (const entry of entries) {
+		await checkoutEntry(wtCtx, entry);
+	}
 	await writeIndex(
 		wtCtx,
 		buildIndex(
