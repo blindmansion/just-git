@@ -111,6 +111,32 @@ const worktreePrune: Action = {
 	},
 };
 
+/**
+ * Relocate a linked worktree to a fresh anchor-relative sibling (`../moved-x`).
+ * Worktrees are compared by their normalized checkout path (not admin id), so
+ * the moved checkout is matched at its *new* location on both the real-git temp
+ * tree and the VFS — the path key was built to survive exactly this. The fresh
+ * random basename can't collide with an existing path, so the move resolves to
+ * the verbatim destination (no into-directory case). Prefers an unlocked
+ * worktree so the move succeeds cleanly (`worktree move` refuses a locked one
+ * without `-f -f`); the relocation, not lock handling, is what this exercises.
+ */
+const worktreeMove: Action = {
+	name: "worktreeMove",
+	category: "worktree",
+	canRun: (state) => state.worktrees.length > 0,
+	precondition: () => true,
+	weight: () => 1,
+	async execute(harness, rng, state) {
+		const candidates = state.worktrees.filter((w) => !w.locked);
+		const pool = candidates.length > 0 ? candidates : state.worktrees;
+		const wt = pool[rng.int(0, pool.length - 1)]!;
+		const cmd = `worktree move ${wt.path} ../moved-${rng.alphanumeric(6)}`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
 // ── Tier A: cross-worktree guards ────────────────────────────────────
 // A branch checked out in a sibling worktree must be refused by the main
 // worktree's checkout / switch / branch -d. A bug here surfaces as a HEAD or
@@ -270,6 +296,7 @@ export const WORKTREE_ACTIONS: readonly Action[] = [
 	worktreeAddSameBasename,
 	worktreeRemove,
 	worktreePrune,
+	worktreeMove,
 	switchClaimedBranch,
 	checkoutClaimedBranch,
 	deleteClaimedBranch,
