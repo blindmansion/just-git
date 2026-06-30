@@ -22,7 +22,12 @@ import { formatDiffStat } from "../lib/commit-summary.ts";
 import { getConfigValue } from "../lib/config.ts";
 import { formatDate } from "../lib/date.ts";
 import { getConflictedPaths, getStage0Entries, readIndex } from "../lib/index.ts";
-import { buildMergeMessage, findAllMergeBases, handleFastForward } from "../lib/merge.ts";
+import {
+	buildMergeMessage,
+	findAllMergeBases,
+	handleFastForward,
+	squashFastForward,
+} from "../lib/merge.ts";
 import { type ApplyMergeFailure, applyMergeResult, mergeOrtRecursive } from "../lib/merge-ort.ts";
 import { peelToCommit, readCommit } from "../lib/object-db.ts";
 import {
@@ -423,48 +428,54 @@ async function handleSquashMerge(
 	const headCommit = await readCommit(gitCtx, headHash);
 	const head = await readHead(gitCtx);
 
+	const bases = await findAllMergeBases(gitCtx, headHash, theirsHash);
+	const isFF = bases.length > 0 && bases[0] === headHash;
+
+	// A fast-forward `merge --squash` uses git's checkout_fast_forward (a 2-way
+	// merge that keeps local index/worktree changes where HEAD == target), not
+	// a 3-way merge, and prints the plain HEAD..target diffstat. HEAD is never
+	// moved. Routing it through the 3-way path below would discard local
+	// modifications and diff against the merged tree instead.
+	if (isFF) {
+		const ffPrefix = `Updating ${abbreviateHash(headHash)}..${abbreviateHash(theirsHash)}\n`;
+		const ff = await squashFastForward(gitCtx, headHash, theirsHash);
+		if (!ff.ok) {
+			await deleteStateFile(gitCtx, "MERGE_MSG");
+			return { stdout: ffPrefix + ff.stdout, stderr: ff.stderr, exitCode: ff.exitCode };
+		}
+		const ffLog = await buildSquashMessageLog(gitCtx, headHash, theirsHash);
+		await writeStateFile(gitCtx, "SQUASH_MSG", `Squashed commit of the following:\n\n${ffLog}`);
+		const ffLabel = customMessage
+			? "Fast-forward (no commit created; -m option ignored)"
+			: "Fast-forward";
+		return {
+			stdout: `${ffPrefix}${ffLabel}\nSquash commit -- not updating HEAD\n${ff.diffstat}`,
+			stderr: "",
+			exitCode: 0,
+		};
+	}
+
 	const conflictStyle = ((await getConfigValue(gitCtx, "merge.conflictstyle")) ?? "merge") as
 		| "merge"
 		| "diff3";
 	const labels = { a: "HEAD", b: branchName, conflictStyle };
 
-	const bases = await findAllMergeBases(gitCtx, headHash, theirsHash);
-	const isFF = bases.length > 0 && bases[0] === headHash;
-	const ffPrefix = isFF
-		? `Updating ${abbreviateHash(headHash)}..${abbreviateHash(theirsHash)}\n`
-		: "";
-
 	const result = await mergeOrtRecursive(gitCtx, headHash, theirsHash, labels, _ext?.mergeDriver);
 
 	const applyResult = await applyMergeResult(gitCtx, result, headCommit.tree, {
 		labels,
-		errorExitCode: isFF ? 1 : 2,
+		errorExitCode: 2,
 		operationName: "merge",
-		skipStagedChangeCheck: isFF,
-		// A fast-forward squash uses git's atomic checkout_fast_forward: on a
-		// worktree-overwrite failure nothing is written, so we must not restore
-		// staged additions that were already deleted from disk.
-		atomicCheckout: isFF,
 	});
 
 	if (!applyResult.ok) {
 		await deleteStateFile(gitCtx, "MERGE_MSG");
-		// Real git writes a no-op reflog for non-FF squash merge failures
-		// but not for FF ones (the worktree check happens after the reflog
-		// write point in git's merge path for non-FF merges).
-		if (!isFF && applyResult.failureKind === "staged" && head?.type === "symbolic") {
+		// Real git writes a no-op `updating HEAD` reflog entry for a non-FF
+		// squash merge failure: the reflog write precedes the worktree update.
+		if (applyResult.failureKind === "staged" && head?.type === "symbolic") {
 			await logRef(gitCtx, env, "HEAD", headHash, headHash, `merge ${branchName}: updating HEAD`);
 		}
-		const failure = applyResult as ApplyMergeFailure;
-		if (isFF) {
-			// FF squash merges use checkout_fast_forward() in real git (unpack-trees),
-			// which doesn't produce the merge-ort strategy trailer.
-			failure.stderr = failure.stderr.replace(/Merge with strategy ort failed\.\n$/, "");
-		}
-		if (ffPrefix) {
-			failure.stdout = ffPrefix + failure.stdout;
-		}
-		return failure;
+		return applyResult as ApplyMergeFailure;
 	}
 
 	// Real git always persists the generated squash log in SQUASH_MSG.
@@ -499,18 +510,11 @@ async function handleSquashMerge(
 		};
 	}
 
-	const treeHash = applyResult.mergedTreeHash;
-	const diffstat = await formatDiffStat(gitCtx, headCommit.tree, treeHash);
 	const mergeMessages = result.messages.length > 0 ? `${result.messages.join("\n")}\n` : "";
 
-	const ffLabel = customMessage
-		? "Fast-forward (no commit created; -m option ignored)"
-		: "Fast-forward";
-	const ffSuccessPrefix = isFF ? `${ffPrefix}${ffLabel}\n` : "";
-
 	return {
-		stdout: `${ffSuccessPrefix}${mergeMessages}Squash commit -- not updating HEAD\n${isFF ? diffstat : ""}`,
-		stderr: isFF ? "" : "Automatic merge went well; stopped before committing as requested\n",
+		stdout: `${mergeMessages}Squash commit -- not updating HEAD\n`,
+		stderr: "Automatic merge went well; stopped before committing as requested\n",
 		exitCode: 0,
 	};
 }

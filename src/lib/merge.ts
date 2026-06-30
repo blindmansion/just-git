@@ -327,3 +327,40 @@ export async function handleFastForward(
 		exitCode: 0,
 	};
 }
+
+/**
+ * Apply a fast-forward `git merge --squash`.
+ *
+ * Real git fast-forwards a squash merge via `checkout_fast_forward` (a 2-way
+ * merge that preserves local index/worktree changes where HEAD == target),
+ * NOT a 3-way merge — and it never moves HEAD. The diffstat git prints is the
+ * plain HEAD..target commit diff, independent of any local modifications.
+ *
+ * This mirrors {@link handleFastForward} minus the ref advance, returning the
+ * diffstat for the caller to wrap with the squash status lines. On a
+ * worktree-overwrite failure the merge error output is returned verbatim.
+ */
+export async function squashFastForward(
+	gitCtx: GitContext,
+	headHash: ObjectId,
+	theirsHash: ObjectId,
+): Promise<
+	{ ok: true; diffstat: string } | { ok: false; stdout: string; stderr: string; exitCode: number }
+> {
+	const headCommit = await readCommit(gitCtx, headHash);
+	const theirsCommit = await readCommit(gitCtx, theirsHash);
+
+	if (gitCtx.workTree) {
+		const currentIndex = await readIndex(gitCtx);
+		const result = await fastForwardMerge(gitCtx, headCommit.tree, theirsCommit.tree, currentIndex);
+		if (!result.success) {
+			const err = result.errorOutput as { stdout: string; stderr: string; exitCode: number };
+			return { ok: false, ...err };
+		}
+		await writeIndex(gitCtx, { version: 2, entries: result.newEntries });
+		await applyWorktreeOps(gitCtx, result.worktreeOps);
+	}
+
+	const diffstat = await formatDiffStat(gitCtx, headCommit.tree, theirsCommit.tree);
+	return { ok: true, diffstat };
+}
