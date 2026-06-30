@@ -182,8 +182,8 @@ if (args[0] === "server") {
 	const command = args.join(" ");
 	const result = await bash.exec(command);
 
-	if (result.stdout) process.stdout.write(result.stdout);
-	if (result.stderr) process.stderr.write(result.stderr);
+	await writeAll(process.stdout, result.stdout);
+	await writeAll(process.stderr, result.stderr);
 
 	const newCwd = bash.getCwd();
 	if (newCwd !== cwd) {
@@ -191,6 +191,19 @@ if (args[0] === "server") {
 	}
 
 	process.exit(result.exitCode);
+}
+
+/**
+ * Write to a stream and wait for it to drain before returning. `process.exit()`
+ * abandons whatever is still buffered in the stdout/stderr pipe, so without this
+ * large output is silently truncated whenever the sandbox is piped or captured
+ * (e.g. `bun sandbox "cat big.txt" | wc -l`).
+ */
+function writeAll(stream: NodeJS.WriteStream, data: string): Promise<void> {
+	if (!data) return Promise.resolve();
+	return new Promise((resolve, reject) => {
+		stream.write(data, (err) => (err ? reject(err) : resolve()));
+	});
 }
 
 function readCwd(): string {
