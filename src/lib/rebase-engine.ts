@@ -83,6 +83,23 @@ async function headLabel(gitCtx: GitContext): Promise<string> {
 
 const EMPTY_TREE_HASH = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
+/**
+ * Whether a commit is "empty" the way git's todo generation classifies it:
+ * its tree equals its first parent's tree (or the empty tree for a root
+ * commit). Git annotates these todo lines with a trailing ` # empty` marker.
+ * Merge commits are never emitted as picks, so they are treated as non-empty.
+ */
+async function isOriginalCommitEmpty(
+	gitCtx: GitContext,
+	commit: { tree: ObjectId; parents: ObjectId[] },
+): Promise<boolean> {
+	const firstParent = commit.parents[0];
+	if (firstParent === undefined) return commit.tree === EMPTY_TREE_HASH;
+	if (commit.parents.length > 1) return false;
+	const parent = await readCommit(gitCtx, firstParent);
+	return commit.tree === parent.tree;
+}
+
 function upToDateMessage(branchName: string): string {
 	if (branchName === "HEAD") return "HEAD is up to date.\n";
 	return `Current branch ${branchName} is up to date.\n`;
@@ -482,10 +499,15 @@ export async function performRebase(
 	}
 
 	// ── Build todo list ──────────────────────────────────────
-	const todo: RebaseTodoEntry[] = filteredCommits.map((c) => ({
-		hash: c.hash,
-		subject: firstLine(c.commit.message),
-	}));
+	const todo: RebaseTodoEntry[] = [];
+	for (const c of filteredCommits) {
+		const entry: RebaseTodoEntry = {
+			hash: c.hash,
+			subject: firstLine(c.commit.message),
+		};
+		if (await isOriginalCommitEmpty(gitCtx, c.commit)) entry.empty = true;
+		todo.push(entry);
+	}
 
 	// ── Skip unnecessary picks (fast-forward optimization) ───
 	let checkoutTarget = ontoHash;

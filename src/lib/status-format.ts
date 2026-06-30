@@ -95,15 +95,17 @@ export async function generateLongFormStatus(
 function pushRebaseTodoLines(
 	lines: string[],
 	rebaseState: {
-		done: { hash: string; subject: string }[];
-		todo: { hash: string; subject: string }[];
+		done: { hash: string; subject: string; empty?: boolean }[];
+		todo: { hash: string; subject: string; empty?: boolean }[];
 	},
 ): void {
+	const todoLine = (e: { hash: string; subject: string; empty?: boolean }): string =>
+		`   pick ${abbreviateHash(e.hash)} # ${e.subject}${e.empty ? " # empty" : ""}`;
 	if (rebaseState.done.length > 0) {
 		const n = rebaseState.done.length;
 		lines.push(`Last command${n === 1 ? "" : "s"} done (${n} command${n === 1 ? "" : "s"} done):`);
 		for (const e of rebaseState.done.slice(-2)) {
-			lines.push(`   pick ${abbreviateHash(e.hash)} # ${e.subject}`);
+			lines.push(todoLine(e));
 		}
 		if (n > 2) {
 			lines.push("  (see more in file .git/rebase-merge/done)");
@@ -115,7 +117,7 @@ function pushRebaseTodoLines(
 			`Next command${n === 1 ? "" : "s"} to do (${n} remaining command${n === 1 ? "" : "s"}):`,
 		);
 		for (const e of rebaseState.todo.slice(0, 2)) {
-			lines.push(`   pick ${abbreviateHash(e.hash)} # ${e.subject}`);
+			lines.push(todoLine(e));
 		}
 		lines.push('  (use "git rebase --edit-todo" to view and edit)');
 	} else {
