@@ -619,34 +619,57 @@ async function handleRepair(
 	let exitCode = 0;
 
 	// Direction 2 (per explicit path arg): read each named worktree's `.git`
-	// gitlink to (re)discover its admin dir and fix that admin's stale `gitdir`
-	// back-pointer. This runs before the admin scan below so that a garbage
-	// gitlink is still reported broken even though the scan repairs it.
+	// gitlink to (re)discover its admin dir and fix both that admin's stale
+	// `gitdir` back-pointer and the gitlink itself. This runs before the admin
+	// scan below so that a garbage gitlink is still reported broken even though
+	// the scan repairs it.
 	for (const p of paths) {
 		const abs = resolve(ctx.cwd, p);
+
+		// The main worktree's `.git` is a directory, not a gitlink, so there is
+		// nothing to repair — git skips it silently rather than erroring.
+		if (stripDotGit(abs) === stripDotGit(gitCtx.commonDir)) continue;
+
 		if (!(await fs.exists(abs))) {
 			lines.push(`error: not a valid path: ${p}\n`);
 			exitCode = 1;
 			continue;
 		}
+
 		const gitlink = join(abs, ".git");
-		const adminDir = await readGitlinkTarget(fs, gitlink);
-		if (adminDir === null) {
-			lines.push(`error: unable to locate repository; .git file broken: ${gitlink}\n`);
-			exitCode = 1;
-			continue;
-		}
-		if (!(await isWorktreeAdminDir(fs, adminDir))) {
+		const recorded = await readGitlinkTarget(fs, gitlink);
+
+		// When both the repo and the worktree have moved, the gitlink points at
+		// a now-vanished admin dir. Recover it by matching the id the gitlink
+		// records against `<commonDir>/worktrees/<id>` in *this* repository.
+		const inferred = await inferBacklink(fs, gitCtx.commonDir, gitlink);
+
+		let backlink: string;
+		if (recorded !== null && (await isWorktreeAdminDir(fs, recorded))) {
+			backlink = recorded;
+		} else if (recorded !== null && inferred) {
+			backlink = inferred;
+		} else if (recorded !== null) {
 			lines.push(
 				`error: unable to locate repository; .git file does not reference a repository: ${gitlink}\n`,
 			);
 			exitCode = 1;
 			continue;
+		} else {
+			lines.push(`error: unable to locate repository; .git file broken: ${gitlink}\n`);
+			exitCode = 1;
+			continue;
 		}
-		const gitdirFile = join(adminDir, "gitdir");
-		const recorded = (await fs.exists(gitdirFile)) ? (await fs.readFile(gitdirFile)).trim() : "";
-		if (recorded !== gitlink) {
+
+		// A non-null inferred dir that differs means the worktree was *copied*
+		// (its gitlink still names the source repo's admin dir); point it here.
+		if (inferred && backlink !== inferred) backlink = inferred;
+
+		const gitdirFile = join(backlink, "gitdir");
+		const current = (await fs.exists(gitdirFile)) ? (await fs.readFile(gitdirFile)).trim() : null;
+		if (current !== gitlink) {
 			await fs.writeFile(gitdirFile, `${gitlink}\n`);
+			await writeGitFile(gitCtx, abs, backlink);
 			lines.push(`repair: gitdir incorrect: ${gitdirFile}\n`);
 		}
 	}
@@ -674,6 +697,32 @@ async function handleRepair(
 	}
 
 	return { stdout: "", stderr: lines.join(""), exitCode };
+}
+
+/** Strip a trailing `/.git` so a worktree dir and its gitlink compare equal. */
+function stripDotGit(path: string): string {
+	return path.endsWith("/.git") ? path.slice(0, -"/.git".length) : path;
+}
+
+/**
+ * Infer a worktree's admin dir when its gitlink points at a vanished location
+ * (both the repo and the worktree were moved). The gitlink still records the
+ * worktree id as its last path component, so match that against
+ * `<commonDir>/worktrees/<id>` in this repository. Returns null when the id
+ * names no such admin dir.
+ */
+async function inferBacklink(
+	fs: FileSystem,
+	commonDir: string,
+	gitlinkPath: string,
+): Promise<string | null> {
+	const pointer = await readGitlinkTarget(fs, gitlinkPath);
+	if (!pointer) return null;
+	const id = basename(pointer);
+	if (!id) return null;
+	const inferred = join(commonDir, "worktrees", id);
+	if (!(await fs.exists(inferred))) return null;
+	return (await fs.stat(inferred)).isDirectory ? inferred : null;
 }
 
 /** The admin dir a worktree's `.git` gitlink points at, or null if unreadable. */

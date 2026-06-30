@@ -874,4 +874,34 @@ describe("git worktree repair", () => {
 		expect(results[3].exitCode).toBe(1);
 		expect(results[3].stderr).toBe("error: not a valid path: /nope\n");
 	});
+
+	test("repairs both links when the repo and worktree both moved", async () => {
+		const { results, bash } = await runScenario(
+			[
+				...SETUP,
+				"git worktree add /wt-a -b wt-a",
+				"mv /repo /repo2",
+				"mv /wt-a /wt-moved",
+				"cd /repo2 && git worktree repair /wt-moved",
+			],
+			{ files: FILES, env: TEST_ENV },
+		);
+
+		// The gitlink points at a vanished admin dir, but its recorded id lets
+		// repair recover the admin dir in the relocated repo and fix both sides.
+		expect(results[6].exitCode).toBe(0);
+		expect(results[6].stderr).toBe("repair: gitdir incorrect: /repo2/.git/worktrees/wt-a/gitdir\n");
+		expect(await readFile(bash.fs, "/wt-moved/.git")).toBe("gitdir: /repo2/.git/worktrees/wt-a\n");
+		expect(await readFile(bash.fs, "/repo2/.git/worktrees/wt-a/gitdir")).toBe("/wt-moved/.git\n");
+	});
+
+	test("silently skips the main worktree path", async () => {
+		const { results } = await runScenario(
+			[...SETUP, "git worktree add /wt -b wt", "git worktree repair /repo"],
+			{ files: FILES, env: TEST_ENV },
+		);
+		expect(results[4].exitCode).toBe(0);
+		expect(results[4].stdout).toBe("");
+		expect(results[4].stderr).toBe("");
+	});
 });
