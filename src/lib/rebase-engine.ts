@@ -244,17 +244,22 @@ async function writeRebaseFfReflog(
 		"HEAD",
 		origHead,
 		targetHash,
-		`rebase (start): checkout ${upstreamArg}`,
+		`${reflogAction} (start): checkout ${upstreamArg}`,
 	);
 	if (headName !== "detached HEAD") {
-		await logRef(
-			gitCtx,
-			env,
-			headName,
-			origHead,
-			targetHash,
-			`${reflogAction} (finish): ${headName} onto ${targetHash}`,
-		);
+		// git only logs the branch ref when its tip actually moves; a no-op
+		// rebase (the branch ends up where it started) still logs the HEAD
+		// start/finish pair but leaves the branch reflog untouched.
+		if (origHead !== targetHash) {
+			await logRef(
+				gitCtx,
+				env,
+				headName,
+				origHead,
+				targetHash,
+				`${reflogAction} (finish): ${headName} onto ${targetHash}`,
+			);
+		}
 		await logRef(
 			gitCtx,
 			env,
@@ -437,6 +442,18 @@ export async function performRebase(
 					exitCode: 0,
 				};
 			}
+			// HEAD stays put, but git still ran the rebase: it logs the HEAD
+			// start/finish pair (the branch reflog is left alone since the tip
+			// didn't move — handled inside writeRebaseFfReflog).
+			await writeRebaseFfReflog(
+				gitCtx,
+				env,
+				origHead,
+				origHead,
+				headName,
+				checkoutLabel,
+				reflogAction,
+			);
 			return {
 				stdout: "",
 				stderr: `${skipStderr}Successfully rebased and updated ${headName}.\n`,
@@ -497,16 +514,20 @@ export async function performRebase(
 				ffErr.stderr = skipStderr + ffErr.stderr;
 				return ffErr;
 			}
-			await writeRebaseFfReflog(
-				gitCtx,
-				env,
-				origHead,
-				checkoutTarget,
-				headName,
-				checkoutLabel,
-				reflogAction,
-			);
 		}
+		// git logs the HEAD start/finish pair whenever it reports a successful
+		// rebase — including the no-op case (checkoutTarget === origHead) reached
+		// only when cherry-picks were skipped. writeRebaseFfReflog leaves the
+		// branch reflog alone when the tip doesn't move.
+		await writeRebaseFfReflog(
+			gitCtx,
+			env,
+			origHead,
+			checkoutTarget,
+			headName,
+			checkoutLabel,
+			reflogAction,
+		);
 		return {
 			stdout: "",
 			stderr: `${skipStderr}Successfully rebased and updated ${headName}.\n`,
@@ -532,7 +553,7 @@ export async function performRebase(
 		"HEAD",
 		origHead,
 		checkoutTarget,
-		`rebase (start): checkout ${checkoutLabel}`,
+		`${reflogAction} (start): checkout ${checkoutLabel}`,
 	);
 
 	// ── Initialize rebase state ──────────────────────────────
@@ -900,14 +921,19 @@ async function finishRebase(
 		await createSymbolicRef(gitCtx, "HEAD", state.headName);
 		await clearDetachPoint(gitCtx);
 
-		await logRef(
-			gitCtx,
-			env,
-			state.headName,
-			state.origHead,
-			currentHead,
-			`${state.reflogAction ?? "rebase"} (finish): ${state.headName} onto ${state.onto}`,
-		);
+		// git only logs the branch ref when its tip actually moves. A rebase
+		// that lands back on the original commit still logs the HEAD "returning
+		// to" entry below, but leaves the branch reflog untouched.
+		if (state.origHead !== currentHead) {
+			await logRef(
+				gitCtx,
+				env,
+				state.headName,
+				state.origHead,
+				currentHead,
+				`${state.reflogAction ?? "rebase"} (finish): ${state.headName} onto ${state.onto}`,
+			);
+		}
 		await logRef(
 			gitCtx,
 			env,

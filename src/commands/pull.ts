@@ -348,7 +348,10 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					theirsHash,
 					theirsHash,
 					upstreamLabel,
-					upstreamLabel,
+					// git pull --rebase checks out the fetched commit object, so the
+					// "pull (start): checkout <onto>" reflog records its sha, not the
+					// remote ref name.
+					theirsHash,
 					ext,
 					{ reflogAction: "pull" },
 				);
