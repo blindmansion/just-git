@@ -337,6 +337,60 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 
 			// ── Rebase path ─────────────────────────────────────────
 			if (pullMode.useRebase && !pullMode.ffOnly) {
+				// git pull --rebase fast-forwards via an internal `merge --ff-only`
+				// (without invoking rebase) when upstream is a strict descendant of
+				// HEAD, i.e. there are no local commits to replay. It prints the
+				// merge-style "Updating <old>..<new> / Fast-forward" output, not the
+				// rebase success message. See builtin/pull.c (can_ff path).
+				const rebaseBases = await findAllMergeBases(gitCtx, headHash, theirsHash);
+				if ((rebaseBases[0] ?? null) === headHash) {
+					const ffResult = await handleFastForward(gitCtx, headHash, theirsHash);
+					if (ffResult.exitCode === 0) {
+						const refName = head?.type === "symbolic" ? head.target : "HEAD";
+						// The reflog action keeps the original pull flags even though the
+						// fast-forward is performed via merge --ff-only internally.
+						const pullFFMsg = `pull${pullMode.noFf ? " --no-ff" : ""}: Fast-forward`;
+						await appendReflog(gitCtx, refName, {
+							oldHash: headHash,
+							newHash: theirsHash,
+							name: ident.name,
+							email: ident.email,
+							timestamp: ident.timestamp,
+							tz: ident.tz,
+							message: pullFFMsg,
+						});
+						if (head?.type === "symbolic") {
+							await appendReflog(gitCtx, "HEAD", {
+								oldHash: headHash,
+								newHash: theirsHash,
+								name: ident.name,
+								email: ident.email,
+								timestamp: ident.timestamp,
+								tz: ident.tz,
+								message: pullFFMsg,
+							});
+						}
+						await ext?.hooks?.postMerge?.({
+							repo: gitCtx,
+							headHash,
+							theirsHash,
+							strategy: "fast-forward",
+							commitHash: null,
+						});
+						await ext?.hooks?.postPull?.({
+							repo: gitCtx,
+							remote: remoteName,
+							branch: pullBranch,
+							strategy: "fast-forward",
+							commitHash: theirsHash,
+						});
+					}
+					return {
+						...ffResult,
+						stderr: fetchOutput + ffResult.stderr,
+					};
+				}
+
 				const headName = head?.type === "symbolic" ? head.target : "detached HEAD";
 				const upstreamLabel = remoteBranch ? `${remoteName}/${remoteBranch}` : remoteName;
 
