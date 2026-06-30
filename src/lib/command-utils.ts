@@ -71,6 +71,7 @@ export async function requireGitContext(
 			{
 				fs,
 				gitDir: loc.gitDir,
+				commonDir: loc.commonDir ?? loc.gitDir,
 				workTree: loc.workTree ?? cwd,
 				objectStore: loc.objectStore,
 				refStore: loc.refStore,
@@ -90,6 +91,7 @@ export async function requireGitContext(
 			...ctx,
 			...(loc?.objectStore ? { objectStore: loc.objectStore } : {}),
 			...(loc?.refStore ? { refStore: loc.refStore } : {}),
+			...(loc?.commonDir ? { commonDir: loc.commonDir } : {}),
 		},
 		ext.capabilities,
 	);

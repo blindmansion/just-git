@@ -25,7 +25,7 @@ import type {
 	RepoCapabilities,
 } from "./lib/types.ts";
 
-export const VERSION = "1.7.1";
+export const VERSION = "1.7.2";
 
 /** Options for subcommand execution (mirrors just-bash's CommandExecOptions). */
 export interface CommandExecOptions {
@@ -153,6 +153,13 @@ export interface GitOptions {
 	 */
 	gitDir?: string;
 	/**
+	 * Explicit shared common directory. Defaults to `gitDir` when omitted.
+	 * Set this distinct from `gitDir` to embed a linked worktree, routing
+	 * objects, shared refs, and config to the common dir while HEAD, the
+	 * index, and reflogs stay under `gitDir`.
+	 */
+	commonDir?: string;
+	/**
 	 * Config overrides. `locked` values always win over `.git/config`;
 	 * `defaults` supply fallbacks when a key is absent from config.
 	 */
@@ -225,6 +232,8 @@ export interface RepoLocators {
 	refStore?: RefStore;
 	/** Pre-resolved .git directory path. */
 	gitDir?: string;
+	/** Pre-resolved shared common dir. Defaults to `gitDir` when omitted. */
+	commonDir?: string;
 	/** Pre-resolved worktree root. */
 	workTree?: string;
 }
@@ -361,7 +370,13 @@ export class Git {
 		const locators: RepoLocators = {
 			...(options?.objectStore ? { objectStore: options.objectStore } : {}),
 			...(options?.refStore ? { refStore: options.refStore } : {}),
-			...(options?.gitDir ? { gitDir: options.gitDir, workTree: this.defaultCwd } : {}),
+			...(options?.gitDir
+				? {
+						gitDir: options.gitDir,
+						workTree: this.defaultCwd,
+						...(options.commonDir ? { commonDir: options.commonDir } : {}),
+					}
+				: {}),
 		};
 
 		const extensions: GitExtensions = {
@@ -404,6 +419,7 @@ export class Git {
 				{
 					fs,
 					gitDir: loc.gitDir,
+					commonDir: loc.commonDir ?? loc.gitDir,
 					workTree: loc.workTree ?? cwd,
 					objectStore: loc.objectStore,
 					refStore: loc.refStore,
@@ -421,6 +437,7 @@ export class Git {
 				...found,
 				...(loc?.objectStore ? { objectStore: loc.objectStore } : {}),
 				...(loc?.refStore ? { refStore: loc.refStore } : {}),
+				...(loc?.commonDir ? { commonDir: loc.commonDir } : {}),
 			},
 			this.ext.capabilities,
 		);

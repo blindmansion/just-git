@@ -408,6 +408,8 @@ export interface GitContext extends GitRepo {
 	fs: FileSystem;
 	/** Absolute path to the .git directory. */
 	gitDir: string;
+	/** Absolute path to the shared `$GIT_COMMON_DIR`. */
+	commonDir: string;
 	/** Absolute path to the working tree root, or null for bare repos. */
 	workTree: string | null;
 }

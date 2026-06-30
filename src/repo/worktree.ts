@@ -128,6 +128,7 @@ export async function createWorktree(
 		...repo,
 		fs,
 		gitDir,
+		commonDir: gitDir,
 		workTree,
 	};
 
@@ -193,6 +194,7 @@ export async function createSandboxWorktree(
 		...overlay,
 		fs,
 		gitDir,
+		commonDir: gitDir,
 		workTree,
 	};
 
