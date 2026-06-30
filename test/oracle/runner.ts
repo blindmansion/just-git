@@ -131,7 +131,14 @@ export async function replayTo(
 	}
 
 	const homeDir = await mkdtemp(join(tmpdir(), "replay-home-"));
-	const repoDir = await mkdtemp(join(tmpdir(), "replay-git-"));
+	// Nest the repo one level down (mirroring RealGitHarness.create) so sibling
+	// worktree paths (e.g. `../wt-x`, `../moved-x`) land inside this replay's
+	// private temp dir instead of the shared system temp root — otherwise
+	// worktrees collide across runs and a `worktree move` destination may not be
+	// created, breaking later in-worktree steps.
+	const repoParent = await mkdtemp(join(tmpdir(), "replay-git-"));
+	const repoDir = join(repoParent, "repo");
+	await mkdir(repoDir, { recursive: true });
 	const env = buildRealGitEnv(homeDir);
 	let commitCounter = 0;
 
@@ -185,7 +192,7 @@ export async function replayTo(
 			}
 		}
 	} catch (err) {
-		await rm(repoDir, { recursive: true, force: true });
+		await rm(repoParent, { recursive: true, force: true });
 		await rm(homeDir, { recursive: true, force: true });
 		if (httpServer) httpServer.stop(true);
 		if (server) await server.close();

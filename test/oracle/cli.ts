@@ -794,7 +794,8 @@ Examples:
 		}
 		console.log("");
 	} finally {
-		await rm(repoDir, { recursive: true, force: true });
+		// Remove the private parent (repo + sibling worktrees), not just the repo.
+		await rm(dirname(repoDir), { recursive: true, force: true });
 	}
 }
 
@@ -859,7 +860,8 @@ Examples:
 
 		printFirstMismatch(path, oracle, impl);
 	} finally {
-		await rm(repoDir, { recursive: true, force: true });
+		// Remove the private parent (repo + sibling worktrees), not just the repo.
+		await rm(dirname(repoDir), { recursive: true, force: true });
 	}
 }
 
@@ -937,7 +939,8 @@ Examples:
 		}
 		console.log("");
 	} finally {
-		await rm(repoDir, { recursive: true, force: true });
+		// Remove the private parent (repo + sibling worktrees), not just the repo.
+		await rm(dirname(repoDir), { recursive: true, force: true });
 	}
 }
 
@@ -998,7 +1001,7 @@ Examples:
 	console.log("  git log --oneline --all --graph");
 	console.log("  git status");
 	console.log("  git diff");
-	console.log(`\nCleanup: rm -rf ${repoDir}`);
+	console.log(`\nCleanup: rm -rf ${dirname(repoDir)}`);
 }
 
 // ── profile ──────────────────────────────────────────────────
