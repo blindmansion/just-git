@@ -1,3 +1,4 @@
+import type { FileSystem } from "../fs.ts";
 import type { CommandContext, GitExtensions } from "../git.ts";
 import { guessRemoteBranch, maybeSetupTracking } from "../lib/checkout-utils.ts";
 import {
@@ -7,9 +8,10 @@ import {
 	isCommandError,
 	requireGitContext,
 } from "../lib/command-utils.ts";
+import { movePath } from "../lib/fs-utils.ts";
 import { buildIndex, defaultStat, readIndex, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
-import { basename, resolve } from "../lib/path.ts";
+import { basename, dirname, join, resolve } from "../lib/path.ts";
 import { logRef, ZERO_HASH } from "../lib/reflog.ts";
 import { FileSystemRefStore, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
 import { resolveRevision } from "../lib/rev-parse.ts";
@@ -19,6 +21,7 @@ import { checkoutEntry, diffIndexToWorkTree } from "../lib/worktree.ts";
 import {
 	branchCheckedOutAt,
 	deriveWorktreeId,
+	enumerateWorktrees,
 	isWorktreeLocked,
 	listWorktrees,
 	lockWorktree,
@@ -132,13 +135,37 @@ export function registerWorktreeCommand(parent: Command, ext?: GitExtensions) {
 		},
 	});
 
-	for (const stub of ["move", "repair"]) {
-		worktree.command(stub, {
-			description: `(${stub} is not yet implemented)`,
-			args: [a.string().name("args").variadic().optional()],
-			handler: async () => fatal(`worktree ${stub} is not yet implemented`),
-		});
-	}
+	worktree.command("move", {
+		description: "Move a working tree to a new location",
+		args: [
+			a.string().name("worktree").describe("Worktree to move"),
+			a.string().name("newPath").describe("New path for the worktree"),
+		],
+		options: {
+			force: f().alias("f").count().describe("Override safety checks"),
+		},
+		handler: async (args, ctx) => {
+			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
+			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
+			return handleMove(
+				gitCtxOrError,
+				ctx,
+				args.worktree as string,
+				args.newPath as string,
+				(args.force as number) ?? 0,
+			);
+		},
+	});
+
+	worktree.command("repair", {
+		description: "Repair worktree administrative files",
+		args: [a.string().name("paths").variadic().optional().describe("Worktree paths to relink")],
+		handler: async (args, ctx) => {
+			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
+			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
+			return handleRepair(gitCtxOrError, ctx, (args.paths as string[]) ?? []);
+		},
+	});
 }
 
 // ── add ─────────────────────────────────────────────────────────────
@@ -529,6 +556,145 @@ async function worktreeIsDirty(gitCtx: GitContext, wt: WorktreeInfo): Promise<bo
 
 	const headMap = await flattenTreeToMap(wtCtx, (await readCommit(wtCtx, headHash)).tree);
 	return hasStagedChanges(index, headMap);
+}
+
+async function handleMove(
+	gitCtx: GitContext,
+	ctx: CommandContext,
+	arg: string,
+	newPathArg: string,
+	force: number,
+): Promise<CommandResult> {
+	const wt = await resolveWorktreeArg(gitCtx, ctx, arg);
+	if (!wt) return fatal(`'${arg}' is not a working tree`);
+	if (wt.isMain) return fatal(`'${arg}' is a main working tree`);
+	if (wt.locked && force < 2) {
+		const reason = await readLockReason(gitCtx, wt.adminDir);
+		const firstLine = reason
+			? `cannot move a locked working tree, lock reason: ${reason}`
+			: "cannot move a locked working tree;";
+		return fatal(`${firstLine}\nuse 'move -f -f' to override or unlock first`);
+	}
+
+	// Resolve the destination like mv(1): an existing directory means "move
+	// into it" (append the source basename); anything else is used verbatim.
+	const destAbs = resolve(ctx.cwd, newPathArg);
+	const intoDir = (await gitCtx.fs.exists(destAbs)) && (await gitCtx.fs.stat(destAbs)).isDirectory;
+	const base = basename(wt.path);
+	const finalAbs = intoDir ? join(destAbs, base) : destAbs;
+	const finalDisplay = intoDir ? `${newPathArg.replace(/\/+$/, "")}/${base}` : newPathArg;
+
+	if (await gitCtx.fs.exists(finalAbs)) {
+		return fatal(`'${finalDisplay}' already exists`);
+	}
+
+	// Moving a worktree into itself (`move wt wt`) is rejected by git's rename.
+	if (finalAbs === wt.path || finalAbs.startsWith(`${wt.path}/`)) {
+		return fatal(`failed to move '${wt.path}' to '${newPathArg}': Invalid argument`);
+	}
+
+	// git relies on rename(2) reporting ENOENT for a missing parent, but our fs
+	// backends auto-create the parent — so check it ourselves to surface git's
+	// exact message instead of silently creating the directory.
+	if (!(await gitCtx.fs.exists(dirname(finalAbs)))) {
+		return fatal(`failed to move '${wt.path}' to '${newPathArg}': No such file or directory`);
+	}
+
+	await movePath(gitCtx.fs, wt.path, finalAbs);
+
+	// The worktree's own `.git` gitlink moved with the directory and still
+	// references the (unchanged) admin id; only the admin `gitdir` back-pointer
+	// needs rewriting to the new checkout location.
+	await gitCtx.fs.writeFile(join(wt.adminDir, "gitdir"), `${join(finalAbs, ".git")}\n`);
+	return { stdout: "", stderr: "", exitCode: 0 };
+}
+
+async function handleRepair(
+	gitCtx: GitContext,
+	ctx: CommandContext,
+	paths: string[],
+): Promise<CommandResult> {
+	const fs = gitCtx.fs;
+	const lines: string[] = [];
+	let exitCode = 0;
+
+	// Direction 2 (per explicit path arg): read each named worktree's `.git`
+	// gitlink to (re)discover its admin dir and fix that admin's stale `gitdir`
+	// back-pointer. This runs before the admin scan below so that a garbage
+	// gitlink is still reported broken even though the scan repairs it.
+	for (const p of paths) {
+		const abs = resolve(ctx.cwd, p);
+		if (!(await fs.exists(abs))) {
+			lines.push(`error: not a valid path: ${p}\n`);
+			exitCode = 1;
+			continue;
+		}
+		const gitlink = join(abs, ".git");
+		const adminDir = await readGitlinkTarget(fs, gitlink);
+		if (adminDir === null) {
+			lines.push(`error: unable to locate repository; .git file broken: ${gitlink}\n`);
+			exitCode = 1;
+			continue;
+		}
+		if (!(await isWorktreeAdminDir(fs, adminDir))) {
+			lines.push(
+				`error: unable to locate repository; .git file does not reference a repository: ${gitlink}\n`,
+			);
+			exitCode = 1;
+			continue;
+		}
+		const gitdirFile = join(adminDir, "gitdir");
+		const recorded = (await fs.exists(gitdirFile)) ? (await fs.readFile(gitdirFile)).trim() : "";
+		if (recorded !== gitlink) {
+			await fs.writeFile(gitdirFile, `${gitlink}\n`);
+			lines.push(`repair: gitdir incorrect: ${gitdirFile}\n`);
+		}
+	}
+
+	// Direction 1 (admin scan, always): rewrite any worktree `.git` gitlink that
+	// no longer points at its admin dir — e.g. after the main repo was moved,
+	// every gitlink still names the old admin location.
+	for (const { privateDir } of await enumerateWorktrees(gitCtx)) {
+		const gitdirFile = join(privateDir, "gitdir");
+		if (!(await fs.exists(gitdirFile))) continue;
+		const recordedGitlink = (await fs.readFile(gitdirFile)).trim();
+		if (!recordedGitlink) continue;
+		const worktreePath = dirname(recordedGitlink);
+		// Only the worktree's own location can be repaired here; a worktree that
+		// itself moved away is undiscoverable without an explicit path arg.
+		if (!(await fs.exists(worktreePath))) continue;
+		const want = `gitdir: ${privateDir}`;
+		const have = (await fs.exists(recordedGitlink))
+			? (await fs.readFile(recordedGitlink)).trim()
+			: null;
+		if (have !== want) {
+			await writeGitFile(gitCtx, worktreePath, privateDir);
+			lines.push(`repair: .git file broken: ${worktreePath}\n`);
+		}
+	}
+
+	return { stdout: "", stderr: lines.join(""), exitCode };
+}
+
+/** The admin dir a worktree's `.git` gitlink points at, or null if unreadable. */
+async function readGitlinkTarget(fs: FileSystem, gitlinkPath: string): Promise<string | null> {
+	if (!(await fs.exists(gitlinkPath))) return null;
+	let content: string;
+	try {
+		content = await fs.readFile(gitlinkPath);
+	} catch {
+		return null;
+	}
+	const trimmed = content.trim();
+	if (!trimmed.startsWith("gitdir:")) return null;
+	return trimmed.slice("gitdir:".length).trim() || null;
+}
+
+/** Whether `dir` looks like a linked-worktree admin dir (has a `gitdir` file). */
+async function isWorktreeAdminDir(fs: FileSystem, dir: string): Promise<boolean> {
+	if (!(await fs.exists(dir))) return false;
+	if (!(await fs.stat(dir)).isDirectory) return false;
+	return fs.exists(join(dir, "gitdir"));
 }
 
 async function handlePrune(

@@ -1174,8 +1174,8 @@ Commands:
   prune   Prune working tree information
   lock    Lock a working tree to prevent pruning
   unlock  Unlock a working tree
-  move    (move is not yet implemented)
-  repair  (repair is not yet implemented)
+  move    Move a working tree to a new location
+  repair  Repair worktree administrative files
 ```
 
 ### git worktree add
@@ -1231,13 +1231,17 @@ Options:
 ### git worktree move
 
 ```
-git worktree move - (move is not yet implemented)
+git worktree move - Move a working tree to a new location
 
 Usage:
-  git worktree move [args...]
+  git worktree move [options] <worktree> <newPath>
 
 Arguments:
-  args...
+  worktree  Worktree to move (required)
+  newPath   New path for the worktree (required)
+
+Options:
+  -f, --force  Override safety checks (counted)
 ```
 
 ### git worktree prune
@@ -1271,13 +1275,13 @@ Options:
 ### git worktree repair
 
 ```
-git worktree repair - (repair is not yet implemented)
+git worktree repair - Repair worktree administrative files
 
 Usage:
-  git worktree repair [args...]
+  git worktree repair [paths...]
 
 Arguments:
-  args...
+  paths...  Worktree paths to relink
 ```
 
 ### git worktree unlock

@@ -239,6 +239,29 @@ export class MemoryFileSystem implements FileSystem {
 		this.data.delete(norm);
 	}
 
+	async mv(src: string, dest: string): Promise<void> {
+		const from = normalize(src);
+		if (!this.data.has(from)) {
+			throw new Error(`ENOENT: no such file or directory, rename '${src}'`);
+		}
+		const to = normalize(dest);
+		if (from === to) return;
+		this.ensureParents(to);
+
+		// Re-key the entry and, for a directory, every descendant under it.
+		const prefix = from === "/" ? "/" : `${from}/`;
+		const destPrefix = to === "/" ? "/" : `${to}/`;
+		for (const key of [...this.data.keys()]) {
+			if (key === from) {
+				this.data.set(to, this.data.get(key)!);
+				this.data.delete(key);
+			} else if (key.startsWith(prefix)) {
+				this.data.set(destPrefix + key.slice(prefix.length), this.data.get(key)!);
+				this.data.delete(key);
+			}
+		}
+	}
+
 	async readlink(path: string): Promise<string> {
 		const resolved = this.resolveParent(path);
 		const entry = this.data.get(resolved);

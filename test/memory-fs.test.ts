@@ -265,6 +265,45 @@ describe("MemoryFileSystem", () => {
 		expect(await fs.exists("/broken")).toBe(false);
 	});
 
+	// ── mv ───────────────────────────────────────────────────────────
+
+	test("mv renames a file", async () => {
+		const fs = new MemoryFileSystem({ "/a.txt": "hello" });
+		await fs.mv!("/a.txt", "/b.txt");
+		expect(await fs.exists("/a.txt")).toBe(false);
+		expect(await fs.readFile("/b.txt")).toBe("hello");
+	});
+
+	test("mv relocates a directory tree, re-keying descendants", async () => {
+		const fs = new MemoryFileSystem({
+			"/src/a.txt": "a",
+			"/src/sub/b.txt": "b",
+		});
+		await fs.mv!("/src", "/dst");
+		expect(await fs.exists("/src")).toBe(false);
+		expect((await fs.stat("/dst")).isDirectory).toBe(true);
+		expect(await fs.readFile("/dst/a.txt")).toBe("a");
+		expect(await fs.readFile("/dst/sub/b.txt")).toBe("b");
+	});
+
+	test("mv creates the destination parent when missing", async () => {
+		const fs = new MemoryFileSystem({ "/a.txt": "x" });
+		await fs.mv!("/a.txt", "/deep/nested/b.txt");
+		expect(await fs.readFile("/deep/nested/b.txt")).toBe("x");
+		expect((await fs.stat("/deep/nested")).isDirectory).toBe(true);
+	});
+
+	test("mv throws ENOENT for a missing source", async () => {
+		const fs = new MemoryFileSystem();
+		await expect(fs.mv!("/nope", "/dst")).rejects.toThrow("ENOENT");
+	});
+
+	test("mv to the same path is a no-op", async () => {
+		const fs = new MemoryFileSystem({ "/a.txt": "x" });
+		await fs.mv!("/a.txt", "/a.txt");
+		expect(await fs.readFile("/a.txt")).toBe("x");
+	});
+
 	// ── Path normalization ───────────────────────────────────────────
 
 	test("normalizes paths with . and ..", async () => {

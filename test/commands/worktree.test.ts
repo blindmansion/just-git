@@ -639,3 +639,239 @@ describe("git worktree remove / prune / lock / unlock", () => {
 		expect(results[4].stderr).toBe("fatal: '/lk' is not locked\n");
 	});
 });
+
+describe("git worktree move", () => {
+	test("relocates the checkout, rewrites only the admin gitdir", async () => {
+		const { results, bash } = await runScenario(
+			[...SETUP, "git worktree add /wt-a -b wt-a", "git worktree move /wt-a /wt-b"],
+			{ files: FILES, env: TEST_ENV },
+		);
+
+		expect(results[4].exitCode).toBe(0);
+		expect(results[4].stdout).toBe("");
+		expect(results[4].stderr).toBe("");
+		// The checkout moved; the old path is gone.
+		expect(await pathExists(bash.fs, "/wt-a")).toBe(false);
+		expect(await readFile(bash.fs, "/wt-b/README.md")).toBe("# Hello\n");
+		// The admin id is unchanged — only the gitdir back-pointer is rewritten.
+		expect(await pathExists(bash.fs, "/repo/.git/worktrees/wt-a")).toBe(true);
+		expect(await readFile(bash.fs, "/repo/.git/worktrees/wt-a/gitdir")).toBe("/wt-b/.git\n");
+		// The gitlink still references the (unmoved) admin id verbatim.
+		expect(await readFile(bash.fs, "/wt-b/.git")).toBe("gitdir: /repo/.git/worktrees/wt-a\n");
+	});
+
+	test("into an existing directory lands at <dir>/<basename>", async () => {
+		const { results, bash } = await runScenario(
+			[...SETUP, "git worktree add /wt-a -b wt-a", "mkdir /dst", "git worktree move /wt-a /dst"],
+			{ files: FILES, env: TEST_ENV },
+		);
+
+		expect(results[5].exitCode).toBe(0);
+		expect(await readFile(bash.fs, "/dst/wt-a/README.md")).toBe("# Hello\n");
+		expect(await readFile(bash.fs, "/repo/.git/worktrees/wt-a/gitdir")).toBe("/dst/wt-a/.git\n");
+	});
+
+	test("resolves the source worktree by id", async () => {
+		const { results, bash } = await runScenario(
+			[...SETUP, "git worktree add /wt-a -b wt-a", "git worktree move wt-a /wt-b"],
+			{ files: FILES, env: TEST_ENV },
+		);
+		expect(results[4].exitCode).toBe(0);
+		expect(await readFile(bash.fs, "/wt-b/README.md")).toBe("# Hello\n");
+	});
+
+	test("moves a dirty worktree without --force", async () => {
+		const { results, bash } = await runScenario(
+			[
+				...SETUP,
+				"git worktree add /dirty -b dirty",
+				"echo more >> /dirty/README.md",
+				"git worktree move /dirty /moved",
+			],
+			{ files: FILES, env: TEST_ENV },
+		);
+		expect(results[5].exitCode).toBe(0);
+		expect(await readFile(bash.fs, "/moved/README.md")).toBe("# Hello\nmore\n");
+	});
+
+	test("refuses the main worktree, quoting the path as typed", async () => {
+		const { results } = await runScenario([...SETUP, "git worktree move /repo /elsewhere"], {
+			files: FILES,
+			env: TEST_ENV,
+		});
+		expect(results[3].exitCode).toBe(128);
+		expect(results[3].stderr).toBe("fatal: '/repo' is a main working tree\n");
+	});
+
+	test("refuses an unknown worktree", async () => {
+		const { results } = await runScenario([...SETUP, "git worktree move /nope /elsewhere"], {
+			files: FILES,
+			env: TEST_ENV,
+		});
+		expect(results[3].exitCode).toBe(128);
+		expect(results[3].stderr).toBe("fatal: '/nope' is not a working tree\n");
+	});
+
+	test("a locked worktree needs -f -f and reports the reason", async () => {
+		const { results, bash } = await runScenario(
+			[
+				...SETUP,
+				"git worktree add /lk -b lk",
+				"git worktree lock --reason busy /lk",
+				"git worktree move /lk /lk2",
+				"git worktree move -f /lk /lk2",
+				"git worktree move -f -f /lk /lk2",
+			],
+			{ files: FILES, env: TEST_ENV },
+		);
+		// A single -f is not enough; both attempts hit the same message.
+		const locked =
+			"fatal: cannot move a locked working tree, lock reason: busy\n" +
+			"use 'move -f -f' to override or unlock first\n";
+		expect(results[5].exitCode).toBe(128);
+		expect(results[5].stderr).toBe(locked);
+		expect(results[6].exitCode).toBe(128);
+		expect(results[6].stderr).toBe(locked);
+		// -f -f overrides the lock.
+		expect(results[7].exitCode).toBe(0);
+		expect(await readFile(bash.fs, "/lk2/README.md")).toBe("# Hello\n");
+	});
+
+	test("a worktree locked with no reason uses the semicolon form", async () => {
+		const { results } = await runScenario(
+			[
+				...SETUP,
+				"git worktree add /lk -b lk",
+				"git worktree lock /lk",
+				"git worktree move /lk /lk2",
+			],
+			{ files: FILES, env: TEST_ENV },
+		);
+		expect(results[5].stderr).toBe(
+			"fatal: cannot move a locked working tree;\nuse 'move -f -f' to override or unlock first\n",
+		);
+	});
+
+	test("refuses when the destination file already exists", async () => {
+		const { results, bash } = await runScenario(
+			[
+				...SETUP,
+				"git worktree add /wt-a -b wt-a",
+				"echo x > /wt-b",
+				"git worktree move /wt-a /wt-b",
+			],
+			{ files: FILES, env: TEST_ENV },
+		);
+		expect(results[5].exitCode).toBe(128);
+		expect(results[5].stderr).toBe("fatal: '/wt-b' already exists\n");
+		// The worktree stays put.
+		expect(await pathExists(bash.fs, "/wt-a")).toBe(true);
+	});
+
+	test("refuses when the computed into-directory target already exists", async () => {
+		const { results } = await runScenario(
+			[
+				...SETUP,
+				"git worktree add /wt-a -b wt-a",
+				"mkdir -p /dst/wt-a",
+				"git worktree move /wt-a /dst",
+			],
+			{ files: FILES, env: TEST_ENV },
+		);
+		expect(results[5].exitCode).toBe(128);
+		expect(results[5].stderr).toBe("fatal: '/dst/wt-a' already exists\n");
+	});
+
+	test("fails with git's errno text when the destination parent is missing", async () => {
+		const { results, bash } = await runScenario(
+			[...SETUP, "git worktree add /wt-a -b wt-a", "git worktree move /wt-a /no/where"],
+			{ files: FILES, env: TEST_ENV },
+		);
+		expect(results[4].exitCode).toBe(128);
+		expect(results[4].stderr).toBe(
+			"fatal: failed to move '/wt-a' to '/no/where': No such file or directory\n",
+		);
+		// Nothing was created at the partial destination.
+		expect(await pathExists(bash.fs, "/no")).toBe(false);
+		expect(await pathExists(bash.fs, "/wt-a")).toBe(true);
+	});
+});
+
+describe("git worktree repair", () => {
+	test("no-arg repair fixes stale gitlinks after the main repo moves", async () => {
+		const { results, bash } = await runScenario(
+			[
+				...SETUP,
+				"git worktree add /wt-a -b wt-a",
+				"mv /repo /repo2",
+				"cd /repo2 && git worktree repair",
+			],
+			{ files: FILES, env: TEST_ENV },
+		);
+
+		expect(results[5].exitCode).toBe(0);
+		expect(results[5].stderr).toBe("repair: .git file broken: /wt-a\n");
+		// The gitlink now points at the relocated admin dir.
+		expect(await readFile(bash.fs, "/wt-a/.git")).toBe("gitdir: /repo2/.git/worktrees/wt-a\n");
+	});
+
+	test("no-arg repair fixes every worktree's gitlink", async () => {
+		const { results, bash } = await runScenario(
+			[
+				...SETUP,
+				"git worktree add /wt-a -b wt-a",
+				"git worktree add /wt-b -b wt-b",
+				"mv /repo /repo2",
+				"cd /repo2 && git worktree repair",
+			],
+			{ files: FILES, env: TEST_ENV },
+		);
+
+		expect(results[6].exitCode).toBe(0);
+		expect(results[6].stderr).toBe(
+			"repair: .git file broken: /wt-a\nrepair: .git file broken: /wt-b\n",
+		);
+		expect(await readFile(bash.fs, "/wt-a/.git")).toBe("gitdir: /repo2/.git/worktrees/wt-a\n");
+		expect(await readFile(bash.fs, "/wt-b/.git")).toBe("gitdir: /repo2/.git/worktrees/wt-b\n");
+	});
+
+	test("relinks a moved worktree only when given its new path", async () => {
+		const { results, bash } = await runScenario(
+			[
+				...SETUP,
+				"git worktree add /wt-a -b wt-a",
+				"mv /wt-a /wt-moved",
+				"git worktree repair",
+				"git worktree repair /wt-moved",
+			],
+			{ files: FILES, env: TEST_ENV },
+		);
+
+		// With no args git cannot find where the worktree went: silent no-op.
+		expect(results[5].exitCode).toBe(0);
+		expect(results[5].stderr).toBe("");
+		// Passing the new path rewrites the admin gitdir back-pointer.
+		expect(results[6].exitCode).toBe(0);
+		expect(results[6].stderr).toBe("repair: gitdir incorrect: /repo/.git/worktrees/wt-a/gitdir\n");
+		expect(await readFile(bash.fs, "/repo/.git/worktrees/wt-a/gitdir")).toBe("/wt-moved/.git\n");
+	});
+
+	test("is a silent no-op when nothing is broken", async () => {
+		const { results } = await runScenario(
+			[...SETUP, "git worktree add /wt -b wt", "git worktree repair"],
+			{ files: FILES, env: TEST_ENV },
+		);
+		expect(results[4].exitCode).toBe(0);
+		expect(results[4].stdout).toBe("");
+		expect(results[4].stderr).toBe("");
+	});
+
+	test("reports a path argument that doesn't exist with exit 1", async () => {
+		const { results } = await runScenario([...SETUP, "git worktree repair /nope"], {
+			files: FILES,
+			env: TEST_ENV,
+		});
+		expect(results[3].exitCode).toBe(1);
+		expect(results[3].stderr).toBe("error: not a valid path: /nope\n");
+	});
+});
