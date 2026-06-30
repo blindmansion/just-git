@@ -571,6 +571,24 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			});
 
 			if (!applyResult.ok) {
+				// A non-FF merge that aborts because of staged local changes still
+				// records a no-op `<action>: updating HEAD` reflog entry (old == new):
+				// real git writes the reflog while setting up the merge, before the
+				// worktree-overwrite check fails. Mirror the merge command's behavior
+				// (only on a staged failure, only when HEAD is on a branch), using the
+				// pull action string.
+				if (applyResult.failureKind === "staged" && head?.type === "symbolic") {
+					const pullFlagStr = noFf ? " --no-ff" : "";
+					await appendReflog(gitCtx, "HEAD", {
+						oldHash: headHash,
+						newHash: headHash,
+						name: ident.name,
+						email: ident.email,
+						timestamp: ident.timestamp,
+						tz: ident.tz,
+						message: `pull${pullFlagStr}: updating HEAD`,
+					});
+				}
 				return {
 					stdout: applyResult.stdout,
 					stderr: fetchOutput + applyResult.stderr,
