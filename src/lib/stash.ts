@@ -1,4 +1,4 @@
-import { abbreviateHash, comparePaths, firstLine } from "./command-utils.ts";
+import { comparePaths, firstLine, uniqueAbbrev } from "./command-utils.ts";
 import { getAuthor, getCommitter } from "./identity.ts";
 import {
 	defaultStat,
@@ -181,7 +181,7 @@ export async function saveStash(
 	// ── Branch info for default message ────────────────────────────
 	const head = await readHead(ctx);
 	const branchName = head?.type === "symbolic" ? branchNameFromRef(head.target) : "(no branch)";
-	const headShort = abbreviateHash(headHash);
+	const headShort = await uniqueAbbrev(ctx, headHash);
 	const headFirstLine = firstLine(headCommit.message);
 
 	// ── 1. Create index commit (I) ─────────────────────────────────

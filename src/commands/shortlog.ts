@@ -1,6 +1,7 @@
 import type { GitExtensions } from "../git.ts";
 import {
 	ambiguousArgError,
+	buildAbbrevResolver,
 	firstLine,
 	isCommandError,
 	requireGitContext,
@@ -175,7 +176,11 @@ export function registerShortlogCommand(parent: Command, ext?: GitExtensions) {
 
 				let line: string;
 				if (customFormat !== null) {
-					const fctx: FormatContext = { hash: entry.hash, commit };
+					const fctx: FormatContext = {
+						hash: entry.hash,
+						commit,
+						abbrev: await buildAbbrevResolver(gitCtx, [entry.hash, commit.tree, ...commit.parents]),
+					};
 					line = expandFormat(customFormat, fctx);
 				} else {
 					line = firstLine(commit.message);

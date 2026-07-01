@@ -1,13 +1,14 @@
 import type { GitExtensions } from "../git.ts";
 import { formatCombinedDiffEntry } from "../lib/combined-diff.ts";
 import {
-	abbreviateHash,
+	buildAbbrevResolver,
 	fatal,
 	isCommandError,
 	requireCommit,
 	requireGitContext,
 	requireHead,
 	requireRevision,
+	uniqueAbbrev,
 } from "../lib/command-utils.ts";
 import { computeDiffStats, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
 import { formatDate } from "../lib/date.ts";
@@ -202,18 +203,19 @@ async function formatCommitShow(
 	presetName: string | null = null,
 ): Promise<string> {
 	// ── Header ──────────────────────────────────────────────────
+	const abbrev = await buildAbbrevResolver(ctx, [hash, commit.tree, ...commit.parents]);
 	let header: string;
 	if (customFormat !== null) {
-		const fctx: FormatContext = { hash, commit };
+		const fctx: FormatContext = { hash, commit, abbrev };
 		header = expandFormat(customFormat, fctx);
 	} else if (presetName !== null) {
-		const fctx: FormatContext = { hash, commit };
+		const fctx: FormatContext = { hash, commit, abbrev };
 		header = formatPreset(presetName, fctx, true, false);
 	} else {
 		const lines: string[] = [];
 		lines.push(`commit ${hash}`);
 		if (commit.parents.length >= 2) {
-			const abbrevParents = commit.parents.map((p) => abbreviateHash(p)).join(" ");
+			const abbrevParents = commit.parents.map((p) => abbrev(p)).join(" ");
 			lines.push(`Merge: ${abbrevParents}`);
 		}
 		lines.push(`Author: ${commit.author.name} <${commit.author.email}>`);
@@ -583,8 +585,10 @@ async function formatCombinedEntry(
 	);
 
 	if (cc.binary) {
-		const parentHashAbbrevs = parentHashes.map((h) => (h ? abbreviateHash(h) : "0000000"));
-		const resultHashAbbrev = resultHash ? abbreviateHash(resultHash) : "0000000";
+		const parentHashAbbrevs = await Promise.all(
+			parentHashes.map(async (h) => (h ? await uniqueAbbrev(ctx, h) : "0000000")),
+		);
+		const resultHashAbbrev = resultHash ? await uniqueAbbrev(ctx, resultHash) : "0000000";
 		return (
 			`diff --cc ${path}\n` +
 			`index ${parentHashAbbrevs.join(",")}..${resultHashAbbrev}\n` +

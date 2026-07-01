@@ -1,17 +1,18 @@
 import type { GitExtensions } from "../git.ts";
-import { abbreviateHash, isCommandError, requireGitContext } from "../lib/command-utils.ts";
+import { isCommandError, requireGitContext, uniqueAbbrev } from "../lib/command-utils.ts";
 import { readReflog, reflogPath, ZERO_HASH } from "../lib/reflog.ts";
 import { resolveRef } from "../lib/refs.ts";
 import type { GitContext } from "../lib/types.ts";
 import { a, type Command, o } from "../parse/index.ts";
 
-function formatReflogEntryLine(
+async function formatReflogEntryLine(
+	gitCtx: GitContext,
 	refName: string,
 	index: number,
 	newHash: string,
 	message: string,
-): string {
-	return `${abbreviateHash(newHash)} ${refName}@{${index}}: ${message}`;
+): Promise<string> {
+	return `${await uniqueAbbrev(gitCtx, newHash)} ${refName}@{${index}}: ${message}`;
 }
 
 async function showReflog(
@@ -41,7 +42,7 @@ async function showReflog(
 		if (!entry) continue;
 		const idx = entries.length - 1 - i;
 		if (entry.newHash === ZERO_HASH) continue;
-		lines.push(formatReflogEntryLine(refName, idx, entry.newHash, entry.message));
+		lines.push(await formatReflogEntryLine(gitCtx, refName, idx, entry.newHash, entry.message));
 		count++;
 	}
 

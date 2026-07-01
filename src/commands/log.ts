@@ -1,6 +1,7 @@
 import type { GitExtensions } from "../git.ts";
 import {
 	ambiguousArgError,
+	buildAbbrevResolver,
 	fatal,
 	isCommandError,
 	requireGitContext,
@@ -329,6 +330,11 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 						decorations: decoFn,
 						decorationsRaw: decoRawFn,
 						dateMode,
+						abbrev: await buildAbbrevResolver(gitCtx, [
+							entry.hash,
+							entry.commit.tree,
+							...entry.commit.parents,
+						]),
 					};
 					let line = expandFormat(customFormat, fctx);
 					const diffText = await formatCommitDiff(gitCtx, entry.commit, diffFormat);
@@ -355,6 +361,11 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 					decorations: decoFn,
 					decorationsRaw: decoRawFn,
 					dateMode,
+					abbrev: await buildAbbrevResolver(gitCtx, [
+						entry.hash,
+						entry.commit.tree,
+						...entry.commit.parents,
+					]),
 				};
 				let line = formatPreset(effectivePreset, fctx, idx === 0, abbrevCommit);
 				const diffText = await formatCommitDiff(gitCtx, entry.commit, diffFormat);
@@ -595,6 +606,11 @@ async function formatWithGraph(
 			decorations: decoFn,
 			decorationsRaw: decoRawFn,
 			dateMode,
+			abbrev: await buildAbbrevResolver(gitCtx, [
+				entry.hash,
+				entry.commit.tree,
+				...entry.commit.parents,
+			]),
 		};
 
 		let msgContent: string;

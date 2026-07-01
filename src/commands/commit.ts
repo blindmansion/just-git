@@ -477,7 +477,8 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 				isMerge,
 			);
 
-			const header = formatCommitOneLiner(
+			const header = await formatCommitOneLiner(
+				gitCtx,
 				branchName,
 				commitHash,
 				messageText,

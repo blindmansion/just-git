@@ -1,6 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import {
-	abbreviateHash,
+	uniqueAbbrev,
 	ensureTrailingNewline,
 	err,
 	fatal,
@@ -67,7 +67,7 @@ export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 
 				await deleteRef(gitCtx, refName);
 				return {
-					stdout: `Deleted tag '${args.name}' (was ${abbreviateHash(hash)})\n`,
+					stdout: `Deleted tag '${args.name}' (was ${await uniqueAbbrev(gitCtx, hash)})\n`,
 					stderr: "",
 					exitCode: 0,
 				};
@@ -158,7 +158,7 @@ export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 
 				const forceMessage =
 					existing && args.force && existing !== newRefHash
-						? `Updated tag '${args.name}' (was ${abbreviateHash(existing)})\n`
+						? `Updated tag '${args.name}' (was ${await uniqueAbbrev(gitCtx, existing)})\n`
 						: "";
 				return { stdout: forceMessage, stderr: "", exitCode: 0 };
 			}

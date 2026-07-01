@@ -1,7 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
-	abbreviateHash,
 	ensureTrailingNewline,
 	err,
 	fatal,
@@ -17,6 +16,7 @@ import {
 	requireVerifiedCommit,
 	resolveCommandSigner,
 	stripCommentLines,
+	uniqueAbbrev,
 	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
 import { walkCommits } from "../lib/commit-walk.ts";
@@ -462,7 +462,7 @@ async function handleSquashMerge(
 	// moved. Routing it through the 3-way path below would discard local
 	// modifications and diff against the merged tree instead.
 	if (isFF) {
-		const ffPrefix = `Updating ${abbreviateHash(headHash)}..${abbreviateHash(theirsHash)}\n`;
+		const ffPrefix = `Updating ${await uniqueAbbrev(gitCtx, headHash)}..${await uniqueAbbrev(gitCtx, theirsHash)}\n`;
 		const ff = await squashFastForward(gitCtx, headHash, theirsHash);
 		if (!ff.ok) {
 			await deleteStateFile(gitCtx, "MERGE_MSG");
@@ -650,7 +650,7 @@ async function handleContinue(
 
 	const diffstat = await formatDiffStat(gitCtx, headCommit.tree, treeHash);
 	const branchName = head?.type === "symbolic" ? branchNameFromRef(head.target) : "detached HEAD";
-	const header = formatCommitOneLiner(branchName, commitHash, messageText);
+	const header = await formatCommitOneLiner(gitCtx, branchName, commitHash, messageText);
 
 	return {
 		stdout: `${header}\n${diffstat}`,

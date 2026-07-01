@@ -1,4 +1,4 @@
-import { abbreviateHash, comparePaths } from "./command-utils.ts";
+import { comparePaths, uniqueAbbrev } from "./command-utils.ts";
 import { isBisectInProgress } from "./bisect.ts";
 import { countAheadBehind } from "./commit-walk.ts";
 import { type GitConfig, readConfig } from "./config.ts";
@@ -92,20 +92,21 @@ export async function generateLongFormStatus(
 
 // ── Long-form formatting ────────────────────────────────────────────
 
-function pushRebaseTodoLines(
+async function pushRebaseTodoLines(
+	gitCtx: GitRepo,
 	lines: string[],
 	rebaseState: {
 		done: { hash: string; subject: string; empty?: boolean }[];
 		todo: { hash: string; subject: string; empty?: boolean }[];
 	},
-): void {
-	const todoLine = (e: { hash: string; subject: string; empty?: boolean }): string =>
-		`   pick ${abbreviateHash(e.hash)} # ${e.subject}${e.empty ? " # empty" : ""}`;
+): Promise<void> {
+	const todoLine = async (e: { hash: string; subject: string; empty?: boolean }): Promise<string> =>
+		`   pick ${await uniqueAbbrev(gitCtx, e.hash)} # ${e.subject}${e.empty ? " # empty" : ""}`;
 	if (rebaseState.done.length > 0) {
 		const n = rebaseState.done.length;
 		lines.push(`Last command${n === 1 ? "" : "s"} done (${n} command${n === 1 ? "" : "s"} done):`);
 		for (const e of rebaseState.done.slice(-2)) {
-			lines.push(todoLine(e));
+			lines.push(await todoLine(e));
 		}
 		if (n > 2) {
 			lines.push("  (see more in file .git/rebase-merge/done)");
@@ -117,7 +118,7 @@ function pushRebaseTodoLines(
 			`Next command${n === 1 ? "" : "s"} to do (${n} remaining command${n === 1 ? "" : "s"}):`,
 		);
 		for (const e of rebaseState.todo.slice(0, 2)) {
-			lines.push(todoLine(e));
+			lines.push(await todoLine(e));
 		}
 		lines.push('  (use "git rebase --edit-todo" to view and edit)');
 	} else {
@@ -150,13 +151,13 @@ async function formatLongStatus(
 
 	// Branch header line
 	if (isDetached && rebaseState) {
-		const ontoShort = abbreviateHash(rebaseState.onto);
+		const ontoShort = await uniqueAbbrev(gitCtx, rebaseState.onto);
 		lines.push(`interactive rebase in progress; onto ${ontoShort}`);
 	} else if (isDetached) {
 		const detachPoint = await readDetachPoint(gitCtx);
 		if (detachPoint) {
 			const atOrFrom = headHash === detachPoint ? "at" : "from";
-			lines.push(`HEAD detached ${atOrFrom} ${abbreviateHash(detachPoint)}`);
+			lines.push(`HEAD detached ${atOrFrom} ${await uniqueAbbrev(gitCtx, detachPoint)}`);
 		} else {
 			lines.push("Not currently on any branch.");
 		}
@@ -188,7 +189,7 @@ async function formatLongStatus(
 		lines.push("");
 	}
 	if (rebaseState && mergeHeadRef) {
-		pushRebaseTodoLines(lines, rebaseState);
+		await pushRebaseTodoLines(gitCtx, lines, rebaseState);
 		lines.push("");
 		if (unmerged.length > 0) {
 			lines.push("You have unmerged paths.");
@@ -203,11 +204,11 @@ async function formatLongStatus(
 		const hasUnmerged = hasConflicts(index);
 		const hasMergeMsg = await gitCtx.fs.exists(joinPath(gitCtx.gitDir, "MERGE_MSG"));
 
-		pushRebaseTodoLines(lines, rebaseState);
+		await pushRebaseTodoLines(gitCtx, lines, rebaseState);
 
 		const isDetachedRebase = rebaseState.headName === "detached HEAD";
 		const origBranch = isDetachedRebase ? null : branchNameFromRef(rebaseState.headName);
-		const ontoShort = abbreviateHash(rebaseState.onto);
+		const ontoShort = await uniqueAbbrev(gitCtx, rebaseState.onto);
 		const branchSuffix = origBranch ? ` branch '${origBranch}' on '${ontoShort}'` : "";
 
 		if (hasUnmerged) {
@@ -230,7 +231,9 @@ async function formatLongStatus(
 		hasIntermediateState = true;
 	} else {
 		if (cherryPickHeadRef) {
-			lines.push(`You are currently cherry-picking commit ${abbreviateHash(cherryPickHeadRef)}.`);
+			lines.push(
+				`You are currently cherry-picking commit ${await uniqueAbbrev(gitCtx, cherryPickHeadRef)}.`,
+			);
 			if (unmerged.length > 0) {
 				lines.push('  (fix conflicts and run "git cherry-pick --continue")');
 			} else {
@@ -240,7 +243,9 @@ async function formatLongStatus(
 			lines.push('  (use "git cherry-pick --abort" to cancel the cherry-pick operation)');
 			hasIntermediateState = true;
 		} else if (revertHeadRef) {
-			lines.push(`You are currently reverting commit ${abbreviateHash(revertHeadRef)}.`);
+			lines.push(
+				`You are currently reverting commit ${await uniqueAbbrev(gitCtx, revertHeadRef)}.`,
+			);
 			if (unmerged.length > 0) {
 				lines.push('  (fix conflicts and run "git revert --continue")');
 			} else {

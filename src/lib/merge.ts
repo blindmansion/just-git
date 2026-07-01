@@ -1,4 +1,4 @@
-import { abbreviateHash } from "./command-utils.ts";
+import { uniqueAbbrev } from "./command-utils.ts";
 import { formatDiffStat } from "./commit-summary.ts";
 import { readConfigView } from "./config.ts";
 import { readIndex, writeIndex } from "./index.ts";
@@ -308,8 +308,8 @@ export async function handleFastForward(
 	const headCommit = await readCommit(gitCtx, headHash);
 	const theirsCommit = await readCommit(gitCtx, theirsHash);
 
-	const oldShort = abbreviateHash(headHash);
-	const newShort = abbreviateHash(theirsHash);
+	const oldShort = await uniqueAbbrev(gitCtx, headHash);
+	const newShort = await uniqueAbbrev(gitCtx, theirsHash);
 	const updatingLine = `Updating ${oldShort}..${newShort}\n`;
 
 	if (gitCtx.workTree) {

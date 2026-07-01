@@ -1,7 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
-	abbreviateHash,
 	ensureTrailingNewline,
 	err,
 	fatal,
@@ -18,6 +17,7 @@ import {
 	requireNoConflicts,
 	resolveCommandSigner,
 	stripCommentLines,
+	uniqueAbbrev,
 	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
 import { formatCommitSummary } from "../lib/commit-summary.ts";
@@ -188,7 +188,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			// Build revert commit message
-			const shortHash = abbreviateHash(resolvedHash);
+			const shortHash = await uniqueAbbrev(gitCtx, resolvedHash);
 			const subject = firstLine(revertedCommit.message);
 			const revertMessage = buildRevertMessage(revertedCommit, resolvedHash, mainlineParent);
 			const commitMessage = ensureTrailingNewline(revertMessage);
@@ -592,7 +592,7 @@ async function finalizeRevertCommit(options: {
 			author.timestamp !== committer.timestamp ||
 			author.timezone !== committer.timezone,
 	);
-	const header = formatCommitOneLiner(branchName, commitHash, displayMessage);
+	const header = await formatCommitOneLiner(gitCtx, branchName, commitHash, displayMessage);
 	return { commitHash, stdout: `${header}\n${summary}` };
 }
 

@@ -1,7 +1,7 @@
 import type { GitExtensions } from "../git.ts";
 import { maybeSetupTracking } from "../lib/checkout-utils.ts";
 import {
-	abbreviateHash,
+	uniqueAbbrev,
 	err,
 	fatal,
 	firstLine,
@@ -311,7 +311,7 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 
 				await deleteRef(gitCtx, refName);
 				return {
-					stdout: `Deleted branch ${args.name} (was ${abbreviateHash(hash)}).\n`,
+					stdout: `Deleted branch ${args.name} (was ${await uniqueAbbrev(gitCtx, hash)}).\n`,
 					stderr: deleteWarning,
 					exitCode: 0,
 				};
@@ -438,7 +438,7 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 							const branch = branchNameFromRef(state.headName);
 							if (branch === "detached HEAD") {
 								const detachPoint = await readDetachPoint(gitCtx);
-								const short = detachPoint ? abbreviateHash(detachPoint) : "(null)";
+								const short = detachPoint ? await uniqueAbbrev(gitCtx, detachPoint) : "(null)";
 								detachedName = `(no branch, rebasing detached HEAD ${short})`;
 							} else {
 								detachedName = `(no branch, rebasing ${branch})`;
@@ -450,7 +450,7 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 						const detachPoint = await readDetachPoint(gitCtx);
 						if (detachPoint) {
 							const atOrFrom = headHash === detachPoint ? "at" : "from";
-							detachedName = `(HEAD detached ${atOrFrom} ${abbreviateHash(detachPoint)})`;
+							detachedName = `(HEAD detached ${atOrFrom} ${await uniqueAbbrev(gitCtx, detachPoint)})`;
 						} else {
 							detachedName = "(no branch)";
 						}
@@ -530,7 +530,7 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 			for (const entry of entries) {
 				const marker = branchMarker(entry.isCurrent, entry.inOtherWorktree);
 				const paddedName = entry.displayName.padEnd(maxNameLen);
-				const shortHash = abbreviateHash(entry.hash);
+				const shortHash = await uniqueAbbrev(gitCtx, entry.hash);
 
 				let subject = "";
 				try {
