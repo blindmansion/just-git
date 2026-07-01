@@ -394,28 +394,74 @@ describe("git rebase", () => {
 			expect(reflog.stdout).toContain("rebase (finish): refs/heads/feature onto");
 		});
 
-		test("finish reflog records the onto base, not the fast-forwarded tip", async () => {
-			// Build a rebase that fast-forwards past `onto` after dropping an
-			// already-applied commit, so the branch's new tip differs from the
-			// onto base. git records the onto base in the finish message.
+		test("finish reflog records the onto base, not the new tip", async () => {
+			// history: initial -> O -> A -> B (feature), with up-base = ...-> A -> U.
+			// `rebase --onto onto-base up-base` replays B onto O, so the new tip
+			// differs from the onto base; git records the onto base in the finish
+			// message.
 			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
 			await bash.exec("git init");
 			await bash.exec("git add .");
 			await bash.exec('git commit -m "initial"');
 
-			// main = initial -> O1 (O1 is the onto base)
+			await bash.fs.writeFile("/repo/o.txt", "o");
+			await bash.exec("git add o.txt");
+			await bash.exec('git commit -m "O"');
+			await bash.exec("git branch onto-base");
+
+			await bash.fs.writeFile("/repo/a.txt", "a");
+			await bash.exec("git add a.txt");
+			await bash.exec('git commit -m "A"');
+			await bash.exec("git branch up-base");
+
+			await bash.fs.writeFile("/repo/b.txt", "b");
+			await bash.exec("git add b.txt");
+			await bash.exec('git commit -m "B"');
+			await bash.exec("git branch feature");
+
+			// up-base diverges from feature at A, so onto is not the merge-base
+			// with upstream — this is a real replay, not a preemptive up-to-date.
+			await bash.exec("git checkout up-base");
+			await bash.fs.writeFile("/repo/u.txt", "u");
+			await bash.exec("git add u.txt");
+			await bash.exec('git commit -m "U"');
+
+			await bash.exec("git checkout feature");
+
+			const gitCtx = await findRepo(bash.fs, "/repo");
+			const ontoHash = await resolveRef(gitCtx!, "refs/heads/onto-base");
+
+			const result = await bash.exec("git rebase --onto onto-base up-base");
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("Successfully rebased and updated refs/heads/feature.");
+
+			const newTip = await resolveHead(gitCtx!);
+			expect(newTip).not.toBe(ontoHash);
+
+			const reflog = await bash.exec("git reflog show feature -n 1");
+			expect(reflog.stdout).toContain(`rebase (finish): refs/heads/feature onto ${ontoHash}`);
+			expect(reflog.stdout).not.toContain(`onto ${newTip}`);
+		});
+
+		test("--onto reports up to date for a linear branch already on onto", async () => {
+			// history: initial -> O (main) -> F1 -> Cy (feature), up = O -> Cx where
+			// Cy duplicates Cx. feature is a linear extension of the onto base and
+			// onto is the merge-base with upstream, so git reports up to date and
+			// leaves the branch untouched (it does NOT replay).
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+
 			await bash.fs.writeFile("/repo/o.txt", "o");
 			await bash.exec("git add o.txt");
 			await bash.exec('git commit -m "O1"');
 
-			// up = initial -> O1 -> Cx (Cx adds x.txt = "X")
 			await bash.exec("git checkout -b up");
 			await bash.fs.writeFile("/repo/x.txt", "X");
 			await bash.exec("git add x.txt");
 			await bash.exec('git commit -m "Cx"');
 
-			// feature = initial -> O1 -> F1 -> Cy, where Cy is the same patch as
-			// Cx (adds x.txt = "X") so it is detected as already applied.
 			await bash.exec("git checkout -b feature main");
 			await bash.fs.writeFile("/repo/f.txt", "f");
 			await bash.exec("git add f.txt");
@@ -425,19 +471,13 @@ describe("git rebase", () => {
 			await bash.exec('git commit -m "Cy"');
 
 			const gitCtx = await findRepo(bash.fs, "/repo");
-			const ontoHash = await resolveRef(gitCtx!, "refs/heads/main");
+			const before = await resolveHead(gitCtx!);
 
-			// Cy is dropped (already applied on up); F1 sits directly on onto,
-			// so feature fast-forwards to F1 — a tip distinct from the onto base.
 			const result = await bash.exec("git rebase --onto main up");
 			expect(result.exitCode).toBe(0);
-
-			const newTip = await resolveHead(gitCtx!);
-			expect(newTip).not.toBe(ontoHash);
-
-			const reflog = await bash.exec("git reflog show feature -n 1");
-			expect(reflog.stdout).toContain(`rebase (finish): refs/heads/feature onto ${ontoHash}`);
-			expect(reflog.stdout).not.toContain(`onto ${newTip}`);
+			expect(result.stdout).toBe("Current branch feature is up to date.\n");
+			expect(result.stderr).toBe("");
+			expect(await resolveHead(gitCtx!)).toBe(before);
 		});
 	});
 
