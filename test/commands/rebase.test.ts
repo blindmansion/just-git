@@ -393,6 +393,52 @@ describe("git rebase", () => {
 			const reflog = await bash.exec("git reflog show feature -n 5");
 			expect(reflog.stdout).toContain("rebase (finish): refs/heads/feature onto");
 		});
+
+		test("finish reflog records the onto base, not the fast-forwarded tip", async () => {
+			// Build a rebase that fast-forwards past `onto` after dropping an
+			// already-applied commit, so the branch's new tip differs from the
+			// onto base. git records the onto base in the finish message.
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+
+			// main = initial -> O1 (O1 is the onto base)
+			await bash.fs.writeFile("/repo/o.txt", "o");
+			await bash.exec("git add o.txt");
+			await bash.exec('git commit -m "O1"');
+
+			// up = initial -> O1 -> Cx (Cx adds x.txt = "X")
+			await bash.exec("git checkout -b up");
+			await bash.fs.writeFile("/repo/x.txt", "X");
+			await bash.exec("git add x.txt");
+			await bash.exec('git commit -m "Cx"');
+
+			// feature = initial -> O1 -> F1 -> Cy, where Cy is the same patch as
+			// Cx (adds x.txt = "X") so it is detected as already applied.
+			await bash.exec("git checkout -b feature main");
+			await bash.fs.writeFile("/repo/f.txt", "f");
+			await bash.exec("git add f.txt");
+			await bash.exec('git commit -m "F1"');
+			await bash.fs.writeFile("/repo/x.txt", "X");
+			await bash.exec("git add x.txt");
+			await bash.exec('git commit -m "Cy"');
+
+			const gitCtx = await findRepo(bash.fs, "/repo");
+			const ontoHash = await resolveRef(gitCtx!, "refs/heads/main");
+
+			// Cy is dropped (already applied on up); F1 sits directly on onto,
+			// so feature fast-forwards to F1 — a tip distinct from the onto base.
+			const result = await bash.exec("git rebase --onto main up");
+			expect(result.exitCode).toBe(0);
+
+			const newTip = await resolveHead(gitCtx!);
+			expect(newTip).not.toBe(ontoHash);
+
+			const reflog = await bash.exec("git reflog show feature -n 1");
+			expect(reflog.stdout).toContain(`rebase (finish): refs/heads/feature onto ${ontoHash}`);
+			expect(reflog.stdout).not.toContain(`onto ${newTip}`);
+		});
 	});
 
 	// ── Conflicts ────────────────────────────────────────────────────
