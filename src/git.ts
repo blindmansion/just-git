@@ -25,7 +25,7 @@ import type {
 	RepoCapabilities,
 } from "./lib/types.ts";
 
-export const VERSION = "1.7.2";
+export const VERSION = "1.8.0";
 
 /** Options for subcommand execution (mirrors just-bash's CommandExecOptions). */
 export interface CommandExecOptions {
