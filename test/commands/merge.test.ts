@@ -315,6 +315,23 @@ describe("git merge", () => {
 				"fatal: options '--squash' and '--no-ff.' cannot be used together\n",
 			);
 		});
+
+		test("rejects --squash with merge.ff=false before resolving branch", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec("git config merge.ff false");
+
+			// Branch does not exist: git validates the --squash/implicit --no-ff
+			// conflict before resolving the branch, so exit is 128 (not the
+			// "not something we can merge" ref-resolution error, exit 1).
+			const result = await bash.exec("git merge --squash nonexistent-branch");
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toBe(
+				"fatal: options '--squash' and '--no-ff.' cannot be used together\n",
+			);
+		});
 	});
 
 	// ── --abort ──────────────────────────────────────────────────────
