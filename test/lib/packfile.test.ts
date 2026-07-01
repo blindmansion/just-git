@@ -246,8 +246,8 @@ describe("readPackStreaming", () => {
 			blob("file content B"),
 			commit(
 				"tree 0000000000000000000000000000000000000000\n" +
-				"author Test <test@test.com> 1000000000 +0000\n" +
-				"committer Test <test@test.com> 1000000000 +0000\n\nInitial\n",
+					"author Test <test@test.com> 1000000000 +0000\n" +
+					"committer Test <test@test.com> 1000000000 +0000\n\nInitial\n",
 			),
 		];
 		const pack = await writePack(input);
