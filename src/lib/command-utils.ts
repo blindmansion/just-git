@@ -310,43 +310,46 @@ export async function handleOperationAbort(
 	const opHead = await resolveRef(gitCtx, opts.operationRef);
 	if (!opHead) return opts.noOpError;
 
-	const origHead = (await resolveRef(gitCtx, "ORIG_HEAD")) ?? (await resolveHead(gitCtx));
-	if (!origHead) {
-		return fatal(`There is no ${opts.operationName} to abort (ORIG_HEAD missing).`);
+	// A conflicted merge / cherry-pick / revert never advances HEAD, so the
+	// abort target is the current HEAD. ORIG_HEAD is a shared pseudo-ref that an
+	// earlier, unrelated operation may have left pointing elsewhere, so it can't
+	// be trusted here (git resets to the recorded operation start, which for
+	// these conflicts is exactly HEAD).
+	const targetHead = await resolveHead(gitCtx);
+	if (!targetHead) {
+		return fatal(`There is no ${opts.operationName} to abort (HEAD missing).`);
 	}
 
-	const headBeforeAbort = await resolveHead(gitCtx);
-	const origCommit = await readCommit(gitCtx, origHead);
+	const headBeforeAbort = targetHead;
+	const targetCommit = await readCommit(gitCtx, targetHead);
 	const currentIndex = await readIndex(gitCtx);
 
 	const abortResult = await mergeAbort(
 		gitCtx,
-		origCommit.tree,
+		targetCommit.tree,
 		currentIndex,
-		opts.origHeadAsTargetRev ? origHead : undefined,
+		opts.origHeadAsTargetRev ? targetHead : undefined,
 	);
 	if (!abortResult.success) {
 		return abortResult.errorOutput as CommandResult;
 	}
 
-	await advanceBranchRef(gitCtx, origHead);
+	await advanceBranchRef(gitCtx, targetHead);
 	await writeIndex(gitCtx, { version: 2, entries: abortResult.newEntries });
 	await applyWorktreeOps(gitCtx, abortResult.worktreeOps);
 
-	if (headBeforeAbort) {
-		const head = await readHead(gitCtx);
-		const isOnBranch = head?.type === "symbolic";
-		if (isOnBranch || headBeforeAbort !== origHead) {
-			const resetTarget = opts.origHeadAsTargetRev ? origHead : "HEAD";
-			await logRef(
-				gitCtx,
-				env,
-				"HEAD",
-				headBeforeAbort,
-				origHead,
-				`reset: moving to ${resetTarget}`,
-			);
-		}
+	const head = await readHead(gitCtx);
+	const isOnBranch = head?.type === "symbolic";
+	if (isOnBranch) {
+		const resetTarget = opts.origHeadAsTargetRev ? targetHead : "HEAD";
+		await logRef(
+			gitCtx,
+			env,
+			"HEAD",
+			headBeforeAbort,
+			targetHead,
+			`reset: moving to ${resetTarget}`,
+		);
 	}
 
 	await opts.clearState(gitCtx);
