@@ -1,5 +1,5 @@
-import { abbreviateHash } from "./command-utils.ts";
 import { type Edit, myersDiff, splitLines } from "./diff-algorithm.ts";
+import { abbreviateHash } from "./abbrev.ts";
 
 /** A line in the combined diff output with per-parent column markers. */
 interface CombinedLine {

@@ -1,16 +1,9 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
-	ensureTrailingNewline,
-	firstLine,
-	formatCommitOneLiner,
 	getSequencerDirtyState,
-	requireCommitter,
 	resolveCommandSigner,
 	sequencerDirtyWorktreeError,
-	stripCommentLines,
-	uniqueAbbrev,
-	writeCommitAndAdvance,
 } from "./command-utils.ts";
 import { bindAttributes } from "./bound-attributes.ts";
 import { formatCommitSummary } from "./commit-summary.ts";
@@ -75,6 +68,10 @@ import { walkWorkTree } from "./worktree.ts";
 import { comparePaths } from "./path.ts";
 import type { CommandResult } from "./command-errors.ts";
 import { fatal, err, isCommandError } from "./command-errors.ts";
+import { firstLine, stripCommentLines, ensureTrailingNewline } from "./text-utils.ts";
+import { uniqueAbbrev } from "./abbrev.ts";
+import { formatCommitOneLiner } from "./ref-format.ts";
+import { requireCommitter, writeCommitAndAdvance } from "./commit-requirements.ts";
 
 /**
  * Return the display label for the current HEAD — either the branch name

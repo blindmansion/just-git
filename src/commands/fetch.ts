@@ -1,12 +1,5 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
-import {
-	buildAbbrevResolver,
-	buildRefUpdateLines,
-	formatTransferRefLines,
-	requireGitContext,
-	type TransferRefLine,
-} from "../lib/command-utils.ts";
 import { readConfig } from "../lib/config.ts";
 import {
 	autoFollowReachableTags,
@@ -33,6 +26,10 @@ import type { ExecResult } from "../hooks.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, isCommandError } from "../lib/command-errors.ts";
+import { buildAbbrevResolver } from "../lib/abbrev.ts";
+import type { TransferRefLine } from "../lib/ref-format.ts";
+import { formatTransferRefLines, buildRefUpdateLines } from "../lib/ref-format.ts";
+import { requireGitContext } from "../lib/commit-requirements.ts";
 
 export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("fetch", {

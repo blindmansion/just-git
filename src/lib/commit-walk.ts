@@ -1,7 +1,7 @@
-import { firstLine } from "./command-utils.ts";
 import { peelToCommit, readCommit } from "./object-db.ts";
 import { listRefs } from "./refs.ts";
 import type { Commit, GitRepo, ObjectId } from "./types.ts";
+import { firstLine } from "./text-utils.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
 

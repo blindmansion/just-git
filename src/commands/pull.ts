@@ -1,18 +1,9 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
-	buildAbbrevResolver,
-	buildRefUpdateLines,
-	formatTransferRefLines,
 	getSequencerDirtyState,
-	requireAuthor,
-	requireCommitter,
-	requireGitContext,
-	requireHead,
-	requireVerifiedCommit,
 	resolveCommandSigner,
 	sequencerDirtyWorktreeError,
-	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
 import { bindAttributes } from "../lib/bound-attributes.ts";
 import { formatDiffStat } from "../lib/commit-summary.ts";
@@ -49,6 +40,16 @@ import type { GitContext, ObjectId, Ref } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { performRebase } from "../lib/rebase-engine.ts";
 import { fatal, isCommandError } from "../lib/command-errors.ts";
+import { buildAbbrevResolver } from "../lib/abbrev.ts";
+import { formatTransferRefLines, buildRefUpdateLines } from "../lib/ref-format.ts";
+import {
+	requireGitContext,
+	requireHead,
+	requireCommitter,
+	requireAuthor,
+	requireVerifiedCommit,
+	writeCommitAndAdvance,
+} from "../lib/commit-requirements.ts";
 
 function pullUpToDateMessage(
 	head: Awaited<ReturnType<typeof readHead>>,

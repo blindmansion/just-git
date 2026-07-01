@@ -1,7 +1,5 @@
-// ── Myers diff algorithm + unified diff formatter ──────────────────
-//
-import { abbreviateHash } from "./command-utils.ts";
 import { isBinaryStr } from "./object-db.ts";
+import { abbreviateHash } from "./abbrev.ts";
 // Implements the core diff algorithm from:
 //   Eugene W. Myers, "An O(ND) Difference Algorithm and Its Variations"
 //

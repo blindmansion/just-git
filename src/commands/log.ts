@@ -1,5 +1,4 @@
 import type { GitExtensions } from "../git.ts";
-import { buildAbbrevResolver, requireGitContext, requireHead } from "../lib/command-utils.ts";
 import { computeDiffStats, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
 import { CommitHeap, walkCommits } from "../lib/commit-walk.ts";
 import { parseDate } from "../lib/date.ts";
@@ -30,6 +29,8 @@ import type { Commit, GitRepo, ObjectId, TreeDiffEntry } from "../lib/types.ts";
 import { worktreeHeadCommits } from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, isCommandError, ambiguousArgError } from "../lib/command-errors.ts";
+import { buildAbbrevResolver } from "../lib/abbrev.ts";
+import { requireGitContext, requireHead } from "../lib/commit-requirements.ts";
 
 const decoder = new TextDecoder();
 

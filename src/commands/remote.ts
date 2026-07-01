@@ -1,5 +1,4 @@
 import type { CommandContext, GitExtensions } from "../git.ts";
-import { requireGitContext } from "../lib/command-utils.ts";
 import { type GitConfig, readConfig, writeConfig } from "../lib/config.ts";
 import { readReflog, writeReflog } from "../lib/reflog.ts";
 import { checkRefFormat, deleteRef, listRefs, RefFormatFlag, updateRef } from "../lib/refs.ts";
@@ -8,6 +7,7 @@ import type { GitContext } from "../lib/types.ts";
 import { a, type Command, f } from "../parse/index.ts";
 import type { CommandResult } from "../lib/command-errors.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
+import { requireGitContext } from "../lib/commit-requirements.ts";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 

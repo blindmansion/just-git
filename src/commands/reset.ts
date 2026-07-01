@@ -1,12 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
-import {
-	firstLine,
-	getCwdPrefix,
-	requireGitContext,
-	requireWorkTree,
-	uniqueAbbrev,
-} from "../lib/command-utils.ts";
+import { getCwdPrefix } from "../lib/command-utils.ts";
 import {
 	addEntry,
 	buildIndex,
@@ -30,6 +24,9 @@ import { applyWorktreeOps, resetHard } from "../lib/unpack-trees.ts";
 import { diffIndexToWorkTree } from "../lib/worktree.ts";
 import { a, type Command, f } from "../parse/index.ts";
 import { fatal, isCommandError, ambiguousArgError } from "../lib/command-errors.ts";
+import { firstLine } from "../lib/text-utils.ts";
+import { uniqueAbbrev } from "../lib/abbrev.ts";
+import { requireGitContext, requireWorkTree } from "../lib/commit-requirements.ts";
 
 export function registerResetCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("reset", {

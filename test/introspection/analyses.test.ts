@@ -37,13 +37,13 @@ describe("shared program bootstrap", () => {
 describe("file metrics", () => {
 	test("computes size/shape and finds god-files", async () => {
 		const metrics = await fileMetrics({ include: "src/lib", root: "src/lib" });
-		const cu = metrics.find((m) => m.relPath === "command-utils.ts");
-		expect(cu).toBeDefined();
-		expect(cu?.exports ?? 0).toBeGreaterThan(20);
+		const cfg = metrics.find((m) => m.relPath === "config.ts");
+		expect(cfg).toBeDefined();
+		expect(cfg?.exports ?? 0).toBeGreaterThan(20);
 
-		// command-utils is a known god-file by export count.
+		// config.ts is a known god-file by export count.
 		const gods = godFiles(metrics, { exports: 25 });
-		expect(gods.some((m) => m.relPath === "command-utils.ts")).toBe(true);
+		expect(gods.some((m) => m.relPath === "config.ts")).toBe(true);
 	});
 });
 

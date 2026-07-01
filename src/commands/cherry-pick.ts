@@ -1,20 +1,9 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
-	ensureTrailingNewline,
-	firstLine,
-	formatCommitOneLiner,
 	handleOperationAbort,
 	hasStagedChanges,
-	requireCommit,
-	requireCommitter,
-	requireGitContext,
-	requireHead,
-	requireNoConflicts,
 	resolveCommandSigner,
-	stripCommentLines,
-	uniqueAbbrev,
-	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
 import { formatCommitSummary } from "../lib/commit-summary.ts";
 import { getConfigValue } from "../lib/config.ts";
@@ -40,6 +29,17 @@ import type { GitContext } from "../lib/types.ts";
 import { applyWorktreeOps, mergeAbort } from "../lib/unpack-trees.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
+import { firstLine, stripCommentLines, ensureTrailingNewline } from "../lib/text-utils.ts";
+import { uniqueAbbrev } from "../lib/abbrev.ts";
+import { formatCommitOneLiner } from "../lib/ref-format.ts";
+import {
+	requireGitContext,
+	requireHead,
+	requireNoConflicts,
+	requireCommit,
+	requireCommitter,
+	writeCommitAndAdvance,
+} from "../lib/commit-requirements.ts";
 
 export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("cherry-pick", {

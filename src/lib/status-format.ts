@@ -1,4 +1,3 @@
-import { uniqueAbbrev } from "./command-utils.ts";
 import { isBisectInProgress } from "./bisect.ts";
 import { countAheadBehind } from "./commit-walk.ts";
 import { type GitConfig, readConfig } from "./config.ts";
@@ -12,6 +11,7 @@ import { detectRenames } from "./rename-detection.ts";
 import { flattenTreeToMap } from "./tree-ops.ts";
 import type { GitContext, GitRepo, Index, ObjectId, TreeDiffEntry } from "./types.ts";
 import { diffIndexToWorkTree } from "./worktree.ts";
+import { uniqueAbbrev } from "./abbrev.ts";
 
 export interface StatusEntry {
 	/** Path used for sorting (new path for renames). */

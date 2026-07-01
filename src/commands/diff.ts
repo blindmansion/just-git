@@ -1,12 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { formatCombinedDiffEntry } from "../lib/combined-diff.ts";
-import {
-	abbreviateHash,
-	getCwdPrefix,
-	requireCommit,
-	requireGitContext,
-	requireWorkTree,
-} from "../lib/command-utils.ts";
+import { getCwdPrefix } from "../lib/command-utils.ts";
 import { resolveAttributes } from "../lib/bound-attributes.ts";
 import { type FileStat, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algorithm.ts";
@@ -30,6 +24,8 @@ import { diffIndexToWorkTree, readCleanedWorktreeContent } from "../lib/worktree
 import { a, type Command, f, o } from "../parse/index.ts";
 import type { CommandResult } from "../lib/command-errors.ts";
 import { fatal, isCommandError } from "../lib/command-errors.ts";
+import { abbreviateHash } from "../lib/abbrev.ts";
+import { requireGitContext, requireWorkTree, requireCommit } from "../lib/commit-requirements.ts";
 
 const decoder = new TextDecoder();
 

@@ -1,7 +1,7 @@
 import type { FileSystem } from "../fs.ts";
 import type { CommandContext, GitExtensions } from "../git.ts";
 import { guessRemoteBranch, maybeSetupTracking } from "../lib/checkout-utils.ts";
-import { hasStagedChanges, requireGitContext } from "../lib/command-utils.ts";
+import { hasStagedChanges } from "../lib/command-utils.ts";
 import { movePath } from "../lib/fs-utils.ts";
 import { buildIndex, defaultStat, readIndex, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
@@ -29,6 +29,7 @@ import {
 import { a, type Command, f, o } from "../parse/index.ts";
 import type { CommandResult } from "../lib/command-errors.ts";
 import { fatal, isCommandError } from "../lib/command-errors.ts";
+import { requireGitContext } from "../lib/commit-requirements.ts";
 
 const USAGE =
 	"usage: git worktree add [<options>] <path> [<commit-ish>]\n" +

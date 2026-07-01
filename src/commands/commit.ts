@@ -1,16 +1,6 @@
 import type { CommandContext, GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
-import {
-	ensureTrailingNewline,
-	firstLine,
-	formatCommitOneLiner,
-	requireAuthor,
-	requireCommitter,
-	requireGitContext,
-	requireWorkTree,
-	resolveCommandSigner,
-	stripCommentLines,
-} from "../lib/command-utils.ts";
+import { resolveCommandSigner } from "../lib/command-utils.ts";
 import { formatCommitSummary } from "../lib/commit-summary.ts";
 import {
 	getStage0Entries,
@@ -38,6 +28,14 @@ import { buildTreeFromIndex } from "../lib/tree-ops.ts";
 import { diffIndexToWorkTree, stageFile } from "../lib/worktree.ts";
 import { type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
+import { firstLine, stripCommentLines, ensureTrailingNewline } from "../lib/text-utils.ts";
+import { formatCommitOneLiner } from "../lib/ref-format.ts";
+import {
+	requireGitContext,
+	requireWorkTree,
+	requireCommitter,
+	requireAuthor,
+} from "../lib/commit-requirements.ts";
 
 function stdinToText(stdin: CommandContext["stdin"]): string {
 	const raw = stdin as string;

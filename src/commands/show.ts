@@ -1,13 +1,5 @@
 import type { GitExtensions } from "../git.ts";
 import { formatCombinedDiffEntry } from "../lib/combined-diff.ts";
-import {
-	buildAbbrevResolver,
-	requireCommit,
-	requireGitContext,
-	requireHead,
-	requireRevision,
-	uniqueAbbrev,
-} from "../lib/command-utils.ts";
 import { computeDiffStats, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
 import { formatDate } from "../lib/date.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algorithm.ts";
@@ -40,6 +32,13 @@ import type {
 } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, isCommandError } from "../lib/command-errors.ts";
+import { uniqueAbbrev, buildAbbrevResolver } from "../lib/abbrev.ts";
+import {
+	requireGitContext,
+	requireHead,
+	requireRevision,
+	requireCommit,
+} from "../lib/commit-requirements.ts";
 
 const decoder = new TextDecoder();
 

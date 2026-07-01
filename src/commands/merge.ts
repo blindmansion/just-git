@@ -1,21 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
-import {
-	ensureTrailingNewline,
-	firstLine,
-	formatCommitOneLiner,
-	handleOperationAbort,
-	requireAuthor,
-	requireCommitter,
-	requireGitContext,
-	requireHead,
-	requireNoConflicts,
-	requireVerifiedCommit,
-	resolveCommandSigner,
-	stripCommentLines,
-	uniqueAbbrev,
-	writeCommitAndAdvance,
-} from "../lib/command-utils.ts";
+import { handleOperationAbort, resolveCommandSigner } from "../lib/command-utils.ts";
 import { walkCommits } from "../lib/commit-walk.ts";
 import { formatDiffStat } from "../lib/commit-summary.ts";
 import { getConfigValue } from "../lib/config.ts";
@@ -44,6 +29,18 @@ import { buildTreeFromIndex } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
+import { firstLine, stripCommentLines, ensureTrailingNewline } from "../lib/text-utils.ts";
+import { uniqueAbbrev } from "../lib/abbrev.ts";
+import { formatCommitOneLiner } from "../lib/ref-format.ts";
+import {
+	requireGitContext,
+	requireHead,
+	requireNoConflicts,
+	requireCommitter,
+	requireAuthor,
+	requireVerifiedCommit,
+	writeCommitAndAdvance,
+} from "../lib/commit-requirements.ts";
 
 export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("merge", {

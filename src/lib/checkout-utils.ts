@@ -1,5 +1,4 @@
 import type { GitExtensions } from "../git.ts";
-import { firstLine, requireCommit, uniqueAbbrev } from "./command-utils.ts";
 import { findOrphanedCommits } from "./commit-walk.ts";
 import { getConfigValue, readConfig, writeConfig } from "./config.ts";
 import { addEntry, defaultStat, readIndex, writeIndex } from "./index.ts";
@@ -24,6 +23,9 @@ import { applyWorktreeOps, checkoutTrees } from "./unpack-trees.ts";
 import { checkoutEntry } from "./worktree.ts";
 import type { CommandResult } from "./command-errors.ts";
 import { fatal, err, isCommandError } from "./command-errors.ts";
+import { firstLine } from "./text-utils.ts";
+import { uniqueAbbrev } from "./abbrev.ts";
+import { requireCommit } from "./commit-requirements.ts";
 
 /**
  * Scan the HEAD reflog for the most recent "checkout: moving from X to Y"

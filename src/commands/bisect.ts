@@ -1,12 +1,5 @@
 import type { GitExtensions } from "../git.ts";
 import {
-	firstLine,
-	requireGitContext,
-	requireRevision,
-	requireWorkTree,
-	uniqueAbbrev,
-} from "../lib/command-utils.ts";
-import {
 	appendBisectLog,
 	type BisectState,
 	cleanBisectState,
@@ -28,6 +21,9 @@ import type { GitContext } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import type { CommandResult } from "../lib/command-errors.ts";
 import { fatal, isCommandError } from "../lib/command-errors.ts";
+import { firstLine } from "../lib/text-utils.ts";
+import { uniqueAbbrev } from "../lib/abbrev.ts";
+import { requireGitContext, requireWorkTree, requireRevision } from "../lib/commit-requirements.ts";
 
 // ── Reserved subcommand names (cannot be used as custom terms) ──────
 

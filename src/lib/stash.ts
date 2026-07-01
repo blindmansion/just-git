@@ -1,4 +1,3 @@
-import { firstLine, uniqueAbbrev } from "./command-utils.ts";
 import { getAuthor, getCommitter } from "./identity.ts";
 import {
 	defaultStat,
@@ -34,6 +33,8 @@ import { buildTreeFromIndex, diffTrees, flattenTree, flattenTreeToMap } from "./
 import type { GitContext, GitRepo, IndexEntry, ObjectId } from "./types.ts";
 import { applyWorktreeOps, resetHard, type WorktreeOp } from "./unpack-trees.ts";
 import { checkoutEntry, cleanEmptyDirs, walkWorkTree } from "./worktree.ts";
+import { firstLine } from "./text-utils.ts";
+import { uniqueAbbrev } from "./abbrev.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
 

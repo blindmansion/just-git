@@ -1,12 +1,5 @@
 import type { GitExtensions } from "../git.ts";
-import {
-	uniqueAbbrev,
-	ensureTrailingNewline,
-	requireCommitter,
-	requireGitContext,
-	requireRevision,
-	resolveCommandSigner,
-} from "../lib/command-utils.ts";
+import { resolveCommandSigner } from "../lib/command-utils.ts";
 import { configBool, getConfigValue } from "../lib/config.ts";
 import { readCommit, readObject, readTag, writeObject } from "../lib/object-db.ts";
 import { serializeTag } from "../lib/objects/tag.ts";
@@ -23,6 +16,13 @@ import type { GitRepo, ObjectId } from "../lib/types.ts";
 import { WM_MATCH, wildmatch } from "../lib/wildmatch.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
+import { ensureTrailingNewline } from "../lib/text-utils.ts";
+import { uniqueAbbrev } from "../lib/abbrev.ts";
+import {
+	requireGitContext,
+	requireRevision,
+	requireCommitter,
+} from "../lib/commit-requirements.ts";
 
 export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("tag", {
