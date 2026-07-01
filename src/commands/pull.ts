@@ -3,10 +3,8 @@ import { isRejection } from "../hooks.ts";
 import {
 	buildAbbrevResolver,
 	buildRefUpdateLines,
-	fatal,
 	formatTransferRefLines,
 	getSequencerDirtyState,
-	isCommandError,
 	requireAuthor,
 	requireCommitter,
 	requireGitContext,
@@ -50,6 +48,7 @@ import type { RemoteRef } from "../lib/transport/transport.ts";
 import type { GitContext, ObjectId, Ref } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { performRebase } from "../lib/rebase-engine.ts";
+import { fatal, isCommandError } from "../lib/command-errors.ts";
 
 function pullUpToDateMessage(
 	head: Awaited<ReturnType<typeof readHead>>,

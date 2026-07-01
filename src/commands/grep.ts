@@ -1,11 +1,5 @@
 import type { GitExtensions } from "../git.ts";
-import {
-	fatal,
-	getCwdPrefix,
-	isCommandError,
-	requireGitContext,
-	requireRevision,
-} from "../lib/command-utils.ts";
+import { getCwdPrefix, requireGitContext, requireRevision } from "../lib/command-utils.ts";
 import { compilePattern, grepContent, type GrepMatch } from "../lib/grep.ts";
 import { readIndex } from "../lib/index.ts";
 import { peelToCommit, readBlobContent, readCommit } from "../lib/object-db.ts";
@@ -14,6 +8,7 @@ import { matchPathspecs, parsePathspec, type Pathspec } from "../lib/pathspec.ts
 import { flattenTree, type FlatTreeEntry } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+import { fatal, isCommandError } from "../lib/command-errors.ts";
 
 // ── File enumeration ────────────────────────────────────────────────
 

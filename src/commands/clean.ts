@@ -1,11 +1,5 @@
 import type { GitExtensions } from "../git.ts";
-import {
-	fatal,
-	getCwdPrefix,
-	isCommandError,
-	requireGitContext,
-	requireWorkTree,
-} from "../lib/command-utils.ts";
+import { getCwdPrefix, requireGitContext, requireWorkTree } from "../lib/command-utils.ts";
 import { getConfigValue } from "../lib/config.ts";
 import {
 	type IgnoreStack,
@@ -19,6 +13,7 @@ import { join } from "../lib/path.ts";
 import { matchPathspecs, parsePathspec } from "../lib/pathspec.ts";
 import type { GitContext } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+import { fatal, isCommandError } from "../lib/command-errors.ts";
 
 export function registerCleanCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("clean", {

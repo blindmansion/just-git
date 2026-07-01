@@ -1,12 +1,5 @@
 import type { GitExtensions } from "../git.ts";
-import {
-	err,
-	fatal,
-	getCwdPrefix,
-	isCommandError,
-	requireGitContext,
-	requireWorkTree,
-} from "../lib/command-utils.ts";
+import { getCwdPrefix, requireGitContext, requireWorkTree } from "../lib/command-utils.ts";
 import { isIgnored, loadBaseIgnore, pushDirIgnore } from "../lib/ignore.ts";
 import { readIndex, removeEntry, writeIndex } from "../lib/index.ts";
 import { join, relative, resolve } from "../lib/path.ts";
@@ -21,6 +14,7 @@ import {
 import type { GitContext, Index } from "../lib/types.ts";
 import { stageFile, walkWorkTree } from "../lib/worktree.ts";
 import { a, type Command, f } from "../parse/index.ts";
+import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 
 interface AddOptions {
 	skipIgnore?: boolean;

@@ -1,11 +1,5 @@
 import type { GitExtensions } from "../git.ts";
-import {
-	fatal,
-	hasStagedChanges,
-	isCommandError,
-	requireGitContext,
-	requireWorkTree,
-} from "../lib/command-utils.ts";
+import { hasStagedChanges, requireGitContext, requireWorkTree } from "../lib/command-utils.ts";
 import { peelToCommit, readCommit, readObject } from "../lib/object-db.ts";
 import { readIndex } from "../lib/index.ts";
 import { listRefs, resolveHead } from "../lib/refs.ts";
@@ -16,6 +10,7 @@ import { WM_MATCH, wildmatch } from "../lib/wildmatch.ts";
 import { parseTag } from "../lib/objects/tag.ts";
 import type { GitContext, GitRepo, ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+import { fatal, isCommandError } from "../lib/command-errors.ts";
 
 interface TagCandidate {
 	name: string;

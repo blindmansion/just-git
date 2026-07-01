@@ -1,4 +1,4 @@
-import { type CommandResult, fatal, type TransferRefLine } from "./command-utils.ts";
+import { type TransferRefLine } from "./command-utils.ts";
 import { objectExists } from "./object-db.ts";
 import { appendReflog, ZERO_HASH } from "./reflog.ts";
 import { listRefs, resolveRef, shortenRef, updateRef } from "./refs.ts";
@@ -7,6 +7,8 @@ import { resolveRemoteTransport } from "./transport/resolver.ts";
 import type { RemoteRef, ShallowFetchOptions, Transport } from "./transport/transport.ts";
 import type { GitContext, GitOperation, GitRepo, ObjectId } from "./types.ts";
 import type { CredentialStore } from "../hooks.ts";
+import type { CommandResult } from "./command-errors.ts";
+import { fatal } from "./command-errors.ts";
 
 interface NormalizedFetchArgs {
 	depth?: number;

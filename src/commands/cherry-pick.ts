@@ -2,13 +2,10 @@ import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
 	ensureTrailingNewline,
-	err,
-	fatal,
 	firstLine,
 	formatCommitOneLiner,
 	handleOperationAbort,
 	hasStagedChanges,
-	isCommandError,
 	requireCommit,
 	requireCommitter,
 	requireGitContext,
@@ -42,6 +39,7 @@ import { buildTreeFromIndex, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext } from "../lib/types.ts";
 import { applyWorktreeOps, mergeAbort } from "../lib/unpack-trees.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 
 export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("cherry-pick", {

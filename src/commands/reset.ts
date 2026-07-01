@@ -1,11 +1,8 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
-	ambiguousArgError,
-	fatal,
 	firstLine,
 	getCwdPrefix,
-	isCommandError,
 	requireGitContext,
 	requireWorkTree,
 	uniqueAbbrev,
@@ -32,6 +29,7 @@ import type { GitContext, ObjectId } from "../lib/types.ts";
 import { applyWorktreeOps, resetHard } from "../lib/unpack-trees.ts";
 import { diffIndexToWorkTree } from "../lib/worktree.ts";
 import { a, type Command, f } from "../parse/index.ts";
+import { fatal, isCommandError, ambiguousArgError } from "../lib/command-errors.ts";
 
 export function registerResetCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("reset", {

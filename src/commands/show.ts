@@ -2,8 +2,6 @@ import type { GitExtensions } from "../git.ts";
 import { formatCombinedDiffEntry } from "../lib/combined-diff.ts";
 import {
 	buildAbbrevResolver,
-	fatal,
-	isCommandError,
 	requireCommit,
 	requireGitContext,
 	requireHead,
@@ -41,6 +39,7 @@ import type {
 	TreeDiffEntry,
 } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+import { fatal, isCommandError } from "../lib/command-errors.ts";
 
 const decoder = new TextDecoder();
 

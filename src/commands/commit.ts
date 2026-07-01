@@ -2,11 +2,8 @@ import type { CommandContext, GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
 	ensureTrailingNewline,
-	err,
-	fatal,
 	firstLine,
 	formatCommitOneLiner,
-	isCommandError,
 	requireAuthor,
 	requireCommitter,
 	requireGitContext,
@@ -40,6 +37,7 @@ import { generateLongFormStatus } from "../lib/status-format.ts";
 import { buildTreeFromIndex } from "../lib/tree-ops.ts";
 import { diffIndexToWorkTree, stageFile } from "../lib/worktree.ts";
 import { type Command, f, o } from "../parse/index.ts";
+import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 
 function stdinToText(stdin: CommandContext["stdin"]): string {
 	const raw = stdin as string;

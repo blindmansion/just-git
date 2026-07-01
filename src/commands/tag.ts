@@ -2,9 +2,6 @@ import type { GitExtensions } from "../git.ts";
 import {
 	uniqueAbbrev,
 	ensureTrailingNewline,
-	err,
-	fatal,
-	isCommandError,
 	requireCommitter,
 	requireGitContext,
 	requireRevision,
@@ -25,6 +22,7 @@ import {
 import type { GitRepo, ObjectId } from "../lib/types.ts";
 import { WM_MATCH, wildmatch } from "../lib/wildmatch.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 
 export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("tag", {

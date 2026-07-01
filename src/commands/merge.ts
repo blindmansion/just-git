@@ -2,12 +2,9 @@ import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
 	ensureTrailingNewline,
-	err,
-	fatal,
 	firstLine,
 	formatCommitOneLiner,
 	handleOperationAbort,
-	isCommandError,
 	requireAuthor,
 	requireCommitter,
 	requireGitContext,
@@ -46,6 +43,7 @@ import { resolveRevision } from "../lib/rev-parse.ts";
 import { buildTreeFromIndex } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 
 export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("merge", {

@@ -29,20 +29,7 @@ import type {
 } from "./types.ts";
 import { applyWorktreeOps, mergeAbort } from "./unpack-trees.ts";
 import { diffIndexToWorkTree } from "./worktree.ts";
-
-export interface CommandResult {
-	stdout: string;
-	stderr: string;
-	exitCode: number;
-}
-
-export function fatal(msg: string): CommandResult {
-	return { stdout: "", stderr: `fatal: ${msg}\n`, exitCode: 128 };
-}
-
-export function err(msg: string, code = 1): CommandResult {
-	return { stdout: "", stderr: msg, exitCode: code };
-}
+import { type CommandResult, err, fatal } from "./command-errors.ts";
 
 const NOT_A_GIT_REPO = fatal("not a git repository (or any of the parent directories): .git");
 
@@ -95,10 +82,6 @@ export async function requireGitContext(
 		},
 		ext.capabilities,
 	);
-}
-
-export function isCommandError<T>(result: T | CommandResult): result is CommandResult {
-	return typeof result === "object" && result !== null && "exitCode" in (result as object);
 }
 
 /**
@@ -354,15 +337,6 @@ export async function buildAbbrevResolver(
 export function firstLine(message: string): string {
 	const idx = message.indexOf("\n");
 	return idx === -1 ? message : message.slice(0, idx);
-}
-
-/** Standard "ambiguous argument" error for unknown revisions/paths. */
-export function ambiguousArgError(rev: string): CommandResult {
-	return fatal(
-		`ambiguous argument '${rev}': unknown revision or path not in the working tree.\n` +
-			"Use '--' to separate paths from revisions, like this:\n" +
-			"'git <command> [<revision>...] -- [<file>...]'",
-	);
 }
 
 /**

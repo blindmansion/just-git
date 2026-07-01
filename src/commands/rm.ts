@@ -1,12 +1,5 @@
 import type { GitExtensions } from "../git.ts";
-import {
-	err,
-	fatal,
-	getCwdPrefix,
-	isCommandError,
-	requireGitContext,
-	requireWorkTree,
-} from "../lib/command-utils.ts";
+import { getCwdPrefix, requireGitContext, requireWorkTree } from "../lib/command-utils.ts";
 import { readIndex, removeEntry, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { join, relative, resolve } from "../lib/path.ts";
@@ -16,6 +9,7 @@ import { hashWorktreeEntry, lstatSafe } from "../lib/symlink.ts";
 import { flattenTree } from "../lib/tree-ops.ts";
 import type { GitContext, Index, ObjectId } from "../lib/types.ts";
 import { a, type Command, f } from "../parse/index.ts";
+import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 
 export function registerRmCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("rm", {

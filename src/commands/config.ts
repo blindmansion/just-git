@@ -1,5 +1,5 @@
 import type { GitExtensions } from "../git.ts";
-import { err, isCommandError, requireGitContext } from "../lib/command-utils.ts";
+import { requireGitContext } from "../lib/command-utils.ts";
 import {
 	type GitConfigMulti,
 	addConfigValue,
@@ -11,6 +11,7 @@ import {
 } from "../lib/config.ts";
 import { join } from "../lib/path.ts";
 import { a, type Command, f } from "../parse/index.ts";
+import { err, isCommandError } from "../lib/command-errors.ts";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 

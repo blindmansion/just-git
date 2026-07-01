@@ -2,10 +2,7 @@ import type { GitExtensions } from "../git.ts";
 import { formatCombinedDiffEntry } from "../lib/combined-diff.ts";
 import {
 	abbreviateHash,
-	type CommandResult,
-	fatal,
 	getCwdPrefix,
-	isCommandError,
 	requireCommit,
 	requireGitContext,
 	requireWorkTree,
@@ -31,6 +28,8 @@ import { diffTrees, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, IndexEntry, ObjectId, TreeDiffEntry } from "../lib/types.ts";
 import { diffIndexToWorkTree, readCleanedWorktreeContent } from "../lib/worktree.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+import type { CommandResult } from "../lib/command-errors.ts";
+import { fatal, isCommandError } from "../lib/command-errors.ts";
 
 const decoder = new TextDecoder();
 

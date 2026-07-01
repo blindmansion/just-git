@@ -1,18 +1,13 @@
 import type { GitExtensions } from "../git.ts";
 import { type BlameEntry, blame } from "../lib/blame.ts";
-import {
-	fatal,
-	isCommandError,
-	requireGitContext,
-	requireHead,
-	requireRevision,
-} from "../lib/command-utils.ts";
+import { requireGitContext, requireHead, requireRevision } from "../lib/command-utils.ts";
 import { isBinaryStr, peelToCommit, readBlobContent } from "../lib/object-db.ts";
 import { flattenTreeToMap } from "../lib/tree-ops.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { relative } from "../lib/path.ts";
 import type { ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+import { fatal, isCommandError } from "../lib/command-errors.ts";
 
 // ── Date formatting ──────────────────────────────────────────────────
 

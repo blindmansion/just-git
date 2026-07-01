@@ -1,14 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { maybeSetupTracking } from "../lib/checkout-utils.ts";
-import {
-	uniqueAbbrev,
-	err,
-	fatal,
-	firstLine,
-	isCommandError,
-	requireCommit,
-	requireGitContext,
-} from "../lib/command-utils.ts";
+import { uniqueAbbrev, firstLine, requireCommit, requireGitContext } from "../lib/command-utils.ts";
 import { getConfigValue, readConfig, writeConfig } from "../lib/config.ts";
 import { getReflogIdentity } from "../lib/identity.ts";
 import { isAncestor } from "../lib/merge.ts";
@@ -37,6 +29,7 @@ import {
 	setWorktreeHead,
 } from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 
 /** The leading marker `git branch` shows: current, checked out elsewhere, or plain. */
 function branchMarker(isCurrent: boolean, inOtherWorktree?: boolean): string {

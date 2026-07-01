@@ -1,9 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import {
-	type CommandResult,
-	fatal,
 	firstLine,
-	isCommandError,
 	requireGitContext,
 	requireRevision,
 	requireWorkTree,
@@ -29,6 +26,8 @@ import { readHead, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
 import { resolveRevision } from "../lib/rev-parse.ts";
 import type { GitContext } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+import type { CommandResult } from "../lib/command-errors.ts";
+import { fatal, isCommandError } from "../lib/command-errors.ts";
 
 // ── Reserved subcommand names (cannot be used as custom terms) ──────
 

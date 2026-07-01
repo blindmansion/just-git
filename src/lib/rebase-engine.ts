@@ -1,14 +1,10 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
-	type CommandResult,
 	ensureTrailingNewline,
-	err,
-	fatal,
 	firstLine,
 	formatCommitOneLiner,
 	getSequencerDirtyState,
-	isCommandError,
 	requireCommitter,
 	resolveCommandSigner,
 	sequencerDirtyWorktreeError,
@@ -77,6 +73,8 @@ import {
 } from "./unpack-trees.ts";
 import { walkWorkTree } from "./worktree.ts";
 import { comparePaths } from "./path.ts";
+import type { CommandResult } from "./command-errors.ts";
+import { fatal, err, isCommandError } from "./command-errors.ts";
 
 /**
  * Return the display label for the current HEAD — either the branch name

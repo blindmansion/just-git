@@ -1,5 +1,5 @@
 import type { GitExtensions } from "../git.ts";
-import { isCommandError, requireGitContext } from "../lib/command-utils.ts";
+import { requireGitContext } from "../lib/command-utils.ts";
 import { type GitConfig, readConfig } from "../lib/config.ts";
 import { collectAllRoots } from "../lib/gc-roots.ts";
 import { clearDetachPoint } from "../lib/operation-state.ts";
@@ -10,6 +10,7 @@ import { enumerateWorktrees } from "../lib/worktree-admin.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { type Command, f } from "../parse/index.ts";
 import { formatRepackStderr, repackFromTips } from "../lib/repack.ts";
+import { isCommandError } from "../lib/command-errors.ts";
 
 export function registerGcCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("gc", {

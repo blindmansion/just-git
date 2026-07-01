@@ -1,17 +1,12 @@
 import type { GitExtensions } from "../git.ts";
-import {
-	fatal,
-	isCommandError,
-	requireCommit,
-	requireGitContext,
-	requireHead,
-} from "../lib/command-utils.ts";
+import { requireCommit, requireGitContext, requireHead } from "../lib/command-utils.ts";
 import { bindAttributes } from "../lib/bound-attributes.ts";
 import { handleAbort, handleContinue, handleSkip, performRebase } from "../lib/rebase-engine.ts";
 import { isRebaseInProgress, rebaseMergeDir } from "../lib/rebase.ts";
 import { readHead } from "../lib/refs.ts";
 import type { ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+import { fatal, isCommandError } from "../lib/command-errors.ts";
 
 export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("rebase", {

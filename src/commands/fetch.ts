@@ -3,9 +3,7 @@ import { isRejection } from "../hooks.ts";
 import {
 	buildAbbrevResolver,
 	buildRefUpdateLines,
-	fatal,
 	formatTransferRefLines,
-	isCommandError,
 	requireGitContext,
 	type TransferRefLine,
 } from "../lib/command-utils.ts";
@@ -34,6 +32,7 @@ import type { RemoteRef } from "../lib/transport/transport.ts";
 import type { ExecResult } from "../hooks.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+import { fatal, isCommandError } from "../lib/command-errors.ts";
 
 export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("fetch", {

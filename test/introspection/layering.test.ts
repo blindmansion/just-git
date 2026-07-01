@@ -37,19 +37,17 @@ const LAYERS = ["lib", "parse", "store", "repo", "proxy", "server", "commands"] 
 
 /**
  * Known runtime import cycles, expressed as sorted root-relative file sets.
- * This one is *within* `lib` (same layer, so not a layering violation) and is
- * tracked here as accepted tech debt. The guard test fails if a NEW cycle
- * appears or if this is fixed (delete it from the baseline then).
+ * Now empty: `lib` has no runtime cycles. The guard test fails if a NEW cycle
+ * appears (add it here with justification) or if a baselined entry is fixed
+ * (delete it), so this list must always mirror reality exactly.
  *
- * The `refs ↔ reflog ↔ repo` cycle was dissolved by moving `ensureParentDir`
- * into the `path.ts` leaf, and the worktree cycle shrank from four nodes to two
- * by moving `comparePaths` there too. The remaining back-edge is `unpack-trees`
- * importing `err` from the `command-utils` god-file; extracting the error
- * helpers into a dependency-free `command-errors.ts` (Idea 1) removes it.
+ * History: the `refs ↔ reflog ↔ repo` and
+ * `command-utils ↔ tree-ops ↔ unpack-trees ↔ worktree` cycles were dissolved by
+ * moving the stray leaf helpers `ensureParentDir` and `comparePaths` into
+ * `path.ts`, then extracting the error helpers (`err`/`fatal`/…) out of the
+ * `command-utils` god-file into a dependency-free `command-errors.ts`.
  */
-const KNOWN_RUNTIME_CYCLES: string[][] = [
-	["lib/command-utils.ts", "lib/unpack-trees.ts"],
-];
+const KNOWN_RUNTIME_CYCLES: string[][] = [];
 
 describe("src layering policy", () => {
 	let graph: ImportGraph;
