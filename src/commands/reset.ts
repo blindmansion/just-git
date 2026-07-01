@@ -1,7 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
-	abbreviateHash,
 	ambiguousArgError,
 	fatal,
 	firstLine,
@@ -9,6 +8,7 @@ import {
 	isCommandError,
 	requireGitContext,
 	requireWorkTree,
+	uniqueAbbrev,
 } from "../lib/command-utils.ts";
 import {
 	addEntry,
@@ -352,7 +352,7 @@ async function resetToCommit(
 
 	const stdout =
 		mode === "hard"
-			? `HEAD is now at ${abbreviateHash(targetHash)} ${firstLine(targetCommit.message)}\n`
+			? `HEAD is now at ${await uniqueAbbrev(gitCtx, targetHash)} ${firstLine(targetCommit.message)}\n`
 			: "";
 	await ext?.hooks?.postReset?.({
 		repo: gitCtx,

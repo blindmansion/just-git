@@ -1,10 +1,10 @@
 import type { GitExtensions } from "../git.ts";
 import {
-	abbreviateHash,
 	ambiguousArgError,
 	fatal,
 	isCommandError,
 	requireGitContext,
+	uniqueAbbrev,
 } from "../lib/command-utils.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { relative } from "../lib/path.ts";
@@ -141,7 +141,7 @@ export function registerRevParseCommand(parent: Command, ext?: GitExtensions) {
 						const normalizedPath = revPathResult.path.replace(/^\//, "");
 						return fatal(`path '${normalizedPath}' does not exist in '${revPathResult.rev}'`);
 					}
-					lines.push(short ? abbreviateHash(resolved) : resolved);
+					lines.push(short ? await uniqueAbbrev(gitCtx, resolved) : resolved);
 					continue;
 				}
 
@@ -150,7 +150,7 @@ export function registerRevParseCommand(parent: Command, ext?: GitExtensions) {
 					return revError(rev, verify);
 				}
 
-				lines.push(short ? abbreviateHash(hash) : hash);
+				lines.push(short ? await uniqueAbbrev(gitCtx, hash) : hash);
 			}
 
 			const out = lines.map((l) => `${l}\n`).join("");

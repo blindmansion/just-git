@@ -1,13 +1,13 @@
 import type { GitExtensions } from "../git.ts";
 import {
 	type CommandResult,
-	abbreviateHash,
 	fatal,
 	firstLine,
 	isCommandError,
 	requireGitContext,
 	requireRevision,
 	requireWorkTree,
+	uniqueAbbrev,
 } from "../lib/command-utils.ts";
 import {
 	appendBisectLog,
@@ -631,7 +631,7 @@ function registerVisualize(parent: Command, ext?: GitExtensions) {
 				for await (const entry of walkCommits(gitCtx, state.badHash, {
 					exclude: state.goodHashes,
 				})) {
-					stdout += `${abbreviateHash(entry.hash)} ${firstLine(entry.commit.message)}\n`;
+					stdout += `${await uniqueAbbrev(gitCtx, entry.hash)} ${firstLine(entry.commit.message)}\n`;
 				}
 
 				return { stdout, stderr: "", exitCode: 0 };

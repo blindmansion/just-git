@@ -20,6 +20,11 @@ export interface FormatContext {
 	decorations?: (hash: ObjectId) => string;
 	decorationsRaw?: (hash: ObjectId) => string;
 	dateMode?: DateMode;
+	/**
+	 * Resolver for disambiguated short hashes (see `buildAbbrevResolver`).
+	 * When omitted, falls back to the fixed-length {@link abbreviateHash}.
+	 */
+	abbrev?: (hash: ObjectId) => string;
 }
 
 /**
@@ -37,6 +42,7 @@ export interface FormatContext {
  */
 export function expandFormat(fmt: string, ctx: FormatContext): string {
 	const { hash, commit } = ctx;
+	const abbrev = ctx.abbrev ?? abbreviateHash;
 	let result = "";
 	let i = 0;
 
@@ -98,7 +104,7 @@ export function expandFormat(fmt: string, ctx: FormatContext): string {
 					i += 2;
 					continue;
 				case "h":
-					result += abbreviateHash(hash);
+					result += abbrev(hash);
 					i += 2;
 					continue;
 				case "T":
@@ -106,7 +112,7 @@ export function expandFormat(fmt: string, ctx: FormatContext): string {
 					i += 2;
 					continue;
 				case "t":
-					result += abbreviateHash(commit.tree);
+					result += abbrev(commit.tree);
 					i += 2;
 					continue;
 				case "P":
@@ -114,7 +120,7 @@ export function expandFormat(fmt: string, ctx: FormatContext): string {
 					i += 2;
 					continue;
 				case "p":
-					result += commit.parents.map(abbreviateHash).join(" ");
+					result += commit.parents.map(abbrev).join(" ");
 					i += 2;
 					continue;
 				case "s":
@@ -222,11 +228,12 @@ export function formatPreset(
 	abbrevCommit = false,
 ): string {
 	const { hash, commit } = ctx;
+	const abbrev = ctx.abbrev ?? abbreviateHash;
 	const decoStr = ctx.decorations ? ctx.decorations(hash) : "";
 
 	switch (preset) {
 		case "oneline": {
-			const displayHash = abbrevCommit ? abbreviateHash(hash) : hash;
+			const displayHash = abbrevCommit ? abbrev(hash) : hash;
 			const sub = subject(commit.message);
 			return decoStr ? `${displayHash} ${decoStr} ${sub}` : `${displayHash} ${sub}`;
 		}
@@ -235,7 +242,7 @@ export function formatPreset(
 			if (!isFirst) lines.push("");
 			lines.push(decoStr ? `commit ${hash} ${decoStr}` : `commit ${hash}`);
 			if (commit.parents.length >= 2) {
-				lines.push(`Merge: ${commit.parents.map(abbreviateHash).join(" ")}`);
+				lines.push(`Merge: ${commit.parents.map(abbrev).join(" ")}`);
 			}
 			lines.push(`Author: ${commit.author.name} <${commit.author.email}>`);
 			lines.push("");
@@ -247,7 +254,7 @@ export function formatPreset(
 			if (!isFirst) lines.push("");
 			lines.push(decoStr ? `commit ${hash} ${decoStr}` : `commit ${hash}`);
 			if (commit.parents.length >= 2) {
-				lines.push(`Merge: ${commit.parents.map(abbreviateHash).join(" ")}`);
+				lines.push(`Merge: ${commit.parents.map(abbrev).join(" ")}`);
 			}
 			lines.push(`Author: ${commit.author.name} <${commit.author.email}>`);
 			lines.push(`Commit: ${commit.committer.name} <${commit.committer.email}>`);
@@ -263,7 +270,7 @@ export function formatPreset(
 			if (!isFirst) lines.push("");
 			lines.push(decoStr ? `commit ${hash} ${decoStr}` : `commit ${hash}`);
 			if (commit.parents.length >= 2) {
-				lines.push(`Merge: ${commit.parents.map(abbreviateHash).join(" ")}`);
+				lines.push(`Merge: ${commit.parents.map(abbrev).join(" ")}`);
 			}
 			lines.push(`Author:     ${commit.author.name} <${commit.author.email}>`);
 			lines.push(
@@ -318,6 +325,7 @@ function formatRaw(ctx: FormatContext, isFirst: boolean): string {
 /** The default "medium" format — matches `git log` default output. */
 function formatMedium(ctx: FormatContext, isFirst: boolean): string {
 	const { hash, commit } = ctx;
+	const abbrev = ctx.abbrev ?? abbreviateHash;
 	const decoStr = ctx.decorations ? ctx.decorations(hash) : "";
 	const lines: string[] = [];
 
@@ -325,7 +333,7 @@ function formatMedium(ctx: FormatContext, isFirst: boolean): string {
 
 	lines.push(decoStr ? `commit ${hash} ${decoStr}` : `commit ${hash}`);
 	if (commit.parents.length >= 2) {
-		lines.push(`Merge: ${commit.parents.map(abbreviateHash).join(" ")}`);
+		lines.push(`Merge: ${commit.parents.map(abbrev).join(" ")}`);
 	}
 	lines.push(`Author: ${commit.author.name} <${commit.author.email}>`);
 	lines.push(

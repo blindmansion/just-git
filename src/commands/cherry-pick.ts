@@ -1,7 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
-	abbreviateHash,
 	ensureTrailingNewline,
 	err,
 	fatal,
@@ -16,6 +15,7 @@ import {
 	requireHead,
 	requireNoConflicts,
 	stripCommentLines,
+	uniqueAbbrev,
 	writeCommitAndAdvance,
 } from "../lib/command-utils.ts";
 import { formatCommitSummary } from "../lib/commit-summary.ts";
@@ -216,7 +216,7 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 				const parentCommit = await readCommit(gitCtx, parentHash);
 				baseTree = parentCommit.tree;
 			}
-			const shortHash = abbreviateHash(theirsHash);
+			const shortHash = await uniqueAbbrev(gitCtx, theirsHash);
 			const subject = firstLine(theirsCommit.message);
 			const conflictStyle = ((await getConfigValue(gitCtx, "merge.conflictstyle")) ?? "merge") as
 				| "merge"
@@ -369,7 +369,7 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 				true,
 			);
 
-			const header = formatCommitOneLiner(branchName, commitHash, cherryPickMessage);
+			const header = await formatCommitOneLiner(gitCtx, branchName, commitHash, cherryPickMessage);
 			const mergeMessages = result.messages.length > 0 ? `${result.messages.join("\n")}\n` : "";
 			await ext?.hooks?.postCherryPick?.({
 				repo: gitCtx,
@@ -547,7 +547,7 @@ async function handleContinue(
 		true,
 	);
 
-	const header = formatCommitOneLiner(branchName, commitHash, messageText);
+	const header = await formatCommitOneLiner(gitCtx, branchName, commitHash, messageText);
 	return {
 		stdout: `${header}\n${summary}`,
 		stderr: "",

@@ -1,12 +1,12 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
-	abbreviateHash,
 	err,
 	fatal,
 	formatTransferRefLines,
 	isCommandError,
 	requireGitContext,
+	uniqueAbbrev,
 	type TransferRefLine,
 } from "../lib/command-utils.ts";
 import { getConfigValue, readConfig, writeConfig } from "../lib/config.ts";
@@ -334,8 +334,8 @@ export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 				} else if (update.newHash === ZERO_HASH) {
 					pushLines.push({ prefix: " - [deleted]", from: shortRef, to: "" });
 				} else {
-					const shortOld = abbreviateHash(update.oldHash);
-					const shortNew = abbreviateHash(update.newHash);
+					const shortOld = await uniqueAbbrev(gitCtx, update.oldHash);
+					const shortNew = await uniqueAbbrev(gitCtx, update.newHash);
 					if (actuallyForced.has(update.name)) {
 						pushLines.push({
 							prefix: ` + ${shortOld}...${shortNew}`,

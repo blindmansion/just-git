@@ -1,7 +1,7 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
-	abbreviateHash,
+	buildAbbrevResolver,
 	buildRefUpdateLines,
 	fatal,
 	formatTransferRefLines,
@@ -218,10 +218,17 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					message: oldRefHash ? "pull" : "pull: storing head",
 				});
 			}
+			const abbrevRef = await buildAbbrevResolver(
+				gitCtx,
+				refUpdates.flatMap((u, i) => {
+					const old = resolvedOldHashes[i];
+					return old ? [old, u.remote.hash] : [u.remote.hash];
+				}),
+			);
 			const fetchRefLines = buildRefUpdateLines(
 				refUpdates.map((u, i) => ({ ...u, oldHash: resolvedOldHashes[i]! })),
 				shortenRef,
-				abbreviateHash,
+				abbrevRef,
 			);
 			fetchRefLines.push(
 				...(await autoFollowReachableTags({

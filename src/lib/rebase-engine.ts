@@ -1,7 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
-	abbreviateHash,
 	type CommandResult,
 	comparePaths,
 	ensureTrailingNewline,
@@ -14,6 +13,7 @@ import {
 	requireCommitter,
 	sequencerDirtyWorktreeError,
 	stripCommentLines,
+	uniqueAbbrev,
 	writeCommitAndAdvance,
 } from "./command-utils.ts";
 import { formatCommitSummary } from "./commit-summary.ts";
@@ -499,7 +499,7 @@ export async function performRebase(
 				const pid = await computePatchId(gitCtx, c.hash);
 				if (pid && leftPatchIds.has(pid)) {
 					skippedWarnings.push(
-						`warning: skipped previously applied commit ${abbreviateHash(c.hash)}`,
+						`warning: skipped previously applied commit ${await uniqueAbbrev(gitCtx, c.hash)}`,
 					);
 				} else {
 					filteredCommits.push(c);
@@ -814,7 +814,7 @@ async function pickOneCommit(
 
 	// Three-way merge: base = parent, ours = HEAD, theirs = commit
 	const baseTree = parentCommit ? parentCommit.tree : null;
-	const shortHash = abbreviateHash(theirsHash);
+	const shortHash = await uniqueAbbrev(gitCtx, theirsHash);
 	const subject = firstLine(theirsCommit.message);
 	const conflictStyle = ((await getConfigValue(gitCtx, "merge.conflictstyle")) ?? "merge") as
 		| "merge"
@@ -1260,7 +1260,7 @@ export async function handleContinue(
 				committer,
 				showDate,
 			);
-			continueStdout = `${formatCommitOneLiner(label, commitHash, message)}\n${summary}`;
+			continueStdout = `${await formatCommitOneLiner(gitCtx, label, commitHash, message)}\n${summary}`;
 		}
 
 		const finishingFinalStep = state.todo.length === 0;

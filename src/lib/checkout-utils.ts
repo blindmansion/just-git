@@ -1,12 +1,12 @@
 import type { GitExtensions } from "../git.ts";
 import {
-	abbreviateHash,
 	type CommandResult,
 	err,
 	fatal,
 	firstLine,
 	isCommandError,
 	requireCommit,
+	uniqueAbbrev,
 } from "./command-utils.ts";
 import { findOrphanedCommits } from "./commit-walk.ts";
 import { getConfigValue, readConfig, writeConfig } from "./config.ts";
@@ -367,17 +367,22 @@ const ORPHAN_DISPLAY_THRESHOLD = 5;
  * Format the "Warning: you are leaving N commits behind" message.
  * Real git truncates the list when count > threshold.
  */
-function formatOrphanWarning(orphans: { hash: string; subject: string }[]): string {
+async function formatOrphanWarning(
+	gitCtx: GitRepo,
+	orphans: { hash: string; subject: string }[],
+): Promise<string> {
 	const count = orphans.length;
 	const plural = count === 1 ? "commit" : "commits";
 	const keepWord = count === 1 ? "it" : "them";
 	const displayCount = count > ORPHAN_DISPLAY_THRESHOLD ? ORPHAN_DISPLAY_THRESHOLD - 1 : count;
 	const displayed = orphans.slice(0, displayCount);
-	const lines = displayed.map((o) => `  ${abbreviateHash(o.hash)} ${o.subject}`);
+	const abbrevs = await Promise.all(displayed.map((o) => uniqueAbbrev(gitCtx, o.hash)));
+	const lines = displayed.map((o, i) => `  ${abbrevs[i]} ${o.subject}`);
 	const remaining = count - displayCount;
 	if (remaining > 0) {
 		lines.push(` ... and ${remaining} more.`);
 	}
+	const branchExample = abbrevs[0]!;
 	return (
 		`Warning: you are leaving ${count} ${plural} behind, not connected to\n` +
 		`any of your branches:\n` +
@@ -387,7 +392,7 @@ function formatOrphanWarning(orphans: { hash: string; subject: string }[]): stri
 		`If you want to keep ${keepWord} by creating a new branch, this may be a good time\n` +
 		`to do so with:\n` +
 		`\n` +
-		` git branch <new-branch-name> ${abbreviateHash((orphans[0] as { hash: string }).hash)}\n` +
+		` git branch <new-branch-name> ${branchExample}\n` +
 		`\n`
 	);
 }
@@ -397,7 +402,7 @@ function formatOrphanWarning(orphans: { hash: string; subject: string }[]): stri
  */
 export async function formatPrevHeadPosition(gitCtx: GitRepo, hash: ObjectId): Promise<string> {
 	const commit = await readCommit(gitCtx, hash);
-	return `Previous HEAD position was ${abbreviateHash(hash)} ${firstLine(commit.message)}\n`;
+	return `Previous HEAD position was ${await uniqueAbbrev(gitCtx, hash)} ${firstLine(commit.message)}\n`;
 }
 
 /**
@@ -415,7 +420,7 @@ export async function buildDetachPreamble(
 		targetHash,
 	});
 	if (orphans.length > 0) {
-		return formatOrphanWarning(orphans);
+		return formatOrphanWarning(gitCtx, orphans);
 	}
 	if (currentHash !== targetHash) {
 		return formatPrevHeadPosition(gitCtx, currentHash);
@@ -585,7 +590,7 @@ export async function detachHeadCore(
 		isBranchCheckout: false,
 	});
 
-	const shortHash = abbreviateHash(targetHash);
+	const shortHash = await uniqueAbbrev(gitCtx, targetHash);
 	const subject = firstLine(targetCommit.message);
 	const alreadyDetached = head?.type === "direct";
 

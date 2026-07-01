@@ -1,7 +1,7 @@
 import type { GitExtensions } from "../git.ts";
 import { formatCombinedDiffEntry } from "../lib/combined-diff.ts";
 import {
-	abbreviateHash,
+	buildAbbrevResolver,
 	fatal,
 	isCommandError,
 	requireCommit,
@@ -196,18 +196,19 @@ async function formatCommitShow(
 	presetName: string | null = null,
 ): Promise<string> {
 	// ── Header ──────────────────────────────────────────────────
+	const abbrev = await buildAbbrevResolver(ctx, [hash, commit.tree, ...commit.parents]);
 	let header: string;
 	if (customFormat !== null) {
-		const fctx: FormatContext = { hash, commit };
+		const fctx: FormatContext = { hash, commit, abbrev };
 		header = expandFormat(customFormat, fctx);
 	} else if (presetName !== null) {
-		const fctx: FormatContext = { hash, commit };
+		const fctx: FormatContext = { hash, commit, abbrev };
 		header = formatPreset(presetName, fctx, true, false);
 	} else {
 		const lines: string[] = [];
 		lines.push(`commit ${hash}`);
 		if (commit.parents.length >= 2) {
-			const abbrevParents = commit.parents.map((p) => abbreviateHash(p)).join(" ");
+			const abbrevParents = commit.parents.map((p) => abbrev(p)).join(" ");
 			lines.push(`Merge: ${abbrevParents}`);
 		}
 		lines.push(`Author: ${commit.author.name} <${commit.author.email}>`);

@@ -1,7 +1,7 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
-	abbreviateHash,
+	buildAbbrevResolver,
 	buildRefUpdateLines,
 	fatal,
 	formatTransferRefLines,
@@ -246,19 +246,19 @@ async function applyFetchRefUpdates(
 		});
 	}
 
+	const abbrevRef = await buildAbbrevResolver(
+		gitCtx,
+		appliedUpdates.flatMap((u) => (u.oldHash ? [u.oldHash, u.remote.hash] : [u.remote.hash])),
+	);
 	const branchApplied = appliedUpdates.filter((u) => !u.localRef.startsWith("refs/tags/"));
-	refLines.push(...buildRefUpdateLines(branchApplied, shortenRef, abbreviateHash));
+	refLines.push(...buildRefUpdateLines(branchApplied, shortenRef, abbrevRef));
 	for (const entry of orderedTagEntries) {
 		if ("prefix" in entry) {
 			refLines.push(entry);
 			continue;
 		}
 		refLines.push(
-			...buildRefUpdateLines(
-				[{ ...entry.update, oldHash: entry.oldHash }],
-				shortenRef,
-				abbreviateHash,
-			),
+			...buildRefUpdateLines([{ ...entry.update, oldHash: entry.oldHash }], shortenRef, abbrevRef),
 		);
 	}
 
