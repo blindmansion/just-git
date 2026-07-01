@@ -73,3 +73,10 @@ export {
 	type FunctionNode,
 	uncalledFunctions,
 } from "./call-graph.ts";
+export {
+	moveDeclaration,
+	moveModules,
+	type RefactorOptions,
+	type RefactorResult,
+	relativeSpecifier,
+} from "./refactor.ts";
