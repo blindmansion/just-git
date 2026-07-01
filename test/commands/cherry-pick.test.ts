@@ -492,6 +492,47 @@ describe("git cherry-pick", () => {
 			expect(await pathExists(bash.fs, "/repo/.git/MERGE_MSG")).toBe(false);
 		});
 
+		test("resets to current HEAD, not a stale ORIG_HEAD", async () => {
+			// A conflicted cherry-pick never moves HEAD, so --abort must reset to
+			// the current HEAD. ORIG_HEAD is a shared pseudo-ref that an earlier
+			// operation may have left pointing at an unrelated commit; the abort
+			// must not follow it.
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/file.txt", "original");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+
+			await bash.exec("git branch feature");
+			await bash.exec("git checkout feature");
+			await bash.fs.writeFile("/repo/file.txt", "feature version");
+			await bash.exec("git add file.txt");
+			await bash.exec('git commit -m "feature change"');
+
+			const gitCtx = await findRepo(bash.fs, "/repo");
+			const featureHash = await resolveHead(gitCtx!);
+
+			await bash.exec("git checkout main");
+			await bash.fs.writeFile("/repo/file.txt", "main version");
+			await bash.exec("git add file.txt");
+			await bash.exec('git commit -m "main change"');
+			const prePickHead = await resolveHead(gitCtx!);
+
+			await bash.exec(`git cherry-pick ${featureHash}`);
+
+			// Simulate a stale ORIG_HEAD left behind by an earlier operation.
+			await bash.fs.writeFile("/repo/.git/ORIG_HEAD", `${featureHash}\n`);
+
+			const abortResult = await bash.exec("git cherry-pick --abort");
+			expect(abortResult.exitCode).toBe(0);
+
+			// Must land on the pre-pick HEAD, not the stale ORIG_HEAD.
+			const postAbortHead = await resolveHead(gitCtx!);
+			expect(postAbortHead).toBe(prePickHead);
+			expect(postAbortHead).not.toBe(featureHash);
+			expect(await resolveRef(gitCtx!, "refs/heads/main")).toBe(prePickHead);
+		});
+
 		test("--abort with no cherry-pick in progress", async () => {
 			const bash = createTestBash({
 				files: EMPTY_REPO,
