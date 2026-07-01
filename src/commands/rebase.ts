@@ -8,7 +8,7 @@ import {
 } from "../lib/command-utils.ts";
 import { bindAttributes } from "../lib/bound-attributes.ts";
 import { handleAbort, handleContinue, handleSkip, performRebase } from "../lib/rebase-engine.ts";
-import { isRebaseInProgress } from "../lib/rebase.ts";
+import { isRebaseInProgress, rebaseMergeDir } from "../lib/rebase.ts";
 import { readHead } from "../lib/refs.ts";
 import type { ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
@@ -50,10 +50,15 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 				return fatal("no upstream configured and no upstream argument given");
 			}
 
-			// Block if concurrent operations are in progress
+			// Block if concurrent operations are in progress. git names the
+			// existing rebase-merge dir: a path relative to the worktree root
+			// (`.git/rebase-merge`) in the main worktree, but the absolute admin
+			// path for a linked worktree, whose state dir lives elsewhere.
 			if (await isRebaseInProgress(gitCtx)) {
+				const stateDir =
+					gitCtx.gitDir === gitCtx.commonDir ? ".git/rebase-merge" : rebaseMergeDir(gitCtx);
 				return fatal(
-					'It seems that there is already a rebase-merge directory, and\nI wonder if you are in the middle of another rebase.  If that is the\ncase, please try\n\tgit rebase (--continue | --abort | --skip)\nIf that is not the case, please\n\trm -fr ".git/rebase-merge"\nand run me again.  I am stopping in case you still have something\nvaluable there.\n',
+					`It seems that there is already a rebase-merge directory, and\nI wonder if you are in the middle of another rebase.  If that is the\ncase, please try\n\tgit rebase (--continue | --abort | --skip)\nIf that is not the case, please\n\trm -fr "${stateDir}"\nand run me again.  I am stopping in case you still have something\nvaluable there.\n`,
 				);
 			}
 

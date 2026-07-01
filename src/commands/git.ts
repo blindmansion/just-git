@@ -39,6 +39,7 @@ import { registerStashCommand } from "./stash.ts";
 import { registerStatusCommand } from "./status.ts";
 import { registerSwitchCommand } from "./switch.ts";
 import { registerTagCommand } from "./tag.ts";
+import { registerWorktreeCommand } from "./worktree.ts";
 
 /**
  * Real git commands that are not implemented in just-git.
@@ -114,7 +115,6 @@ export const KNOWN_UNIMPLEMENTED_COMMANDS = new Set([
 	"verify-pack",
 	"verify-tag",
 	"whatchanged",
-	"worktree",
 	"write-tree",
 ]);
 
@@ -157,6 +157,7 @@ const COMMAND_REGISTRY: Record<GitCommandName, (git: Command, ext?: GitExtension
 	gc: (g, e) => registerGcCommand(g, e),
 	bisect: (g, e) => registerBisectCommand(g, e),
 	grep: (g, e) => registerGrepCommand(g, e),
+	worktree: (g, e) => registerWorktreeCommand(g, e),
 };
 
 export function createGitCommand(ext?: GitExtensions): Command {

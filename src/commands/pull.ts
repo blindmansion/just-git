@@ -366,6 +366,60 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 
 			// ── Rebase path ─────────────────────────────────────────
 			if (pullMode.useRebase && !pullMode.ffOnly) {
+				// git pull --rebase fast-forwards via an internal `merge --ff-only`
+				// (without invoking rebase) when upstream is a strict descendant of
+				// HEAD, i.e. there are no local commits to replay. It prints the
+				// merge-style "Updating <old>..<new> / Fast-forward" output, not the
+				// rebase success message. See builtin/pull.c (can_ff path).
+				const rebaseBases = await findAllMergeBases(gitCtx, headHash, theirsHash);
+				if ((rebaseBases[0] ?? null) === headHash) {
+					const ffResult = await handleFastForward(gitCtx, headHash, theirsHash);
+					if (ffResult.exitCode === 0) {
+						const refName = head?.type === "symbolic" ? head.target : "HEAD";
+						// The reflog action keeps the original pull flags even though the
+						// fast-forward is performed via merge --ff-only internally.
+						const pullFFMsg = `pull${pullMode.noFf ? " --no-ff" : ""}: Fast-forward`;
+						await appendReflog(gitCtx, refName, {
+							oldHash: headHash,
+							newHash: theirsHash,
+							name: ident.name,
+							email: ident.email,
+							timestamp: ident.timestamp,
+							tz: ident.tz,
+							message: pullFFMsg,
+						});
+						if (head?.type === "symbolic") {
+							await appendReflog(gitCtx, "HEAD", {
+								oldHash: headHash,
+								newHash: theirsHash,
+								name: ident.name,
+								email: ident.email,
+								timestamp: ident.timestamp,
+								tz: ident.tz,
+								message: pullFFMsg,
+							});
+						}
+						await ext?.capabilities?.hooks?.postMerge?.({
+							repo: gitCtx,
+							headHash,
+							theirsHash,
+							strategy: "fast-forward",
+							commitHash: null,
+						});
+						await ext?.capabilities?.hooks?.postPull?.({
+							repo: gitCtx,
+							remote: remoteName,
+							branch: pullBranch,
+							strategy: "fast-forward",
+							commitHash: theirsHash,
+						});
+					}
+					return {
+						...ffResult,
+						stderr: fetchOutput + ffResult.stderr,
+					};
+				}
+
 				const headName = head?.type === "symbolic" ? head.target : "detached HEAD";
 				const upstreamLabel = remoteBranch ? `${remoteName}/${remoteBranch}` : remoteName;
 
@@ -377,7 +431,10 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					theirsHash,
 					theirsHash,
 					upstreamLabel,
-					upstreamLabel,
+					// git pull --rebase checks out the fetched commit object, so the
+					// "pull (start): checkout <onto>" reflog records its sha, not the
+					// remote ref name.
+					theirsHash,
 					ext,
 					{ reflogAction: "pull" },
 				);
@@ -543,6 +600,24 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			});
 
 			if (!applyResult.ok) {
+				// A non-FF merge that aborts because of staged local changes still
+				// records a no-op `<action>: updating HEAD` reflog entry (old == new):
+				// real git writes the reflog while setting up the merge, before the
+				// worktree-overwrite check fails. Mirror the merge command's behavior
+				// (only on a staged failure, only when HEAD is on a branch), using the
+				// pull action string.
+				if (applyResult.failureKind === "staged" && head?.type === "symbolic") {
+					const pullFlagStr = noFf ? " --no-ff" : "";
+					await appendReflog(gitCtx, "HEAD", {
+						oldHash: headHash,
+						newHash: headHash,
+						name: ident.name,
+						email: ident.email,
+						timestamp: ident.timestamp,
+						tz: ident.tz,
+						message: `pull${pullFlagStr}: updating HEAD`,
+					});
+				}
 				return {
 					stdout: applyResult.stdout,
 					stderr: fetchOutput + applyResult.stderr,

@@ -589,7 +589,7 @@ export async function readConfigData(ctx: GitContext): Promise<ConfigData> {
 
 /** Persist {@link ConfigData} to `.git/config`. The shell write boundary. */
 export async function writeConfigData(ctx: GitContext, data: ConfigData): Promise<void> {
-	await ctx.fs.writeFile(join(ctx.gitDir, "config"), data.text);
+	await ctx.fs.writeFile(join(ctx.commonDir, "config"), data.text);
 }
 
 // ── Filesystem operations ───────────────────────────────────────────
@@ -601,14 +601,14 @@ export async function readConfig(ctx: GitContext): Promise<GitConfig> {
 
 /** Read raw .git/config text. Returns empty string if file doesn't exist. */
 async function readConfigRaw(ctx: GitContext): Promise<string> {
-	const path = join(ctx.gitDir, "config");
+	const path = join(ctx.commonDir, "config");
 	if (!(await ctx.fs.exists(path))) return "";
 	return ctx.fs.readFile(path);
 }
 
 /** Serialize and write .git/config. */
 export async function writeConfig(ctx: GitContext, config: GitConfig): Promise<void> {
-	const path = join(ctx.gitDir, "config");
+	const path = join(ctx.commonDir, "config");
 	await ctx.fs.writeFile(path, serializeConfig(config));
 }
 

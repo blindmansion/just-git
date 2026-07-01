@@ -1,9 +1,33 @@
 import { Bash, ReadWriteFs } from "just-bash";
+import { expect } from "bun:test";
 import { createGit } from "../../src/git";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { $ } from "bun";
+import { GitCommandError, isolatedGitEnv, RealGit } from "../real-git";
+
+/** Identity used by the real git binary in interop tests. */
+const REAL_GIT_IDENTITY = {
+	GIT_AUTHOR_NAME: "Real Git",
+	GIT_AUTHOR_EMAIL: "real@test.com",
+	GIT_COMMITTER_NAME: "Real Git",
+	GIT_COMMITTER_EMAIL: "real@test.com",
+};
+
+/** A real-git sandbox bound to an interop test's working directory. */
+export function realGitIn(sandbox: string): RealGit {
+	return RealGit.in(sandbox, { env: REAL_GIT_IDENTITY });
+}
+
+/** Assert that a real git command failed with the expected exit code. */
+export async function expectGitCommandError(
+	promise: Promise<unknown>,
+	exitCode = 1,
+): Promise<void> {
+	await expect(promise).rejects.toThrow(GitCommandError);
+	await expect(promise).rejects.toMatchObject({ result: { exitCode } });
+}
 
 /** Create a fresh temp directory for a test group. */
 export function createSandbox(): string {
@@ -35,8 +59,9 @@ export async function jg(bash: Bash, cmd: string) {
  * Identity is always provided via -c flags to avoid depending on global config.
  */
 export async function realGit(sandbox: string, cmd: string) {
-	const r = await $`git -c user.name="Real Git" -c user.email="real@test.com" ${{ raw: cmd }}`
+	const r = await $`git ${{ raw: cmd }}`
 		.cwd(sandbox)
+		.env(isolatedGitEnv(sandbox, REAL_GIT_IDENTITY))
 		.nothrow()
 		.quiet();
 	return {

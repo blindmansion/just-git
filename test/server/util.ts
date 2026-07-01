@@ -6,6 +6,7 @@ import { createGit } from "../../src/index.ts";
 import { createServer } from "../../src/server/handler.ts";
 import { MemoryStorage } from "../../src/store/memory-storage.ts";
 import type { Auth, GitServerConfig } from "../../src/server/types.ts";
+import { isolatedGitEnv } from "../real-git.ts";
 
 // ── Test env ────────────────────────────────────────────────────────
 
@@ -42,18 +43,14 @@ export async function realGit(
 	command: string,
 	extraEnv?: Record<string, string>,
 ) {
-	const env: Record<string, string> = {
-		PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/local/bin",
-		HOME: home,
-		GIT_CONFIG_NOSYSTEM: "1",
-		GIT_CONFIG_GLOBAL: "/dev/null",
+	const env = isolatedGitEnv(home, {
 		GIT_PROTOCOL_VERSION: "1",
 		GIT_AUTHOR_NAME: "Real Git",
 		GIT_AUTHOR_EMAIL: "real@test.com",
 		GIT_COMMITTER_NAME: "Real Git",
 		GIT_COMMITTER_EMAIL: "real@test.com",
 		...extraEnv,
-	};
+	});
 	const proc = Bun.spawn(["sh", "-c", `git ${command}`], {
 		cwd,
 		env,

@@ -25,6 +25,6 @@ To understand repo structure, use the introspection toolkit — see [test/intros
 
 ## Testing
 
-Default to `bun test` for validation. just-git is also validated against real git with an oracle testing framework, but only run the oracle suite when explicitly instructed — it is slow. See **[docs/TESTING.md](docs/TESTING.md)** for methodology and how to run it (and [test/oracle/README.md](test/oracle/README.md) for details). Quick run when asked: `bun oracle validate`.
+Default to `bun test` for validation. just-git is also validated against real git with an oracle testing framework, but only run the oracle suite when explicitly instructed — it is slow. See **[docs/TESTING.md](docs/TESTING.md)** for methodology and how to run it (and [test/oracle/README.md](test/oracle/README.md) for details).
 
 `bun sandbox "git init"` runs commands interactively against a real filesystem.

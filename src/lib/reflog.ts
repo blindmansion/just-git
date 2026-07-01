@@ -1,6 +1,8 @@
+import type { FileSystem } from "../fs.ts";
 import { ZERO_HASH } from "./hex.ts";
 import { getReflogIdentity } from "./identity.ts";
 import { join } from "./path.ts";
+import { isPerWorktreeRef } from "./ref-classify.ts";
 import { ensureParentDir } from "./repo.ts";
 import type { GitContext, ObjectId } from "./types.ts";
 
@@ -87,8 +89,10 @@ export function logRefEffects(
 
 // ── Paths ───────────────────────────────────────────────────────────
 
-function reflogPath(ctx: GitContext, refName: string): string {
-	return join(ctx.gitDir, "logs", refName);
+export function reflogPath(ctx: GitContext, refName: string): string {
+	// logs/HEAD is per-worktree; logs/refs/* is shared across worktrees.
+	const base = isPerWorktreeRef(refName) ? ctx.gitDir : ctx.commonDir;
+	return join(base, "logs", refName);
 }
 
 // ── Read ────────────────────────────────────────────────────────────
@@ -138,10 +142,19 @@ function parseLine(line: string): ReflogEntry | null {
  * Returns entries in chronological order (oldest first).
  */
 export async function readReflog(ctx: GitContext, refName: string): Promise<ReflogEntry[]> {
-	const path = reflogPath(ctx, refName);
-	if (!(await ctx.fs.exists(path))) return [];
+	return readReflogAt(ctx.fs, reflogPath(ctx, refName));
+}
 
-	const content = await ctx.fs.readFile(path);
+/**
+ * Read reflog entries from an explicit file path. Used by callers that walk
+ * the logs tree directly and must read the file they found, rather than
+ * re-deriving a path from a ref name (which would re-route across the
+ * common/private split).
+ */
+export async function readReflogAt(fs: FileSystem, path: string): Promise<ReflogEntry[]> {
+	if (!(await fs.exists(path))) return [];
+
+	const content = await fs.readFile(path);
 	if (!content.trim()) return [];
 
 	const entries: ReflogEntry[] = [];
@@ -213,6 +226,20 @@ export async function writeReflog(
 	entries: ReflogEntry[],
 ): Promise<void> {
 	await applyReflogEffects(ctx, [reflogRewrite(refName, entries)]);
+}
+
+/** Write reflog entries to an explicit file path. Counterpart of {@link readReflogAt}. */
+export async function writeReflogAt(
+	fs: FileSystem,
+	path: string,
+	entries: ReflogEntry[],
+): Promise<void> {
+	await ensureParentDir(fs, path);
+	if (entries.length === 0) {
+		await fs.writeFile(path, "");
+		return;
+	}
+	await fs.writeFile(path, `${entries.map(serializeEntry).join("\n")}\n`);
 }
 
 /**

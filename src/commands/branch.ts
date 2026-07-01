@@ -20,6 +20,7 @@ import {
 	branchNameFromRef,
 	createSymbolicRef,
 	deleteRef,
+	FileSystemRefStore,
 	isValidBranchName,
 	listRefs,
 	readHead,
@@ -28,8 +29,21 @@ import {
 	updateRef,
 } from "../lib/refs.ts";
 import { formatBranchTrackingInfo, getTrackingInfo } from "../lib/status-format.ts";
-import type { ObjectId } from "../lib/types.ts";
+import type { GitContext, ObjectId } from "../lib/types.ts";
+import {
+	branchCheckedOutAt,
+	branchRebasingAt,
+	listWorktrees,
+	setWorktreeHead,
+} from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+
+/** The leading marker `git branch` shows: current, checked out elsewhere, or plain. */
+function branchMarker(isCurrent: boolean, inOtherWorktree?: boolean): string {
+	if (isCurrent) return "* ";
+	if (inOtherWorktree) return "+ ";
+	return "  ";
+}
 
 function formatSetUpstreamFailure(upstream: string) {
 	return {
@@ -143,11 +157,11 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 					return fatal(`no branch named '${oldName}'`);
 				}
 
-				if (await isRebaseInProgress(gitCtx)) {
-					const state = await readRebaseState(gitCtx);
-					if (state?.headName === oldRef) {
-						return fatal(`branch ${oldRef} is being rebased at ${gitCtx.workTree}`);
-					}
+				// A branch being rebased in *any* worktree (not just this one)
+				// can't be renamed; its HEAD is detached mid-rewrite there.
+				const rebasingAt = await branchRebasingAt(gitCtx, oldRef);
+				if (rebasingAt) {
+					return fatal(`branch ${oldRef} is being rebased at ${rebasingAt}`);
 				}
 
 				const existingNewRef = await resolveRef(gitCtx, newRef);
@@ -166,10 +180,28 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 					await createSymbolicRef(gitCtx, "HEAD", newRef);
 				}
 
+				// Repoint any sibling worktree that had the old branch checked
+				// out, and log the rename in that worktree's private HEAD reflog
+				// (a single `0…0 -> tip` entry, as git does). Both its HEAD and
+				// its reflog are private, so target its admin dir directly rather
+				// than the shared ref store (which would hit the current worktree).
+				const renameMsg = `Branch: renamed ${oldRef} to ${newRef}`;
+				for (const wt of await listWorktrees(gitCtx)) {
+					if (wt.adminDir === gitCtx.gitDir) continue;
+					if (wt.branch !== oldRef) continue;
+					await setWorktreeHead(gitCtx, wt.adminDir, { type: "branch", ref: newRef });
+					const siblingCtx: GitContext = {
+						...gitCtx,
+						gitDir: wt.adminDir,
+						workTree: wt.path,
+						refStore: new FileSystemRefStore(gitCtx.fs, wt.adminDir, gitCtx.commonDir),
+					};
+					await logRef(siblingCtx, ctx.env, "HEAD", ZERO_HASH, hash, renameMsg);
+				}
+
 				if (oldEntries.length > 0) {
 					await writeReflog(gitCtx, newRef, oldEntries);
 				}
-				const renameMsg = `Branch: renamed ${oldRef} to ${newRef}`;
 				await logRef(gitCtx, ctx.env, newRef, hash, hash, renameMsg);
 				if (oldName === currentBranch) {
 					const ident = await getReflogIdentity(gitCtx, ctx.env);
@@ -222,6 +254,13 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 				}
 
 				const refName = `refs/heads/${args.name}`;
+				const usedAt = await branchCheckedOutAt(gitCtx, refName, gitCtx.gitDir);
+				if (usedAt) {
+					return err(
+						`error: cannot delete branch '${args.name}' used by worktree at '${usedAt}'\n`,
+					);
+				}
+
 				const hash = await resolveRef(gitCtx, refName);
 				if (!hash) {
 					return err(`error: branch '${args.name}' not found\n`);
@@ -377,7 +416,14 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 				hash: ObjectId;
 				isCurrent: boolean;
 				branchName: string | null;
+				inOtherWorktree?: boolean;
 			}[] = [];
+
+			const otherWorktreeBranches = new Set(
+				(await listWorktrees(gitCtx))
+					.filter((wt) => wt.adminDir !== gitCtx.gitDir && wt.branch)
+					.map((wt) => wt.branch as string),
+			);
 
 			// Detached HEAD indicator
 			if (showLocal && !currentBranch) {
@@ -429,6 +475,7 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 						hash: ref.hash,
 						isCurrent: name === currentBranch,
 						branchName: name,
+						inOtherWorktree: otherWorktreeBranches.has(ref.name),
 					});
 				}
 			}
@@ -465,8 +512,8 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 
 			// Non-verbose: simple listing
 			if (verboseLevel === 0) {
-				const lines = entries.map((e) =>
-					e.isCurrent ? `* ${e.displayName}` : `  ${e.displayName}`,
+				const lines = entries.map(
+					(e) => `${branchMarker(e.isCurrent, e.inOtherWorktree)}${e.displayName}`,
 				);
 				return {
 					stdout: `${lines.join("\n")}\n`,
@@ -481,7 +528,7 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 
 			const lines: string[] = [];
 			for (const entry of entries) {
-				const marker = entry.isCurrent ? "* " : "  ";
+				const marker = branchMarker(entry.isCurrent, entry.inOtherWorktree);
 				const paddedName = entry.displayName.padEnd(maxNameLen);
 				const shortHash = abbreviateHash(entry.hash);
 

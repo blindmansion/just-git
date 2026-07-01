@@ -27,6 +27,17 @@ export function inConflict(state: QueryState): boolean {
 	);
 }
 
+/**
+ * Branches checked out in a linked worktree other than the current (main)
+ * one. These are "claimed" — git refuses to check out, switch to, or delete
+ * them from the main worktree. Drives the cross-worktree guard actions.
+ */
+export function claimedWorktreeBranches(state: QueryState): string[] {
+	return state.worktrees
+		.map((w) => w.branch)
+		.filter((b): b is string => b !== null && b !== state.currentBranch);
+}
+
 // ── Name generators ──────────────────────────────────────────────────
 
 const BRANCH_PREFIXES = ["feature", "fix", "topic", "dev", "wip"];
@@ -95,6 +106,15 @@ export function pickOtherBranch(
 export function pickAnyBranch(rng: SeededRNG, state: QueryState, opts?: PickerOpts): string | null {
 	if (shouldFuzz(rng, opts)) return fuzzBranchName(rng);
 	return state.branches.length > 0 ? rng.pick(state.branches) : null;
+}
+
+/**
+ * Pick a branch currently checked out in a sibling worktree (see
+ * `claimedWorktreeBranches`). Returns null when none are claimed.
+ */
+export function pickClaimedWorktreeBranch(rng: SeededRNG, state: QueryState): string | null {
+	const claimed = claimedWorktreeBranches(state);
+	return claimed.length > 0 ? rng.pick(claimed) : null;
 }
 
 /** Pick a random worktree file path. */

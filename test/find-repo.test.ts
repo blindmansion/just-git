@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createGit, MemoryFileSystem } from "../src";
 import { diffCommits, readFileAtCommit, resolveRef, walkCommitHistory } from "../src/repo";
+import { findRepo, resolveGitDirFile } from "../src/lib/repo.ts";
 import { TEST_ENV } from "./fixtures";
 
 describe("Git.findRepo", () => {
@@ -19,6 +20,9 @@ describe("Git.findRepo", () => {
 		expect(repo).not.toBeNull();
 		expect(repo!.gitDir).toBe("/repo/.git");
 		expect(repo!.workTree).toBe("/repo");
+		// In a plain repo the private and common dirs coincide, but both must
+		// be populated so subsystems can route shared vs per-worktree state.
+		expect(repo!.commonDir).toBe("/repo/.git");
 	});
 
 	test("uses instance defaults for fs and cwd", async () => {
@@ -114,5 +118,107 @@ describe("Git.findRepo", () => {
 			history.push(info.message.trim());
 		}
 		expect(history).toEqual(["update", "initial"]);
+	});
+});
+
+describe("findRepo with linked worktrees", () => {
+	/** Lay out a main repo plus one linked worktree on a fresh memory fs. */
+	async function seedWorktree(): Promise<MemoryFileSystem> {
+		const fs = new MemoryFileSystem();
+		await fs.mkdir("/repo/.git/worktrees/wt1", { recursive: true });
+		await fs.writeFile("/repo/.git/HEAD", "ref: refs/heads/main\n");
+		await fs.writeFile("/repo/.git/worktrees/wt1/commondir", "../..\n");
+		await fs.writeFile("/repo/.git/worktrees/wt1/HEAD", "ref: refs/heads/wt\n");
+		await fs.writeFile("/repo/.git/worktrees/wt1/gitdir", "/wt1/.git\n");
+		await fs.mkdir("/wt1", { recursive: true });
+		await fs.writeFile("/wt1/.git", "gitdir: /repo/.git/worktrees/wt1\n");
+		return fs;
+	}
+
+	test("resolves the private gitDir and shared commonDir from a .git file", async () => {
+		const fs = await seedWorktree();
+
+		const ctx = await findRepo(fs, "/wt1");
+		expect(ctx).not.toBeNull();
+		expect({ gitDir: ctx!.gitDir, commonDir: ctx!.commonDir, workTree: ctx!.workTree }).toEqual({
+			gitDir: "/repo/.git/worktrees/wt1",
+			commonDir: "/repo/.git",
+			workTree: "/wt1",
+		});
+	});
+
+	test("a .git file with a dangling pointer is a hard stop (null, no walk-up)", async () => {
+		const fs = new MemoryFileSystem();
+		// A real repo sits at the root, so a walk-up would wrongly find it.
+		await fs.mkdir("/.git", { recursive: true });
+		await fs.writeFile("/.git/HEAD", "ref: refs/heads/main\n");
+		await fs.mkdir("/wt", { recursive: true });
+		await fs.writeFile("/wt/.git", "gitdir: /nonexistent/worktrees/x\n");
+
+		expect(await findRepo(fs, "/wt")).toBeNull();
+	});
+
+	test("a .git file without a gitdir: prefix returns null", async () => {
+		const fs = new MemoryFileSystem();
+		await fs.mkdir("/wt", { recursive: true });
+		await fs.writeFile("/wt/.git", "this is not a pointer\n");
+
+		expect(await findRepo(fs, "/wt")).toBeNull();
+	});
+});
+
+describe("resolveGitDirFile", () => {
+	test("absolute pointer with commondir", async () => {
+		const fs = new MemoryFileSystem();
+		await fs.mkdir("/repo/.git/worktrees/wt1", { recursive: true });
+		await fs.writeFile("/repo/.git/worktrees/wt1/commondir", "../..\n");
+		await fs.mkdir("/wt1", { recursive: true });
+		await fs.writeFile("/wt1/.git", "gitdir: /repo/.git/worktrees/wt1\n");
+
+		expect(await resolveGitDirFile(fs, "/wt1/.git", "/wt1")).toEqual({
+			gitDir: "/repo/.git/worktrees/wt1",
+			commonDir: "/repo/.git",
+		});
+	});
+
+	test("relative pointer resolves against the worktree", async () => {
+		const fs = new MemoryFileSystem();
+		await fs.mkdir("/repo/.git/worktrees/wt1", { recursive: true });
+		await fs.writeFile("/repo/.git/worktrees/wt1/commondir", "../..\n");
+		await fs.mkdir("/repo/wt1", { recursive: true });
+		await fs.writeFile("/repo/wt1/.git", "gitdir: ../.git/worktrees/wt1\n");
+
+		expect(await resolveGitDirFile(fs, "/repo/wt1/.git", "/repo/wt1")).toEqual({
+			gitDir: "/repo/.git/worktrees/wt1",
+			commonDir: "/repo/.git",
+		});
+	});
+
+	test("missing commondir defaults commonDir to the gitDir", async () => {
+		const fs = new MemoryFileSystem();
+		await fs.mkdir("/private", { recursive: true });
+		await fs.mkdir("/wt", { recursive: true });
+		await fs.writeFile("/wt/.git", "gitdir: /private\n");
+
+		expect(await resolveGitDirFile(fs, "/wt/.git", "/wt")).toEqual({
+			gitDir: "/private",
+			commonDir: "/private",
+		});
+	});
+
+	test("dangling pointer returns null", async () => {
+		const fs = new MemoryFileSystem();
+		await fs.mkdir("/wt", { recursive: true });
+		await fs.writeFile("/wt/.git", "gitdir: /nonexistent\n");
+
+		expect(await resolveGitDirFile(fs, "/wt/.git", "/wt")).toBeNull();
+	});
+
+	test("missing gitdir: prefix returns null", async () => {
+		const fs = new MemoryFileSystem();
+		await fs.mkdir("/wt", { recursive: true });
+		await fs.writeFile("/wt/.git", "garbage\n");
+
+		expect(await resolveGitDirFile(fs, "/wt/.git", "/wt")).toBeNull();
 	});
 });

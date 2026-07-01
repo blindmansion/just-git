@@ -1,37 +1,30 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { normalizeWorktreePath } from "../random/file-gen";
+import { GitCommandError, RealGit } from "../real-git";
 import { normalizeRebaseField } from "./compare";
 
 /**
- * Run a git command in the given repo directory with an isolated environment.
+ * Run `git` with the given arguments in a repo directory under an isolated
+ * environment. If `env` is provided (the harness's pre-built isolated env) it
+ * takes precedence; otherwise a fresh isolated environment is used.
  *
- * If `env` is provided, it's used directly (should already be the isolated env
- * from buildGitEnv). Otherwise falls back to a minimal isolated env — but callers
- * should prefer passing the pre-built env for consistency.
+ * Capture intentionally tolerates non-zero exits — e.g. `rev-parse HEAD` on an
+ * unborn branch exits 128, and callers branch on `exitCode`. `execAsync` throws
+ * on failure, so recover the captured result instead of propagating.
  */
 async function run(
-	cmd: string[],
+	args: string[],
 	cwd: string,
 	env?: Record<string, string>,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-	const proc = Bun.spawn(cmd, {
-		cwd,
-		stdout: "pipe",
-		stderr: "pipe",
-		env: env ?? {
-			PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/local/bin",
-			GIT_CONFIG_NOSYSTEM: "1",
-			GIT_CONFIG_GLOBAL: "/dev/null",
-			HOME: cwd,
-		},
-	});
-	const [stdout, stderr] = await Promise.all([
-		new Response(proc.stdout).text(),
-		new Response(proc.stderr).text(),
-	]);
-	const exitCode = await proc.exited;
-	return { exitCode, stdout, stderr };
+	try {
+		return await RealGit.in(cwd, env ? { env } : undefined).execAsync(args);
+	} catch (error) {
+		if (error instanceof GitCommandError) return error.result;
+		throw error;
+	}
 }
 
 // ── HEAD ──────────────────────────────────────────────────────────
@@ -49,7 +42,7 @@ async function captureHead(repoDir: string, env?: Record<string, string>): Promi
 
 	const headRef = headContent.startsWith("ref: ") ? headContent : null;
 
-	const resolved = await run(["git", "rev-parse", "HEAD"], repoDir, env);
+	const resolved = await run(["rev-parse", "HEAD"], repoDir, env);
 	const headSha = resolved.exitCode === 0 ? resolved.stdout.trim() : null;
 
 	return { headRef, headSha };
@@ -63,11 +56,7 @@ export interface RefEntry {
 }
 
 async function captureRefs(repoDir: string, env?: Record<string, string>): Promise<RefEntry[]> {
-	const result = await run(
-		["git", "for-each-ref", "--format=%(objectname) %(refname)"],
-		repoDir,
-		env,
-	);
+	const result = await run(["for-each-ref", "--format=%(objectname) %(refname)"], repoDir, env);
 	if (result.exitCode !== 0 || !result.stdout.trim()) return [];
 
 	return result.stdout
@@ -92,14 +81,9 @@ export interface IndexEntry {
 	path: string;
 }
 
-export async function captureIndex(
-	repoDir: string,
-	env?: Record<string, string>,
-): Promise<IndexEntry[]> {
-	const result = await run(["git", "ls-files", "--stage"], repoDir, env);
-	if (result.exitCode !== 0 || !result.stdout.trim()) return [];
-
-	return result.stdout
+function parseLsFilesStage(stdout: string): IndexEntry[] {
+	if (!stdout.trim()) return [];
+	return stdout
 		.trim()
 		.split("\n")
 		.map((line) => {
@@ -113,6 +97,30 @@ export async function captureIndex(
 				path: line.slice(tabIdx + 1),
 			};
 		});
+}
+
+export async function captureIndex(
+	repoDir: string,
+	env?: Record<string, string>,
+): Promise<IndexEntry[]> {
+	const result = await run(["ls-files", "--stage"], repoDir, env);
+	if (result.exitCode !== 0) return [];
+	return parseLsFilesStage(result.stdout);
+}
+
+/**
+ * Capture a worktree's private index by pointing `--git-dir` at its admin dir.
+ * Reads `<gitDir>/index` directly, so it works even when the checkout dir has
+ * been removed (a prunable worktree) — git only needs the index, not the tree.
+ */
+async function captureIndexAt(
+	repoDir: string,
+	gitDir: string,
+	env?: Record<string, string>,
+): Promise<IndexEntry[]> {
+	const result = await run(["--git-dir", gitDir, "ls-files", "--stage"], repoDir, env);
+	if (result.exitCode !== 0) return [];
+	return parseLsFilesStage(result.stdout);
 }
 
 // ── Active operation detection ───────────────────────────────────
@@ -131,8 +139,7 @@ const OPERATION_FILES: Record<string, string[]> = {
 // Rebase is special — it uses a directory
 const REBASE_DIRS = ["rebase-merge", "rebase-apply"];
 
-async function captureOperation(repoDir: string): Promise<OperationState> {
-	const gitDir = `${repoDir}/.git`;
+async function captureOperation(gitDir: string): Promise<OperationState> {
 	const hash = createHash("sha1");
 	let found: string | null = null;
 
@@ -307,27 +314,175 @@ async function captureStashHashes(
 	repoDir: string,
 	env?: Record<string, string>,
 ): Promise<string[]> {
-	const result = await run(["git", "stash", "list", "--format=%H"], repoDir, env);
+	const result = await run(["stash", "list", "--format=%H"], repoDir, env);
 	if (result.exitCode !== 0 || !result.stdout.trim()) return [];
 	return result.stdout.trim().split("\n");
+}
+
+// ── Per-worktree state ───────────────────────────────────────────
+
+/**
+ * The full observable state of a single worktree: its private HEAD, index,
+ * checkout contents, operation state, and lock/prunable/existence status.
+ *
+ * The main worktree is `id: "main"` / `path: "."`; linked worktrees are
+ * compared by their normalized `path` (relative to the anchor — the parent of
+ * the main worktree), so the same checkout matches across the real-git temp
+ * tree and the in-memory VFS regardless of admin-dir id. `id` is retained for
+ * debug output but is no longer the comparison key (Tier 3).
+ */
+export interface WorktreeSnapshot {
+	id: string;
+	/**
+	 * Anchor-relative normalized checkout path; "." for the main worktree. This
+	 * is the comparison key for linked worktrees (see {@link normalizeWorktreePath}).
+	 */
+	path: string;
+	/** e.g. "ref: refs/heads/main", or null when detached. */
+	headRef: string | null;
+	headSha: string | null;
+	/** This worktree's staging area (stage-aware). */
+	index: IndexEntry[];
+	/** SHA-1 hash of this checkout's files (sorted path+content). */
+	workTreeHash: string;
+	/** merge | cherry-pick | revert | rebase | null. */
+	operation: string | null;
+	operationStateHash: string | null;
+	locked: boolean;
+	lockReason: string | null;
+	/** git's prunable reason for this worktree, or null. */
+	prunable: string | null;
+	/** Whether the checkout directory is physically present. */
+	checkoutExists: boolean;
+}
+
+/** Resolve a worktree's HEAD-file content into a (headRef, headSha) pair. */
+async function resolveWorktreeHead(
+	repoDir: string,
+	headContent: string,
+	env?: Record<string, string>,
+): Promise<{ headRef: string | null; headSha: string | null }> {
+	if (!headContent.startsWith("ref: ")) {
+		return { headRef: null, headSha: headContent || null };
+	}
+	const ref = headContent.slice("ref: ".length);
+	const resolved = await run(["rev-parse", ref], repoDir, env);
+	return { headRef: headContent, headSha: resolved.exitCode === 0 ? resolved.stdout.trim() : null };
+}
+
+/** Capture the main worktree's full state (id "main"). */
+async function captureMainWorktree(
+	repoDir: string,
+	env?: Record<string, string>,
+): Promise<WorktreeSnapshot> {
+	const [head, index, workTreeHash, operation] = await Promise.all([
+		captureHead(repoDir, env),
+		captureIndex(repoDir, env),
+		hashWorkTree(repoDir),
+		captureOperation(`${repoDir}/.git`),
+	]);
+	return {
+		id: "main",
+		path: ".",
+		headRef: head.headRef,
+		headSha: head.headSha,
+		index,
+		workTreeHash,
+		operation: operation.operation,
+		operationStateHash: operation.stateHash,
+		locked: false,
+		lockReason: null,
+		prunable: null,
+		checkoutExists: true,
+	};
+}
+
+/**
+ * Capture every worktree's full state — the main worktree first, then each
+ * linked worktree registered under `.git/worktrees`, sorted by admin id.
+ *
+ * Lock and prunable status are derived from the admin dir directly (same
+ * logic as the impl's `listWorktrees`), so both sides agree byte-for-byte
+ * rather than depending on porcelain reason-string wording.
+ */
+async function captureWorktrees(
+	repoDir: string,
+	env?: Record<string, string>,
+): Promise<WorktreeSnapshot[]> {
+	const worktrees: WorktreeSnapshot[] = [await captureMainWorktree(repoDir, env)];
+
+	const worktreesDir = `${repoDir}/.git/worktrees`;
+	let ids: string[];
+	try {
+		ids = await readdir(worktreesDir);
+	} catch {
+		return worktrees;
+	}
+
+	// Real git writes a realpath'd absolute path into each worktree's `gitdir`
+	// (e.g. `/private/var/...` while `repoDir` is `/var/...` on macOS). Anchor
+	// the path normalization on the realpath'd repo dir so the resulting
+	// relative key (`wt-x`, `sub/wt-x`) matches the symlink-free VFS side.
+	const anchorRepoDir = await realpath(repoDir).catch(() => repoDir);
+
+	for (const id of ids.sort()) {
+		const adminDir = `${worktreesDir}/${id}`;
+		const headContent = (await safeReadFile(`${adminDir}/HEAD`))?.trim();
+		if (headContent === undefined) continue;
+
+		const { headRef, headSha } = await resolveWorktreeHead(repoDir, headContent, env);
+
+		const gitlinkRaw = await safeReadFile(`${adminDir}/gitdir`);
+		const gitlink = gitlinkRaw?.trim() || null;
+		const wtPath = gitlink ? dirname(gitlink) : "";
+		const normalizedPath = wtPath ? normalizeWorktreePath(anchorRepoDir, wtPath) : "";
+
+		let prunable: string | null = null;
+		if (!gitlink) prunable = "gitdir file does not exist";
+		else if (!(await exists(gitlink))) prunable = "gitdir file points to non-existent location";
+
+		const locked = await exists(`${adminDir}/locked`);
+		const lockReason = locked ? (await safeReadFile(`${adminDir}/locked`))?.trim() || null : null;
+
+		const [index, workTreeHash, operation] = await Promise.all([
+			captureIndexAt(repoDir, adminDir, env),
+			hashWorkTree(wtPath),
+			captureOperation(adminDir),
+		]);
+
+		worktrees.push({
+			id,
+			path: normalizedPath,
+			headRef,
+			headSha,
+			index,
+			workTreeHash,
+			operation: operation.operation,
+			operationStateHash: operation.stateHash,
+			locked,
+			lockReason,
+			prunable,
+			checkoutExists: wtPath ? await exists(wtPath) : false,
+		});
+	}
+
+	return worktrees;
 }
 
 // ── Full snapshot capture ────────────────────────────────────────
 
 export interface GitSnapshot {
-	head: HeadState;
+	/** Shared (common-dir) refs. */
 	refs: RefEntry[];
-	index: IndexEntry[];
-	operation: OperationState;
-	/** SHA-1 hash of the worktree (sorted path+content). Fast to compare. */
-	workTreeHash: string;
-	/** Stash commit hashes in stack order (newest first). */
+	/** Shared stash commit hashes in stack order (newest first). */
 	stashHashes: string[];
+	/** Every worktree's full state — the main worktree first. */
+	worktrees: WorktreeSnapshot[];
 }
 
 /**
  * Capture the complete observable state of a git repository.
- * Stores a hash of the worktree instead of full file contents —
+ * Stores a hash of each worktree instead of full file contents —
  * on mismatch, replay the trace and call captureWorkTree() to get the diff.
  *
  * @param env - Optional isolated environment for git commands.
@@ -337,13 +492,10 @@ export async function captureSnapshot(
 	repoDir: string,
 	env?: Record<string, string>,
 ): Promise<GitSnapshot> {
-	const [head, refs, index, operation, workTreeHash, stashHashes] = await Promise.all([
-		captureHead(repoDir, env),
+	const [refs, stashHashes, worktrees] = await Promise.all([
 		captureRefs(repoDir, env),
-		captureIndex(repoDir, env),
-		captureOperation(repoDir),
-		hashWorkTree(repoDir),
 		captureStashHashes(repoDir, env),
+		captureWorktrees(repoDir, env),
 	]);
-	return { head, refs, index, operation, workTreeHash, stashHashes };
+	return { refs, stashHashes, worktrees };
 }

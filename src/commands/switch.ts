@@ -38,6 +38,7 @@ import {
 import { buildTreeFromIndex } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId, Ref } from "../lib/types.ts";
 import { applyWorktreeOps, checkoutTrees } from "../lib/unpack-trees.ts";
+import { branchCheckedOutAt } from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 
 function fromNameOf(head: Ref | null, hash: ObjectId | null): string {
@@ -62,6 +63,7 @@ export function registerSwitchCommand(parent: Command, ext?: GitExtensions) {
 			detach: f().alias("d").describe("Detach HEAD at named commit"),
 			orphan: o.string().describe("Create a new orphan branch"),
 			guess: f().default(true).describe("Guess branch from remote tracking"),
+			ignoreOtherWorktrees: f().describe("Allow checking out a branch used by another worktree"),
 		},
 		handler: async (args, ctx, meta) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
@@ -97,7 +99,16 @@ export function registerSwitchCommand(parent: Command, ext?: GitExtensions) {
 				const branchName = (args.create || args.forceCreate) as string;
 				const startPoint =
 					positional ?? (meta.passthrough.length > 0 ? meta.passthrough[0] : undefined);
-				return switchCreateBranch(gitCtx, branchName, !!args.forceCreate, startPoint, ctx.env, ext);
+				return switchCreateBranch(
+					gitCtx,
+					branchName,
+					!!args.forceCreate,
+					startPoint,
+					ctx.env,
+					ext,
+					undefined,
+					!!args.ignoreOtherWorktrees,
+				);
 			}
 
 			// ── No target ────────────────────────────────────────
@@ -114,7 +125,15 @@ export function registerSwitchCommand(parent: Command, ext?: GitExtensions) {
 			const refName = `refs/heads/${positional}`;
 			const branchHash = await resolveRef(gitCtx, refName);
 			if (branchHash) {
-				return switchToBranch(gitCtx, positional, refName, branchHash, ctx.env, ext);
+				return switchToBranch(
+					gitCtx,
+					positional,
+					refName,
+					branchHash,
+					ctx.env,
+					ext,
+					!!args.ignoreOtherWorktrees,
+				);
 			}
 
 			// ── Guess from remote tracking refs ───────────────────
@@ -202,6 +221,7 @@ async function switchCreateBranch(
 	env: Map<string, string>,
 	ext?: GitExtensions,
 	trackingRef?: string,
+	ignoreOtherWorktrees = false,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
 	if (!isValidBranchName(branchName)) {
 		return fatal(`'${branchName}' is not a valid branch name`);
@@ -252,6 +272,13 @@ async function switchCreateBranch(
 	// Check operation state after reference validation
 	const opBlock = await checkActiveOperation(gitCtx);
 	if (opBlock) return opBlock;
+
+	// Force-resetting an existing branch (-C) that lives in another worktree is
+	// refused, after the operation check so a merge-in-progress reports first.
+	if (existing && !ignoreOtherWorktrees) {
+		const usedAt = await branchCheckedOutAt(gitCtx, refName, gitCtx.gitDir);
+		if (usedAt) return fatal(`'${branchName}' is already used by worktree at '${usedAt}'`);
+	}
 
 	const preRej = await ext?.capabilities?.hooks?.preCheckout?.({
 		repo: gitCtx,
@@ -386,9 +413,19 @@ async function switchToBranch(
 	targetHash: ObjectId,
 	env: Map<string, string>,
 	ext?: GitExtensions,
+	ignoreOtherWorktrees = false,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+	// An in-progress operation blocks the switch before the worktree check, so
+	// `switch` reports "cannot switch branch while merging" rather than the
+	// worktree error when both apply (matching git).
 	const opBlock = await checkActiveOperation(gitCtx);
 	if (opBlock) return opBlock;
+
+	if (!ignoreOtherWorktrees) {
+		const usedAt = await branchCheckedOutAt(gitCtx, refName, gitCtx.gitDir);
+		if (usedAt) return fatal(`'${branchName}' is already used by worktree at '${usedAt}'`);
+	}
+
 	const preRej = await ext?.capabilities?.hooks?.preCheckout?.({
 		repo: gitCtx,
 		target: branchName,

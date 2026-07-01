@@ -406,9 +406,19 @@ export type RemoteResolver = (url: string) => GitRepo | null | Promise<GitRepo |
  */
 export interface GitContext extends GitRepo {
 	fs: FileSystem;
-	/** Absolute path to the .git directory. */
+	/**
+	 * Absolute path to the per-worktree private `$GIT_DIR`. Holds this
+	 * worktree's HEAD, index, `logs/HEAD`, operation state (MERGE_HEAD,
+	 * CHERRY_PICK_HEAD, REVERT_HEAD, ORIG_HEAD), and the per-worktree ref
+	 * namespaces (`refs/bisect|worktree|rewritten`).
+	 */
 	gitDir: string;
-	/** Absolute path to the shared `$GIT_COMMON_DIR`. */
+	/**
+	 * Absolute path to the shared `$GIT_COMMON_DIR`. Holds the state shared
+	 * across all worktrees: objects, `refs/heads|tags|remotes`, `packed-refs`,
+	 * config, and `logs/refs/*`. Equals `gitDir` in a plain repo, a bare repo,
+	 * and the main worktree; it differs only inside a linked worktree.
+	 */
 	commonDir: string;
 	/** Absolute path to the working tree root, or null for bare repos. */
 	workTree: string | null;

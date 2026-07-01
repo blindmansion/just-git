@@ -27,6 +27,7 @@ import {
 	readIndex,
 	writeIndex,
 } from "./index.ts";
+import { findAllMergeBases, isAncestor } from "./merge.ts";
 import { type ContentMergeFn, mergeOrtNonRecursive } from "./merge-ort.ts";
 import { readCommit } from "./object-db.ts";
 import type { Signer } from "./signing.ts";
@@ -90,6 +91,23 @@ async function headLabel(gitCtx: GitRepo): Promise<string> {
 }
 
 const EMPTY_TREE_HASH = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/**
+ * Whether a commit is "empty" the way git's todo generation classifies it:
+ * its tree equals its first parent's tree (or the empty tree for a root
+ * commit). Git annotates these todo lines with a trailing ` # empty` marker.
+ * Merge commits are never emitted as picks, so they are treated as non-empty.
+ */
+async function isOriginalCommitEmpty(
+	gitCtx: GitContext,
+	commit: { tree: ObjectId; parents: ObjectId[] },
+): Promise<boolean> {
+	const firstParent = commit.parents[0];
+	if (firstParent === undefined) return commit.tree === EMPTY_TREE_HASH;
+	if (commit.parents.length > 1) return false;
+	const parent = await readCommit(gitCtx, firstParent);
+	return commit.tree === parent.tree;
+}
 
 function upToDateMessage(branchName: string): string {
 	if (branchName === "HEAD") return "HEAD is up to date.\n";
@@ -257,18 +275,25 @@ function rebaseFfReflogEffects(
 			"HEAD",
 			origHead,
 			targetHash,
-			`rebase (start): checkout ${upstreamArg}`,
+			`${reflogAction} (start): checkout ${upstreamArg}`,
 		),
 	];
 	if (headName !== "detached HEAD") {
+		// git only logs the branch ref when its tip actually moves; a no-op
+		// rebase (the branch ends up where it started) still logs the HEAD
+		// start/finish pair but leaves the branch reflog untouched.
+		if (origHead !== targetHash) {
+			effects.push(
+				...logRefEffects(
+					identity,
+					headName,
+					origHead,
+					targetHash,
+					`${reflogAction} (finish): ${headName} onto ${targetHash}`,
+				),
+			);
+		}
 		effects.push(
-			...logRefEffects(
-				identity,
-				headName,
-				origHead,
-				targetHash,
-				`${reflogAction} (finish): ${headName} onto ${targetHash}`,
-			),
 			...logRefEffects(
 				identity,
 				"HEAD",
@@ -426,22 +451,57 @@ export async function performRebase(
 	}
 
 	if (filteredCommits.length === 0) {
-		if (ontoHash !== origHead) {
-			const ffErr = await fastForwardTo(gitCtx, ontoHash, currentIndex, headName);
-			if (ffErr) {
-				ffErr.stderr = skipStderr + ffErr.stderr;
-				return ffErr;
+		// Every commit in the range was already applied on the target. If `onto`
+		// is already contained in HEAD, HEAD *is* the rebased result: git keeps
+		// it where it is — fast-forwarding to `onto` here would move HEAD
+		// backwards and drop commits.
+		if (await isAncestor(gitCtx, ontoHash, origHead)) {
+			// git only short-circuits to "Current branch is up to date" (skipping the
+			// replay entirely, so no cherry-pick warnings) when it can fast-forward:
+			// the branch's single merge-base with upstream is `onto`. Otherwise it
+			// runs the replay — a no-op here since everything was already applied —
+			// and reports success with the skip warnings, leaving HEAD untouched.
+			const upstreamBases = await findAllMergeBases(gitCtx, upstreamHash, origHead);
+			const canFastForward = upstreamBases.length === 1 && upstreamBases[0] === ontoHash;
+			if (canFastForward) {
+				return {
+					stdout: upToDateMessage(branchName),
+					stderr: "",
+					exitCode: 0,
+				};
 			}
+			// HEAD stays put, but git still ran the rebase: it logs the HEAD
+			// start/finish pair (the branch reflog is left alone since the tip
+			// didn't move — handled inside writeRebaseFfReflog).
 			await writeRebaseFfReflog(
 				gitCtx,
 				env,
 				origHead,
-				ontoHash,
+				origHead,
 				headName,
 				checkoutLabel,
 				reflogAction,
 			);
+			return {
+				stdout: "",
+				stderr: `${skipStderr}Successfully rebased and updated ${headName}.\n`,
+				exitCode: 0,
+			};
 		}
+		const ffErr = await fastForwardTo(gitCtx, ontoHash, currentIndex, headName);
+		if (ffErr) {
+			ffErr.stderr = skipStderr + ffErr.stderr;
+			return ffErr;
+		}
+		await writeRebaseFfReflog(
+			gitCtx,
+			env,
+			origHead,
+			ontoHash,
+			headName,
+			checkoutLabel,
+			reflogAction,
+		);
 		return {
 			stdout: "",
 			stderr: `${skipStderr}Successfully rebased and updated ${headName}.\n`,
@@ -450,10 +510,15 @@ export async function performRebase(
 	}
 
 	// ── Build todo list ──────────────────────────────────────
-	const todo: RebaseTodoEntry[] = filteredCommits.map((c) => ({
-		hash: c.hash,
-		subject: firstLine(c.commit.message),
-	}));
+	const todo: RebaseTodoEntry[] = [];
+	for (const c of filteredCommits) {
+		const entry: RebaseTodoEntry = {
+			hash: c.hash,
+			subject: firstLine(c.commit.message),
+		};
+		if (await isOriginalCommitEmpty(gitCtx, c.commit)) entry.empty = true;
+		todo.push(entry);
+	}
 
 	// ── Skip unnecessary picks (fast-forward optimization) ───
 	let checkoutTarget = ontoHash;
@@ -482,16 +547,20 @@ export async function performRebase(
 				ffErr.stderr = skipStderr + ffErr.stderr;
 				return ffErr;
 			}
-			await writeRebaseFfReflog(
-				gitCtx,
-				env,
-				origHead,
-				checkoutTarget,
-				headName,
-				checkoutLabel,
-				reflogAction,
-			);
 		}
+		// git logs the HEAD start/finish pair whenever it reports a successful
+		// rebase — including the no-op case (checkoutTarget === origHead) reached
+		// only when cherry-picks were skipped. writeRebaseFfReflog leaves the
+		// branch reflog alone when the tip doesn't move.
+		await writeRebaseFfReflog(
+			gitCtx,
+			env,
+			origHead,
+			checkoutTarget,
+			headName,
+			checkoutLabel,
+			reflogAction,
+		);
 		return {
 			stdout: "",
 			stderr: `${skipStderr}Successfully rebased and updated ${headName}.\n`,
@@ -517,7 +586,7 @@ export async function performRebase(
 		"HEAD",
 		origHead,
 		checkoutTarget,
-		`rebase (start): checkout ${checkoutLabel}`,
+		`${reflogAction} (start): checkout ${checkoutLabel}`,
 	);
 
 	// ── Initialize rebase state ──────────────────────────────
@@ -895,14 +964,19 @@ async function finishRebase(
 		await createSymbolicRef(gitCtx, "HEAD", state.headName);
 		await clearDetachPoint(gitCtx);
 
-		await logRef(
-			gitCtx,
-			env,
-			state.headName,
-			state.origHead,
-			currentHead,
-			`${state.reflogAction ?? "rebase"} (finish): ${state.headName} onto ${state.onto}`,
-		);
+		// git only logs the branch ref when its tip actually moves. A rebase
+		// that lands back on the original commit still logs the HEAD "returning
+		// to" entry below, but leaves the branch reflog untouched.
+		if (state.origHead !== currentHead) {
+			await logRef(
+				gitCtx,
+				env,
+				state.headName,
+				state.origHead,
+				currentHead,
+				`${state.reflogAction ?? "rebase"} (finish): ${state.headName} onto ${state.onto}`,
+			);
+		}
 		await logRef(
 			gitCtx,
 			env,

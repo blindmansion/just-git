@@ -109,6 +109,65 @@ export const STRESS_FILE_GEN_CONFIG: FileGenConfig = {
 	editWeights: [30, 60, 10],
 };
 
+// ── Worktree execution context ───────────────────────────────────────
+
+/**
+ * Resolve a step's worktree-relative execution context against a repo root.
+ *
+ * The `cwd` selector is a path relative to the repo root (e.g. "../wt-abc123"
+ * for a sibling linked worktree); `null`/`undefined` means the primary
+ * worktree. Both the real-git temp tree and the in-memory VFS interpret it the
+ * same way because linked worktrees are created as `../<id>` siblings on both
+ * sides. POSIX-only (oracle runs under bun on posix), so `/`-normalization is
+ * sufficient for both real temp dirs and VFS paths.
+ */
+export function resolveWorktreeRoot(repoRoot: string, cwd: string | null | undefined): string {
+	if (!cwd) return repoRoot;
+	const combined = `${repoRoot}/${cwd}`;
+	const segments = combined.split("/");
+	const out: string[] = [];
+	for (const seg of segments) {
+		if (seg === "" || seg === ".") continue;
+		if (seg === "..") {
+			out.pop();
+			continue;
+		}
+		out.push(seg);
+	}
+	const prefix = combined.startsWith("/") ? "/" : "";
+	return prefix + out.join("/");
+}
+
+/**
+ * POSIX path of `to` relative to `from`. Both must be absolute. Pure string
+ * arithmetic (no fs), so it behaves identically on the real-git temp tree and
+ * the in-memory VFS — the property the worktree path key relies on.
+ */
+export function posixRelative(from: string, to: string): string {
+	const fromSegs = from.split("/").filter((s) => s !== "");
+	const toSegs = to.split("/").filter((s) => s !== "");
+	let i = 0;
+	while (i < fromSegs.length && i < toSegs.length && fromSegs[i] === toSegs[i]) i++;
+	const up = fromSegs.slice(i).map(() => "..");
+	const down = toSegs.slice(i);
+	return [...up, ...down].join("/") || ".";
+}
+
+/**
+ * Normalize an absolute worktree checkout path to a key that is identical
+ * across both filesystem layouts: the path relative to the *anchor* (the parent
+ * of the main worktree). The real harness nests the repo one level under a temp
+ * dir and the VFS main is `/repo`, so both anchors are "one level above the
+ * repo" and a sibling `<anchor>/wt-x` normalizes to `wt-x` (nested →
+ * `sub/wt-x`) on both sides. The main worktree itself is keyed as `"."`.
+ */
+export function normalizeWorktreePath(repoRoot: string, absWorktreePath: string): string {
+	const anchorSegs = repoRoot.split("/").filter((s) => s !== "");
+	anchorSegs.pop();
+	const anchor = `/${anchorSegs.join("/")}`;
+	return posixRelative(anchor, absWorktreePath);
+}
+
 // ── FileOpTarget ─────────────────────────────────────────────────────
 
 /** Minimal interface for applying file operations to a filesystem. */

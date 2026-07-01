@@ -11,20 +11,23 @@ import { createGitCommand } from "../../src/commands/git";
 import { createServer, MemoryStorage, type GitServer } from "../../src/server/index";
 import { readIndex } from "../../src/lib/index";
 import { readReflog } from "../../src/lib/reflog";
-import { listRefs, readHead, resolveRef } from "../../src/lib/refs";
+import { FileSystemRefStore, listRefs, readHead, resolveRef } from "../../src/lib/refs";
 import { findRepo } from "../../src/lib/repo";
 import type { GitContext } from "../../src/lib/types";
+import { listWorktrees } from "../../src/lib/worktree-admin";
 import {
 	DEFAULT_FILE_GEN_CONFIG,
 	type FileGenConfig,
 	type FileOpTarget,
 	generateAndApplyFileOps,
 	generateServerCommitFiles,
+	normalizeWorktreePath,
 	resolveAllFiles,
+	resolveWorktreeRoot,
 } from "../random/file-gen";
 import { DEFAULT_TEST_ENV } from "../random/harness";
 import { BatchChecker } from "./checker";
-import { normalizeRebaseField, type ImplState } from "./compare";
+import { normalizeRebaseField, type ImplState, type ImplWorktreeState } from "./compare";
 import {
 	isCommitCommand,
 	isFileOpBatch,
@@ -128,34 +131,34 @@ async function captureImplState(fs: IFileSystem): Promise<ImplState> {
 
 	if (!gitCtx) {
 		return {
-			headRef: null,
-			headSha: null,
 			refs: new Map(),
-			index: new Map(),
-			workTreeHash: await virtualHashWorkTree(fs, VFS_ROOT),
-			activeOperation: null,
-			operationStateHash: null,
 			stashHashes: [],
+			worktrees: [
+				{
+					id: "main",
+					path: ".",
+					headRef: null,
+					headSha: null,
+					index: new Map(),
+					workTreeHash: await virtualHashWorkTree(fs, VFS_ROOT),
+					operation: null,
+					operationStateHash: null,
+					locked: false,
+					lockReason: null,
+					prunable: null,
+					checkoutExists: true,
+				},
+			],
 		};
 	}
 
-	const [headState, refs, index, operation, workTreeHash, stashHashes] = await Promise.all([
-		captureVirtualHead(gitCtx),
+	const [refs, stashHashes, worktrees] = await Promise.all([
 		captureVirtualRefs(gitCtx),
-		captureVirtualIndex(gitCtx),
-		captureVirtualOperation(fs, gitCtx.gitDir),
-		virtualHashWorkTree(fs, VFS_ROOT),
 		captureVirtualStash(gitCtx),
+		captureVirtualWorktrees(fs, gitCtx),
 	]);
 
-	return {
-		...headState,
-		refs,
-		index,
-		workTreeHash,
-		stashHashes,
-		...operation,
-	};
+	return { refs, stashHashes, worktrees };
 }
 
 // ── HEAD ─────────────────────────────────────────────────────────
@@ -306,6 +309,78 @@ async function captureVirtualStash(ctx: GitContext): Promise<string[]> {
 	return hashes;
 }
 
+// ── Worktrees ────────────────────────────────────────────────────
+
+/**
+ * Capture every worktree's full state from the virtual filesystem — the main
+ * worktree first (id "main"), then each linked worktree. Drives off the impl's
+ * own `listWorktrees`, mirroring how the real capture walks the admin dirs, so
+ * lock/prunable/existence and per-worktree head/index/operation/hash are
+ * compared on both sides.
+ */
+async function captureVirtualWorktrees(
+	fs: IFileSystem,
+	ctx: GitContext,
+): Promise<ImplWorktreeState[]> {
+	const result: ImplWorktreeState[] = [];
+
+	for (const info of await listWorktrees(ctx)) {
+		if (info.isMain) {
+			const [head, index, operation] = await Promise.all([
+				captureVirtualHead(ctx),
+				captureVirtualIndex(ctx),
+				captureVirtualOperation(fs, ctx.gitDir),
+			]);
+			result.push({
+				id: "main",
+				path: ".",
+				headRef: head.headRef,
+				headSha: head.headSha,
+				index,
+				workTreeHash: await virtualHashWorkTree(fs, ctx.workTree ?? VFS_ROOT),
+				operation: operation.activeOperation,
+				operationStateHash: operation.operationStateHash,
+				locked: false,
+				lockReason: null,
+				prunable: null,
+				checkoutExists: true,
+			});
+			continue;
+		}
+
+		const id = info.adminDir.slice(info.adminDir.lastIndexOf("/") + 1);
+		// Scope a context at this worktree's private admin dir: HEAD/index live
+		// there, while objects and shared refs stay rooted at the common dir.
+		const wtCtx: GitContext = {
+			...ctx,
+			gitDir: info.adminDir,
+			refStore: new FileSystemRefStore(fs, info.adminDir, ctx.commonDir),
+		};
+		const wtPath = info.path || "";
+		const normalizedPath = wtPath ? normalizeWorktreePath(VFS_ROOT, wtPath) : "";
+		const [index, operation] = await Promise.all([
+			captureVirtualIndex(wtCtx),
+			captureVirtualOperation(fs, info.adminDir),
+		]);
+		result.push({
+			id,
+			path: normalizedPath,
+			headRef: info.branch ? `ref: ${info.branch}` : null,
+			headSha: info.head,
+			index,
+			workTreeHash: await virtualHashWorkTree(fs, wtPath),
+			operation: operation.activeOperation,
+			operationStateHash: operation.operationStateHash,
+			locked: info.locked,
+			lockReason: info.lockReason,
+			prunable: info.prunable,
+			checkoutExists: wtPath ? await fs.exists(wtPath) : false,
+		});
+	}
+
+	return result;
+}
+
 // ── Worktree hash ────────────────────────────────────────────────
 
 /**
@@ -393,11 +468,15 @@ async function walkVirtualDirCollect(
 
 // ── Individual file op dispatch (for conflict resolution writes) ─
 
-async function applyIndividualFileOp(fs: IFileSystem, command: string): Promise<void> {
+async function applyIndividualFileOp(
+	fs: IFileSystem,
+	command: string,
+	root: string,
+): Promise<void> {
 	const op = parseFileOp(command);
 	switch (op.type) {
 		case "write": {
-			const fullPath = `${VFS_ROOT}/${op.path}`;
+			const fullPath = `${root}/${op.path}`;
 			const dir = fullPath.slice(0, fullPath.lastIndexOf("/"));
 			if (!(await fs.exists(dir))) {
 				await fs.mkdir(dir, { recursive: true });
@@ -416,8 +495,8 @@ async function applyIndividualFileOp(fs: IFileSystem, command: string): Promise<
 			break;
 		}
 		case "delete":
-			if (await fs.exists(`${VFS_ROOT}/${op.path}`)) {
-				await fs.rm(`${VFS_ROOT}/${op.path}`);
+			if (await fs.exists(`${root}/${op.path}`)) {
+				await fs.rm(`${root}/${op.path}`);
 			}
 			break;
 	}
@@ -446,17 +525,19 @@ async function executeCommand(
 	commitCounter: { value: number },
 	fileGenConfig: FileGenConfig = DEFAULT_FILE_GEN_CONFIG,
 	server?: GitServer,
+	cwd: string | null = null,
 ): Promise<CommandOutput> {
+	const root = resolveWorktreeRoot(VFS_ROOT, cwd);
 	if (isFileOpBatch(command)) {
 		const seed = parseFileOpBatchSeed(command);
-		const files = await listVirtualWorkTreeFiles(bash.fs, VFS_ROOT);
-		const target = createVfsTarget(bash.fs, VFS_ROOT);
+		const files = await listVirtualWorkTreeFiles(bash.fs, root);
+		const target = createVfsTarget(bash.fs, root);
 		await generateAndApplyFileOps(target, seed, files, fileGenConfig);
 		return NO_OUTPUT;
 	} else if (isFileResolve(command)) {
 		const seed = parseFileResolveSeed(command);
-		const files = await listVirtualWorkTreeFiles(bash.fs, VFS_ROOT);
-		const target = createVfsTarget(bash.fs, VFS_ROOT);
+		const files = await listVirtualWorkTreeFiles(bash.fs, root);
+		const target = createVfsTarget(bash.fs, root);
 		await resolveAllFiles(target, seed, files, fileGenConfig);
 		return NO_OUTPUT;
 	} else if (isServerCommit(command)) {
@@ -475,7 +556,7 @@ async function executeCommand(
 		});
 		return NO_OUTPUT;
 	} else if (isIndividualFileOp(command)) {
-		await applyIndividualFileOp(bash.fs, command);
+		await applyIndividualFileOp(bash.fs, command, root);
 		return NO_OUTPUT;
 	} else {
 		let envOverride: Record<string, string> | undefined;
@@ -487,7 +568,10 @@ async function executeCommand(
 				GIT_COMMITTER_DATE: ts,
 			};
 		}
-		const result = await bash.exec(command, { env: envOverride });
+		const result = await bash.exec(command, {
+			env: envOverride,
+			cwd: cwd ? root : undefined,
+		});
 		return {
 			stdout: result.stdout,
 			stderr: result.stderr,
@@ -545,11 +629,11 @@ export async function replayAndCheck(
 	let totalSteps = 0;
 	let firstWarning: StepDivergence | null = null;
 
-	for (const { seq, command } of commands) {
+	for (const { seq, command, cwd } of commands) {
 		if (options?.stopAt != null && seq > options.stopAt) break;
 		totalSteps++;
 
-		const output = await executeCommand(bash, command, commitCounter, fileGenConfig, server);
+		const output = await executeCommand(bash, command, commitCounter, fileGenConfig, server, cwd);
 
 		const isPlaceholder = checker.isPlaceholder(seq);
 		let stateWarn = false;
@@ -640,9 +724,16 @@ export async function replayToVirtual(
 	const commands = replay.checker.getCommands();
 	const commitCounter = { value: 0 };
 
-	for (const { seq, command } of commands) {
+	for (const { seq, command, cwd } of commands) {
 		if (seq > stopAt) break;
-		await executeCommand(replay.bash, command, commitCounter, replay.fileGenConfig, replay.server);
+		await executeCommand(
+			replay.bash,
+			command,
+			commitCounter,
+			replay.fileGenConfig,
+			replay.server,
+			cwd,
+		);
 	}
 
 	return replay;
@@ -662,7 +753,7 @@ export async function replayToStateAndOutput(
 	const commitCounter = { value: 0 };
 	let lastOutput: CommandOutput = NO_OUTPUT;
 
-	for (const { seq, command } of commands) {
+	for (const { seq, command, cwd } of commands) {
 		if (seq > stopAt) break;
 		lastOutput = await executeCommand(
 			replay.bash,
@@ -670,6 +761,7 @@ export async function replayToStateAndOutput(
 			commitCounter,
 			replay.fileGenConfig,
 			replay.server,
+			cwd,
 		);
 	}
 
@@ -695,9 +787,9 @@ export async function replayWithTiming(dbPath: string, traceId: number): Promise
 	const commitCounter = { value: 0 };
 	const timings: CommandTiming[] = [];
 
-	for (const { seq, command } of commands) {
+	for (const { seq, command, cwd } of commands) {
 		const start = performance.now();
-		await executeCommand(bash, command, commitCounter, fileGenConfig, server);
+		await executeCommand(bash, command, commitCounter, fileGenConfig, server, cwd);
 		const elapsed = performance.now() - start;
 		timings.push({ seq, command, elapsedMs: elapsed });
 	}
@@ -734,8 +826,8 @@ export async function replayWithSize(
 	const samples: SizeSample[] = [];
 	const totalSteps = commands.length;
 
-	for (const { seq, command } of commands) {
-		await executeCommand(bash, command, commitCounter, fileGenConfig, server);
+	for (const { seq, command, cwd } of commands) {
+		await executeCommand(bash, command, commitCounter, fileGenConfig, server, cwd);
 
 		if (seq % sampleEvery === 0 || seq === totalSteps - 1) {
 			const sample = await measureRepoSize(bash.fs, seq, command);

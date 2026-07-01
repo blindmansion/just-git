@@ -99,7 +99,8 @@ export type GitCommandName =
 	| "gc"
 	| "bisect"
 	| "grep"
-	| "shortlog";
+	| "shortlog"
+	| "worktree";
 
 /**
  * Configuration for a {@link Git} instance.

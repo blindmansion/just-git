@@ -17,7 +17,7 @@ async function enumerateLooseOnlyFromTips(
 ): Promise<{ hash: ObjectId; type: ObjectType; content: Uint8Array }[]> {
 	// Build set of already-packed hashes
 	const packedHashes = new Set<string>();
-	const packDir = join(gitCtx.gitDir, "objects", "pack");
+	const packDir = join(gitCtx.commonDir, "objects", "pack");
 	try {
 		const packFiles = await gitCtx.fs.readdir(packDir);
 		for (const file of packFiles) {
@@ -95,7 +95,7 @@ export async function repackFromTips(options: RepackOptions): Promise<RepackResu
 		packHash += (b >> 4).toString(16) + (b & 0xf).toString(16);
 	}
 
-	const packDir = join(gitCtx.gitDir, "objects", "pack");
+	const packDir = join(gitCtx.commonDir, "objects", "pack");
 	await fs.mkdir(packDir, { recursive: true });
 
 	const packName = `pack-${packHash}`;
@@ -148,7 +148,7 @@ export async function repackFromTips(options: RepackOptions): Promise<RepackResu
 		}
 
 		// Delete loose objects that are in the new pack
-		const objectsDir = join(gitCtx.gitDir, "objects");
+		const objectsDir = join(gitCtx.commonDir, "objects");
 		let entries: string[];
 		try {
 			entries = await fs.readdir(objectsDir);

@@ -1,0 +1,309 @@
+import {
+	claimedWorktreeBranches,
+	inConflict,
+	pickAnyBranch,
+	pickClaimedWorktreeBranch,
+} from "../pickers";
+import type { Action } from "../types";
+
+/**
+ * Worktree checkouts live outside the repo (anchor-relative siblings of it), so
+ * the checkout itself is outside the hashed worktree on both the real-git temp
+ * dir and the in-memory VFS. Worktrees are compared by their normalized path
+ * (not admin-dir id), so management actions address a worktree by its reported
+ * `path` selector — correct even for moved or same-basename checkouts.
+ */
+const worktreeAddDetached: Action = {
+	name: "worktreeAddDetached",
+	category: "worktree",
+	createsWorktree: true,
+	canRun: (state) => state.hasCommits,
+	precondition: (state) => !inConflict(state),
+	weight: () => 2,
+	async execute(harness, rng) {
+		const id = rng.alphanumeric(6);
+		const cmd = `worktree add --detach ../wt-${id} HEAD`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+const worktreeAddNewBranch: Action = {
+	name: "worktreeAddNewBranch",
+	category: "worktree",
+	createsWorktree: true,
+	canRun: (state) => state.hasCommits,
+	precondition: (state) => !inConflict(state),
+	weight: () => 2,
+	async execute(harness, rng) {
+		const id = rng.alphanumeric(6);
+		const cmd = `worktree add -b wtb-${id} ../wt-${id}`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+/**
+ * Add a worktree at a *nested* (multi-segment) relative path. The admin id is
+ * still the unique basename `wt-<id>`, but the normalized comparison key is
+ * `n<rand>/wt-<id>` — exercising path keying with a multi-segment path.
+ */
+const worktreeAddNested: Action = {
+	name: "worktreeAddNested",
+	category: "worktree",
+	createsWorktree: true,
+	canRun: (state) => state.hasCommits,
+	precondition: (state) => !inConflict(state),
+	weight: () => 1,
+	async execute(harness, rng) {
+		const id = rng.alphanumeric(6);
+		const cmd = `worktree add --detach ../n${rng.alphanumeric(4)}/wt-${id} HEAD`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+/**
+ * Add a worktree whose path basename (`shared`) is constant, so repeated picks
+ * collide and git appends a counter to the admin id (`shared`, `shared1`, …;
+ * `deriveWorktreeId`). The parent segment is random, so the normalized path key
+ * stays distinct — proving path keying separates same-basename checkouts that
+ * the old id-equality convention couldn't represent.
+ */
+const worktreeAddSameBasename: Action = {
+	name: "worktreeAddSameBasename",
+	category: "worktree",
+	createsWorktree: true,
+	canRun: (state) => state.hasCommits,
+	precondition: (state) => !inConflict(state),
+	weight: () => 1,
+	async execute(harness, rng) {
+		const cmd = `worktree add --detach ../sb${rng.alphanumeric(4)}/shared HEAD`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+const worktreeRemove: Action = {
+	name: "worktreeRemove",
+	category: "worktree",
+	canRun: (state) => state.worktrees.length > 0,
+	precondition: () => true,
+	weight: () => 1,
+	async execute(harness, rng, state) {
+		const wt = state.worktrees[rng.int(0, state.worktrees.length - 1)]!;
+		const cmd = `worktree remove ${wt.path}`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+const worktreePrune: Action = {
+	name: "worktreePrune",
+	category: "worktree",
+	canRun: () => true,
+	precondition: () => true,
+	weight: () => 1,
+	async execute(harness) {
+		const cmd = "worktree prune";
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+/**
+ * Relocate a linked worktree to a fresh anchor-relative sibling (`../moved-x`).
+ * Worktrees are compared by their normalized checkout path (not admin id), so
+ * the moved checkout is matched at its *new* location on both the real-git temp
+ * tree and the VFS — the path key was built to survive exactly this. The fresh
+ * random basename can't collide with an existing path, so the move resolves to
+ * the verbatim destination (no into-directory case). Prefers an unlocked
+ * worktree so the move succeeds cleanly (`worktree move` refuses a locked one
+ * without `-f -f`); the relocation, not lock handling, is what this exercises.
+ */
+const worktreeMove: Action = {
+	name: "worktreeMove",
+	category: "worktree",
+	canRun: (state) => state.worktrees.length > 0,
+	precondition: () => true,
+	weight: () => 1,
+	async execute(harness, rng, state) {
+		const candidates = state.worktrees.filter((w) => !w.locked);
+		const pool = candidates.length > 0 ? candidates : state.worktrees;
+		const wt = pool[rng.int(0, pool.length - 1)]!;
+		const cmd = `worktree move ${wt.path} ../moved-${rng.alphanumeric(6)}`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+// ── Tier A: cross-worktree guards ────────────────────────────────────
+// A branch checked out in a sibling worktree must be refused by the main
+// worktree's checkout / switch / branch -d. A bug here surfaces as a HEAD or
+// ref divergence (error severity), not just an output mismatch.
+
+const switchClaimedBranch: Action = {
+	name: "switchClaimedBranch",
+	category: "worktree",
+	canRun: (state) => claimedWorktreeBranches(state).length > 0,
+	precondition: (state) => !inConflict(state),
+	weight: () => 2,
+	async execute(harness, rng, state) {
+		const branch = pickClaimedWorktreeBranch(rng, state)!;
+		const cmd = `switch ${branch}`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+const checkoutClaimedBranch: Action = {
+	name: "checkoutClaimedBranch",
+	category: "worktree",
+	canRun: (state) => claimedWorktreeBranches(state).length > 0,
+	precondition: (state) => !inConflict(state),
+	weight: () => 2,
+	async execute(harness, rng, state) {
+		const branch = pickClaimedWorktreeBranch(rng, state)!;
+		const cmd = `checkout ${branch}`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+const deleteClaimedBranch: Action = {
+	name: "deleteClaimedBranch",
+	category: "worktree",
+	canRun: (state) => claimedWorktreeBranches(state).length > 0,
+	precondition: (state) => !inConflict(state),
+	weight: () => 2,
+	async execute(harness, rng, state) {
+		const branch = pickClaimedWorktreeBranch(rng, state)!;
+		// Both -d and -D are refused while the branch is checked out elsewhere.
+		const flag = rng.next() < 0.5 ? "-d" : "-D";
+		const cmd = `branch ${flag} ${branch}`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+// ── Tier B: worktree add error paths ─────────────────────────────────
+
+const worktreeAddDuplicateBranch: Action = {
+	name: "worktreeAddDuplicateBranch",
+	category: "worktree",
+	canRun: (state) => state.hasCommits && state.branches.length > 0,
+	precondition: (state) => !inConflict(state),
+	weight: () => 1,
+	async execute(harness, rng, state) {
+		const branch = pickAnyBranch(rng, state)!;
+		const id = rng.alphanumeric(6);
+		const cmd = `worktree add -b ${branch} ../wt-${id}`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+const worktreeAddExistingPath: Action = {
+	name: "worktreeAddExistingPath",
+	category: "worktree",
+	canRun: (state) => state.hasCommits && state.worktrees.length > 0,
+	precondition: (state) => !inConflict(state),
+	weight: () => 1,
+	async execute(harness, rng, state) {
+		const wt = state.worktrees[rng.int(0, state.worktrees.length - 1)]!;
+		const cmd = `worktree add ${wt.path}`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+const worktreeAddClaimedBranch: Action = {
+	name: "worktreeAddClaimedBranch",
+	category: "worktree",
+	canRun: (state) => state.hasCommits && claimedWorktreeBranches(state).length > 0,
+	precondition: (state) => !inConflict(state),
+	weight: () => 1,
+	async execute(harness, rng, state) {
+		const branch = pickClaimedWorktreeBranch(rng, state)!;
+		const id = rng.alphanumeric(6);
+		const cmd = `worktree add ../wt-${id} ${branch}`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+// ── Tier C: worktree remove edge cases ───────────────────────────────
+
+const worktreeRemoveMain: Action = {
+	name: "worktreeRemoveMain",
+	category: "worktree",
+	canRun: (state) => state.hasCommits,
+	precondition: () => true,
+	weight: () => 1,
+	async execute(harness) {
+		const cmd = "worktree remove .";
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+const worktreeRemoveLocked: Action = {
+	name: "worktreeRemoveLocked",
+	category: "worktree",
+	canRun: (state) => state.worktrees.length > 0,
+	precondition: () => true,
+	weight: () => 1,
+	async execute(harness, rng, state) {
+		// Prefer an unlocked worktree so the setup lock succeeds cleanly; the
+		// recorded refusal is the final `remove` (the lock is a placeholder step).
+		const candidates = state.worktrees.filter((w) => !w.locked);
+		const pool = candidates.length > 0 ? candidates : state.worktrees;
+		const wt = pool[rng.int(0, pool.length - 1)]!;
+		await harness.git(`worktree lock ${wt.path}`);
+		const cmd = `worktree remove ${wt.path}`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+const worktreeRemoveForce: Action = {
+	name: "worktreeRemoveForce",
+	category: "worktree",
+	canRun: (state) => state.worktrees.length > 0,
+	precondition: () => true,
+	weight: () => 1,
+	async execute(harness, rng, state) {
+		const wt = state.worktrees[rng.int(0, state.worktrees.length - 1)]!;
+		// `-f -f` overrides both the dirty-tree and locked-tree guards.
+		const cmd = `worktree remove -f -f ${wt.path}`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+// Work *inside* a linked worktree is no longer driven by bespoke actions: the
+// walk's worktree targeting (see `WorktreeTargeter` / `WorktreeView` in
+// walker.ts + harness.ts) binds the harness to a chosen checkout and runs the
+// ordinary worktree-safe action catalog (commit/branch/merge/rebase/stash/...)
+// against it, exercising per-worktree HEAD/index/operation state for free. The
+// actions below are the ones that must run from the *primary* worktree: they
+// manage worktrees (path/admin conventions) or assert cross-worktree guards.
+
+export const WORKTREE_ACTIONS: readonly Action[] = [
+	worktreeAddDetached,
+	worktreeAddNewBranch,
+	worktreeAddNested,
+	worktreeAddSameBasename,
+	worktreeRemove,
+	worktreePrune,
+	worktreeMove,
+	switchClaimedBranch,
+	checkoutClaimedBranch,
+	deleteClaimedBranch,
+	worktreeAddDuplicateBranch,
+	worktreeAddExistingPath,
+	worktreeAddClaimedBranch,
+	worktreeRemoveMain,
+	worktreeRemoveLocked,
+	worktreeRemoveForce,
+];

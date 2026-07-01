@@ -32,6 +32,7 @@ import { dirname, join } from "node:path";
 import { readIndex } from "../../src/lib/index";
 import { readObject } from "../../src/lib/object-db";
 import { findRepo } from "../../src/lib/repo";
+import { resolveWorktreeRoot } from "../random/file-gen";
 import { captureIndex, captureWorkTree, type GitSnapshot, type WorkTreeFile } from "./capture";
 import { compare, type OracleState } from "./compare";
 import { generateTraces, PRESETS, parseSeeds } from "./generate";
@@ -48,7 +49,13 @@ import {
 import { runPlannerInspect } from "./planner-inspect";
 import { runPostMortem } from "./post-mortem";
 import { replayTo } from "./runner";
-import { applyDelta, EMPTY_SNAPSHOT, type SnapshotDelta } from "./snapshot-delta";
+import { assertSchemaVersion } from "./schema";
+import {
+	applyDelta,
+	EMPTY_SNAPSHOT,
+	isPlaceholderDelta,
+	type SnapshotDelta,
+} from "./snapshot-delta";
 
 const DATA_DIR = join(dirname(import.meta.path), "data");
 
@@ -70,7 +77,30 @@ const VALUE_FLAGS = new Set([
 	"--clone-url",
 	"--top",
 	"--every",
+	"--worktree",
 ]);
+
+/** VFS root the virtual replay materializes the primary worktree at. */
+const CLI_VFS_ROOT = "/repo";
+
+/**
+ * Resolve a worktree key (default "main" = primary) to the checkout dir on each
+ * replayed side. Linked worktrees are keyed by their normalized anchor-relative
+ * path (e.g. `wt-x`, `sub/wt-x`) — exactly what the `worktree:<path>:` divergence
+ * fields name. The checkout sits at `../<path>` relative to the repo root on
+ * both the real temp tree and the VFS. For "main" the dirs are the replay roots.
+ */
+function resolveWorktreeDirs(
+	repoDir: string,
+	worktreePath: string,
+): { realDir: string; vfsDir: string } {
+	if (worktreePath === "main") return { realDir: repoDir, vfsDir: CLI_VFS_ROOT };
+	const selector = `../${worktreePath}`;
+	return {
+		realDir: resolveWorktreeRoot(repoDir, selector),
+		vfsDir: resolveWorktreeRoot(CLI_VFS_ROOT, selector),
+	};
+}
 
 /**
  * Parse args into positional args and flags/options.
@@ -235,6 +265,9 @@ Examples:
 		steps,
 		actions: preset.actions,
 		chaosRate,
+		worktreeRate: preset.worktreeRate,
+		maxWorktrees: preset.maxWorktrees,
+		worktreeStickiness: preset.worktreeStickiness,
 		fuzz: preset.fuzz,
 		fileGen: preset.fileGen,
 		description,
@@ -472,6 +505,7 @@ Examples:
 	const seq = parseInt(stepArg, 10);
 
 	const conn = new Database(db, { readonly: true });
+	assertSchemaVersion(conn);
 
 	// Get the target step (without snapshot — we'll reconstruct it from deltas)
 	const step = conn
@@ -546,51 +580,58 @@ Examples:
 	let snap: GitSnapshot = EMPTY_SNAPSHOT;
 	for (const row of deltaRows) {
 		const delta: SnapshotDelta = JSON.parse(row.snapshot);
-		if (delta.workTreeHash !== "") {
+		if (!isPlaceholderDelta(delta)) {
 			snap = applyDelta(snap, delta);
 		}
 	}
 	// Check if the target step itself is a placeholder
 	const targetDelta: SnapshotDelta = JSON.parse(deltaRows[deltaRows.length - 1].snapshot);
-	if (targetDelta.workTreeHash === "") {
+	if (isPlaceholderDelta(targetDelta)) {
 		console.log("\nSnapshot: (placeholder — intermediate step of multi-command action)");
 		console.log("");
 		return;
 	}
 
+	const oracleMain = snap.worktrees.find((w) => w.id === "main") ?? snap.worktrees[0];
+	const implMain = implState.worktrees.find((w) => w.id === "main") ?? implState.worktrees[0];
+
 	console.log("\nOracle state:");
 	printState({
-		headRef: snap.head.headRef,
-		headSha: snap.head.headSha,
-		operation: snap.operation.operation,
-		operationHash: snap.operation.stateHash,
+		headRef: oracleMain?.headRef ?? null,
+		headSha: oracleMain?.headSha ?? null,
+		operation: oracleMain?.operation ?? null,
+		operationHash: oracleMain?.operationStateHash ?? null,
 		refCount: snap.refs.length,
-		indexCount: snap.index.filter((e) => e.stage === 0).length,
-		conflictCount: snap.index.filter((e) => e.stage > 0).length,
-		workTreeHash: snap.workTreeHash,
+		indexCount: (oracleMain?.index ?? []).filter((e) => e.stage === 0).length,
+		conflictCount: (oracleMain?.index ?? []).filter((e) => e.stage > 0).length,
+		workTreeHash: oracleMain?.workTreeHash ?? "",
 	});
 
 	console.log("\nImpl state:");
 	printState({
-		headRef: implState.headRef,
-		headSha: implState.headSha,
-		operation: implState.activeOperation,
-		operationHash: implState.operationStateHash,
+		headRef: implMain?.headRef ?? null,
+		headSha: implMain?.headSha ?? null,
+		operation: implMain?.operation ?? null,
+		operationHash: implMain?.operationStateHash ?? null,
 		refCount: implState.refs.size,
-		indexCount: [...implState.index.keys()].filter((k) => k.endsWith(":0")).length,
-		conflictCount: [...implState.index.keys()].filter((k) => !k.endsWith(":0")).length,
-		workTreeHash: implState.workTreeHash,
+		indexCount: [...(implMain?.index.keys() ?? [])].filter((k) => k.endsWith(":0")).length,
+		conflictCount: [...(implMain?.index.keys() ?? [])].filter((k) => !k.endsWith(":0")).length,
+		workTreeHash: implMain?.workTreeHash ?? "",
 	});
+
+	// Note any linked worktrees so the `worktree:<path>:` divergence field
+	// prefixes make sense (the path is the key; the admin id is shown alongside).
+	const linked = snap.worktrees.filter((w) => w.id !== "main");
+	if (linked.length > 0) {
+		console.log(`\nLinked worktrees: ${linked.map((w) => `${w.path} (id ${w.id})`).join(", ")}`);
+	}
 
 	// ── State divergences ────────────────────────────────────────
 
 	const oracleState: OracleState = {
-		head: snap.head,
 		refs: snap.refs,
-		index: snap.index,
-		operation: snap.operation,
-		workTreeHash: snap.workTreeHash,
 		stashHashes: snap.stashHashes ?? [],
+		worktrees: snap.worktrees ?? [],
 	};
 	const divergences = compare(oracleState, implState);
 
@@ -711,15 +752,18 @@ async function cmdDiffWorktree(args: string[]): Promise<void> {
 	const traceArg = positional[1] ?? getOpt("--trace");
 	const stepArg = positional[2] ?? getOpt("--step");
 	const limitArg = getOpt("--limit");
+	const worktreeId = getOpt("--worktree") ?? "main";
 
 	if (!dbName || !traceArg || !stepArg) {
-		console.log(`Usage: bun oracle diff-worktree <name> <trace> <step> [--limit N]
+		console.log(`Usage: bun oracle diff-worktree <name> <trace> <step> [--limit N] [--worktree path]
 
 Compare oracle(real git) and impl virtual worktree files at a step.
+Use --worktree <path> to diff a linked worktree's checkout (default: main).
 
 Examples:
   diff-worktree basic 5 42
-  diff-worktree basic 5 42 --limit 100`);
+  diff-worktree basic 5 42 --limit 100
+  diff-worktree worktree 5 42 --worktree wt-abc123`);
 		process.exit(1);
 	}
 
@@ -731,13 +775,14 @@ Examples:
 	const repoDir = await replayTo(db, traceId, step);
 	try {
 		const virtual = await replayToVirtual(db, traceId, step);
+		const { realDir, vfsDir } = resolveWorktreeDirs(repoDir, worktreeId);
 		const [oracleFiles, implFiles] = await Promise.all([
-			captureWorkTree(repoDir),
-			captureVirtualWorkTree(virtual.bash.fs),
+			captureWorkTree(realDir),
+			captureVirtualWorkTree(virtual.bash.fs, vfsDir),
 		]);
 		const diff = diffWorkTrees(oracleFiles, implFiles);
 
-		console.log(`\n--- Trace ${traceId}, Step ${step} Worktree Diff ---\n`);
+		console.log(`\n--- Trace ${traceId}, Step ${step} Worktree Diff (${worktreeId}) ---\n`);
 		console.log(
 			`Differing paths: ${diff.differing.length}${diff.differing.length > limit ? ` (showing first ${limit})` : ""}\n`,
 		);
@@ -749,7 +794,8 @@ Examples:
 		}
 		console.log("");
 	} finally {
-		await rm(repoDir, { recursive: true, force: true });
+		// Remove the private parent (repo + sibling worktrees), not just the repo.
+		await rm(dirname(repoDir), { recursive: true, force: true });
 	}
 }
 
@@ -761,15 +807,18 @@ async function cmdDiffFile(args: string[]): Promise<void> {
 	const traceArg = positional[1] ?? getOpt("--trace");
 	const stepArg = positional[2] ?? getOpt("--step");
 	const path = positional[3];
+	const worktreeId = getOpt("--worktree") ?? "main";
 
 	if (!dbName || !traceArg || !stepArg || !path) {
-		console.log(`Usage: bun oracle diff-file <name> <trace> <step> <path>
+		console.log(`Usage: bun oracle diff-file <name> <trace> <step> <path> [--worktree path]
 
 Show first line-level mismatch for a specific file path.
+Use --worktree <path> to resolve the path in a linked worktree (default: main).
 
 Examples:
   diff-file basic 5 42 src/app.ts
-  diff-file cherry-pick 149 281 initial.txt`);
+  diff-file cherry-pick 149 281 initial.txt
+  diff-file worktree 5 42 a.txt --worktree wt-abc123`);
 		process.exit(1);
 	}
 
@@ -780,9 +829,10 @@ Examples:
 	const repoDir = await replayTo(db, traceId, step);
 	try {
 		const virtual = await replayToVirtual(db, traceId, step);
+		const { realDir, vfsDir } = resolveWorktreeDirs(repoDir, worktreeId);
 		const [oracleFiles, implFiles] = await Promise.all([
-			captureWorkTree(repoDir),
-			captureVirtualWorkTree(virtual.bash.fs),
+			captureWorkTree(realDir),
+			captureVirtualWorkTree(virtual.bash.fs, vfsDir),
 		]);
 		const oracleMap = new Map(oracleFiles.map((f) => [f.path, f.content]));
 		const implMap = new Map(implFiles.map((f) => [f.path, f.content]));
@@ -790,7 +840,7 @@ Examples:
 		const oracle = oracleMap.get(path);
 		const impl = implMap.get(path);
 
-		console.log(`\n--- Trace ${traceId}, Step ${step}, File ${path} ---\n`);
+		console.log(`\n--- Trace ${traceId}, Step ${step}, File ${path} (${worktreeId}) ---\n`);
 		if (oracle === undefined && impl === undefined) {
 			console.log("File missing in both oracle and impl.\n");
 			return;
@@ -810,7 +860,8 @@ Examples:
 
 		printFirstMismatch(path, oracle, impl);
 	} finally {
-		await rm(repoDir, { recursive: true, force: true });
+		// Remove the private parent (repo + sibling worktrees), not just the repo.
+		await rm(dirname(repoDir), { recursive: true, force: true });
 	}
 }
 
@@ -823,15 +874,18 @@ async function cmdConflictBlobs(args: string[]): Promise<void> {
 	const stepArg = positional[2] ?? getOpt("--step");
 	const path = positional[3];
 	const full = hasFlag("--full");
+	const worktreeId = getOpt("--worktree") ?? "main";
 
 	if (!dbName || !traceArg || !stepArg || !path) {
-		console.log(`Usage: bun oracle conflict-blobs <name> <trace> <step> <path> [--full]
+		console.log(`Usage: bun oracle conflict-blobs <name> <trace> <step> <path> [--full] [--worktree path]
 
 Print stage 1/2/3 index blob info for a conflicted path in oracle and impl.
+Use --worktree <path> to read a linked worktree's private index (default: main).
 
 Examples:
   conflict-blobs cherry-pick 149 281 initial.txt
-  conflict-blobs cherry-pick 149 281 initial.txt --full`);
+  conflict-blobs cherry-pick 149 281 initial.txt --full
+  conflict-blobs worktree 5 42 a.txt --worktree wt-abc123`);
 		process.exit(1);
 	}
 
@@ -842,14 +896,15 @@ Examples:
 
 	try {
 		const virtual = await replayToVirtual(db, traceId, step);
-		const gitCtx = await findRepo(virtual.bash.fs, "/repo");
+		const { realDir, vfsDir } = resolveWorktreeDirs(repoDir, worktreeId);
+		const gitCtx = await findRepo(virtual.bash.fs, vfsDir);
 		if (!gitCtx) {
 			console.log("No git repository in virtual replay.\n");
 			return;
 		}
 
 		const [oracleEntries, implIndex] = await Promise.all([
-			captureIndex(repoDir),
+			captureIndex(realDir),
 			readIndex(gitCtx),
 		]);
 
@@ -860,14 +915,16 @@ Examples:
 			.filter((e) => e.path === path && e.stage > 0)
 			.sort((a, b) => a.stage - b.stage);
 
-		console.log(`\n--- Trace ${traceId}, Step ${step}, Conflict Blobs: ${path} ---\n`);
+		console.log(
+			`\n--- Trace ${traceId}, Step ${step}, Conflict Blobs: ${path} (${worktreeId}) ---\n`,
+		);
 
 		console.log("Oracle:");
 		if (oracleStages.length === 0) {
 			console.log("  (no stage 1/2/3 entries)");
 		}
 		for (const entry of oracleStages) {
-			const content = await readRealStageBlob(repoDir, path, entry.stage);
+			const content = await readRealStageBlob(realDir, path, entry.stage);
 			printStageBlob("  ", entry.stage, entry.sha, entry.mode, content, full);
 		}
 
@@ -882,7 +939,8 @@ Examples:
 		}
 		console.log("");
 	} finally {
-		await rm(repoDir, { recursive: true, force: true });
+		// Remove the private parent (repo + sibling worktrees), not just the repo.
+		await rm(dirname(repoDir), { recursive: true, force: true });
 	}
 }
 
@@ -943,7 +1001,7 @@ Examples:
 	console.log("  git log --oneline --all --graph");
 	console.log("  git status");
 	console.log("  git diff");
-	console.log(`\nCleanup: rm -rf ${repoDir}`);
+	console.log(`\nCleanup: rm -rf ${dirname(repoDir)}`);
 }
 
 // ── profile ──────────────────────────────────────────────────
@@ -1610,6 +1668,9 @@ Examples:
 			steps,
 			actions: preset.actions,
 			chaosRate,
+			worktreeRate: preset.worktreeRate,
+			maxWorktrees: preset.maxWorktrees,
+			worktreeStickiness: preset.worktreeStickiness,
 			fuzz: preset.fuzz,
 			fileGen: preset.fileGen,
 			description: `validate: ${presetName}`,
@@ -1946,11 +2007,11 @@ Commands:
   inspect <name> <trace> <step>     Examine a step with oracle + impl diff
   trace-context <name> <trace> <step> [--before N]
                                     Show prior commands around a step
-  diff-worktree <name> <trace> <step> [--limit N]
+  diff-worktree <name> <trace> <step> [--limit N] [--worktree path]
                                     Diff oracle vs impl worktree paths
-  diff-file <name> <trace> <step> <path>
+  diff-file <name> <trace> <step> <path> [--worktree path]
                                     Show first mismatch for one file
-  conflict-blobs <name> <trace> <step> <path> [--full]
+  conflict-blobs <name> <trace> <step> <path> [--full] [--worktree path]
                                     Show stage 1/2/3 blob details
   rebuild <name> <trace> <step>     Materialize a real git repo at a step
   planner-inspect <name> <trace> <step>

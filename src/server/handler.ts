@@ -643,12 +643,34 @@ async function readRequestBody(
 	const encoding = req.headers.get("content-encoding");
 	if (encoding === "gzip" || encoding === "x-gzip") {
 		const ds = new DecompressionStream("gzip");
-		const writer = ds.writable.getWriter();
 		const copy = new Uint8Array(raw.byteLength);
 		copy.set(raw);
-		await writer.write(copy);
-		await writer.close();
-		return readStreamWithMax(ds.readable, limits.maxInflatedBytes, "Decompressed body too large");
+		// Feed the compressed input WITHOUT awaiting completion before we start
+		// reading: DecompressionStream is a TransformStream with a bounded
+		// internal buffer, so for any payload that inflates past the readable
+		// side's high-water mark the writer blocks on backpressure until the
+		// readable side is drained. Awaiting writer.close() before reading
+		// therefore deadlocks (and the maxInflatedBytes guard below — which
+		// lives on the read side — would never run). Drain concurrently instead.
+		const pump = (async () => {
+			const writer = ds.writable.getWriter();
+			try {
+				await writer.write(copy);
+				await writer.close();
+			} catch {
+				// The reader may abort the stream when maxInflatedBytes is
+				// exceeded, which rejects pending writer operations. That
+				// rejection is surfaced by readStreamWithMax below; swallow it
+				// here so it doesn't become an unhandled rejection.
+			}
+		})();
+		const inflated = await readStreamWithMax(
+			ds.readable,
+			limits.maxInflatedBytes,
+			"Decompressed body too large",
+		);
+		await pump;
+		return inflated;
 	}
 	return raw;
 }
@@ -670,6 +692,9 @@ async function readStreamWithMax(
 			if (!value) continue;
 			totalBytes += value.byteLength;
 			if (maxBytes !== undefined && totalBytes > maxBytes) {
+				// Cancel so any upstream producer blocked on backpressure (e.g. a
+				// DecompressionStream writer) is released rather than left pending.
+				await reader.cancel(new RequestLimitError(errorMessage)).catch(() => {});
 				throw new RequestLimitError(errorMessage);
 			}
 			chunks.push(value);

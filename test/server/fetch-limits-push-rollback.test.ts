@@ -150,6 +150,87 @@ describe("bounded request size (upload-pack)", () => {
 	});
 });
 
+// ── gzip decompression deadlock regression ─────────────────────────
+
+function raceTimeout<T>(p: Promise<T>, ms = 4000): Promise<T> {
+	return Promise.race([
+		p,
+		new Promise<T>((_, reject) =>
+			setTimeout(
+				() => reject(new Error(`request did not resolve within ${ms}ms (decompression deadlock?)`)),
+				ms,
+			),
+		),
+	]);
+}
+
+describe("gzip request decompression past the stream high-water mark", () => {
+	// DecompressionStream is a TransformStream whose readable side has a bounded
+	// internal buffer (~64 KB). A payload that inflates past it forces the writer
+	// to block on backpressure, so the body MUST be drained concurrently with
+	// feeding. The previous write+close-then-read pattern deadlocked here; these
+	// tests (whose inflated size exceeds the HWM, unlike the small-body case
+	// above) time out if that regresses.
+	const INFLATED = 256 * 1024;
+
+	test("oversized gzip body returns 413 instead of deadlocking", async () => {
+		const { driver } = await setupRepo();
+		const server = createServer({
+			storage: driver,
+			fetchLimits: { maxRequestBytes: 1 << 20, maxInflatedBytes: 64 },
+			onError: false,
+		});
+
+		// Highly compressible: tiny compressed, large inflated — past the HWM.
+		const compressed = await gzipBytes(new Uint8Array(INFLATED));
+
+		const res = await raceTimeout(
+			server.fetch(
+				new Request("http://localhost/repo/git-upload-pack", {
+					method: "POST",
+					headers: { "Content-Encoding": "gzip" },
+					body: compressed,
+				}),
+			),
+		);
+		expect(res.status).toBe(413);
+		expect(await res.text()).toContain("Decompressed body too large");
+	});
+
+	test("large gzip body under a generous limit is fully decompressed", async () => {
+		const { driver } = await setupRepo();
+		const server = createServer({
+			storage: driver,
+			fetchLimits: { maxRequestBytes: 1 << 20, maxInflatedBytes: 1 << 20 },
+			onError: false,
+		});
+
+		const enc = new TextEncoder();
+		const fakeHash = "b".repeat(40);
+		const wants: Uint8Array[] = [];
+		const wantCount = Math.ceil(INFLATED / 50); // ~50 bytes per pkt-line
+		for (let i = 0; i < wantCount; i++) {
+			wants.push(encodePktLine(enc.encode(`want ${fakeHash}\n`)));
+		}
+		const rawBody = concatPktLines(...wants, flushPkt(), encodePktLine(enc.encode("done\n")));
+		expect(rawBody.byteLength).toBeGreaterThan(64 * 1024);
+		const compressed = await gzipBytes(rawBody);
+
+		const res = await raceTimeout(
+			server.fetch(
+				new Request("http://localhost/repo/git-upload-pack", {
+					method: "POST",
+					headers: { "Content-Encoding": "gzip" },
+					body: compressed,
+				}),
+			),
+		);
+		// The whole body inflated without deadlocking and was not spuriously
+		// rejected by the inflated-size guard.
+		expect(await res.text()).not.toContain("Decompressed body too large");
+	});
+});
+
 // ── Issue 2: Rejected push object rollback ──────────────────────────
 
 describe("rejected push side effects", () => {

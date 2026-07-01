@@ -3,17 +3,38 @@
  * Extracted from test/random/harness.ts — same isolation, no virtual side.
  */
 
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
+import {
+	mkdir,
+	mkdtemp,
+	readdir,
+	readFile,
+	realpath,
+	rm,
+	stat,
+	unlink,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
 	DEFAULT_FILE_GEN_CONFIG,
 	type FileGenConfig,
+	type FileOpTarget,
 	generateAndApplyFileOps,
 	generateServerCommitFiles,
+	posixRelative,
 	resolveAllFiles,
+	resolveWorktreeRoot,
 } from "../random/file-gen";
-import { DEFAULT_TEST_ENV, type ExecResult, type WalkHarness } from "../random/harness";
+import {
+	adminDirFromGitlink,
+	DEFAULT_TEST_ENV,
+	type ExecResult,
+	type WalkHarness,
+	type WorktreeInfo,
+	worktreeIdFromCwd,
+} from "../random/harness";
+import { isolatedGitEnv } from "../real-git";
 import { isCommitCommand } from "./fileops";
 import { createServer, MemoryStorage, type GitServer } from "../../src/server/index";
 
@@ -28,20 +49,7 @@ export function buildRealGitEnv(
 	homeDir: string,
 	overrides?: Record<string, string>,
 ): Record<string, string> {
-	return {
-		PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/local/bin",
-		GIT_CONFIG_NOSYSTEM: "1",
-		GIT_CONFIG_GLOBAL: "/dev/null",
-		GIT_CONFIG_COUNT: "2",
-		GIT_CONFIG_KEY_0: "init.defaultBranch",
-		GIT_CONFIG_VALUE_0: "main",
-		GIT_CONFIG_KEY_1: "gc.auto",
-		GIT_CONFIG_VALUE_1: "0",
-		HOME: homeDir,
-		GIT_EDITOR: "true",
-		...DEFAULT_TEST_ENV,
-		...overrides,
-	};
+	return isolatedGitEnv(homeDir, { ...DEFAULT_TEST_ENV, ...overrides });
 }
 
 // ── RealGitHarness ───────────────────────────────────────────────
@@ -71,7 +79,13 @@ export class RealGitHarness implements WalkHarness {
 		options?: { withRemote?: boolean },
 	): Promise<RealGitHarness> {
 		const homeDir = await mkdtemp(join(tmpdir(), "oracle-home-"));
-		const repoDir = await mkdtemp(join(tmpdir(), "oracle-git-"));
+		// Nest the repo one level down so sibling paths (e.g. a worktree added
+		// at `../wt-x`) land inside this trace's private temp dir — isolated
+		// from other traces and removed by cleanup — rather than in the shared
+		// system temp root.
+		const repoParent = await mkdtemp(join(tmpdir(), "oracle-git-"));
+		const repoDir = join(repoParent, "repo");
+		await mkdir(repoDir, { recursive: true });
 		const env = buildRealGitEnv(homeDir);
 
 		let remoteBaseUrl: string | null = null;
@@ -97,7 +111,33 @@ export class RealGitHarness implements WalkHarness {
 
 	// ── WalkHarness: commands ────────────────────────────────────
 
-	async git(command: string, envOverride?: Record<string, string>): Promise<ExecResult> {
+	/** Resolve a worktree-relative selector against the repo root. */
+	private rootFor(cwd?: string): string {
+		return resolveWorktreeRoot(this.repoDir, cwd);
+	}
+
+	/**
+	 * The git/admin dir holding a worktree's private HEAD + operation state.
+	 * Primary → `<repo>/.git`; a linked checkout's admin dir is read from its
+	 * `.git` gitlink (so it's correct under `worktree move` / same-basename
+	 * checkouts), falling back to the sibling-path convention if unreadable.
+	 */
+	private async gitDirFor(cwd?: string): Promise<string> {
+		if (!cwd) return join(this.repoDir, ".git");
+		try {
+			const admin = adminDirFromGitlink(await readFile(join(this.rootFor(cwd), ".git"), "utf-8"));
+			if (admin) return admin;
+		} catch {
+			// gitlink unreadable — fall back to the sibling-path convention.
+		}
+		return join(this.repoDir, ".git", "worktrees", worktreeIdFromCwd(cwd));
+	}
+
+	async git(
+		command: string,
+		envOverride?: Record<string, string>,
+		cwd?: string,
+	): Promise<ExecResult> {
 		let env: Record<string, string>;
 		if (envOverride) {
 			env = { ...this.env, ...envOverride };
@@ -109,7 +149,7 @@ export class RealGitHarness implements WalkHarness {
 			env = this.env;
 		}
 		const proc = Bun.spawn(["sh", "-c", `git ${command}`], {
-			cwd: this.repoDir,
+			cwd: this.rootFor(cwd),
 			env,
 			stdout: "pipe",
 			stderr: "pipe",
@@ -122,23 +162,27 @@ export class RealGitHarness implements WalkHarness {
 		return { stdout, stderr, exitCode };
 	}
 
-	async gitCommit(message: string): Promise<ExecResult> {
+	async gitCommit(message: string, cwd?: string): Promise<ExecResult> {
 		this.commitCounter++;
 		const ts = `${1000000000 + this.commitCounter} +0000`;
-		return this.git(`commit -m "${message}"`, {
-			GIT_AUTHOR_DATE: ts,
-			GIT_COMMITTER_DATE: ts,
-		});
+		return this.git(
+			`commit -m "${message}"`,
+			{
+				GIT_AUTHOR_DATE: ts,
+				GIT_COMMITTER_DATE: ts,
+			},
+			cwd,
+		);
 	}
 
-	async writeFile(relPath: string, content: string): Promise<void> {
-		const fullPath = join(this.repoDir, relPath);
+	async writeFile(relPath: string, content: string, cwd?: string): Promise<void> {
+		const fullPath = join(this.rootFor(cwd), relPath);
 		await mkdir(join(fullPath, ".."), { recursive: true });
 		await writeFile(fullPath, content);
 	}
 
-	async readFile(relPath: string): Promise<string> {
-		return readFile(join(this.repoDir, relPath), "utf-8");
+	async readFile(relPath: string, cwd?: string): Promise<string> {
+		return readFile(join(this.rootFor(cwd), relPath), "utf-8");
 	}
 
 	async spliceFile(
@@ -146,17 +190,18 @@ export class RealGitHarness implements WalkHarness {
 		content: string,
 		offset: number,
 		deleteCount: number,
+		cwd?: string,
 	): Promise<void> {
-		const fullPath = join(this.repoDir, relPath);
+		const fullPath = join(this.rootFor(cwd), relPath);
 		const existing = await readFile(fullPath, "utf-8");
 		const before = existing.slice(0, offset);
 		const after = existing.slice(offset + deleteCount);
 		await writeFile(fullPath, before + content + after);
 	}
 
-	async deleteFile(relPath: string): Promise<void> {
+	async deleteFile(relPath: string, cwd?: string): Promise<void> {
 		try {
-			await unlink(join(this.repoDir, relPath));
+			await unlink(join(this.rootFor(cwd), relPath));
 		} catch {
 			// File may not exist
 		}
@@ -164,13 +209,42 @@ export class RealGitHarness implements WalkHarness {
 
 	// ── WalkHarness: seed-based batch ────────────────────────────
 
-	async applyFileOpBatch(seed: number, files: string[]): Promise<void> {
-		await generateAndApplyFileOps(this, seed, files, this.fileGenConfig);
+	/** Build a FileOpTarget rooted at a worktree-relative selector. */
+	private targetFor(cwd?: string): FileOpTarget {
+		const root = this.rootFor(cwd);
+		return {
+			async writeFile(relPath, content) {
+				const fullPath = join(root, relPath);
+				await mkdir(join(fullPath, ".."), { recursive: true });
+				await writeFile(fullPath, content);
+			},
+			readFile: (relPath) => readFile(join(root, relPath), "utf-8"),
+			async spliceFile(relPath, content, offset, deleteCount) {
+				const fullPath = join(root, relPath);
+				const existing = await readFile(fullPath, "utf-8");
+				await writeFile(
+					fullPath,
+					existing.slice(0, offset) + content + existing.slice(offset + deleteCount),
+				);
+			},
+			async deleteFile(relPath) {
+				try {
+					await unlink(join(root, relPath));
+				} catch {
+					// File may not exist
+				}
+			},
+		};
 	}
 
-	async resolveFiles(seed: number): Promise<void> {
-		const files = await this.listWorkTreeFiles();
-		await resolveAllFiles(this, seed, files, this.fileGenConfig);
+	async applyFileOpBatch(seed: number, files: string[], cwd?: string): Promise<void> {
+		const list = cwd ? await this.listWorkTreeFiles(cwd) : files;
+		await generateAndApplyFileOps(this.targetFor(cwd), seed, list, this.fileGenConfig);
+	}
+
+	async resolveFiles(seed: number, cwd?: string): Promise<void> {
+		const files = await this.listWorkTreeFiles(cwd);
+		await resolveAllFiles(this.targetFor(cwd), seed, files, this.fileGenConfig);
 	}
 
 	// ── WalkHarness: server-side commit ──────────────────────────
@@ -192,9 +266,9 @@ export class RealGitHarness implements WalkHarness {
 
 	// ── WalkHarness: state queries ───────────────────────────────
 
-	async listWorkTreeFiles(): Promise<string[]> {
+	async listWorkTreeFiles(cwd?: string): Promise<string[]> {
 		const files: string[] = [];
-		await this.walkDir(this.repoDir, "", files);
+		await this.walkDir(this.rootFor(cwd), "", files);
 		return files.sort();
 	}
 
@@ -224,16 +298,20 @@ export class RealGitHarness implements WalkHarness {
 		// string gets mangled by sh -c (parens are shell syntax).
 		const result = await this.git("branch");
 		if (result.exitCode !== 0 || !result.stdout.trim()) return [];
-		return result.stdout
-			.trim()
-			.split("\n")
-			.map((line) => line.replace(/^\*?\s*/, "").trim())
-			.filter((name) => name.length > 0 && !name.startsWith("("))
-			.sort();
+		return (
+			result.stdout
+				.trim()
+				.split("\n")
+				// `git branch` prefixes the current branch with "* " and a branch
+				// checked out in another worktree with "+ "; strip either marker.
+				.map((line) => line.replace(/^[*+]?\s*/, "").trim())
+				.filter((name) => name.length > 0 && !name.startsWith("("))
+				.sort()
+		);
 	}
 
-	async getCurrentBranch(): Promise<string | null> {
-		const headPath = join(this.repoDir, ".git", "HEAD");
+	async getCurrentBranch(cwd?: string): Promise<string | null> {
+		const headPath = join(await this.gitDirFor(cwd), "HEAD");
 		try {
 			const content = (await readFile(headPath, "utf-8")).trim();
 			return content.startsWith("ref: refs/heads/")
@@ -244,27 +322,28 @@ export class RealGitHarness implements WalkHarness {
 		}
 	}
 
-	async isInMergeConflict(): Promise<boolean> {
-		return fileExists(join(this.repoDir, ".git", "MERGE_HEAD"));
+	async isInMergeConflict(cwd?: string): Promise<boolean> {
+		return fileExists(join(await this.gitDirFor(cwd), "MERGE_HEAD"));
 	}
 
-	async isInCherryPickConflict(): Promise<boolean> {
-		return fileExists(join(this.repoDir, ".git", "CHERRY_PICK_HEAD"));
+	async isInCherryPickConflict(cwd?: string): Promise<boolean> {
+		return fileExists(join(await this.gitDirFor(cwd), "CHERRY_PICK_HEAD"));
 	}
 
-	async isInRevertConflict(): Promise<boolean> {
-		return fileExists(join(this.repoDir, ".git", "REVERT_HEAD"));
+	async isInRevertConflict(cwd?: string): Promise<boolean> {
+		return fileExists(join(await this.gitDirFor(cwd), "REVERT_HEAD"));
 	}
 
-	async isInRebaseConflict(): Promise<boolean> {
+	async isInRebaseConflict(cwd?: string): Promise<boolean> {
+		const gitDir = await this.gitDirFor(cwd);
 		return (
-			(await fileExists(join(this.repoDir, ".git", "rebase-merge"))) ||
-			(await fileExists(join(this.repoDir, ".git", "rebase-apply")))
+			(await fileExists(join(gitDir, "rebase-merge"))) ||
+			(await fileExists(join(gitDir, "rebase-apply")))
 		);
 	}
 
-	async hasCommits(): Promise<boolean> {
-		const result = await this.git("rev-parse HEAD");
+	async hasCommits(cwd?: string): Promise<boolean> {
+		const result = await this.git("rev-parse HEAD", undefined, cwd);
 		return result.exitCode === 0;
 	}
 
@@ -280,6 +359,42 @@ export class RealGitHarness implements WalkHarness {
 		return result.stdout.trim().split("\n").filter(Boolean);
 	}
 
+	async listWorktrees(): Promise<WorktreeInfo[]> {
+		const worktreesDir = join(this.repoDir, ".git", "worktrees");
+		let ids: string[];
+		try {
+			ids = (await readdir(worktreesDir)).sort();
+		} catch {
+			return [];
+		}
+		// Real git writes realpath'd absolute paths into each `gitdir`; anchor the
+		// relative selector on the realpath'd repo dir so it normalizes cleanly.
+		const realRepo = await realpath(this.repoDir).catch(() => this.repoDir);
+		const infos: WorktreeInfo[] = [];
+		for (const id of ids) {
+			const adminDir = join(worktreesDir, id);
+			let branch: string | null = null;
+			try {
+				const content = (await readFile(join(adminDir, "HEAD"), "utf-8")).trim();
+				if (content.startsWith("ref: refs/heads/")) {
+					branch = content.slice("ref: refs/heads/".length);
+				}
+			} catch {
+				// HEAD missing — treat as detached/unknown.
+			}
+			const locked = await fileExists(join(adminDir, "locked"));
+			let path = `../${id}`;
+			try {
+				const gitlink = (await readFile(join(adminDir, "gitdir"), "utf-8")).trim();
+				if (gitlink) path = posixRelative(realRepo, dirname(gitlink));
+			} catch {
+				// gitdir missing — fall back to the sibling-path convention.
+			}
+			infos.push({ id, path, branch, locked });
+		}
+		return infos;
+	}
+
 	// ── Cleanup ──────────────────────────────────────────────────
 
 	async cleanup(): Promise<void> {
@@ -291,7 +406,7 @@ export class RealGitHarness implements WalkHarness {
 			await this.server.close();
 			this.server = null;
 		}
-		await rm(this.repoDir, { recursive: true, force: true });
+		await rm(dirname(this.repoDir), { recursive: true, force: true });
 		await rm(this.homeDir, { recursive: true, force: true });
 	}
 }

@@ -11,7 +11,7 @@
  * Custom configurations can import generateTraces() directly.
  */
 
-import { ALL_ACTIONS, NETWORK_ACTIONS } from "../random/actions/index";
+import { ALL_ACTIONS, NETWORK_ACTIONS, WORKTREE_ACTIONS } from "../random/actions/index";
 import {
 	DEFAULT_FILE_GEN_CONFIG,
 	DEFAULT_GITIGNORE_PATTERNS,
@@ -22,7 +22,13 @@ import {
 import type { ExecResult, WalkHarness } from "../random/harness";
 import { SeededRNG } from "../random/rng";
 import type { Action, ActionCategory, FuzzConfig } from "../random/types";
-import { pickAction, queryState } from "../random/walker";
+import {
+	applyWorktreeCap,
+	pickAction,
+	queryState,
+	worktreeSafeActions,
+	WorktreeTargeter,
+} from "../random/walker";
 import { captureSnapshot, type GitSnapshot } from "./capture";
 import {
 	del,
@@ -59,7 +65,7 @@ export interface TraceConfig {
  */
 class RecordingHarness implements WalkHarness {
 	/** Accumulated commands for the current walker step. */
-	private buffer: { command: string; result: ExecResult | null }[] = [];
+	private buffer: { command: string; result: ExecResult | null; cwd: string | null }[] = [];
 	/** Previous full snapshot for computing deltas. */
 	private prevSnapshot: GitSnapshot = EMPTY_SNAPSHOT;
 
@@ -70,7 +76,11 @@ class RecordingHarness implements WalkHarness {
 		private seq: number = 0,
 	) {}
 
-	async git(command: string, envOverride?: Record<string, string>): Promise<ExecResult> {
+	async git(
+		command: string,
+		envOverride?: Record<string, string>,
+		cwd?: string,
+	): Promise<ExecResult> {
 		// Commit-creating commands need incrementing timestamps to match replay
 		let env = envOverride;
 		if (!env && isCommitCommand(command)) {
@@ -78,29 +88,30 @@ class RecordingHarness implements WalkHarness {
 			const ts = `${1000000000 + this.inner.commitCounter} +0000`;
 			env = { GIT_AUTHOR_DATE: ts, GIT_COMMITTER_DATE: ts };
 		}
-		const result = await this.inner.git(command, env);
-		this.buffer.push({ command: `git ${command}`, result });
+		const result = await this.inner.git(command, env, cwd);
+		this.buffer.push({ command: `git ${command}`, result, cwd: cwd ?? null });
 		return result;
 	}
 
-	async gitCommit(message: string): Promise<ExecResult> {
-		const result = await this.inner.gitCommit(message);
+	async gitCommit(message: string, cwd?: string): Promise<ExecResult> {
+		const result = await this.inner.gitCommit(message, cwd);
 		this.buffer.push({
 			command: `git commit -m "${message}"`,
 			result,
+			cwd: cwd ?? null,
 		});
 		return result;
 	}
 
 	// ── Individual file ops (for conflict resolution writes) ─────
 
-	async writeFile(relPath: string, content: string): Promise<void> {
-		await this.inner.writeFile(relPath, content);
-		this.buffer.push({ command: write(relPath, content), result: null });
+	async writeFile(relPath: string, content: string, cwd?: string): Promise<void> {
+		await this.inner.writeFile(relPath, content, cwd);
+		this.buffer.push({ command: write(relPath, content), result: null, cwd: cwd ?? null });
 	}
 
-	async readFile(relPath: string): Promise<string> {
-		return this.inner.readFile(relPath);
+	async readFile(relPath: string, cwd?: string): Promise<string> {
+		return this.inner.readFile(relPath, cwd);
 	}
 
 	async spliceFile(
@@ -108,38 +119,42 @@ class RecordingHarness implements WalkHarness {
 		content: string,
 		offset: number,
 		deleteCount: number,
+		cwd?: string,
 	): Promise<void> {
-		await this.inner.spliceFile(relPath, content, offset, deleteCount);
+		await this.inner.spliceFile(relPath, content, offset, deleteCount, cwd);
 		this.buffer.push({
 			command: write(relPath, content, offset, deleteCount),
 			result: null,
+			cwd: cwd ?? null,
 		});
 	}
 
-	async deleteFile(relPath: string): Promise<void> {
-		await this.inner.deleteFile(relPath);
-		this.buffer.push({ command: del(relPath), result: null });
+	async deleteFile(relPath: string, cwd?: string): Promise<void> {
+		await this.inner.deleteFile(relPath, cwd);
+		this.buffer.push({ command: del(relPath), result: null, cwd: cwd ?? null });
 	}
 
 	// ── Seed-based batch (the common path) ───────────────────────
 
-	async applyFileOpBatch(seed: number, files: string[]): Promise<void> {
+	async applyFileOpBatch(seed: number, files: string[], cwd?: string): Promise<void> {
 		// Apply ops on the real harness (bypasses recording of individual ops)
-		await this.inner.applyFileOpBatch(seed, files);
+		await this.inner.applyFileOpBatch(seed, files, cwd);
 		// Record just the seed
 		this.buffer.push({
 			command: serializeFileOpBatch(seed),
 			result: null,
+			cwd: cwd ?? null,
 		});
 	}
 
 	// ── Seed-based resolve (conflict resolution) ─────────────────
 
-	async resolveFiles(seed: number): Promise<void> {
-		await this.inner.resolveFiles(seed);
+	async resolveFiles(seed: number, cwd?: string): Promise<void> {
+		await this.inner.resolveFiles(seed, cwd);
 		this.buffer.push({
 			command: serializeFileResolve(seed),
 			result: null,
+			cwd: cwd ?? null,
 		});
 	}
 
@@ -150,6 +165,7 @@ class RecordingHarness implements WalkHarness {
 		this.buffer.push({
 			command: serializeServerCommit(seed, branch),
 			result: null,
+			cwd: null,
 		});
 	}
 
@@ -175,7 +191,7 @@ class RecordingHarness implements WalkHarness {
 		let snapshot: GitSnapshot | null = null;
 
 		for (let i = 0; i < this.buffer.length; i++) {
-			const { command, result } = this.buffer[i];
+			const { command, result, cwd } = this.buffer[i];
 
 			if (i === snapshotIdx) {
 				snapshot = await captureSnapshot(this.inner.repoDir);
@@ -190,6 +206,7 @@ class RecordingHarness implements WalkHarness {
 						stderr: result?.stderr ?? "",
 					},
 					delta,
+					cwd,
 				);
 				this.prevSnapshot = snapshot;
 			} else {
@@ -204,6 +221,7 @@ class RecordingHarness implements WalkHarness {
 						stderr: result?.stderr ?? "",
 					},
 					EMPTY_SNAPSHOT,
+					cwd,
 				);
 			}
 			this.seq++;
@@ -213,35 +231,38 @@ class RecordingHarness implements WalkHarness {
 
 	// ── State queries delegate directly ──────────────────────────
 
-	listWorkTreeFiles() {
-		return this.inner.listWorkTreeFiles();
+	listWorkTreeFiles(cwd?: string) {
+		return this.inner.listWorkTreeFiles(cwd);
 	}
 	listBranches() {
 		return this.inner.listBranches();
 	}
-	getCurrentBranch() {
-		return this.inner.getCurrentBranch();
+	getCurrentBranch(cwd?: string) {
+		return this.inner.getCurrentBranch(cwd);
 	}
-	isInMergeConflict() {
-		return this.inner.isInMergeConflict();
+	isInMergeConflict(cwd?: string) {
+		return this.inner.isInMergeConflict(cwd);
 	}
-	isInCherryPickConflict() {
-		return this.inner.isInCherryPickConflict();
+	isInCherryPickConflict(cwd?: string) {
+		return this.inner.isInCherryPickConflict(cwd);
 	}
-	isInRevertConflict() {
-		return this.inner.isInRevertConflict();
+	isInRevertConflict(cwd?: string) {
+		return this.inner.isInRevertConflict(cwd);
 	}
-	isInRebaseConflict() {
-		return this.inner.isInRebaseConflict();
+	isInRebaseConflict(cwd?: string) {
+		return this.inner.isInRebaseConflict(cwd);
 	}
-	hasCommits() {
-		return this.inner.hasCommits();
+	hasCommits(cwd?: string) {
+		return this.inner.hasCommits(cwd);
 	}
 	getStashCount() {
 		return this.inner.getStashCount();
 	}
 	listRemotes() {
 		return this.inner.listRemotes();
+	}
+	listWorktrees() {
+		return this.inner.listWorktrees();
 	}
 }
 
@@ -260,6 +281,15 @@ interface GenerateConfig {
 	chaosRate?: number;
 	/** Per-picker-type probability of injecting wrong values. */
 	fuzz?: FuzzConfig;
+	/**
+	 * Probability (0-1) that a step runs inside a randomly chosen linked
+	 * worktree instead of the primary one. Default 0.
+	 */
+	worktreeRate?: number;
+	/** Cap on concurrent linked worktrees (suppresses growth at/above it). Default Infinity. */
+	maxWorktrees?: number;
+	/** `[min, max]` consecutive steps to stay in a worktree once entered. Default `[1, 1]`. */
+	worktreeStickiness?: [number, number];
 	/** File generation config. Defaults to DEFAULT_FILE_GEN_CONFIG. */
 	fileGen?: FileGenConfig;
 	/** Optional description stored in the trace metadata. */
@@ -279,6 +309,9 @@ export async function generateTraces(config: GenerateConfig): Promise<void> {
 	const { dbPath, seeds, steps, description, cloneUrl, fuzz, withRemote } = config;
 	const actions = config.actions ?? ALL_ACTIONS;
 	const chaosRate = config.chaosRate ?? 0;
+	const worktreeRate = config.worktreeRate ?? 0;
+	const maxWorktrees = config.maxWorktrees ?? Number.POSITIVE_INFINITY;
+	const worktreeStickiness = config.worktreeStickiness;
 	const fileGen = config.fileGen ?? DEFAULT_FILE_GEN_CONFIG;
 
 	const db = initDb(dbPath);
@@ -331,9 +364,12 @@ export async function generateTraces(config: GenerateConfig): Promise<void> {
 					steps,
 					actions,
 					chaosRate,
+					worktreeRate,
 					cloneUrl,
 					fuzz,
 					harness.remoteBaseUrl ?? undefined,
+					maxWorktrees,
+					worktreeStickiness,
 				);
 			} finally {
 				await harness.cleanup();
@@ -362,11 +398,15 @@ async function runRecordedWalk(
 	steps: number,
 	actions: readonly Action[],
 	chaosRate: number,
+	worktreeRate: number,
 	cloneUrl?: string,
 	fuzz?: FuzzConfig,
 	remoteBaseUrl?: string,
+	maxWorktrees: number = Number.POSITIVE_INFINITY,
+	worktreeStickiness?: [number, number],
 ): Promise<void> {
 	const rng = new SeededRNG(seed);
+	const targeter = new WorktreeTargeter(rng, worktreeRate, worktreeStickiness);
 
 	if (cloneUrl) {
 		await recorder.git(`clone ${cloneUrl} .`);
@@ -374,7 +414,21 @@ async function runRecordedWalk(
 	} else {
 		await recorder.git("init");
 		await recorder.flush();
+	}
 
+	// Disable reflog expiry so traces are deterministic and independent of the
+	// real wall clock. Commit dates are pinned to ~2001, so any wall-clock-
+	// relative `gc` reflog expiry (default 90d/30d) would wipe the entire reflog
+	// the moment a trace runs `git gc`, making real git lose the detached-HEAD
+	// "checkout: moving from" entry and fall back to "(no branch)". Pinning
+	// expiry to "never" keeps the reflog intact on both engines. Written into the
+	// repo config (a recorded step) so the replayed just-git repo honors it too.
+	await recorder.git("config gc.reflogExpire never");
+	await recorder.flush();
+	await recorder.git("config gc.reflogExpireUnreachable never");
+	await recorder.flush();
+
+	if (!cloneUrl) {
 		if (remoteBaseUrl) {
 			await recorder.git(`remote add origin ${remoteBaseUrl}/repo`);
 			await recorder.flush();
@@ -394,11 +448,17 @@ async function runRecordedWalk(
 	}
 
 	for (let step = 1; step <= steps; step++) {
-		const state = await queryState(recorder);
-		const action = pickAction(rng, state, actions, chaosRate);
+		const target = await targeter.select(recorder);
+		const view = target ?? recorder;
+		const state = await queryState(view);
+		const base = target ? worktreeSafeActions(actions) : actions;
+		const eligible = applyWorktreeCap(base, state, maxWorktrees);
+		const action = pickAction(rng, state, eligible, chaosRate);
 		if (!action) continue;
 
-		await action.execute(recorder, rng, state, fuzz);
+		await action.execute(view, rng, state, fuzz);
+		// Commands buffer on the recorder regardless of the view; flush persists
+		// them (each carries its worktree cwd).
 		await recorder.flush();
 	}
 }
@@ -408,6 +468,26 @@ async function runRecordedWalk(
 interface Preset {
 	actions: readonly Action[];
 	chaosRate?: number;
+	/**
+	 * Probability (0-1) that a step runs inside a randomly chosen linked
+	 * worktree. The walk binds the harness to that checkout and picks from the
+	 * worktree-safe action subset, so the whole catalog exercises per-worktree
+	 * HEAD/index/operation state. Default 0 (always primary).
+	 */
+	worktreeRate?: number;
+	/**
+	 * Cap on concurrent linked worktrees. Worktree-creating actions are
+	 * suppressed at/above it, keeping the walk on a few *deep* checkouts rather
+	 * than many shallow ones (worktree bugs are state-depth bugs, not count
+	 * bugs). Default Infinity (uncapped).
+	 */
+	maxWorktrees?: number;
+	/**
+	 * `[min, max]` consecutive steps to stay in a worktree once entered, so
+	 * multi-step in-worktree workflows complete in place. Default `[1, 1]`
+	 * (independent per-step reselection — favors dangling cross-worktree ops).
+	 */
+	worktreeStickiness?: [number, number];
 	fuzz?: FuzzConfig;
 	fileGen?: FileGenConfig;
 	cloneUrl?: string;
@@ -570,6 +650,55 @@ export const PRESETS: Record<string, Preset> = {
 		actions: boostCategory(ALL_ACTIONS, "merge", 3),
 	},
 
+	/**
+	 * Worktree-focused: core daily-use commands plus the worktree actions
+	 * (add/remove/prune, cross-worktree guards, and in-worktree commit/merge),
+	 * with the worktree category boosted so linked worktrees are created and
+	 * operated on frequently. Exercises per-worktree HEAD/index/operation state,
+	 * the cross-worktree porcelain guards (a branch checked out in a sibling
+	 * worktree refusing checkout/switch/delete in the main one), and cwd-routed
+	 * work inside linked checkouts.
+	 */
+	worktree: {
+		// Depth over breadth: a low worktree boost (management is rare), a small
+		// cap, and sticky in-worktree runs so a few checkouts accumulate real
+		// per-worktree index/HEAD/operation/reflog state instead of churning
+		// many shallow ones.
+		actions: boostCategory([...CORE_ACTIONS, ...WORKTREE_ACTIONS], "worktree", 2),
+		chaosRate: 0.05,
+		worktreeRate: 0.3,
+		maxWorktrees: 3,
+		worktreeStickiness: [3, 8],
+		fuzz: FUZZ_LIGHT,
+	},
+
+	/**
+	 * Worktree-deep: high `worktreeRate` with *independent* per-step reselection
+	 * (no stickiness) and gitignore'd file generation. Where `worktree` favors
+	 * deep, completed in-worktree workflows, this preset favors the
+	 * worktree-specific *hazard* the independence produces — an operation left
+	 * in progress in worktree B (a dangling rebase/merge) while later steps
+	 * operate elsewhere over the shared object store. The live count is still
+	 * capped (a handful of worktrees suffices for that hazard; more only inflates
+	 * capture cost), just higher than `worktree`.
+	 */
+	"worktree-deep": {
+		actions: boostCategory([...CORE_ACTIONS, ...WORKTREE_ACTIONS], "worktree", 3),
+		chaosRate: 0.05,
+		worktreeRate: 0.5,
+		maxWorktrees: 4,
+		worktreeStickiness: [1, 1],
+		fuzz: FUZZ_LIGHT,
+		fileGen: {
+			...DEFAULT_FILE_GEN_CONFIG,
+			gitignore: {
+				rate: 0.05,
+				subdirRate: 0.3,
+				patterns: DEFAULT_GITIGNORE_PATTERNS,
+			},
+		},
+	},
+
 	/** Cherry-pick focused. */
 	"cherry-pick-heavy": {
 		actions: boostCategory(ALL_ACTIONS, "cherry-pick", 3),
@@ -642,6 +771,13 @@ export const PRESETS: Record<string, Preset> = {
 	kitchen: {
 		actions: excludeNames(ALL_ACTIONS, "cherryPickNoCommit", "revertNoCommit"),
 		chaosRate: 0.12,
+		// A kitchen sink should also *work inside* the worktrees it creates, not
+		// just create and tear them down. Modest rate + cap + stickiness so a
+		// few worktrees see real work without dominating the mix or inflating
+		// capture cost.
+		worktreeRate: 0.2,
+		maxWorktrees: 4,
+		worktreeStickiness: [2, 5],
 		fuzz: FUZZ_LIGHT,
 		fileGen: {
 			...DEFAULT_FILE_GEN_CONFIG,
@@ -690,6 +826,10 @@ export const PRESETS: Record<string, Preset> = {
 	"remote-kitchen": {
 		actions: excludeNames(ALL_ACTIONS, "cherryPickNoCommit", "revertNoCommit"),
 		chaosRate: 0.12,
+		// Same in-worktree work as `kitchen`, plus the remote transport mix.
+		worktreeRate: 0.2,
+		maxWorktrees: 4,
+		worktreeStickiness: [2, 5],
 		fuzz: FUZZ_LIGHT,
 		fileGen: {
 			...DEFAULT_FILE_GEN_CONFIG,

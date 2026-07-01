@@ -10,20 +10,24 @@ import {
 } from "./compare";
 import type { TraceConfig } from "./generate";
 import type { CommandOutput } from "./impl-harness";
-import { applyDelta, EMPTY_SNAPSHOT, type SnapshotDelta } from "./snapshot-delta";
+import { assertSchemaVersion } from "./schema";
+import {
+	applyDelta,
+	EMPTY_SNAPSHOT,
+	isPlaceholderDelta,
+	type SnapshotDelta,
+} from "./snapshot-delta";
 
 /**
- * Converts a stored GitSnapshot (arrays) into the OracleState shape
- * that the comparison functions expect.
+ * Converts a stored GitSnapshot into the OracleState shape that the
+ * comparison functions expect. The two are structurally identical (refs,
+ * stash, per-worktree state); this just narrows the type.
  */
 function toOracleState(snap: GitSnapshot): OracleState {
 	return {
-		head: snap.head,
 		refs: snap.refs,
-		index: snap.index,
-		operation: snap.operation,
-		workTreeHash: snap.workTreeHash,
 		stashHashes: snap.stashHashes,
+		worktrees: snap.worktrees,
 	};
 }
 
@@ -33,6 +37,8 @@ interface StepData {
 	exitCode: number;
 	stdout: string;
 	stderr: string;
+	/** Worktree-relative execution context (e.g. "../wt-x"); null = primary. */
+	cwd: string | null;
 	oracle: OracleState;
 }
 
@@ -53,6 +59,10 @@ export class BatchChecker {
 	constructor(dbPath: string, traceId: number) {
 		const db = new Database(dbPath, { readonly: true });
 
+		// Refuse to replay a stale on-disk DB whose snapshot shape this code
+		// can't interpret — that would silently miscompare delta-decoded state.
+		assertSchemaVersion(db);
+
 		// Read trace config (null for legacy traces without the column)
 		let config: TraceConfig | null = null;
 		try {
@@ -69,7 +79,7 @@ export class BatchChecker {
 
 		const rows = db
 			.prepare(
-				`SELECT seq, command, exit_code, stdout, stderr, snapshot FROM steps
+				`SELECT seq, command, exit_code, stdout, stderr, snapshot, cwd FROM steps
          WHERE trace_id = ? ORDER BY seq`,
 			)
 			.all(traceId) as {
@@ -79,19 +89,22 @@ export class BatchChecker {
 			stdout: string;
 			stderr: string;
 			snapshot: string;
+			cwd: string | null;
 		}[];
 
 		let currentFull: GitSnapshot = EMPTY_SNAPSHOT;
 		this.steps = rows.map((row) => {
 			const delta: SnapshotDelta = JSON.parse(row.snapshot);
-			// Placeholders have workTreeHash === "" — don't accumulate them
-			if (delta.workTreeHash === "") {
+			// Placeholders carry the sentinel empty main-worktree hash — don't
+			// accumulate them into the running full snapshot.
+			if (isPlaceholderDelta(delta)) {
 				return {
 					seq: row.seq,
 					command: row.command,
 					exitCode: row.exit_code,
 					stdout: row.stdout,
 					stderr: row.stderr ?? "",
+					cwd: row.cwd ?? null,
 					oracle: toOracleState(delta as GitSnapshot),
 				};
 			}
@@ -102,6 +115,7 @@ export class BatchChecker {
 				exitCode: row.exit_code,
 				stdout: row.stdout,
 				stderr: row.stderr ?? "",
+				cwd: row.cwd ?? null,
 				oracle: toOracleState(currentFull),
 			};
 		});
@@ -137,11 +151,12 @@ export class BatchChecker {
 	}
 
 	/** All commands in order, for replay. */
-	getCommands(): { seq: number; command: string; exitCode: number }[] {
+	getCommands(): { seq: number; command: string; exitCode: number; cwd: string | null }[] {
 		return this.steps.map((s) => ({
 			seq: s.seq,
 			command: s.command,
 			exitCode: s.exitCode,
+			cwd: s.cwd,
 		}));
 	}
 
@@ -153,7 +168,8 @@ export class BatchChecker {
 	isPlaceholder(seq: number): boolean {
 		const step = this.bySeq.get(seq);
 		if (!step) return false;
-		return step.oracle.workTreeHash === "";
+		const main = step.oracle.worktrees.find((w) => w.id === "main");
+		return main?.workTreeHash === "";
 	}
 
 	/**
@@ -266,7 +282,11 @@ export class BatchChecker {
 	private static worktreePathStderrMatches(expected: string, actual: string): boolean {
 		const patterns: [RegExp, string][] = [
 			[/used by worktree at '[^']+'/g, "used by worktree at '<path>'"],
+			[/checked out at '[^']+'/g, "checked out at '<path>'"],
 			[/is being rebased at \S+/g, "is being rebased at <path>"],
+			// "already a rebase-merge directory" prints `rm -fr "<abs path>"`;
+			// oracle uses a real temp dir, impl the VFS root.
+			[/rm -fr "[^"]*rebase-merge"/g, 'rm -fr "<path>/rebase-merge"'],
 		];
 		const norm = (s: string) => {
 			let r = s;

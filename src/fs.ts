@@ -83,4 +83,15 @@ export interface FileSystem {
 	 * @throws Error if `path` already exists.
 	 */
 	symlink?(target: string, path: string): Promise<void>;
+	/**
+	 * Move/rename a file or directory from `src` to `dest`.
+	 *
+	 * Optional: callers must route through the `movePath` helper
+	 * (`src/lib/fs-utils.ts`), which falls back to a recursive copy + remove
+	 * when a backend doesn't implement this. `dest` is the final path — the
+	 * caller resolves any "move into an existing directory" semantics
+	 * beforehand, so implementations should not re-interpret it.
+	 * @throws Error if `src` doesn't exist.
+	 */
+	mv?(src: string, dest: string): Promise<void>;
 }

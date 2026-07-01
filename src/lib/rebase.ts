@@ -11,6 +11,12 @@ export interface RebaseTodoEntry {
 	hash: ObjectId;
 	/** First line of the commit message. */
 	subject: string;
+	/**
+	 * Whether the original commit is empty (its tree equals its first parent's
+	 * tree, or the empty tree for a root commit). Git annotates such todo lines
+	 * with a trailing ` # empty` marker.
+	 */
+	empty?: boolean;
 }
 
 export interface RebaseState {
@@ -34,7 +40,7 @@ export interface RebaseState {
 
 // ── Paths ───────────────────────────────────────────────────────────
 
-function rebaseMergeDir(gitCtx: GitContext): string {
+export function rebaseMergeDir(gitCtx: GitContext): string {
 	return join(gitCtx.gitDir, "rebase-merge");
 }
 
@@ -156,9 +162,13 @@ function parseTodoList(text: string): RebaseTodoEntry[] {
 		if (!trimmed || trimmed.startsWith("#")) continue;
 		const match = trimmed.match(/^pick\s+([0-9a-f]+)\s+(.*)/);
 		if (match?.[1] && match[2]) {
+			let rest = match[2];
+			// Git appends a trailing " # empty" marker for empty commits.
+			const empty = rest.endsWith(" # empty");
+			if (empty) rest = rest.slice(0, -" # empty".length);
 			// Real git uses "pick <hash> # <subject>" — strip the "# " prefix
-			const subject = match[2].startsWith("# ") ? match[2].slice(2) : match[2];
-			entries.push({ hash: match[1], subject });
+			const subject = rest.startsWith("# ") ? rest.slice(2) : rest;
+			entries.push(empty ? { hash: match[1], subject, empty } : { hash: match[1], subject });
 		}
 	}
 	return entries;
@@ -166,7 +176,7 @@ function parseTodoList(text: string): RebaseTodoEntry[] {
 
 function formatTodoList(entries: RebaseTodoEntry[]): string {
 	if (entries.length === 0) return "";
-	return `${entries.map((e) => `pick ${e.hash} # ${e.subject}`).join("\n")}\n`;
+	return `${entries.map((e) => `pick ${e.hash} # ${e.subject}${e.empty ? " # empty" : ""}`).join("\n")}\n`;
 }
 
 // ── Planner ─────────────────────────────────────────────────────────

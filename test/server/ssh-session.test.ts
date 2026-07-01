@@ -6,6 +6,7 @@ import { createServer } from "../../src/server/handler.ts";
 import { MemoryStorage } from "../../src/store/memory-storage.ts";
 import { parseGitSshCommand } from "../../src/server/ssh-session.ts";
 import type { GitServer, SshChannel } from "../../src/server/types.ts";
+import { isolatedGitEnv } from "../real-git.ts";
 
 const TEST_IDENTITY = {
 	name: "Test",
@@ -490,12 +491,8 @@ async function cleanupDir(dir: string) {
 }
 
 function sshTestEnv(port: number, home: string): Record<string, string> {
-	return {
-		PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/local/bin",
-		HOME: home,
-		GIT_CONFIG_NOSYSTEM: "1",
-		GIT_CONFIG_GLOBAL: "/dev/null",
+	return isolatedGitEnv(home, {
 		GIT_PROTOCOL_VERSION: "1",
 		GIT_SSH_COMMAND: `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p ${port}`,
-	};
+	});
 }

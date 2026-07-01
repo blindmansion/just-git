@@ -17,6 +17,7 @@ import {
 	generateAndApplyFileOps,
 	generateServerCommitFiles,
 	resolveAllFiles,
+	resolveWorktreeRoot,
 } from "../random/file-gen";
 import { createServer, MemoryStorage, type GitServer } from "../../src/server/index";
 import {
@@ -130,7 +131,14 @@ export async function replayTo(
 	}
 
 	const homeDir = await mkdtemp(join(tmpdir(), "replay-home-"));
-	const repoDir = await mkdtemp(join(tmpdir(), "replay-git-"));
+	// Nest the repo one level down (mirroring RealGitHarness.create) so sibling
+	// worktree paths (e.g. `../wt-x`, `../moved-x`) land inside this replay's
+	// private temp dir instead of the shared system temp root — otherwise
+	// worktrees collide across runs and a `worktree move` destination may not be
+	// created, breaking later in-worktree steps.
+	const repoParent = await mkdtemp(join(tmpdir(), "replay-git-"));
+	const repoDir = join(repoParent, "repo");
+	await mkdir(repoDir, { recursive: true });
 	const env = buildRealGitEnv(homeDir);
 	let commitCounter = 0;
 
@@ -138,18 +146,20 @@ export async function replayTo(
 		for (const step of steps) {
 			if (step.seq > stopAtSeq) break;
 
+			const root = resolveWorktreeRoot(repoDir, step.cwd);
+
 			if (isFileOpBatch(step.command)) {
 				const seed = parseFileOpBatchSeed(step.command);
-				const files = await listRealWorkTreeFiles(repoDir);
-				const target = createRealFsTarget(repoDir);
+				const files = await listRealWorkTreeFiles(root);
+				const target = createRealFsTarget(root);
 				await generateAndApplyFileOps(target, seed, files, fileGenConfig);
 			} else if (isFileResolve(step.command)) {
 				const seed = parseFileResolveSeed(step.command);
-				const files = await listRealWorkTreeFiles(repoDir);
-				const target = createRealFsTarget(repoDir);
+				const files = await listRealWorkTreeFiles(root);
+				const target = createRealFsTarget(root);
 				await resolveAllFiles(target, seed, files, fileGenConfig);
 			} else if (isIndividualFileOp(step.command)) {
-				await execIndividualFileOp(repoDir, step.command);
+				await execIndividualFileOp(root, step.command);
 			} else if (isServerCommit(step.command)) {
 				const { seed, branch } = parseServerCommit(step.command);
 				const files = generateServerCommitFiles(seed, fileGenConfig);
@@ -178,11 +188,11 @@ export async function replayTo(
 				if (storedBaseUrl && newBaseUrl) {
 					cmd = cmd.replaceAll(storedBaseUrl, newBaseUrl);
 				}
-				await execShell(repoDir, cmd, stepEnv);
+				await execShell(root, cmd, stepEnv);
 			}
 		}
 	} catch (err) {
-		await rm(repoDir, { recursive: true, force: true });
+		await rm(repoParent, { recursive: true, force: true });
 		await rm(homeDir, { recursive: true, force: true });
 		if (httpServer) httpServer.stop(true);
 		if (server) await server.close();
