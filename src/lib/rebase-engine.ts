@@ -268,6 +268,7 @@ function rebaseFfReflogEffects(
 	headName: string,
 	upstreamArg: string,
 	reflogAction: "rebase" | "pull",
+	ontoHash: ObjectId,
 ): ReflogEffect[] {
 	const effects: ReflogEffect[] = [
 		...logRefEffects(
@@ -283,13 +284,16 @@ function rebaseFfReflogEffects(
 		// rebase (the branch ends up where it started) still logs the HEAD
 		// start/finish pair but leaves the branch reflog untouched.
 		if (origHead !== targetHash) {
+			// git records the resolved `onto` base in the finish message, which
+			// can differ from the ref's new tip when leading picks were
+			// fast-forwarded past `onto`.
 			effects.push(
 				...logRefEffects(
 					identity,
 					headName,
 					origHead,
 					targetHash,
-					`${reflogAction} (finish): ${headName} onto ${targetHash}`,
+					`${reflogAction} (finish): ${headName} onto ${ontoHash}`,
 				),
 			);
 		}
@@ -314,11 +318,20 @@ async function writeRebaseFfReflog(
 	headName: string,
 	upstreamArg: string,
 	reflogAction: "rebase" | "pull",
+	ontoHash: ObjectId,
 ): Promise<void> {
 	const identity = await getReflogIdentity(gitCtx, env);
 	await applyReflogEffects(
 		gitCtx,
-		rebaseFfReflogEffects(identity, origHead, targetHash, headName, upstreamArg, reflogAction),
+		rebaseFfReflogEffects(
+			identity,
+			origHead,
+			targetHash,
+			headName,
+			upstreamArg,
+			reflogAction,
+			ontoHash,
+		),
 	);
 }
 
@@ -422,6 +435,7 @@ export async function performRebase(
 				headName,
 				checkoutLabel,
 				reflogAction,
+				ontoHash,
 			);
 			return {
 				stdout: "",
@@ -481,6 +495,7 @@ export async function performRebase(
 				headName,
 				checkoutLabel,
 				reflogAction,
+				ontoHash,
 			);
 			return {
 				stdout: "",
@@ -501,6 +516,7 @@ export async function performRebase(
 			headName,
 			checkoutLabel,
 			reflogAction,
+			ontoHash,
 		);
 		return {
 			stdout: "",
@@ -560,6 +576,7 @@ export async function performRebase(
 			headName,
 			checkoutLabel,
 			reflogAction,
+			ontoHash,
 		);
 		return {
 			stdout: "",
