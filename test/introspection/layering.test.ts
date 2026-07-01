@@ -37,16 +37,18 @@ const LAYERS = ["lib", "parse", "store", "repo", "proxy", "server", "commands"] 
 
 /**
  * Known runtime import cycles, expressed as sorted root-relative file sets.
- * Both are *within* `lib` (same layer, so not layering violations) and are
+ * This one is *within* `lib` (same layer, so not a layering violation) and is
  * tracked here as accepted tech debt. The guard test fails if a NEW cycle
- * appears or if one of these is fixed (delete it from the baseline then).
+ * appears or if this is fixed (delete it from the baseline then).
  *
- * TODO: break these by extracting the shared leaf helpers (`comparePaths`,
- * `flattenTreeToMap`, `ensureParentDir`) into dependency-free modules.
+ * The `refs ↔ reflog ↔ repo` cycle was dissolved by moving `ensureParentDir`
+ * into the `path.ts` leaf, and the worktree cycle shrank from four nodes to two
+ * by moving `comparePaths` there too. The remaining back-edge is `unpack-trees`
+ * importing `err` from the `command-utils` god-file; extracting the error
+ * helpers into a dependency-free `command-errors.ts` (Idea 1) removes it.
  */
 const KNOWN_RUNTIME_CYCLES: string[][] = [
-	["lib/command-utils.ts", "lib/tree-ops.ts", "lib/unpack-trees.ts", "lib/worktree.ts"],
-	["lib/refs.ts", "lib/reflog.ts", "lib/repo.ts"],
+	["lib/command-utils.ts", "lib/unpack-trees.ts"],
 ];
 
 describe("src layering policy", () => {

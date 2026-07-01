@@ -213,15 +213,6 @@ export async function initRepository(
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-/** Ensure the parent directory of a file path exists. */
-export async function ensureParentDir(fs: FileSystem, path: string): Promise<void> {
-	const lastSlash = path.lastIndexOf("/");
-	if (lastSlash > 0) {
-		const dir = path.slice(0, lastSlash);
-		await fs.mkdir(dir, { recursive: true });
-	}
-}
-
 /** Get the parent directory of a path. Returns "/" for the root. */
 function parentDir(path: string): string {
 	const lastSlash = path.lastIndexOf("/");

@@ -1,3 +1,5 @@
+import type { FileSystem } from "../fs.ts";
+
 // ============================================================================
 // Core utilities
 // ============================================================================
@@ -155,4 +157,28 @@ export function relative(from: string, to: string): string {
 	for (const r of rest) parts.push(r);
 
 	return parts.join("/") || ".";
+}
+
+// ============================================================================
+// Comparison
+// ============================================================================
+
+/** Standard path comparator for sorting entries by path. */
+export function comparePaths(a: string, b: string): number {
+	if (a < b) return -1;
+	if (a > b) return 1;
+	return 0;
+}
+
+// ============================================================================
+// Filesystem helpers
+// ============================================================================
+
+/** Ensure the parent directory of a file path exists. */
+export async function ensureParentDir(fs: FileSystem, path: string): Promise<void> {
+	const lastSlash = path.lastIndexOf("/");
+	if (lastSlash > 0) {
+		const dir = path.slice(0, lastSlash);
+		await fs.mkdir(dir, { recursive: true });
+	}
 }

@@ -1,5 +1,5 @@
 import type { GitExtensions } from "../git.ts";
-import { comparePaths, isCommandError, requireGitContext } from "../lib/command-utils.ts";
+import { isCommandError, requireGitContext } from "../lib/command-utils.ts";
 import { readConfig } from "../lib/config.ts";
 import { readIndex } from "../lib/index.ts";
 import { branchNameFromRef, readHead, resolveHead } from "../lib/refs.ts";
@@ -15,6 +15,7 @@ import {
 } from "../lib/status-format.ts";
 import { diffIndexToWorkTree } from "../lib/worktree.ts";
 import { type Command, f } from "../parse/index.ts";
+import { comparePaths } from "../lib/path.ts";
 
 export function registerStatusCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("status", {

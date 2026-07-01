@@ -14,7 +14,6 @@
  * by pairwise-merging multiple LCAs into a virtual base tree.
  */
 
-import { comparePaths } from "./command-utils.ts";
 import type { MergeLabels } from "./diff3.ts";
 import {
 	merge as diff3Merge,
@@ -26,7 +25,7 @@ import { defaultStat, getStage0Entries, readIndex, writeIndex } from "./index.ts
 import { findAllMergeBases, type MergeConflict, type MergeTreeResult } from "./merge.ts";
 import { isBinaryStr, readBlobContent, readCommit, readObject, writeObject } from "./object-db.ts";
 import { serializeCommit } from "./objects/commit.ts";
-import { join } from "./path.ts";
+import { join, comparePaths } from "./path.ts";
 import { detectRenames, type RenamePair } from "./rename-detection.ts";
 import { isSymlinkMode } from "./symlink.ts";
 import { buildTreeFromIndex, type FlatTreeEntry, flattenTreeToMap } from "./tree-ops.ts";

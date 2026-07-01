@@ -1,11 +1,11 @@
-import { comparePaths, uniqueAbbrev } from "./command-utils.ts";
+import { uniqueAbbrev } from "./command-utils.ts";
 import { isBisectInProgress } from "./bisect.ts";
 import { countAheadBehind } from "./commit-walk.ts";
 import { type GitConfig, readConfig } from "./config.ts";
 import { getStage0Entries, hasConflicts, readIndex } from "./index.ts";
 import { readCommit } from "./object-db.ts";
 import { readDetachPoint, readStateFile } from "./operation-state.ts";
-import { join as joinPath } from "./path.ts";
+import { join as joinPath, comparePaths } from "./path.ts";
 import { isRebaseInProgress, readRebaseState } from "./rebase.ts";
 import { branchNameFromRef, readHead, resolveHead, resolveRef } from "./refs.ts";
 import { detectRenames } from "./rename-detection.ts";

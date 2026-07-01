@@ -3,7 +3,6 @@ import { formatCombinedDiffEntry } from "../lib/combined-diff.ts";
 import {
 	abbreviateHash,
 	type CommandResult,
-	comparePaths,
 	fatal,
 	getCwdPrefix,
 	isCommandError,
@@ -23,7 +22,7 @@ import {
 import { getStage0Entries, readIndex } from "../lib/index.ts";
 import { findAllMergeBases } from "../lib/merge.ts";
 import { hashObject, readBlobBytes, readCommit } from "../lib/object-db.ts";
-import { join } from "../lib/path.ts";
+import { join, comparePaths } from "../lib/path.ts";
 import { matchPathspecs, type Pathspec, parsePathspec } from "../lib/pathspec.ts";
 import { parseRangeSyntax } from "../lib/range-syntax.ts";
 import { resolveHead } from "../lib/refs.ts";

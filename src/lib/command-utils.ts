@@ -293,13 +293,6 @@ export function sequencerDirtyWorktreeError(
 	return err(`${lines.join("\n")}\n`, exitCode);
 }
 
-/** Standard path comparator for sorting entries by path. */
-export function comparePaths(a: string, b: string): number {
-	if (a < b) return -1;
-	if (a > b) return 1;
-	return 0;
-}
-
 /** Compute the working-directory-relative prefix for pathspec resolution. */
 export function getCwdPrefix(gitCtx: GitContext, cwd: string): string {
 	return gitCtx.workTree ? relative(gitCtx.workTree, cwd) : "";

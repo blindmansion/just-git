@@ -2,7 +2,6 @@ import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
 	type CommandResult,
-	comparePaths,
 	ensureTrailingNewline,
 	err,
 	fatal,
@@ -77,6 +76,7 @@ import {
 	UnpackError,
 } from "./unpack-trees.ts";
 import { walkWorkTree } from "./worktree.ts";
+import { comparePaths } from "./path.ts";
 
 /**
  * Return the display label for the current HEAD — either the branch name

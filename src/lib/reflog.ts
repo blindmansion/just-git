@@ -1,9 +1,8 @@
 import type { FileSystem } from "../fs.ts";
 import { ZERO_HASH } from "./hex.ts";
 import { getReflogIdentity } from "./identity.ts";
-import { join } from "./path.ts";
+import { join, ensureParentDir } from "./path.ts";
 import { isPerWorktreeRef } from "./ref-classify.ts";
-import { ensureParentDir } from "./repo.ts";
 import type { GitContext, ObjectId } from "./types.ts";
 
 // ── Types ───────────────────────────────────────────────────────────

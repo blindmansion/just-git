@@ -1,10 +1,9 @@
 import type { FileSystem } from "../fs.ts";
 import { readObject } from "./object-db.ts";
 import { parseTag } from "./objects/tag.ts";
-import { join } from "./path.ts";
+import { join, ensureParentDir } from "./path.ts";
 import { isPerWorktreeRef } from "./ref-classify.ts";
 import { applyReflogEffects, reflogDelete, type ReflogEffect } from "./reflog.ts";
-import { ensureParentDir } from "./repo.ts";
 import {
 	normalizeRef,
 	type DirectRef,

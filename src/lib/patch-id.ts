@@ -15,13 +15,13 @@
  *   - Hash with SHA-1
  */
 
-import { comparePaths } from "./command-utils.ts";
 import { formatUnifiedDiff } from "./diff-algorithm.ts";
 import { readObject } from "./object-db.ts";
 import { parseCommit } from "./objects/commit.ts";
 import { createHasher } from "./sha1.ts";
 import { diffTrees } from "./tree-ops.ts";
 import type { GitRepo, ObjectId } from "./types.ts";
+import { comparePaths } from "./path.ts";
 
 /**
  * Compute the patch-id for a commit.

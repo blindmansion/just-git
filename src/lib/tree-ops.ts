@@ -1,8 +1,8 @@
-import { comparePaths } from "./command-utils.ts";
 import { readObject, writeObject } from "./object-db.ts";
 import { parseTree, serializeTree } from "./objects/tree.ts";
 import type { GitRepo, IndexEntry, ObjectId, TreeDiffEntry, TreeEntry } from "./types.ts";
 import { FileMode as FM } from "./types.ts";
+import { comparePaths } from "./path.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
 

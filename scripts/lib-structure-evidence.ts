@@ -36,9 +36,11 @@ const byIn = [...deg.entries()].sort((a, b) => b[1].in - a[1].in).slice(0, 8);
 const byOut = [...deg.entries()].sort((a, b) => b[1].out - a[1].out).slice(0, 8);
 line("\n## hubs (runtime graph)\n");
 line("top fan-in (most depended-on):");
-for (const [f, d] of byIn) line(`  ${rel(f).padEnd(24)} in:${d.in} out:${d.out} depth:${depth.get(f)}`);
+for (const [f, d] of byIn)
+	line(`  ${rel(f).padEnd(24)} in:${d.in} out:${d.out} depth:${depth.get(f)}`);
 line("\ntop fan-out (most dependencies):");
-for (const [f, d] of byOut) line(`  ${rel(f).padEnd(24)} out:${d.out} in:${d.in} depth:${depth.get(f)}`);
+for (const [f, d] of byOut)
+	line(`  ${rel(f).padEnd(24)} out:${d.out} in:${d.in} depth:${depth.get(f)}`);
 
 // ── 3. Runtime cycles ───────────────────────────────────────────────────────
 line("\n## runtime import cycles\n");
@@ -67,7 +69,14 @@ const candidates: Record<string, string[]> = {
 		"path-safety",
 	],
 	"refs/": ["refs", "reflog", "rev-parse", "shallow", "range-syntax"],
-	"diff/": ["diff-algorithm", "diff-driver", "diff3", "combined-diff", "patch-id", "rename-detection"],
+	"diff/": [
+		"diff-algorithm",
+		"diff-driver",
+		"diff3",
+		"combined-diff",
+		"patch-id",
+		"rename-detection",
+	],
 };
 line("\n## candidate directories (cohesion vs coupling)\n");
 line("name".padEnd(14) + "sz  intra  fanOut  fanIn  surface  importers");
@@ -75,12 +84,12 @@ for (const [name, members] of Object.entries(candidates)) {
 	const m = groupMetrics(graph, members);
 	line(
 		name.padEnd(14) +
-		`${m.size}`.padStart(2) +
-		`${m.internalEdges}`.padStart(7) +
-		`${m.fanOut}`.padStart(8) +
-		`${m.fanIn}`.padStart(7) +
-		`  ${m.publicSurface}/${m.size}`.padStart(9) +
-		`${m.externalImporters}`.padStart(11) +
-		(m.missing.length ? `  MISSING: ${m.missing.join(", ")}` : ""),
+			`${m.size}`.padStart(2) +
+			`${m.internalEdges}`.padStart(7) +
+			`${m.fanOut}`.padStart(8) +
+			`${m.fanIn}`.padStart(7) +
+			`  ${m.publicSurface}/${m.size}`.padStart(9) +
+			`${m.externalImporters}`.padStart(11) +
+			(m.missing.length ? `  MISSING: ${m.missing.join(", ")}` : ""),
 	);
 }

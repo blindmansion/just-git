@@ -1,4 +1,4 @@
-import { comparePaths, firstLine, uniqueAbbrev } from "./command-utils.ts";
+import { firstLine, uniqueAbbrev } from "./command-utils.ts";
 import { getAuthor, getCommitter } from "./identity.ts";
 import {
 	defaultStat,
@@ -10,7 +10,7 @@ import {
 import { mergeOrtNonRecursive } from "./merge-ort.ts";
 import { hashObject, readCommit, writeObject } from "./object-db.ts";
 import { serializeCommit } from "./objects/commit.ts";
-import { dirname, join } from "./path.ts";
+import { dirname, join, comparePaths } from "./path.ts";
 import {
 	appendReflog,
 	applyReflogEffects,
