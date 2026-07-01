@@ -115,6 +115,51 @@ function upToDateMessage(branchName: string): string {
 }
 
 /**
+ * Whether the parent chain from `head` down to `onto` is linear (contains no
+ * merge commits). Mirrors git's `is_linear_history()` in builtin/rebase.c:
+ * walk single parents from `head`, bailing at the first merge, until `onto`
+ * (or a root) is reached.
+ */
+async function isLinearHistory(
+	gitCtx: GitContext,
+	onto: ObjectId,
+	head: ObjectId,
+): Promise<boolean> {
+	let cur: ObjectId | undefined = head;
+	while (cur && cur !== onto) {
+		const commit = await readCommit(gitCtx, cur);
+		if (commit.parents.length === 0) return true;
+		if (commit.parents.length > 1) return false;
+		cur = commit.parents[0];
+	}
+	return true;
+}
+
+/**
+ * Whether the rebase can be reported as a preemptive "up to date" / fast-forward
+ * without replaying any commits. Mirrors git's `can_fast_forward()`
+ * (builtin/rebase.c): the single merge-base of (onto, head) must be `onto`, the
+ * single merge-base of (upstream, head) must also be `onto`, and the history
+ * from `onto` to `head` must be linear. When true, git leaves the branch where
+ * it is and prints "Current branch <name> is up to date." (it never replays,
+ * even if some commits in the range look already-applied).
+ */
+async function canRebaseFastForward(
+	gitCtx: GitContext,
+	ontoHash: ObjectId,
+	upstreamHash: ObjectId,
+	origHead: ObjectId,
+): Promise<boolean> {
+	const ontoBases = await findAllMergeBases(gitCtx, ontoHash, origHead);
+	if (ontoBases.length !== 1 || ontoBases[0] !== ontoHash) return false;
+
+	const upstreamBases = await findAllMergeBases(gitCtx, upstreamHash, origHead);
+	if (upstreamBases.length !== 1 || upstreamBases[0] !== ontoHash) return false;
+
+	return isLinearHistory(gitCtx, ontoHash, origHead);
+}
+
+/**
  * Check whether resetting the worktree to targetTree would overwrite
  * untracked files. Returns an error result if so, null if safe.
  *
@@ -417,6 +462,22 @@ export async function performRebase(
 		return { stdout: "", stderr: preRebaseRej.message ?? "", exitCode: 1 };
 	}
 
+	// ── Preemptive up-to-date check ──────────────────────────
+	// git decides "Current branch is up to date" up front via can_fast_forward()
+	// — before any cherry-pick/already-applied filtering. If the branch is
+	// already a linear extension of `onto` and `onto` is the merge-base with
+	// `upstream`, git leaves the branch untouched and reports up-to-date. Any
+	// other outcome runs the rebase machinery and reports "Successfully rebased"
+	// (even when the replay turns out to be a no-op), so this is the *only* path
+	// that yields the up-to-date message.
+	if (await canRebaseFastForward(gitCtx, ontoHash, upstreamHash, origHead)) {
+		return {
+			stdout: upToDateMessage(branchName),
+			stderr: "",
+			exitCode: 0,
+		};
+	}
+
 	// ── Compute commit range (+ cherry-pick dedup) ──────────
 	const selection = await selectRebaseCommits(gitCtx, upstreamHash, origHead, {
 		reapplyCherryPicks: options?.reapplyCherryPicks,
@@ -443,9 +504,22 @@ export async function performRebase(
 				exitCode: 0,
 			};
 		}
+		// onto === HEAD with an empty range: not fast-forwardable (the preemptive
+		// check already handled that), so git runs a no-op replay and reports
+		// success, leaving the branch where it is.
+		await writeRebaseFfReflog(
+			gitCtx,
+			env,
+			origHead,
+			origHead,
+			headName,
+			checkoutLabel,
+			reflogAction,
+			ontoHash,
+		);
 		return {
-			stdout: upToDateMessage(branchName),
-			stderr: "",
+			stdout: "",
+			stderr: `Successfully rebased and updated ${headName}.\n`,
 			exitCode: 0,
 		};
 	}
@@ -465,25 +539,13 @@ export async function performRebase(
 	}
 
 	if (filteredCommits.length === 0) {
-		// Every commit in the range was already applied on the target. If `onto`
-		// is already contained in HEAD, HEAD *is* the rebased result: git keeps
-		// it where it is — fast-forwarding to `onto` here would move HEAD
-		// backwards and drop commits.
+		// Every commit in the range was already applied on the target. The
+		// preemptive up-to-date check already returned for the fast-forwardable
+		// case, so here git still runs the (no-op) replay and reports success
+		// with any skip warnings. If `onto` is already contained in HEAD, HEAD
+		// *is* the rebased result: git keeps it where it is — fast-forwarding to
+		// `onto` here would move HEAD backwards and drop commits.
 		if (await isAncestor(gitCtx, ontoHash, origHead)) {
-			// git only short-circuits to "Current branch is up to date" (skipping the
-			// replay entirely, so no cherry-pick warnings) when it can fast-forward:
-			// the branch's single merge-base with upstream is `onto`. Otherwise it
-			// runs the replay — a no-op here since everything was already applied —
-			// and reports success with the skip warnings, leaving HEAD untouched.
-			const upstreamBases = await findAllMergeBases(gitCtx, upstreamHash, origHead);
-			const canFastForward = upstreamBases.length === 1 && upstreamBases[0] === ontoHash;
-			if (canFastForward) {
-				return {
-					stdout: upToDateMessage(branchName),
-					stderr: "",
-					exitCode: 0,
-				};
-			}
 			// HEAD stays put, but git still ran the rebase: it logs the HEAD
 			// start/finish pair (the branch reflog is left alone since the tip
 			// didn't move — handled inside writeRebaseFfReflog).
@@ -550,13 +612,9 @@ export async function performRebase(
 	const done: RebaseTodoEntry[] = todo.splice(0, skippedCount);
 
 	if (todo.length === 0) {
-		if (checkoutTarget === origHead && !skipStderr) {
-			return {
-				stdout: upToDateMessage(branchName),
-				stderr: "",
-				exitCode: 0,
-			};
-		}
+		// The preemptive up-to-date check already handled the fast-forwardable
+		// case; a no-op landing here (checkoutTarget === origHead) still reports
+		// "Successfully rebased", matching git.
 		if (checkoutTarget !== origHead) {
 			const ffErr = await fastForwardTo(gitCtx, checkoutTarget, currentIndex, headName);
 			if (ffErr) {
