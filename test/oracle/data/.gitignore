@@ -1,2 +1,3 @@
 # Each DB lives in its own subdirectory (e.g. default/traces.sqlite)
-*/
+*
+!.gitignore
