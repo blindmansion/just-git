@@ -84,9 +84,6 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 			if (!branch) {
 				return fatal("you must specify a branch to merge");
 			}
-			if (args.squash && args.noFf) {
-				return fatal("options '--squash' and '--no-ff.' cannot be used together");
-			}
 
 			// Resolve current HEAD first
 			const headHash = await requireHead(gitCtx);
@@ -115,6 +112,22 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 
 			// Note: real git does NOT block merge during an active rebase.
 
+			// Resolve effective FF mode: CLI flags override merge.ff config.
+			// Git resolves merge.ff into an implicit --no-ff and validates the
+			// --squash/--no-ff incompatibility here — before resolving the branch
+			// argument — so an invalid branch name still reports the option
+			// conflict (exit 128) rather than "not something we can merge".
+			let noFf = !!args.noFf;
+			let ffOnly = !!args.ffOnly;
+			if (!args.noFf && !args.ffOnly) {
+				const mergeFFConfig = await getConfigValue(gitCtx, "merge.ff");
+				if (mergeFFConfig === "false") noFf = true;
+				else if (mergeFFConfig === "only") ffOnly = true;
+			}
+			if (args.squash && noFf) {
+				return fatal("options '--squash' and '--no-ff.' cannot be used together");
+			}
+
 			// Resolve the branch to merge (peel tags to commit)
 			const resolvedHash = await resolveRevision(gitCtx, branch);
 			if (!resolvedHash) {
@@ -131,18 +144,6 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 				"merge.verifysignatures",
 			);
 			if (verifyErr) return verifyErr;
-
-			// Resolve effective FF mode: CLI flags override merge.ff config
-			let noFf = !!args.noFf;
-			let ffOnly = !!args.ffOnly;
-			if (!args.noFf && !args.ffOnly) {
-				const mergeFFConfig = await getConfigValue(gitCtx, "merge.ff");
-				if (mergeFFConfig === "false") noFf = true;
-				else if (mergeFFConfig === "only") ffOnly = true;
-			}
-			if (args.squash && noFf) {
-				return fatal("options '--squash' and '--no-ff.' cannot be used together");
-			}
 
 			// Find merge bases for already-up-to-date / fast-forward checks
 			const bases = await findAllMergeBases(gitCtx, headHash, theirsHash);
