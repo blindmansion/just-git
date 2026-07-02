@@ -11,6 +11,7 @@ import {
 } from "../lib/bisect.ts";
 import { detachHeadCore, switchBranchCore } from "../lib/worktree/checkout-utils.ts";
 import { readCommit } from "../lib/object-db.ts";
+import { walkCommits } from "../lib/commit-walk.ts";
 import { readStateFile, writeStateFile } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";
 import { readHead, resolveHead, resolveRef, updateRef } from "../lib/refs/refs.ts";
@@ -620,7 +621,6 @@ function registerVisualize(parent: Command, ext?: GitExtensions) {
 					};
 				}
 
-				const { walkCommits } = await import("../lib/commit-walk.ts");
 				let stdout = "";
 				for await (const entry of walkCommits(gitCtx, state.badHash, {
 					exclude: state.goodHashes,
