@@ -77,8 +77,6 @@ export function makeState(input: PathStateInput = {}): PathState {
 interface UnpackOptsInput {
 	reset?: boolean;
 	updateWorktree?: boolean;
-	operationName?: string;
-	errorExitCode?: number;
 }
 
 /**
@@ -89,8 +87,6 @@ export function onewayOpts(input: UnpackOptsInput = {}): UnpackOptions {
 		mergeFn: onewayMerge,
 		updateWorktree: input.updateWorktree ?? true,
 		reset: input.reset ?? false,
-		errorExitCode: input.errorExitCode ?? 128,
-		operationName: input.operationName ?? "reset",
 	};
 }
 
@@ -102,7 +98,5 @@ export function twowayOpts(input: UnpackOptsInput = {}): UnpackOptions {
 		mergeFn: twowayMerge,
 		updateWorktree: input.updateWorktree ?? true,
 		reset: input.reset ?? false,
-		errorExitCode: input.errorExitCode ?? 1,
-		operationName: input.operationName ?? "checkout",
 	};
 }

@@ -2205,8 +2205,6 @@ export async function applyMergeResult(
 				mergeFn: onewayMerge,
 				updateWorktree: false,
 				reset: false,
-				errorExitCode: options.errorExitCode ?? 2,
-				operationName: options.operationName ?? "merge",
 			},
 		);
 		if (!preflightResult.success) {
@@ -2259,8 +2257,6 @@ export async function applyMergeResult(
 				mergeFn: twowayMerge,
 				updateWorktree: true,
 				reset: false,
-				errorExitCode: options.errorExitCode ?? 2,
-				operationName: options.operationName ?? "merge",
 				allowStagedChanges: !!options.preflightOnewayCheck,
 			},
 		);

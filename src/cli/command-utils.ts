@@ -14,6 +14,7 @@ import { advanceBranchRef, readHead, resolveHead, resolveRef } from "../lib/refs
 import { type Signer, resolveConfiguredSigner, SigningError } from "../lib/signing.ts";
 import type { ConfigView, GitContext, GitRepo } from "../lib/types.ts";
 import { applyWorktreeOps, mergeAbort } from "../lib/worktree/unpack-trees.ts";
+import { renderMergeAbortError } from "../format/unpack-trees.ts";
 
 /**
  * Render the sequencer "dirty worktree" refusal for `rebase` / `pull --rebase`
@@ -70,14 +71,14 @@ export async function handleOperationAbort(
 	const targetCommit = await readCommit(gitCtx, targetHead);
 	const currentIndex = await readIndex(gitCtx);
 
-	const abortResult = await mergeAbort(
-		gitCtx,
-		targetCommit.tree,
-		currentIndex,
-		opts.origHeadAsTargetRev ? targetHead : undefined,
-	);
+	const abortResult = await mergeAbort(gitCtx, targetCommit.tree, currentIndex);
 	if (!abortResult.success) {
-		return abortResult.errorOutput as CommandResult;
+		const revName = opts.origHeadAsTargetRev ? targetHead : "HEAD";
+		return {
+			stdout: "",
+			stderr: renderMergeAbortError(abortResult.errors, revName),
+			exitCode: 128,
+		};
 	}
 
 	await advanceBranchRef(gitCtx, targetHead);

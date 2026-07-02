@@ -4,6 +4,7 @@ import { getSequencerDirtyState } from "../lib/command-utils.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import { gatherCommitStats } from "../lib/commit-summary.ts";
 import { renderDiffStat, renderFastForward } from "../format/commit-summary.ts";
+import { renderUnpackErrors } from "../format/unpack-trees.ts";
 import {
 	autoFollowReachableTags,
 	collectFetchHaves,
@@ -380,9 +381,10 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					const ffResult = await handleFastForward(gitCtx, headHash, theirsHash);
 					if (!ffResult.ok) {
 						return {
-							stdout: `Updating ${ffResult.oldShort}..${ffResult.newShort}\n${ffResult.stdout}`,
-							stderr: fetchOutput + ffResult.stderr,
-							exitCode: ffResult.exitCode,
+							stdout: `Updating ${ffResult.oldShort}..${ffResult.newShort}\n`,
+							stderr:
+								fetchOutput + renderUnpackErrors(ffResult.rejected, { operationName: "merge" }),
+							exitCode: 1,
 						};
 					}
 					const refName = head?.type === "symbolic" ? head.target : "HEAD";
@@ -543,9 +545,9 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				const ffResult = await handleFastForward(gitCtx, headHash, theirsHash);
 				if (!ffResult.ok) {
 					return {
-						stdout: `Updating ${ffResult.oldShort}..${ffResult.newShort}\n${ffResult.stdout}`,
-						stderr: fetchOutput + ffResult.stderr,
-						exitCode: ffResult.exitCode,
+						stdout: `Updating ${ffResult.oldShort}..${ffResult.newShort}\n`,
+						stderr: fetchOutput + renderUnpackErrors(ffResult.rejected, { operationName: "merge" }),
+						exitCode: 1,
 					};
 				}
 				const refName = head?.type === "symbolic" ? head.target : "HEAD";

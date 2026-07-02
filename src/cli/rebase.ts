@@ -10,7 +10,8 @@ import type {
 	RebaseStep,
 } from "../lib/rebase-engine.ts";
 import type { RebaseTodoEntry } from "../lib/rebase.ts";
-import { formatErrors, type RejectedPath } from "../lib/worktree/unpack-trees.ts";
+import { renderUnpackErrors } from "../format/unpack-trees.ts";
+import type { RejectedPath } from "../lib/worktree/unpack-trees.ts";
 
 /**
  * Map a {@link RebaseOutcome} produced by the rebase engine to the CLI
@@ -88,14 +89,13 @@ export function renderRebaseOutcome(outcome: RebaseOutcome): CommandResult {
 			return { stdout: "", stderr: "", exitCode: 0 };
 
 		case "abortBlocked": {
-			const errorOutput = formatErrors(outcome.rejected, {
-				errorExitCode: 128,
+			const errorText = renderUnpackErrors(outcome.rejected, {
 				operationName: "reset",
 				actionHint: "reset",
 			});
 			return {
 				stdout: "",
-				stderr: `${errorOutput.stderr}fatal: could not move back to ${outcome.origHead}\n`,
+				stderr: `${errorText}fatal: could not move back to ${outcome.origHead}\n`,
 				exitCode: 128,
 			};
 		}
@@ -178,12 +178,11 @@ function renderSteps(steps: RebaseStep[]): string {
 }
 
 function renderCheckoutBlocked(rejected: RejectedPath[]): string {
-	const errorOutput = formatErrors(rejected, {
-		errorExitCode: 1,
+	const errorText = renderUnpackErrors(rejected, {
 		operationName: "checkout",
 		actionHint: "switch branches",
 	});
-	return `${errorOutput.stderr}error: could not detach HEAD\n`;
+	return `${errorText}error: could not detach HEAD\n`;
 }
 
 function renderConflictStdout(conflict: RebaseConflict): string {

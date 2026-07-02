@@ -7,7 +7,6 @@
 import type { GitExtensions } from "../git.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
 import type { CommandResult } from "./command-errors.ts";
-import { err } from "./command-errors.ts";
 import { readConfig } from "../lib/config/store.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 import { readIndex, writeIndex } from "../lib/index.ts";
@@ -24,12 +23,34 @@ import {
 	computeCheckoutStatus,
 	gatherDetachPreamble,
 } from "../lib/worktree/checkout-utils.ts";
-import { applyWorktreeOps, checkoutTrees } from "../lib/worktree/unpack-trees.ts";
+import {
+	applyWorktreeOps,
+	checkoutTrees,
+	type RejectedPath,
+} from "../lib/worktree/unpack-trees.ts";
 import {
 	renderCancelWarnings,
 	renderCheckoutSummary,
 	renderDetachPreamble,
 } from "../format/checkout.ts";
+import { renderUnpackErrors } from "../format/unpack-trees.ts";
+
+/**
+ * Map a blocked `checkoutTrees` result (worktree-safety rejections) to the
+ * `CommandResult` git prints. Shared by `checkout`, `switch`, and the
+ * detach/switch core so the "checkout"/"switch branches" wording stays in one
+ * place.
+ */
+export function renderCheckoutUnpackFailure(rejected: RejectedPath[]): CommandResult {
+	return {
+		stdout: "",
+		stderr: renderUnpackErrors(rejected, {
+			operationName: "checkout",
+			actionHint: "switch branches",
+		}),
+		exitCode: 1,
+	};
+}
 
 /**
  * Build the "<path>: needs merge" file list that real git prints to
@@ -105,7 +126,7 @@ export async function switchBranchCore(
 	if (currentTree !== targetTree) {
 		const result = await checkoutTrees(gitCtx, currentTree, targetTree, currentIndex);
 		if (!result.success) {
-			return result.errorOutput ?? err("error: checkout would overwrite local changes");
+			return renderCheckoutUnpackFailure(result.errors);
 		}
 		currentIndex = { version: 2, entries: result.newEntries };
 		await writeIndex(gitCtx, currentIndex);
@@ -193,7 +214,7 @@ export async function detachHeadCore(
 	if (currentTree !== targetTree) {
 		const result = await checkoutTrees(gitCtx, currentTree, targetTree, currentIndex);
 		if (!result.success) {
-			return result.errorOutput ?? err("error: checkout would overwrite local changes");
+			return renderCheckoutUnpackFailure(result.errors);
 		}
 		currentIndex = { version: 2, entries: result.newEntries };
 		await writeIndex(gitCtx, currentIndex);

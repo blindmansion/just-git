@@ -8,7 +8,12 @@ import {
 	restoreConflicted,
 	restoreFiles,
 } from "../lib/worktree/checkout-utils.ts";
-import { detachHeadCore, switchBranchCore, requireResolvedIndex } from "../cli/checkout-core.ts";
+import {
+	detachHeadCore,
+	renderCheckoutUnpackFailure,
+	requireResolvedIndex,
+	switchBranchCore,
+} from "../cli/checkout-core.ts";
 import { renderRestoreOutcome } from "../cli/restore.ts";
 import { renderCancelWarnings, renderCheckoutSummary } from "../format/checkout.ts";
 import { getCwdPrefix } from "../lib/command-utils.ts";
@@ -332,7 +337,7 @@ async function createAndSwitch(
 				currentIndex,
 			);
 			if (!result.success) {
-				return result.errorOutput ?? err("error: checkout would overwrite local changes");
+				return renderCheckoutUnpackFailure(result.errors);
 			}
 			currentIndex = { version: 2, entries: result.newEntries };
 			await writeIndex(gitCtx, currentIndex);

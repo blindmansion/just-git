@@ -3,7 +3,7 @@ import { readIndex, writeIndex } from "./index.ts";
 import { readCommit } from "./object-db.ts";
 import { advanceBranchRef } from "./refs/refs.ts";
 import type { ConfigView, GitContext, GitRepo, IndexEntry, ObjectId } from "./types.ts";
-import { applyWorktreeOps, fastForwardMerge } from "./worktree/unpack-trees.ts";
+import { applyWorktreeOps, fastForwardMerge, type RejectedPath } from "./worktree/unpack-trees.ts";
 import { uniqueAbbrev } from "./abbrev.ts";
 import { readConfigView } from "./config/view.ts";
 
@@ -303,18 +303,13 @@ export async function buildMergeMessage(
 /**
  * Data outcome of a fast-forward merge. The abbreviated hashes and gathered
  * diffstat are returned so the *command* layer renders the `Updating`/
- * `Fast-forward` output (byte-fidelity presentation is not `lib`'s job).
+ * `Fast-forward` output (byte-fidelity presentation is not `lib`'s job). On a
+ * worktree-overwrite failure the structured `rejected` paths are surfaced for
+ * the command tier to render via `format/unpack-trees#renderUnpackErrors`.
  */
 export type FastForwardResult =
 	| { ok: true; oldShort: string; newShort: string; stats: DiffStats }
-	| {
-			ok: false;
-			oldShort: string;
-			newShort: string;
-			stdout: string;
-			stderr: string;
-			exitCode: number;
-	  };
+	| { ok: false; oldShort: string; newShort: string; rejected: RejectedPath[] };
 
 export async function handleFastForward(
 	gitCtx: GitContext,
@@ -331,12 +326,7 @@ export async function handleFastForward(
 		const currentIndex = await readIndex(gitCtx);
 		const result = await fastForwardMerge(gitCtx, headCommit.tree, theirsCommit.tree, currentIndex);
 		if (!result.success) {
-			const err = result.errorOutput as {
-				stdout: string;
-				stderr: string;
-				exitCode: number;
-			};
-			return { ok: false, oldShort, newShort, ...err };
+			return { ok: false, oldShort, newShort, rejected: result.errors };
 		}
 		await writeIndex(gitCtx, { version: 2, entries: result.newEntries });
 		await applyWorktreeOps(gitCtx, result.worktreeOps);
@@ -358,16 +348,14 @@ export async function handleFastForward(
  *
  * This mirrors {@link handleFastForward} minus the ref advance, returning the
  * gathered diffstat for the caller to render and wrap with the squash status
- * lines. On a worktree-overwrite failure the merge error output is returned
- * verbatim.
+ * lines. On a worktree-overwrite failure the structured `rejected` paths are
+ * surfaced for the command tier to render.
  */
 export async function squashFastForward(
 	gitCtx: GitContext,
 	headHash: ObjectId,
 	theirsHash: ObjectId,
-): Promise<
-	{ ok: true; stats: DiffStats } | { ok: false; stdout: string; stderr: string; exitCode: number }
-> {
+): Promise<{ ok: true; stats: DiffStats } | { ok: false; rejected: RejectedPath[] }> {
 	const headCommit = await readCommit(gitCtx, headHash);
 	const theirsCommit = await readCommit(gitCtx, theirsHash);
 
@@ -375,8 +363,7 @@ export async function squashFastForward(
 		const currentIndex = await readIndex(gitCtx);
 		const result = await fastForwardMerge(gitCtx, headCommit.tree, theirsCommit.tree, currentIndex);
 		if (!result.success) {
-			const err = result.errorOutput as { stdout: string; stderr: string; exitCode: number };
-			return { ok: false, ...err };
+			return { ok: false, rejected: result.errors };
 		}
 		await writeIndex(gitCtx, { version: 2, entries: result.newEntries });
 		await applyWorktreeOps(gitCtx, result.worktreeOps);

@@ -7,6 +7,7 @@ import {
 	renderDiffStat,
 	renderFastForward,
 } from "../format/commit-summary.ts";
+import { renderUnpackErrors } from "../format/unpack-trees.ts";
 import { formatDate } from "../lib/date.ts";
 import { getConflictedPaths, getStage0Entries, readIndex } from "../lib/index.ts";
 import {
@@ -199,9 +200,9 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 				const ff = await handleFastForward(gitCtx, headHash, theirsHash);
 				if (!ff.ok) {
 					return {
-						stdout: `Updating ${ff.oldShort}..${ff.newShort}\n${ff.stdout}`,
-						stderr: ff.stderr,
-						exitCode: ff.exitCode,
+						stdout: `Updating ${ff.oldShort}..${ff.newShort}\n`,
+						stderr: renderUnpackErrors(ff.rejected, { operationName: "merge" }),
+						exitCode: 1,
 					};
 				}
 				await deleteStateFile(gitCtx, "MERGE_MSG");
@@ -472,7 +473,11 @@ async function handleSquashMerge(
 		const ff = await squashFastForward(gitCtx, headHash, theirsHash);
 		if (!ff.ok) {
 			await deleteStateFile(gitCtx, "MERGE_MSG");
-			return { stdout: ffPrefix + ff.stdout, stderr: ff.stderr, exitCode: ff.exitCode };
+			return {
+				stdout: ffPrefix,
+				stderr: renderUnpackErrors(ff.rejected, { operationName: "merge" }),
+				exitCode: 1,
+			};
 		}
 		const ffLog = await buildSquashMessageLog(gitCtx, headHash, theirsHash);
 		await writeStateFile(gitCtx, "SQUASH_MSG", `Squashed commit of the following:\n\n${ffLog}`);

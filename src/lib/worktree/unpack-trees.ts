@@ -185,15 +185,6 @@ export interface UnpackOptions {
 	/** Whether to skip precondition checks (reset --hard, checkout -f). */
 	reset: boolean;
 
-	/** Exit code to use on precondition failure. */
-	errorExitCode: number;
-
-	/** Operation name for error messages ("checkout", "merge", etc.). */
-	operationName: string;
-
-	/** Override for "before you <action>" text (e.g. "switch branches"). Defaults to operationName. */
-	actionHint?: string;
-
 	/** Stop at the first precondition error (one-way merge behavior). Real git's tree walk exits early. */
 	stopAtFirstError?: boolean;
 
@@ -210,15 +201,6 @@ export interface UnpackOptions {
 	 * Safety is ensured by a separate oneway preflight check.
 	 */
 	allowStagedChanges?: boolean;
-}
-
-/** Configuration for precondition checks (two-way and three-way). */
-interface PreconditionCheckOptions {
-	errorExitCode: number;
-	operationName: string;
-
-	/** Override for "before you <action>" text. Defaults to operationName. */
-	actionHint?: string;
 }
 
 /** Signature for merge decision functions (one-way and two-way). */
@@ -241,9 +223,6 @@ interface UnpackResult {
 
 	/** Collected errors (only valid if success=false). */
 	errors: RejectedPath[];
-
-	/** Human-readable error output (only valid if success=false). */
-	errorOutput: { stdout: string; stderr: string; exitCode: number } | null;
 }
 
 /** A worktree operation to perform after the index is updated. */
@@ -877,70 +856,7 @@ function buildResult(
 }
 
 // =====================================================================
-// SECTION 12: Error Formatting
-// =====================================================================
-
-/**
- * Format collected errors into user-facing error output.
- *
- * Matches git's display_error_msgs() pattern:
- *   - Each UnpackError type gets its own block (git keeps separate rejection lists)
- *   - WOULD_OVERWRITE (staged changes) and NOT_UPTODATE_FILE (dirty worktree)
- *     both produce "Your local changes..." but as separate blocks
- *   - Paths sorted within each group
- *   - "Aborting" appended once at the end
- */
-const ERROR_TEMPLATES: Array<{
-	error: UnpackError;
-	msg: (op: string) => string;
-	fix: (action: string) => string;
-}> = [
-	{
-		error: UnpackError.WOULD_OVERWRITE,
-		msg: (op) => `error: Your local changes to the following files would be overwritten by ${op}:`,
-		fix: (a) => `Please commit your changes or stash them before you ${a}.`,
-	},
-	{
-		error: UnpackError.NOT_UPTODATE_FILE,
-		msg: (op) => `error: Your local changes to the following files would be overwritten by ${op}:`,
-		fix: (a) => `Please commit your changes or stash them before you ${a}.`,
-	},
-	{
-		error: UnpackError.WOULD_LOSE_UNTRACKED_OVERWRITTEN,
-		msg: (op) => `error: The following untracked working tree files would be overwritten by ${op}:`,
-		fix: (a) => `Please move or remove them before you ${a}.`,
-	},
-	{
-		error: UnpackError.WOULD_LOSE_UNTRACKED_REMOVED,
-		msg: (op) => `error: The following untracked working tree files would be removed by ${op}:`,
-		fix: (a) => `Please move or remove them before you ${a}.`,
-	},
-];
-
-export function formatErrors(
-	rejected: RejectedPath[],
-	opts: UnpackOptions | PreconditionCheckOptions,
-): { stdout: string; stderr: string; exitCode: number } {
-	const action = opts.actionHint ?? opts.operationName;
-	const blocks: string[] = [];
-
-	for (const { error, msg, fix } of ERROR_TEMPLATES) {
-		const paths = rejected
-			.filter((r) => r.error === error)
-			.map((r) => r.path)
-			.sort();
-		if (paths.length > 0) {
-			const fileList = paths.map((f) => `\t${f}`).join("\n");
-			blocks.push(`${msg(opts.operationName)}\n${fileList}\n${fix(action)}\n`);
-		}
-	}
-
-	const stderr = blocks.length > 0 ? `${blocks.join("")}Aborting\n` : "";
-	return { stdout: "", stderr, exitCode: opts.errorExitCode };
-}
-
-// =====================================================================
-// SECTION 13: Main Entry Point — unpackTrees()
+// SECTION 12: Main Entry Point — unpackTrees()
 // =====================================================================
 
 /**
@@ -950,7 +866,8 @@ export function formatErrors(
  *   1. Build PathState for every path in the union of all trees + index + worktree
  *   2. Call opts.mergeFn(state) for each path → MergeDecision
  *   3. Check preconditions for each decision → collect RejectedPaths
- *   4. If any errors: format and return failure
+ *   4. If any errors: return the structured rejections (the command tier renders
+ *      them via `format/unpack-trees#renderUnpackErrors`)
  *   5. If all clear: build new index entries + WorktreeOps, return success
  */
 export async function unpackTrees(
@@ -973,14 +890,13 @@ export async function unpackTrees(
 	// Step 3: Check preconditions
 	const rejected = await checkDecisionPreconditions(decisions, pathStateMap, opts);
 
-	// Step 4: If errors, format and return
+	// Step 4: If errors, return the structured rejections
 	if (rejected.length > 0) {
 		return {
 			success: false,
 			newEntries: [],
 			worktreeOps: [],
 			errors: rejected,
-			errorOutput: formatErrors(rejected, opts),
 		};
 	}
 
@@ -992,12 +908,11 @@ export async function unpackTrees(
 		newEntries,
 		worktreeOps,
 		errors: [],
-		errorOutput: null,
 	};
 }
 
 // =====================================================================
-// SECTION 14: Worktree Op Executor
+// SECTION 13: Worktree Op Executor
 // =====================================================================
 
 /**
@@ -1046,7 +961,7 @@ export async function applyWorktreeOps(ctx: GitContext, ops: WorktreeOp[]): Prom
 }
 
 // =====================================================================
-// SECTION 15: Caller Convenience Functions
+// SECTION 14: Caller Convenience Functions
 // =====================================================================
 
 /**
@@ -1071,9 +986,6 @@ export async function checkoutTrees(
 			mergeFn: twowayMerge,
 			updateWorktree: true,
 			reset: false,
-			errorExitCode: 1,
-			operationName: "checkout",
-			actionHint: "switch branches",
 		},
 	);
 }
@@ -1100,8 +1012,6 @@ export async function fastForwardMerge(
 			mergeFn: twowayMerge,
 			updateWorktree: true,
 			reset: false,
-			errorExitCode: 1,
-			operationName: "merge",
 		},
 	);
 }
@@ -1121,8 +1031,6 @@ export async function resetHard(
 		mergeFn: onewayMerge,
 		updateWorktree: true,
 		reset: true,
-		errorExitCode: 128,
-		operationName: "reset",
 	});
 }
 
@@ -1134,12 +1042,15 @@ export async function resetHard(
  * as CE_REMOVE (keeping them in the index), so oneway_merge sees them
  * as "index present" and generates DELETE ops. We strip them entirely
  * and post-process to add DELETE ops for orphaned conflict paths.
+ *
+ * On failure the structured `errors` are returned as-is; the command tier
+ * renders them (with its own revision name) via
+ * `format/unpack-trees#renderMergeAbortError`.
  */
 export async function mergeAbort(
 	ctx: GitContext,
 	origHeadTree: ObjectId,
 	currentIndex: Index,
-	targetRevName?: string,
 ): Promise<UnpackResult> {
 	// Collect paths that have conflict-stage entries
 	const conflictPaths = new Set<string>();
@@ -1163,32 +1074,12 @@ export async function mergeAbort(
 			mergeFn: onewayMerge,
 			updateWorktree: true,
 			reset: false,
-			errorExitCode: 128,
-			operationName: "merge",
 			stopAtFirstError: true,
 			strippedConflictPaths: conflictPaths,
 		},
 	);
 
 	if (!result.success) {
-		const revName = targetRevName ?? "HEAD";
-		const lines: string[] = [];
-		for (const e of result.errors) {
-			if (e.error === UnpackError.NOT_UPTODATE_FILE) {
-				lines.push(`error: Entry '${e.path}' not uptodate. Cannot merge.\n`);
-			} else if (e.error === UnpackError.WOULD_LOSE_UNTRACKED_OVERWRITTEN) {
-				lines.push(
-					`error: Untracked working tree file '${e.path}' would be overwritten by merge.\n`,
-				);
-			}
-		}
-		if (lines.length > 0) {
-			result.errorOutput = {
-				stdout: "",
-				stderr: lines.join("") + `fatal: Could not reset index file to revision '${revName}'.\n`,
-				exitCode: 128,
-			};
-		}
 		return result;
 	}
 

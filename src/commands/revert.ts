@@ -24,6 +24,7 @@ import type { Signer } from "../lib/signing.ts";
 import { buildTreeFromIndex, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, Identity, ObjectId } from "../lib/types.ts";
 import { applyWorktreeOps, mergeAbort } from "../lib/worktree/unpack-trees.ts";
+import { renderMergeAbortError } from "../format/unpack-trees.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../cli/command-errors.ts";
 import { firstLine, stripCommentLines, ensureTrailingNewline } from "../lib/text-utils.ts";
@@ -362,16 +363,14 @@ async function handleSkip(
 
 	const headCommit = await readCommit(gitCtx, headHash);
 	const currentIndex = await readIndex(gitCtx);
-	const result = await mergeAbort(gitCtx, headCommit.tree, currentIndex, headHash);
+	const result = await mergeAbort(gitCtx, headCommit.tree, currentIndex);
 	if (!result.success) {
-		const out = result.errorOutput as {
-			stdout: string;
-			stderr: string;
-			exitCode: number;
-		};
 		return {
-			...out,
-			stderr: out.stderr + "error: failed to skip the commit\nfatal: revert failed\n",
+			stdout: "",
+			stderr:
+				renderMergeAbortError(result.errors, headHash) +
+				"error: failed to skip the commit\nfatal: revert failed\n",
+			exitCode: 128,
 		};
 	}
 

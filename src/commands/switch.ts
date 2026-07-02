@@ -9,7 +9,12 @@ import {
 	guessRemoteBranch,
 	setupTracking,
 } from "../lib/worktree/checkout-utils.ts";
-import { detachHeadCore, switchBranchCore, requireResolvedIndex } from "../cli/checkout-core.ts";
+import {
+	detachHeadCore,
+	renderCheckoutUnpackFailure,
+	requireResolvedIndex,
+	switchBranchCore,
+} from "../cli/checkout-core.ts";
 import {
 	renderCancelWarnings,
 	renderCheckoutSummary,
@@ -36,7 +41,7 @@ import type { GitContext, ObjectId, Ref } from "../lib/types.ts";
 import { applyWorktreeOps, checkoutTrees } from "../lib/worktree/unpack-trees.ts";
 import { branchCheckedOutAt } from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
-import { fatal, err, isCommandError } from "../cli/command-errors.ts";
+import { fatal, isCommandError } from "../cli/command-errors.ts";
 import { requireGitContext, requireCommit } from "../cli/commit-requirements.ts";
 import { isValidBranchName } from "../lib/refs/name.ts";
 import { readConfig, writeConfig } from "../lib/config/store.ts";
@@ -310,7 +315,7 @@ async function switchCreateBranch(
 				currentIndex,
 			);
 			if (!result.success) {
-				return result.errorOutput ?? err("error: checkout would overwrite local changes");
+				return renderCheckoutUnpackFailure(result.errors);
 			}
 			currentIndex = { version: 2, entries: result.newEntries };
 			await writeIndex(gitCtx, currentIndex);
@@ -507,7 +512,7 @@ async function switchOrphanBranch(
 		const emptyTree = await buildTreeFromIndex(gitCtx, []);
 		const result = await checkoutTrees(gitCtx, currentTree, emptyTree, currentIndex);
 		if (!result.success) {
-			return result.errorOutput ?? err("error: checkout would overwrite local changes");
+			return renderCheckoutUnpackFailure(result.errors);
 		}
 		await applyWorktreeOps(gitCtx, result.worktreeOps);
 		await writeIndex(gitCtx, { version: 2, entries: result.newEntries });
