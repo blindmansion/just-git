@@ -4,7 +4,7 @@ import { createAttributesProvider } from "../lib/attributes/attributes.ts";
 import { getCwdPrefix } from "../lib/command-utils.ts";
 import { join, relative } from "../lib/path.ts";
 import { a, type Command, f } from "./kit/parse/index.ts";
-import { isCommandError } from "./kit/command-errors.ts";
+import { isCommandError } from "./kit/command-result.ts";
 import { requireGitContext } from "./kit/commit-requirements.ts";
 
 /** Decode a possibly-byte-encoded stdin payload into text. */

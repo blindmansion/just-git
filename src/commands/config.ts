@@ -1,7 +1,7 @@
 import type { GitExtensions } from "../git.ts";
 import { join } from "../lib/path.ts";
 import { a, type Command, f } from "./kit/parse/index.ts";
-import { err, isCommandError } from "./kit/command-errors.ts";
+import { err, isCommandError } from "./kit/command-result.ts";
 import { requireGitContext } from "./kit/commit-requirements.ts";
 import {
 	getConfigValue,

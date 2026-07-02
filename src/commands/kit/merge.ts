@@ -5,7 +5,7 @@
 
 import type { ApplyMergeFailure } from "../../lib/merge-ort.ts";
 import { renderMergeOrtError, renderMergeOrtWorktreeMultiBlock } from "./format/merge-ort.ts";
-import type { CommandResult } from "./command-errors.ts";
+import type { CommandResult } from "./command-result.ts";
 
 /** Presentation context for wording an {@link ApplyMergeFailure}. */
 export interface ApplyMergeRenderContext {

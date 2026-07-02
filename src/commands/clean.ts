@@ -12,7 +12,7 @@ import { join } from "../lib/path.ts";
 import { matchPathspecs, parsePathspec } from "../lib/attributes/pathspec.ts";
 import type { GitContext } from "../lib/types.ts";
 import { a, type Command, f, o } from "./kit/parse/index.ts";
-import { fatal, isCommandError } from "./kit/command-errors.ts";
+import { fatal, isCommandError } from "./kit/command-result.ts";
 import { requireGitContext, requireWorkTree } from "./kit/commit-requirements.ts";
 import { getConfigValue } from "../lib/config/store.ts";
 

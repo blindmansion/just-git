@@ -38,7 +38,7 @@ import {
  *     edge is a violation ("presentation/orchestration is owned by the command
  *     tier"; see `local-docs/plans/lib-formatting-data-separation.md`).
  *   - `format`/`parse` sit below the orchestration, so a renderer or the parser
- *     reaching *up* into the orchestration (e.g. importing `command-errors` /
+ *     reaching *up* into the orchestration (e.g. importing `command-result` /
  *     `CommandResult`) is a violation — this keeps them pure.
  */
 const LAYERS = [
@@ -72,7 +72,7 @@ const LAYERS = [
  * `command-utils ↔ tree-ops ↔ unpack-trees ↔ worktree` cycles were dissolved by
  * moving the stray leaf helpers `ensureParentDir` and `comparePaths` into
  * `path.ts`, then extracting the error helpers (`err`/`fatal`/…) out of the
- * `command-utils` god-file into a dependency-free `command-errors.ts`.
+ * `command-utils` god-file into a dependency-free `command-result.ts`.
  */
 const KNOWN_RUNTIME_CYCLES: string[][] = [];
 
@@ -141,10 +141,10 @@ describe("lib is free of the CLI command contract", () => {
 		expect(refs.map((r) => r.id)).toEqual([]);
 	});
 
-	test("no lib file imports the command-errors module", async () => {
+	test("no lib file imports the command-result module", async () => {
 		const graph = await buildImportGraph({ include: "src", root: "src" });
 		const commandErrors = [...graph.nodes.values()].find(
-			(n) => n.relPath === "commands/kit/command-errors.ts",
+			(n) => n.relPath === "commands/kit/command-result.ts",
 		);
 		expect(commandErrors).toBeDefined();
 		const libImporters = dependents(graph, commandErrors!.file)

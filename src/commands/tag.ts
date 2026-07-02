@@ -6,7 +6,7 @@ import { deleteRef, listRefs, resolveHead, resolveRef, updateRef } from "../lib/
 import type { GitRepo, ObjectId } from "../lib/types.ts";
 import { WM_MATCH, wildmatch } from "../lib/attributes/wildmatch.ts";
 import { a, type Command, f, o } from "./kit/parse/index.ts";
-import { fatal, err, isCommandError } from "./kit/command-errors.ts";
+import { fatal, err, isCommandError } from "./kit/command-result.ts";
 import { ensureTrailingNewline } from "../lib/text-utils.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
 import { requireGitContext, requireRevision, requireCommitter } from "./kit/commit-requirements.ts";

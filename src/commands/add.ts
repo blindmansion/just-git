@@ -14,7 +14,7 @@ import {
 import type { GitContext, Index } from "../lib/types.ts";
 import { stageFile, walkWorkTree } from "../lib/worktree/worktree.ts";
 import { a, type Command, f } from "./kit/parse/index.ts";
-import { fatal, err, isCommandError } from "./kit/command-errors.ts";
+import { fatal, err, isCommandError } from "./kit/command-result.ts";
 import { requireGitContext, requireWorkTree } from "./kit/commit-requirements.ts";
 
 interface AddOptions {

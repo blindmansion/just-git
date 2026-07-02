@@ -1,5 +1,5 @@
-// Command error primitives: the `CommandResult` shape returned by every git
-// command and the small helpers for building/detecting error results. This is
+// The command contract: the `CommandResult` shape returned by every git
+// command, plus the small helpers for building/detecting error results. This is
 // the CLI command contract; it lives in `commands/kit/` so `lib` never speaks it — lib
 // gatherers surface typed outcomes that the command tier maps to a result here.
 

@@ -10,7 +10,7 @@ import { flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { checkoutEntry } from "../lib/worktree/worktree.ts";
 import { a, type Command, f, o } from "./kit/parse/index.ts";
-import { fatal, err, isCommandError } from "./kit/command-errors.ts";
+import { fatal, err, isCommandError } from "./kit/command-result.ts";
 import { requireGitContext, requireCommit } from "./kit/commit-requirements.ts";
 
 export function registerRestoreCommand(parent: Command, ext?: GitExtensions) {

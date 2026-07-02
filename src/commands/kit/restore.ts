@@ -1,4 +1,4 @@
-import { type CommandResult, err, fatal } from "./command-errors.ts";
+import { type CommandResult, err, fatal } from "./command-result.ts";
 import type { RestoreOutcome } from "../../lib/worktree/checkout-utils.ts";
 
 /**

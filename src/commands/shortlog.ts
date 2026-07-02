@@ -12,7 +12,7 @@ import { resolveRevision } from "../lib/refs/rev-parse.ts";
 import { diffTrees } from "../lib/tree-ops.ts";
 import type { Commit, GitRepo, ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "./kit/parse/index.ts";
-import { isCommandError, ambiguousArgError } from "./kit/command-errors.ts";
+import { isCommandError, ambiguousArgError } from "./kit/command-result.ts";
 import { firstLine } from "../lib/text-utils.ts";
 import { buildAbbrevResolver } from "../lib/abbrev.ts";
 import { requireGitContext, requireHead } from "./kit/commit-requirements.ts";

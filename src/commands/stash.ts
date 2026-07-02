@@ -17,8 +17,8 @@ import { generateLongFormStatus } from "./kit/status.ts";
 import { diffTrees } from "../lib/tree-ops.ts";
 import type { GitContext, GitRepo, ObjectId, TreeDiffEntry } from "../lib/types.ts";
 import { a, type Command, f, o } from "./kit/parse/index.ts";
-import type { CommandResult } from "./kit/command-errors.ts";
-import { fatal, err, isCommandError } from "./kit/command-errors.ts";
+import type { CommandResult } from "./kit/command-result.ts";
+import { fatal, err, isCommandError } from "./kit/command-result.ts";
 import { renderStashApplyError, renderStashDropError } from "./kit/stash.ts";
 import { requireGitContext } from "./kit/commit-requirements.ts";
 

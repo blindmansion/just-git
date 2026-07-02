@@ -23,8 +23,8 @@ import { diffTrees, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, IndexEntry, ObjectId, TreeDiffEntry } from "../lib/types.ts";
 import { diffIndexToWorkTree, readCleanedWorktreeContent } from "../lib/worktree/worktree.ts";
 import { a, type Command, f, o } from "./kit/parse/index.ts";
-import type { CommandResult } from "./kit/command-errors.ts";
-import { fatal, isCommandError } from "./kit/command-errors.ts";
+import type { CommandResult } from "./kit/command-result.ts";
+import { fatal, isCommandError } from "./kit/command-result.ts";
 import { abbreviateHash } from "../lib/abbrev.ts";
 import { requireGitContext, requireWorkTree, requireCommit } from "./kit/commit-requirements.ts";
 

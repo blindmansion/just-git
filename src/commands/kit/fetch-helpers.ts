@@ -4,7 +4,7 @@
 // prepareShallowFetch, autoFollowReachableTags) stay in `lib/fetch-helpers.ts`.
 
 import type { CredentialStore } from "../../hooks.ts";
-import { type CommandResult, fatal } from "./command-errors.ts";
+import { type CommandResult, fatal } from "./command-result.ts";
 import { INFINITE_DEPTH, isShallowRepo } from "../../lib/refs/shallow.ts";
 import { resolveRemoteTransport } from "../../lib/transport/resolver.ts";
 import type { GitContext, GitOperation } from "../../lib/types.ts";

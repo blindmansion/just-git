@@ -23,7 +23,7 @@ import type { GitContext, Identity, ObjectId } from "../lib/types.ts";
 import { applyWorktreeOps, mergeAbort } from "../lib/worktree/unpack-trees.ts";
 import { renderMergeAbortError } from "./kit/format/unpack-trees.ts";
 import { a, type Command, f, o } from "./kit/parse/index.ts";
-import { fatal, err, isCommandError } from "./kit/command-errors.ts";
+import { fatal, err, isCommandError } from "./kit/command-result.ts";
 import { firstLine, stripCommentLines, ensureTrailingNewline } from "../lib/text-utils.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
 import {

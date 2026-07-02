@@ -6,7 +6,7 @@ import { isRebaseInProgress, rebaseMergeDir } from "../lib/rebase.ts";
 import { readHead } from "../lib/refs/refs.ts";
 import type { ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "./kit/parse/index.ts";
-import { fatal, isCommandError } from "./kit/command-errors.ts";
+import { fatal, isCommandError } from "./kit/command-result.ts";
 import { requireGitContext, requireHead, requireCommit } from "./kit/commit-requirements.ts";
 
 export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {

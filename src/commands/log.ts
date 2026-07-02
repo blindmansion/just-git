@@ -29,7 +29,7 @@ import { diffTrees } from "../lib/tree-ops.ts";
 import type { Commit, GitRepo, ObjectId, TreeDiffEntry } from "../lib/types.ts";
 import { worktreeHeadCommits } from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "./kit/parse/index.ts";
-import { fatal, isCommandError, ambiguousArgError } from "./kit/command-errors.ts";
+import { fatal, isCommandError, ambiguousArgError } from "./kit/command-result.ts";
 import { buildAbbrevResolver } from "../lib/abbrev.ts";
 import { requireGitContext, requireHead } from "./kit/commit-requirements.ts";
 import { branchNameFromRef } from "../lib/refs/name.ts";

@@ -23,7 +23,7 @@ import type { GitContext, ObjectId } from "../lib/types.ts";
 import { applyWorktreeOps, resetHard } from "../lib/worktree/unpack-trees.ts";
 import { diffIndexToWorkTree } from "../lib/worktree/worktree.ts";
 import { a, type Command, f } from "./kit/parse/index.ts";
-import { fatal, isCommandError, ambiguousArgError } from "./kit/command-errors.ts";
+import { fatal, isCommandError, ambiguousArgError } from "./kit/command-result.ts";
 import { firstLine } from "../lib/text-utils.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
 import { requireGitContext, requireWorkTree } from "./kit/commit-requirements.ts";

@@ -6,7 +6,7 @@ import { hashWorktreeEntry, lstatSafe } from "../lib/symlink.ts";
 import type { GitContext, Index, IndexEntry } from "../lib/types.ts";
 import { walkWorkTree } from "../lib/worktree/worktree.ts";
 import { a, type Command, f } from "./kit/parse/index.ts";
-import { isCommandError } from "./kit/command-errors.ts";
+import { isCommandError } from "./kit/command-result.ts";
 import { requireGitContext, requireWorkTree } from "./kit/commit-requirements.ts";
 
 export function registerLsFilesCommand(parent: Command, ext?: GitExtensions): void {

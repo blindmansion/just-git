@@ -4,7 +4,7 @@
 // this is where the CLI contract is assembled.
 
 import type { StashApplyError } from "../../lib/stash.ts";
-import { type CommandResult, err, fatal } from "./command-errors.ts";
+import { type CommandResult, err, fatal } from "./command-result.ts";
 
 /** git's "could not restore untracked files from stash" block. */
 function renderUntrackedExists(paths: string[]): string {

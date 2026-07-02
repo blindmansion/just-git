@@ -226,16 +226,16 @@ describe("signature type references", () => {
 		);
 		const by = (id: string) => refs.find((r) => r.id === id);
 
-		// Explicit return of the type. command-errors.ts is the CLI command
+		// Explicit return of the type. command-result.ts is the CLI command
 		// contract and now lives in commands/kit/, not lib/ (Track B complete).
-		expect(by("commands/kit/command-errors.ts#fatal")?.positions).toEqual(["return"]);
-		expect(by("commands/kit/command-errors.ts#ambiguousArgError")?.positions).toContain("return");
+		expect(by("commands/kit/command-result.ts#fatal")?.positions).toEqual(["return"]);
+		expect(by("commands/kit/command-result.ts#ambiguousArgError")?.positions).toContain("return");
 		// The rebase engine no longer speaks the CommandResult contract: it
 		// returns a structured RebaseOutcome that commands/kit/rebase.ts renders (Track B2).
 		expect(by("lib/rebase-engine.ts#checkUntrackedConflicts")).toBeUndefined();
 		expect(by("lib/rebase-engine.ts#performRebase")).toBeUndefined();
 		// The type in a parameter is recorded as a param position, not a return.
-		const isCmdErr = by("commands/kit/command-errors.ts#isCommandError");
+		const isCmdErr = by("commands/kit/command-result.ts#isCommandError");
 		expect(isCmdErr?.positions).toContain("param");
 		expect(isCmdErr?.positions).not.toContain("return");
 

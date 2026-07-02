@@ -6,7 +6,7 @@ import { readCommit } from "../lib/object-db.ts";
 import { relative } from "../lib/path.ts";
 import type { ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "./kit/parse/index.ts";
-import { fatal, isCommandError } from "./kit/command-errors.ts";
+import { fatal, isCommandError } from "./kit/command-result.ts";
 import { requireGitContext, requireHead, requireRevision } from "./kit/commit-requirements.ts";
 
 // ── Date formatting ──────────────────────────────────────────────────

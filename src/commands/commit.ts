@@ -28,7 +28,7 @@ import { generateLongFormStatus } from "./kit/status.ts";
 import { buildTreeFromIndex } from "../lib/tree-ops.ts";
 import { diffIndexToWorkTree, stageFile } from "../lib/worktree/worktree.ts";
 import { type Command, f, o } from "./kit/parse/index.ts";
-import { fatal, err, isCommandError } from "./kit/command-errors.ts";
+import { fatal, err, isCommandError } from "./kit/command-result.ts";
 import { firstLine, stripCommentLines, ensureTrailingNewline } from "../lib/text-utils.ts";
 import {
 	requireGitContext,

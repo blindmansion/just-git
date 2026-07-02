@@ -36,7 +36,7 @@ import { applyWorktreeOps, checkoutTrees } from "../lib/worktree/unpack-trees.ts
 import { checkoutEntry } from "../lib/worktree/worktree.ts";
 import { branchCheckedOutAt } from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "./kit/parse/index.ts";
-import { fatal, err, isCommandError } from "./kit/command-errors.ts";
+import { fatal, err, isCommandError } from "./kit/command-result.ts";
 import { requireGitContext, requireCommit } from "./kit/commit-requirements.ts";
 import { isValidBranchName } from "../lib/refs/name.ts";
 import { readConfig, writeConfig } from "../lib/config/store.ts";

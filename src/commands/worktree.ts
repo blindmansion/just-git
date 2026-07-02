@@ -27,8 +27,8 @@ import {
 	writeWorktreeAdmin,
 } from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "./kit/parse/index.ts";
-import type { CommandResult } from "./kit/command-errors.ts";
-import { fatal, isCommandError } from "./kit/command-errors.ts";
+import type { CommandResult } from "./kit/command-result.ts";
+import { fatal, isCommandError } from "./kit/command-result.ts";
 import { requireGitContext } from "./kit/commit-requirements.ts";
 import { FileSystemRefStore } from "../lib/refs/store.ts";
 import { ZERO_HASH } from "../lib/hex.ts";

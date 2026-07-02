@@ -9,7 +9,7 @@ import { hashWorktreeEntry, lstatSafe } from "../lib/symlink.ts";
 import { flattenTree } from "../lib/tree-ops.ts";
 import type { GitContext, Index, ObjectId } from "../lib/types.ts";
 import { a, type Command, f } from "./kit/parse/index.ts";
-import { fatal, err, isCommandError } from "./kit/command-errors.ts";
+import { fatal, err, isCommandError } from "./kit/command-result.ts";
 import { requireGitContext, requireWorkTree } from "./kit/commit-requirements.ts";
 
 export function registerRmCommand(parent: Command, ext?: GitExtensions) {

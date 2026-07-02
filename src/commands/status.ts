@@ -13,7 +13,7 @@ import {
 import { diffIndexToWorkTree } from "../lib/worktree/worktree.ts";
 import { type Command, f } from "./kit/parse/index.ts";
 import { comparePaths } from "../lib/path.ts";
-import { isCommandError } from "./kit/command-errors.ts";
+import { isCommandError } from "./kit/command-result.ts";
 import { requireGitContext } from "./kit/commit-requirements.ts";
 import { branchNameFromRef } from "../lib/refs/name.ts";
 import { readConfig } from "../lib/config/store.ts";

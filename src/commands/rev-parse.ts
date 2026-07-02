@@ -6,7 +6,7 @@ import { parseRevPath, resolveRevision } from "../lib/refs/rev-parse.ts";
 import { flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext } from "../lib/types.ts";
 import { a, type Command, f } from "./kit/parse/index.ts";
-import { fatal, isCommandError, ambiguousArgError } from "./kit/command-errors.ts";
+import { fatal, isCommandError, ambiguousArgError } from "./kit/command-result.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
 import { requireGitContext } from "./kit/commit-requirements.ts";
 
