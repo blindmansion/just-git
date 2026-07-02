@@ -24,7 +24,6 @@ import { hashWorktreeEntry, lstatSafe } from "../symlink.ts";
 import { flattenTreeToMap } from "../tree-ops.ts";
 import type { GitContext, Index, IndexEntry, ObjectId } from "../types.ts";
 import { checkoutEntry, cleanEmptyDirs, walkWorkTree } from "./worktree.ts";
-import { err } from "../command-errors.ts";
 
 // =====================================================================
 // SECTION 1: Error Types
@@ -1184,10 +1183,11 @@ export async function mergeAbort(
 			}
 		}
 		if (lines.length > 0) {
-			result.errorOutput = err(
-				lines.join("") + `fatal: Could not reset index file to revision '${revName}'.\n`,
-				128,
-			);
+			result.errorOutput = {
+				stdout: "",
+				stderr: lines.join("") + `fatal: Could not reset index file to revision '${revName}'.\n`,
+				exitCode: 128,
+			};
 		}
 		return result;
 	}

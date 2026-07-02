@@ -1,6 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
-import { renderCommitOneLiner, renderCommitSummary } from "../format/commit-summary.ts";
+import { renderRebaseOutcome } from "../cli/rebase.ts";
 import { handleAbort, handleContinue, handleSkip, performRebase } from "../lib/rebase-engine.ts";
 import { isRebaseInProgress, rebaseMergeDir } from "../lib/rebase.ts";
 import { readHead } from "../lib/refs/refs.ts";
@@ -30,38 +30,17 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 
 			// ── Resume operations ────────────────────────────────────
 			if (args.abort) {
-				return handleAbort(gitCtx, ctx.env);
+				return renderRebaseOutcome(await handleAbort(gitCtx, ctx.env));
 			}
 			if (args.continue) {
-				const res = await handleContinue(
-					gitCtx,
-					ctx.env,
-					(await bindAttributes(gitCtx, "rebase"))?.merge,
+				return renderRebaseOutcome(
+					await handleContinue(gitCtx, ctx.env, (await bindAttributes(gitCtx, "rebase"))?.merge),
 				);
-				if (res.finalizedCommit) {
-					const { oneLiner, author, committer, showDate, stats } = res.finalizedCommit;
-					const header = renderCommitOneLiner(
-						oneLiner.branchName,
-						oneLiner.shortHash,
-						oneLiner.message,
-					);
-					const summary = renderCommitSummary({
-						author,
-						committer,
-						showDate,
-						isMerge: false,
-						stats,
-					});
-					return {
-						stdout: `${header}\n${summary}${res.stdout}`,
-						stderr: res.stderr,
-						exitCode: res.exitCode,
-					};
-				}
-				return res;
 			}
 			if (args.skip) {
-				return handleSkip(gitCtx, ctx.env, (await bindAttributes(gitCtx, "rebase"))?.merge);
+				return renderRebaseOutcome(
+					await handleSkip(gitCtx, ctx.env, (await bindAttributes(gitCtx, "rebase"))?.merge),
+				);
 			}
 
 			// ── Starting a new rebase ────────────────────────────────
@@ -117,17 +96,19 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 			const reapplyCherryPicks = !!args["reapply-cherry-picks"];
 			const ontoLabel = ontoArg ?? upstreamArg;
 
-			return performRebase(
-				gitCtx,
-				ctx.env,
-				origHead,
-				headName,
-				upstreamHash,
-				ontoHash,
-				upstreamArg,
-				ontoLabel,
-				ext,
-				reapplyCherryPicks ? { reapplyCherryPicks: true } : undefined,
+			return renderRebaseOutcome(
+				await performRebase(
+					gitCtx,
+					ctx.env,
+					origHead,
+					headName,
+					upstreamHash,
+					ontoHash,
+					upstreamArg,
+					ontoLabel,
+					ext,
+					reapplyCherryPicks ? { reapplyCherryPicks: true } : undefined,
+				),
 			);
 		},
 	});

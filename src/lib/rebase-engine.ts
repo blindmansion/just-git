@@ -54,74 +54,142 @@ import type { GitContext, GitRepo, Identity, Index, ObjectId } from "./types.ts"
 import {
 	applyWorktreeOps,
 	checkoutTrees,
-	formatErrors,
 	type RejectedPath,
 	resetHard,
 	UnpackError,
 } from "./worktree/unpack-trees.ts";
 import { walkWorkTree } from "./worktree/worktree.ts";
 import { comparePaths } from "./path.ts";
-import type { CommandResult } from "./command-errors.ts";
-import { fatal, err, isCommandError } from "./command-errors.ts";
 import { firstLine, stripCommentLines, ensureTrailingNewline } from "./text-utils.ts";
 import { uniqueAbbrev } from "./abbrev.ts";
 import { writeCommitAndAdvance } from "./commit-write.ts";
 import { branchNameFromRef } from "./refs/name.ts";
 import { getConfigValue } from "./config/store.ts";
 
+// ── Structured outcomes ─────────────────────────────────────────────
+//
+// The rebase engine gathers data and mutates on-disk state, but never
+// assembles the CLI stdout/stderr/exit-code contract itself. Every
+// entrypoint returns a {@link RebaseOutcome}; `cli/rebase#renderRebaseOutcome`
+// maps each variant to a `CommandResult`.
+
+/** Progress marker for one replayed step: "Rebasing (current/total)". */
+export interface RebaseProgress {
+	current: number;
+	total: number;
+}
+
+/** Result of replaying a single todo entry, rendered after its progress line. */
+export type RebaseStepMessage =
+	| { kind: "applied" }
+	| { kind: "dropped"; hash: ObjectId; subject: string };
+
+export interface RebaseStep {
+	progress: RebaseProgress;
+	message: RebaseStepMessage;
+}
+
+/** Why a rebase stopped before replaying every commit in the todo list. */
+export type RebaseConflict =
+	| { kind: "content"; shortHash: string; subject: string; mergeMessages: string[] }
+	| { kind: "untracked"; blockedPaths: string[]; entry: RebaseTodoEntry }
+	| { kind: "fatal"; message: string };
+
 /**
- * Resolve the committer identity, returning a {@link CommandResult} error when
- * no identity is configured. Lib-local so the rebase engine (which still speaks
- * the command contract) doesn't depend on the `cli` guard family.
+ * Commit-summary data for a conflict-resolved commit finalized by
+ * `git rebase --continue`; the command layer renders it (matches git's
+ * `print_commit_summary`).
  */
-async function resolveCommitterOrError(
+export interface FinalizedRebaseCommit {
+	/** Raw pieces of the one-line header; the command layer renders it. */
+	oneLiner: { branchName: string; shortHash: string; message: string };
+	author: Identity;
+	committer: Identity;
+	showDate: boolean;
+	stats: DiffStats;
+}
+
+/**
+ * Structured result of a rebase engine entrypoint. `cli/rebase#renderRebaseOutcome`
+ * maps each variant to the stdout/stderr/exit-code contract; `lib` never assembles
+ * that CLI text itself.
+ */
+export type RebaseOutcome =
+	| { kind: "upToDate"; branchName: string }
+	| { kind: "unmergedPaths"; paths: string[] }
+	| { kind: "dirtyWorktree"; state: SequencerDirtyState }
+	| { kind: "preRebaseRejected"; message: string }
+	| { kind: "signingFailed" }
+	| { kind: "checkoutBlocked"; rejected: RejectedPath[]; skipped: string[] }
+	| {
+			kind: "rebased";
+			headName: string;
+			skipped: string[];
+			steps: RebaseStep[];
+			finalizedCommit?: FinalizedRebaseCommit;
+	  }
+	| {
+			kind: "stopped";
+			skipped: string[];
+			steps: RebaseStep[];
+			progress: RebaseProgress;
+			conflict: RebaseConflict;
+			finalizedCommit?: FinalizedRebaseCommit;
+	  }
+	| {
+			kind: "refLockFailure";
+			headName: string;
+			actual: ObjectId | null;
+			expected: ObjectId;
+			skipped: string[];
+			steps: RebaseStep[];
+	  }
+	| { kind: "aborted" }
+	| { kind: "abortBlocked"; rejected: RejectedPath[]; origHead: ObjectId }
+	| { kind: "skipNoHead" }
+	| { kind: "unmergedContinue" }
+	| { kind: "stagedChangesContinue" }
+	| { kind: "fatal"; message: string };
+
+/**
+ * Resolve the committer identity, surfacing "no identity configured" as a
+ * structured failure rather than throwing or building a `CommandResult`.
+ */
+async function resolveCommitter(
 	gitCtx: GitRepo,
 	env: Map<string, string>,
-): Promise<Identity | CommandResult> {
+): Promise<{ ok: true; committer: Identity } | { ok: false; message: string }> {
 	try {
-		return resolveIdentityFrom(gitCtx, await readConfigView(gitCtx), env, "committer");
+		return {
+			ok: true,
+			committer: resolveIdentityFrom(gitCtx, await readConfigView(gitCtx), env, "committer"),
+		};
 	} catch (e) {
-		return fatal((e as Error).message);
+		return { ok: false, message: (e as Error).message };
 	}
 }
 
 /**
  * Resolve the signer for a rebase-created commit, mapping the "signing required
- * but unavailable" policy failure to a {@link CommandResult}. Lib-local for the
- * same reason as {@link resolveCommitterOrError}: the rebase engine still speaks
- * the command contract but must not import the `cli` guard family.
+ * but unavailable" policy failure to a structured `{ ok: false }`.
  */
-async function resolveSignerOrError(gitCtx: GitRepo): Promise<Signer | CommandResult | undefined> {
+async function resolveSigner(
+	gitCtx: GitRepo,
+): Promise<{ ok: true; signer?: Signer } | { ok: false }> {
 	try {
-		return resolveConfiguredSigner(
-			gitCtx,
-			await readConfigView(gitCtx),
-			undefined,
-			"commit.gpgsign",
-		);
+		return {
+			ok: true,
+			signer: resolveConfiguredSigner(
+				gitCtx,
+				await readConfigView(gitCtx),
+				undefined,
+				"commit.gpgsign",
+			),
+		};
 	} catch (e) {
-		if (e instanceof SigningError) return err("error: gpg failed to sign the data\n", 128);
+		if (e instanceof SigningError) return { ok: false };
 		throw e;
 	}
-}
-
-/**
- * Render the sequencer "dirty worktree" refusal — rebase can't run over local
- * changes. Mirrors `cli/command-utils#sequencerDirtyWorktreeError`, kept
- * file-local so the engine stays off the `cli` tier.
- */
-function rebaseDirtyWorktreeError(state: SequencerDirtyState): CommandResult {
-	const lines: string[] = [];
-	if (state.hasUnstaged) lines.push("error: cannot rebase: You have unstaged changes.");
-	if (state.hasStaged) {
-		lines.push(
-			state.hasUnstaged
-				? "error: additionally, your index contains uncommitted changes."
-				: "error: cannot rebase: Your index contains uncommitted changes.",
-		);
-	}
-	lines.push("error: Please commit or stash them.");
-	return err(`${lines.join("\n")}\n`, 1);
 }
 
 /**
@@ -153,11 +221,6 @@ async function isOriginalCommitEmpty(
 	if (commit.parents.length > 1) return false;
 	const parent = await readCommit(gitCtx, firstParent);
 	return commit.tree === parent.tree;
-}
-
-function upToDateMessage(branchName: string): string {
-	if (branchName === "HEAD") return "HEAD is up to date.\n";
-	return `Current branch ${branchName} is up to date.\n`;
 }
 
 /**
@@ -206,8 +269,9 @@ async function canRebaseFastForward(
 }
 
 /**
- * Check whether resetting the worktree to targetTree would overwrite
- * untracked files. Returns an error result if so, null if safe.
+ * Check whether resetting the worktree to targetTree would overwrite untracked
+ * files. Returns the rejected paths if so (the caller renders "could not detach
+ * HEAD"), or null if safe.
  *
  * This check mirrors real git's behavior: before `reset_head()` with
  * twoway_merge, untracked files that would be overwritten are detected.
@@ -218,7 +282,7 @@ async function checkUntrackedConflicts(
 	gitCtx: GitContext,
 	targetTree: ObjectId,
 	currentIndex: Index,
-): Promise<CommandResult | null> {
+): Promise<RejectedPath[] | null> {
 	if (!gitCtx.workTree) return null;
 
 	// Flatten both trees
@@ -245,34 +309,19 @@ async function checkUntrackedConflicts(
 		}
 	}
 
-	if (rejected.length > 0) {
-		const errorOutput = formatErrors(rejected, {
-			errorExitCode: 1,
-			operationName: "checkout",
-			actionHint: "switch branches",
-		});
-		return err(`${errorOutput.stderr}error: could not detach HEAD\n`);
-	}
-
-	return null;
+	return rejected.length > 0 ? rejected : null;
 }
 
 /**
- * Check whether aborting (resetting to origHead tree) would overwrite
- * untracked files. Produces the error format git uses for reset_head():
- *
- *   error: The following untracked working tree files would be overwritten by reset:
- *       <file>
- *   Please move or remove them before you reset.
- *   Aborting
- *   fatal: could not move back to <hash>
+ * Check whether aborting (resetting to origHead tree) would overwrite untracked
+ * files. Returns the rejected paths if so (the caller renders the reset error),
+ * or null if safe.
  */
 async function checkAbortUntrackedConflicts(
 	gitCtx: GitContext,
 	targetTree: ObjectId,
 	currentIndex: Index,
-	origHead: ObjectId,
-): Promise<CommandResult | null> {
+): Promise<RejectedPath[] | null> {
 	if (!gitCtx.workTree) return null;
 
 	const targetMap = await flattenTreeToMap(gitCtx, targetTree);
@@ -293,20 +342,7 @@ async function checkAbortUntrackedConflicts(
 		}
 	}
 
-	if (rejected.length > 0) {
-		const errorOutput = formatErrors(rejected, {
-			errorExitCode: 128,
-			operationName: "reset",
-			actionHint: "reset",
-		});
-		return {
-			stdout: "",
-			stderr: `${errorOutput.stderr}fatal: could not move back to ${origHead}\n`,
-			exitCode: 128,
-		};
-	}
-
-	return null;
+	return rejected.length > 0 ? rejected : null;
 }
 
 async function checkUntrackedConflictsForPick(
@@ -328,22 +364,6 @@ async function checkUntrackedConflictsForPick(
 	}
 
 	return blockedPaths.length > 0 ? blockedPaths : null;
-}
-
-/**
- * Format the error message for untracked files blocking a rebase pick.
- * Matches real git's sequencer output for this case.
- */
-function formatUntrackedMergeError(blockedPaths: string[], entry: RebaseTodoEntry): string {
-	const fileList = blockedPaths.map((p) => `\t${p}`).join("\n");
-	return (
-		`error: The following untracked working tree files would be overwritten by merge:\n${fileList}\n` +
-		"Please move or remove them before you merge.\nAborting\n" +
-		`hint: Could not execute the todo command\nhint:\nhint:     pick ${entry.hash} # ${entry.subject}\nhint:\n` +
-		"hint: It has been rescheduled; To edit the command before continuing, please\n" +
-		"hint: edit the todo list first:\nhint:\n" +
-		"hint:     git rebase --edit-todo\nhint:     git rebase --continue\n"
-	);
 }
 
 /**
@@ -428,19 +448,19 @@ async function writeRebaseFfReflog(
 
 /**
  * Fast-forward the worktree, index, and branch ref to a target commit.
- * Checks for untracked file conflicts first. Returns an error result
- * if the checkout is blocked, null on success.
+ * Checks for untracked file conflicts first. Returns the rejected paths if
+ * the checkout is blocked, null on success.
  */
 async function fastForwardTo(
 	gitCtx: GitContext,
 	targetHash: ObjectId,
 	currentIndex: Index,
 	headName: string,
-): Promise<CommandResult | null> {
+): Promise<RejectedPath[] | null> {
 	const targetCommit = await readCommit(gitCtx, targetHash);
 
-	const untrackedErr = await checkUntrackedConflicts(gitCtx, targetCommit.tree, currentIndex);
-	if (untrackedErr) return untrackedErr;
+	const rejected = await checkUntrackedConflicts(gitCtx, targetCommit.tree, currentIndex);
+	if (rejected) return rejected;
 
 	const result = await resetHard(gitCtx, targetCommit.tree, currentIndex);
 	if (result.success) {
@@ -474,7 +494,7 @@ export async function performRebase(
 	checkoutLabel: string,
 	ext?: GitExtensions,
 	options?: { reapplyCherryPicks?: boolean; reflogAction?: "rebase" | "pull" },
-): Promise<CommandResult> {
+): Promise<RebaseOutcome> {
 	const branchName = headName.startsWith("refs/heads/") ? branchNameFromRef(headName) : "HEAD";
 	const reflogAction = options?.reflogAction ?? "rebase";
 
@@ -483,19 +503,12 @@ export async function performRebase(
 
 	const unmergedPaths = getConflictedPaths(currentIndex).sort();
 	if (unmergedPaths.length > 0) {
-		return {
-			stdout: unmergedPaths.map((p) => `${p}: needs merge\n`).join(""),
-			stderr:
-				"error: cannot rebase: You have unstaged changes.\n" +
-				"error: additionally, your index contains uncommitted changes.\n" +
-				"error: Please commit or stash them.\n",
-			exitCode: 1,
-		};
+		return { kind: "unmergedPaths", paths: unmergedPaths };
 	}
 
 	const dirtyState = await getSequencerDirtyState(gitCtx, origHead, currentIndex);
 	if (dirtyState) {
-		return rebaseDirtyWorktreeError(dirtyState);
+		return { kind: "dirtyWorktree", state: dirtyState };
 	}
 
 	// pre-rebase hook
@@ -505,7 +518,7 @@ export async function performRebase(
 		branch: headName !== "detached HEAD" ? branchName : null,
 	});
 	if (isRejection(preRebaseRej)) {
-		return { stdout: "", stderr: preRebaseRej.message ?? "", exitCode: 1 };
+		return { kind: "preRebaseRejected", message: preRebaseRej.message ?? "" };
 	}
 
 	// ── Preemptive up-to-date check ──────────────────────────
@@ -517,11 +530,7 @@ export async function performRebase(
 	// (even when the replay turns out to be a no-op), so this is the *only* path
 	// that yields the up-to-date message.
 	if (await canRebaseFastForward(gitCtx, ontoHash, upstreamHash, origHead)) {
-		return {
-			stdout: upToDateMessage(branchName),
-			stderr: "",
-			exitCode: 0,
-		};
+		return { kind: "upToDate", branchName };
 	}
 
 	// ── Compute commit range (+ cherry-pick dedup) ──────────
@@ -532,8 +541,8 @@ export async function performRebase(
 	// ── Empty range: up-to-date or fast-forward ─────────────
 	if (selection.rawCount === 0) {
 		if (ontoHash !== origHead) {
-			const ffErr = await fastForwardTo(gitCtx, ontoHash, currentIndex, headName);
-			if (ffErr) return ffErr;
+			const rejected = await fastForwardTo(gitCtx, ontoHash, currentIndex, headName);
+			if (rejected) return { kind: "checkoutBlocked", rejected, skipped: [] };
 			await writeRebaseFfReflog(
 				gitCtx,
 				env,
@@ -544,11 +553,7 @@ export async function performRebase(
 				reflogAction,
 				ontoHash,
 			);
-			return {
-				stdout: "",
-				stderr: `Successfully rebased and updated ${headName}.\n`,
-				exitCode: 0,
-			};
+			return { kind: "rebased", headName, skipped: [], steps: [] };
 		}
 		// onto === HEAD with an empty range: not fast-forwardable (the preemptive
 		// check already handled that), so git runs a no-op replay and reports
@@ -563,29 +568,12 @@ export async function performRebase(
 			reflogAction,
 			ontoHash,
 		);
-		return {
-			stdout: "",
-			stderr: `Successfully rebased and updated ${headName}.\n`,
-			exitCode: 0,
-		};
+		return { kind: "rebased", headName, skipped: [], steps: [] };
 	}
 
 	// ── Cherry-pick skip detection ──────────────────────────
-	const skippedWarnings = await Promise.all(
-		selection.skipped.map(
-			async (hash) =>
-				`warning: skipped previously applied commit ${await uniqueAbbrev(gitCtx, hash)}`,
-		),
-	);
+	const skipped = await Promise.all(selection.skipped.map((hash) => uniqueAbbrev(gitCtx, hash)));
 	const filteredCommits = selection.commits;
-
-	let skipStderr = "";
-	if (skippedWarnings.length > 0) {
-		skipStderr =
-			`${skippedWarnings.join("\n")}\n` +
-			"hint: use --reapply-cherry-picks to include skipped commits\n" +
-			'hint: Disable this message with "git config set advice.skippedCherryPicks false"\n';
-	}
 
 	if (filteredCommits.length === 0) {
 		// Every commit in the range was already applied on the target. The
@@ -608,17 +596,10 @@ export async function performRebase(
 				reflogAction,
 				ontoHash,
 			);
-			return {
-				stdout: "",
-				stderr: `${skipStderr}Successfully rebased and updated ${headName}.\n`,
-				exitCode: 0,
-			};
+			return { kind: "rebased", headName, skipped, steps: [] };
 		}
-		const ffErr = await fastForwardTo(gitCtx, ontoHash, currentIndex, headName);
-		if (ffErr) {
-			ffErr.stderr = skipStderr + ffErr.stderr;
-			return ffErr;
-		}
+		const rejected = await fastForwardTo(gitCtx, ontoHash, currentIndex, headName);
+		if (rejected) return { kind: "checkoutBlocked", rejected, skipped };
 		await writeRebaseFfReflog(
 			gitCtx,
 			env,
@@ -629,11 +610,7 @@ export async function performRebase(
 			reflogAction,
 			ontoHash,
 		);
-		return {
-			stdout: "",
-			stderr: `${skipStderr}Successfully rebased and updated ${headName}.\n`,
-			exitCode: 0,
-		};
+		return { kind: "rebased", headName, skipped, steps: [] };
 	}
 
 	// ── Build todo list ──────────────────────────────────────
@@ -665,11 +642,8 @@ export async function performRebase(
 		// case; a no-op landing here (checkoutTarget === origHead) still reports
 		// "Successfully rebased", matching git.
 		if (checkoutTarget !== origHead) {
-			const ffErr = await fastForwardTo(gitCtx, checkoutTarget, currentIndex, headName);
-			if (ffErr) {
-				ffErr.stderr = skipStderr + ffErr.stderr;
-				return ffErr;
-			}
+			const rejected = await fastForwardTo(gitCtx, checkoutTarget, currentIndex, headName);
+			if (rejected) return { kind: "checkoutBlocked", rejected, skipped };
 		}
 		// git logs the HEAD start/finish pair whenever it reports a successful
 		// rebase — including the no-op case (checkoutTarget === origHead) reached
@@ -685,19 +659,12 @@ export async function performRebase(
 			reflogAction,
 			ontoHash,
 		);
-		return {
-			stdout: "",
-			stderr: `${skipStderr}Successfully rebased and updated ${headName}.\n`,
-			exitCode: 0,
-		};
+		return { kind: "rebased", headName, skipped, steps: [] };
 	}
 
 	// ── Detach HEAD onto target ──────────────────────────────
-	const ffErr = await fastForwardTo(gitCtx, checkoutTarget, currentIndex, "detached HEAD");
-	if (ffErr) {
-		ffErr.stderr = skipStderr + ffErr.stderr;
-		return ffErr;
-	}
+	const detachRejected = await fastForwardTo(gitCtx, checkoutTarget, currentIndex, "detached HEAD");
+	if (detachRejected) return { kind: "checkoutBlocked", rejected: detachRejected, skipped };
 
 	await deleteRef(gitCtx, "CHERRY_PICK_HEAD");
 	await deleteRef(gitCtx, "REVERT_HEAD");
@@ -728,30 +695,33 @@ export async function performRebase(
 	await updateRef(gitCtx, "ORIG_HEAD", origHead);
 
 	// ── Run the pick loop ────────────────────────────────────
-	const signer = await resolveSignerOrError(gitCtx);
-	if (isCommandError(signer)) return signer;
-	const pickResult = await runPickLoop(
+	const signerResult = await resolveSigner(gitCtx);
+	if (!signerResult.ok) return { kind: "signingFailed" };
+	const loop = await runPickLoop(
 		gitCtx,
 		env,
 		(await bindAttributes(gitCtx, "rebase"))?.merge,
-		signer,
+		signerResult.signer,
 	);
-	if (skipStderr) {
-		pickResult.stderr = skipStderr + pickResult.stderr;
-	}
-	return pickResult;
+	return buildLoopOutcome(gitCtx, env, loop, skipped);
 }
 
 // ── Pick loop — replays commits from the todo list ──────────────────
+
+interface PickLoopResult {
+	steps: RebaseStep[];
+	terminal:
+		| { kind: "done" }
+		| { kind: "conflict"; progress: RebaseProgress; conflict: RebaseConflict };
+}
 
 async function runPickLoop(
 	gitCtx: GitContext,
 	env: Map<string, string>,
 	mergeDriver?: ContentMergeFn,
 	signer?: Signer,
-): Promise<CommandResult> {
-	const stderrLines: string[] = [];
-	const stdoutLines: string[] = [];
+): Promise<PickLoopResult> {
+	const steps: RebaseStep[] = [];
 
 	for (;;) {
 		const state = await readRebaseState(gitCtx);
@@ -760,8 +730,8 @@ async function runPickLoop(
 		const entry = state.todo[0];
 		if (!entry) break;
 
-		// Emit progress (uses \r so terminal overwrites the line)
-		stderrLines.push(`Rebasing (${state.msgnum + 1}/${state.end})\r`);
+		// Progress marker (rendered with \r so the terminal overwrites the line).
+		const progress: RebaseProgress = { current: state.msgnum + 1, total: state.end };
 
 		// Advance state BEFORE the pick (matching real git: the done file
 		// records attempted picks, not just successful ones).
@@ -769,7 +739,7 @@ async function runPickLoop(
 
 		const result = await pickOneCommit(gitCtx, entry, env, mergeDriver, signer);
 
-		if (result.conflict) {
+		if (result.kind === "conflict") {
 			if (result.rescheduleCurrent) {
 				// Put the entry back in todo for retry, but keep it in done.
 				// Real git's save_todo appends to done before the pick, then
@@ -782,36 +752,66 @@ async function runPickLoop(
 					await writeRebaseState(gitCtx, latest);
 				}
 			}
-			// Stop — write conflict info
-			if (result.stdout) stdoutLines.push(result.stdout);
-			stderrLines.push(result.stderr);
-			return {
-				stdout: stdoutLines.join(""),
-				stderr: stderrLines.join(""),
-				exitCode: 1,
-			};
+			return { steps, terminal: { kind: "conflict", progress, conflict: result.conflict } };
 		}
 
-		if (result.stdout) {
-			stdoutLines.push(result.stdout);
-		}
-		if (result.stderr) {
-			stderrLines.push(result.stderr);
+		if (result.kind === "dropped") {
+			steps.push({
+				progress,
+				message: { kind: "dropped", hash: result.hash, subject: result.subject },
+			});
+		} else {
+			steps.push({ progress, message: { kind: "applied" } });
 		}
 	}
 
 	// All commits applied — finish
-	return finishRebase(gitCtx, stderrLines, env);
+	return { steps, terminal: { kind: "done" } };
+}
+
+/**
+ * Map a completed pick loop to a terminal {@link RebaseOutcome}: a conflict
+ * stops the rebase; otherwise finalize and report success (or a ref-lock
+ * failure).
+ */
+async function buildLoopOutcome(
+	gitCtx: GitContext,
+	env: Map<string, string>,
+	loop: PickLoopResult,
+	skipped: string[],
+): Promise<RebaseOutcome> {
+	if (loop.terminal.kind === "conflict") {
+		return {
+			kind: "stopped",
+			skipped,
+			steps: loop.steps,
+			progress: loop.terminal.progress,
+			conflict: loop.terminal.conflict,
+		};
+	}
+	const finish = await finishRebase(gitCtx, env);
+	if (finish.kind === "finished") {
+		return { kind: "rebased", headName: finish.headName, skipped, steps: loop.steps };
+	}
+	if (finish.kind === "refLockFailure") {
+		return {
+			kind: "refLockFailure",
+			headName: finish.headName,
+			actual: finish.actual,
+			expected: finish.expected,
+			skipped,
+			steps: loop.steps,
+		};
+	}
+	return { kind: "fatal", message: finish.message };
 }
 
 // ── Pick a single commit (three-way merge) ──────────────────────────
 
-interface PickResult {
-	conflict: boolean;
-	stdout: string;
-	stderr: string;
-	rescheduleCurrent?: boolean;
-}
+type PickResult =
+	| { kind: "applied" }
+	| { kind: "dropped"; hash: ObjectId; subject: string }
+	| { kind: "conflict"; conflict: RebaseConflict; rescheduleCurrent?: boolean };
 
 async function pickOneCommit(
 	gitCtx: GitContext,
@@ -828,9 +828,8 @@ async function pickOneCommit(
 	const headHash = await resolveHead(gitCtx);
 	if (!headHash) {
 		return {
-			conflict: true,
-			stdout: "",
-			stderr: "fatal: no HEAD commit during rebase\n",
+			kind: "conflict",
+			conflict: { kind: "fatal", message: "no HEAD commit during rebase" },
 		};
 	}
 
@@ -845,9 +844,8 @@ async function pickOneCommit(
 		const currentIndex = await readIndex(gitCtx);
 		if (!parentCommit) {
 			return {
-				conflict: true,
-				stdout: "",
-				stderr: "fatal: missing parent commit during rebase\n",
+				kind: "conflict",
+				conflict: { kind: "fatal", message: "missing parent commit during rebase" },
 			};
 		}
 
@@ -867,9 +865,8 @@ async function pickOneCommit(
 			await updateRef(gitCtx, "REBASE_HEAD", theirsHash);
 			await writeRebaseConflictMeta(gitCtx, theirsHash, theirsCommit.author);
 			return {
-				conflict: true,
-				stdout: "",
-				stderr: formatUntrackedMergeError(blockedPaths, entry),
+				kind: "conflict",
+				conflict: { kind: "untracked", blockedPaths, entry },
 				rescheduleCurrent: true,
 			};
 		}
@@ -885,7 +882,7 @@ async function pickOneCommit(
 		await advanceBranchRef(gitCtx, theirsHash);
 		await logRef(gitCtx, env, "HEAD", headHash, theirsHash, "rebase: fast-forward");
 
-		return { conflict: false, stdout: "", stderr: "" };
+		return { kind: "applied" };
 	}
 
 	const headCommit = await readCommit(gitCtx, headHash);
@@ -963,9 +960,8 @@ async function pickOneCommit(
 		await updateRef(gitCtx, "REBASE_HEAD", theirsHash);
 		await writeRebaseConflictMeta(gitCtx, theirsHash, theirsCommit.author);
 		return {
-			conflict: true,
-			stdout: "",
-			stderr: formatUntrackedMergeError(blockedPaths, entry),
+			kind: "conflict",
+			conflict: { kind: "untracked", blockedPaths, entry },
 			rescheduleCurrent: true,
 		};
 	}
@@ -997,19 +993,14 @@ async function pickOneCommit(
 		// whether staged changes are from conflict resolution vs random edits)
 		await writeStateFile(gitCtx, "rebase-merge/message", theirsCommit.message);
 
-		const mergeOutput = mergeResult.messages.join("\n");
-
 		return {
-			conflict: true,
-			stdout: mergeOutput ? `${mergeOutput}\n` : "",
-			stderr:
-				`error: could not apply ${shortHash}... ${entry.subject}\n` +
-				"hint: Resolve all conflicts manually, mark them as resolved with\n" +
-				'hint: "git add/rm <conflicted_files>", then run "git rebase --continue".\n' +
-				'hint: You can instead skip this commit: run "git rebase --skip".\n' +
-				'hint: To abort and get back to the state before "git rebase", run "git rebase --abort".\n' +
-				'hint: Disable this message with "git config set advice.mergeConflict false"\n' +
-				`Could not apply ${shortHash}... # ${entry.subject}\n`,
+			kind: "conflict",
+			conflict: {
+				kind: "content",
+				shortHash,
+				subject: entry.subject,
+				mergeMessages: mergeResult.messages,
+			},
 		};
 	}
 
@@ -1022,16 +1013,12 @@ async function pickOneCommit(
 	const originallyEmpty =
 		parentHash === null ? theirsCommit.tree === EMPTY_TREE_HASH : theirsCommit.tree === baseTree;
 	if (mergedTreeHash === headCommit.tree && !originallyEmpty) {
-		return {
-			conflict: false,
-			stdout: "",
-			stderr: `dropping ${theirsHash} ${entry.subject} -- patch contents already upstream\n`,
-		};
+		return { kind: "dropped", hash: theirsHash, subject: entry.subject };
 	}
 
-	const committerResult = await resolveCommitterOrError(gitCtx, env);
-	if (isCommandError(committerResult)) {
-		return { conflict: true, stdout: "", stderr: committerResult.stderr };
+	const committerResult = await resolveCommitter(gitCtx, env);
+	if (!committerResult.ok) {
+		return { kind: "conflict", conflict: { kind: "fatal", message: committerResult.message } };
 	}
 
 	const pickCommitHash = await writeCommitAndAdvance(
@@ -1039,35 +1026,32 @@ async function pickOneCommit(
 		mergedTreeHash,
 		[headHash],
 		theirsCommit.author,
-		committerResult,
+		committerResult.committer,
 		theirsCommit.message,
 		signer,
 	);
 
 	await logRef(gitCtx, env, "HEAD", headHash, pickCommitHash, `rebase (pick): ${entry.subject}`);
 
-	return {
-		conflict: false,
-		stdout: "",
-		stderr: "",
-	};
+	return { kind: "applied" };
 }
 
 // ── Finish rebase ───────────────────────────────────────────────────
 
-async function finishRebase(
-	gitCtx: GitContext,
-	stderrLines: string[],
-	env: Map<string, string>,
-): Promise<CommandResult> {
+type FinishResult =
+	| { kind: "finished"; headName: string }
+	| { kind: "refLockFailure"; headName: string; actual: ObjectId | null; expected: ObjectId }
+	| { kind: "fatal"; message: string };
+
+async function finishRebase(gitCtx: GitContext, env: Map<string, string>): Promise<FinishResult> {
 	const state = await readRebaseState(gitCtx);
 	if (!state) {
-		return fatal("no rebase in progress");
+		return { kind: "fatal", message: "no rebase in progress" };
 	}
 
 	const currentHead = await resolveHead(gitCtx);
 	if (!currentHead) {
-		return fatal("no HEAD during rebase finish");
+		return { kind: "fatal", message: "no HEAD during rebase finish" };
 	}
 
 	// Update the original branch ref and re-attach HEAD
@@ -1075,13 +1059,10 @@ async function finishRebase(
 		const currentBranchHash = await resolveRef(gitCtx, state.headName);
 		if (currentBranchHash !== state.origHead) {
 			return {
-				stdout: "",
-				stderr:
-					stderrLines.join("") +
-					`error: update_ref failed for ref '${state.headName}': cannot lock ref '${state.headName}': ` +
-					`is at ${currentBranchHash ?? "(null)"} but expected ${state.origHead}\n` +
-					`error: could not update ${state.headName}\n`,
-				exitCode: 1,
+				kind: "refLockFailure",
+				headName: state.headName,
+				actual: currentBranchHash ?? null,
+				expected: state.origHead,
 			};
 		}
 		await updateRef(gitCtx, state.headName, currentHead);
@@ -1111,19 +1092,12 @@ async function finishRebase(
 		);
 	}
 
-	const refLabel = state.headName;
-	const successMsg = `Successfully rebased and updated ${refLabel}.\n`;
-
 	// Clean up all state (including any cherry-pick/merge started mid-rebase)
 	await deleteRef(gitCtx, "REBASE_HEAD");
 	await clearAllOperationState(gitCtx);
 	await cleanupRebaseState(gitCtx);
 
-	return {
-		stdout: "",
-		stderr: stderrLines.join("") + successMsg,
-		exitCode: 0,
-	};
+	return { kind: "finished", headName: state.headName };
 }
 
 // ── --abort ─────────────────────────────────────────────────────────
@@ -1131,10 +1105,10 @@ async function finishRebase(
 export async function handleAbort(
 	gitCtx: GitContext,
 	env: Map<string, string>,
-): Promise<CommandResult> {
+): Promise<RebaseOutcome> {
 	const state = await readRebaseState(gitCtx);
 	if (!state) {
-		return fatal("no rebase in progress");
+		return { kind: "fatal", message: "no rebase in progress" };
 	}
 
 	const headBeforeAbort = await resolveHead(gitCtx);
@@ -1147,13 +1121,8 @@ export async function handleAbort(
 	// with oneway_merge which blocks on untracked file conflicts.
 	// We do a targeted pre-check, then resetHard for the actual restore
 	// (which forcibly overwrites dirty tracked files, as expected).
-	const untrackedErr = await checkAbortUntrackedConflicts(
-		gitCtx,
-		origCommit.tree,
-		currentIndex,
-		origHead,
-	);
-	if (untrackedErr) return untrackedErr;
+	const rejected = await checkAbortUntrackedConflicts(gitCtx, origCommit.tree, currentIndex);
+	if (rejected) return { kind: "abortBlocked", rejected, origHead };
 
 	const abortResult = await resetHard(gitCtx, origCommit.tree, currentIndex);
 	if (abortResult.success) {
@@ -1187,52 +1156,28 @@ export async function handleAbort(
 	await clearAllOperationState(gitCtx);
 	await cleanupRebaseState(gitCtx);
 
-	return {
-		stdout: "",
-		stderr: "",
-		exitCode: 0,
-	};
+	return { kind: "aborted" };
 }
 
 // ── --continue ──────────────────────────────────────────────────────
-
-/**
- * Result of `git rebase --continue`. When the step finalized a
- * conflict-resolved commit, `finalizedCommit` carries the data for the command
- * layer to render its commit summary (prepended to `stdout`); `lib` no longer
- * assembles that presentation itself.
- */
-export interface ContinueOutcome extends CommandResult {
-	finalizedCommit?: {
-		/** Raw pieces of the one-line header; the command layer renders it. */
-		oneLiner: { branchName: string; shortHash: string; message: string };
-		author: Identity;
-		committer: Identity;
-		showDate: boolean;
-		stats: DiffStats;
-	};
-}
 
 export async function handleContinue(
 	gitCtx: GitContext,
 	env: Map<string, string>,
 	mergeDriver?: ContentMergeFn,
-): Promise<ContinueOutcome> {
-	let finalizedCommit: ContinueOutcome["finalizedCommit"];
+): Promise<RebaseOutcome> {
+	let finalizedCommit: FinalizedRebaseCommit | undefined;
 
 	const state = await readRebaseState(gitCtx);
 	if (!state) {
-		return fatal("no rebase in progress");
+		return { kind: "fatal", message: "no rebase in progress" };
 	}
 
 	const index = await readIndex(gitCtx);
 
 	// Check for unresolved conflicts
 	if (hasConflicts(index)) {
-		return err(
-			"error: Committing is not possible because you have unmerged files.\nhint: Fix them up in the work tree, and then use 'git add <file>'\nhint: as appropriate to mark resolution and make a commit.\nfatal: Exiting because of an unresolved conflict.\n",
-			128,
-		);
+		return { kind: "unmergedContinue" };
 	}
 
 	// Check if REBASE_HEAD still exists (user hasn't committed yet)
@@ -1245,7 +1190,7 @@ export async function handleContinue(
 		// (state is advanced before pick), so don't check todo.length.
 		const headHash = await resolveHead(gitCtx);
 		if (!headHash) {
-			return fatal("Cannot read HEAD");
+			return { kind: "fatal", message: "Cannot read HEAD" };
 		}
 		const headCommit = await readCommit(gitCtx, headHash);
 		const stage0Entries = getStage0Entries(index);
@@ -1262,15 +1207,7 @@ export async function handleContinue(
 		// but rebase-merge/message persists until --continue processes it.
 		const hasRebaseMsg = (await readStateFile(gitCtx, "rebase-merge/message")) !== null;
 		if (needsCommit && !hasRebaseMsg) {
-			return err(
-				"error: you have staged changes in your working tree\n" +
-					"If these changes are meant to be squashed into the previous commit, run:\n\n" +
-					"  git commit --amend \n\n" +
-					"If they are meant to go into a new commit, run:\n\n" +
-					"  git commit \n\n" +
-					"In both cases, once you're done, continue with:\n\n" +
-					"  git rebase --continue\n\n",
-			);
+			return { kind: "stagedChangesContinue" };
 		}
 
 		if (needsCommit) {
@@ -1304,8 +1241,9 @@ export async function handleContinue(
 				messageText = originalCommit.message;
 			}
 
-			const committer = await resolveCommitterOrError(gitCtx, env);
-			if (isCommandError(committer)) return committer;
+			const committerResult = await resolveCommitter(gitCtx, env);
+			if (!committerResult.ok) return { kind: "fatal", message: committerResult.message };
+			const committer = committerResult.committer;
 
 			const message = ensureTrailingNewline(messageText);
 
@@ -1318,8 +1256,8 @@ export async function handleContinue(
 				parents.push(mergeHeadHash);
 			}
 
-			const continueSigner = await resolveSignerOrError(gitCtx);
-			if (isCommandError(continueSigner)) return continueSigner;
+			const signerResult = await resolveSigner(gitCtx);
+			if (!signerResult.ok) return { kind: "signingFailed" };
 
 			const commitHash = await writeCommitAndAdvance(
 				gitCtx,
@@ -1328,7 +1266,7 @@ export async function handleContinue(
 				authorSource.author,
 				committer,
 				message,
-				continueSigner,
+				signerResult.signer,
 			);
 
 			// Clean up merge state if present
@@ -1378,11 +1316,12 @@ export async function handleContinue(
 
 	// State was already advanced when the pick was attempted (before
 	// conflict), so no need to advance again. Just continue.
-	const pickResult = await runPickLoop(gitCtx, env, mergeDriver);
-	if (finalizedCommit) {
-		return { ...pickResult, finalizedCommit };
+	const loop = await runPickLoop(gitCtx, env, mergeDriver);
+	const outcome = await buildLoopOutcome(gitCtx, env, loop, []);
+	if (finalizedCommit && (outcome.kind === "rebased" || outcome.kind === "stopped")) {
+		outcome.finalizedCommit = finalizedCommit;
 	}
-	return pickResult;
+	return outcome;
 }
 
 // ── --skip ──────────────────────────────────────────────────────────
@@ -1391,22 +1330,16 @@ export async function handleSkip(
 	gitCtx: GitContext,
 	env: Map<string, string>,
 	mergeDriver?: ContentMergeFn,
-): Promise<CommandResult> {
+): Promise<RebaseOutcome> {
 	const state = await readRebaseState(gitCtx);
 	if (!state) {
-		return fatal("no rebase in progress");
+		return { kind: "fatal", message: "no rebase in progress" };
 	}
 
 	// Hard reset to current HEAD (discard in-progress merge)
 	const headHash = await resolveHead(gitCtx);
 	if (!headHash) {
-		return {
-			stdout: "",
-			stderr:
-				"error: could not determine HEAD revision\n" +
-				"fatal: could not discard worktree changes\n",
-			exitCode: 128,
-		};
+		return { kind: "skipNoHead" };
 	}
 
 	const headCommit = await readCommit(gitCtx, headHash);
@@ -1428,5 +1361,6 @@ export async function handleSkip(
 
 	// State was already advanced when the pick was attempted (before
 	// conflict), so no need to advance again. Just continue.
-	return runPickLoop(gitCtx, env, mergeDriver);
+	const loop = await runPickLoop(gitCtx, env, mergeDriver);
+	return buildLoopOutcome(gitCtx, env, loop, []);
 }

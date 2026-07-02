@@ -31,6 +31,7 @@ import type { RemoteRef } from "../lib/transport/transport.ts";
 import type { GitContext, ObjectId, Ref } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { performRebase } from "../lib/rebase-engine.ts";
+import { renderRebaseOutcome } from "../cli/rebase.ts";
 import { fatal, isCommandError } from "../lib/command-errors.ts";
 import { buildAbbrevResolver } from "../lib/abbrev.ts";
 import { formatTransferRefLines, buildRefUpdateLines } from "../lib/ref-format.ts";
@@ -432,20 +433,22 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				const headName = head?.type === "symbolic" ? head.target : "detached HEAD";
 				const upstreamLabel = remoteBranch ? `${remoteName}/${remoteBranch}` : remoteName;
 
-				const result = await performRebase(
-					gitCtx,
-					ctx.env,
-					headHash,
-					headName,
-					theirsHash,
-					theirsHash,
-					upstreamLabel,
-					// git pull --rebase checks out the fetched commit object, so the
-					// "pull (start): checkout <onto>" reflog records its sha, not the
-					// remote ref name.
-					theirsHash,
-					ext,
-					{ reflogAction: "pull" },
+				const result = renderRebaseOutcome(
+					await performRebase(
+						gitCtx,
+						ctx.env,
+						headHash,
+						headName,
+						theirsHash,
+						theirsHash,
+						upstreamLabel,
+						// git pull --rebase checks out the fetched commit object, so the
+						// "pull (start): checkout <onto>" reflog records its sha, not the
+						// remote ref name.
+						theirsHash,
+						ext,
+						{ reflogAction: "pull" },
+					),
 				);
 
 				if (result.exitCode === 0) {
