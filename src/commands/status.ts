@@ -1,9 +1,9 @@
 import type { GitExtensions } from "../git.ts";
 import { readIndex } from "../lib/index.ts";
 import { readHead, resolveHead } from "../lib/refs/refs.ts";
+import { generateLongFormStatus } from "../cli/status.ts";
 import {
 	collapseUntrackedDirs,
-	generateLongFormStatus,
 	getTrackingInfo,
 	getStagedChanges,
 	getUnmergedPaths,

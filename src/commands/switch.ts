@@ -16,7 +16,8 @@ import {
 	renderDetachPreamble,
 	renderTrackingSetup,
 } from "../format/checkout.ts";
-import { formatLongTrackingInfo, getTrackingInfo } from "../lib/status-format.ts";
+import { formatLongTrackingInfo } from "../format/status.ts";
+import { getTrackingInfo } from "../lib/status-format.ts";
 import { clearIndex, readIndex, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { clearDetachPoint, readStateFile } from "../lib/operation-state.ts";

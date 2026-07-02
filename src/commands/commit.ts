@@ -24,7 +24,7 @@ import { join } from "../lib/path.ts";
 import { isRebaseInProgress } from "../lib/rebase.ts";
 import { logRef } from "../lib/refs/reflog.ts";
 import { readHead, resolveHead, resolveRef, updateRef } from "../lib/refs/refs.ts";
-import { generateLongFormStatus } from "../lib/status-format.ts";
+import { generateLongFormStatus } from "../cli/status.ts";
 import { buildTreeFromIndex } from "../lib/tree-ops.ts";
 import { diffIndexToWorkTree, stageFile } from "../lib/worktree/worktree.ts";
 import { type Command, f, o } from "../parse/index.ts";

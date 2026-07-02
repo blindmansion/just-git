@@ -23,10 +23,87 @@ export interface StatusEntry {
 	displayPath?: string;
 }
 
+/** One rebase todo/done entry, with its hash already abbreviated for display. */
+export interface RebaseTodoView {
+	shortHash: string;
+	subject: string;
+	empty?: boolean;
+}
+
+/** Pre-resolved rebase progress used to render the long-status rebase section. */
+export interface RebaseStatusView {
+	/** Abbreviated `onto` commit. */
+	ontoShort: string;
+	/** Original branch name, or null when rebasing a detached HEAD. */
+	origBranch: string | null;
+	/** Total commands already applied. */
+	doneCount: number;
+	/** Last (up to 2) applied commands, for the "Last commands done" block. */
+	doneTail: RebaseTodoView[];
+	/** Total commands still to apply. */
+	todoCount: number;
+	/** First (up to 2) pending commands, for the "Next commands to do" block. */
+	todoHead: RebaseTodoView[];
+	/** Whether a MERGE_MSG file exists (distinguishes conflict-fixed states). */
+	hasMergeMsg: boolean;
+}
+
 /**
- * Generate the full long-form `git status` output.
- * Used by the status command handler and also by commit/cherry-pick
- * failure paths, which output `git status` to stdout on failure.
+ * Everything the long-form `git status` renderer needs, fully resolved.
+ * All async reads (refs, config, rebase state, abbreviations, …) happen while
+ * gathering this struct so the renderer (`format/status#renderLongStatus`)
+ * stays pure and synchronous.
+ */
+export interface LongStatusData {
+	headHash: ObjectId | null;
+	isDetached: boolean;
+	branchName: string;
+	/** Whether the index has any stage>0 (conflicted) entries. */
+	indexHasConflicts: boolean;
+	staged: StatusEntry[];
+	unstaged: StatusEntry[];
+	unmerged: StatusEntry[];
+	collapsedUntracked: string[];
+	/** Rebase progress, or null when no rebase is in progress. */
+	rebase: RebaseStatusView | null;
+	/** Abbreviated CHERRY_PICK_HEAD, or null when not cherry-picking. */
+	cherryPickShort: string | null;
+	/** Abbreviated REVERT_HEAD, or null when not reverting. */
+	revertShort: string | null;
+	hasMergeHead: boolean;
+	/** Abbreviated detach point, or null when not detached / unknown. */
+	detachPointShort: string | null;
+	/** True when HEAD is exactly at the detach point ("at" vs "from"). */
+	detachedAt: boolean;
+	tracking: TrackingInfo | null;
+	/** Branch bisecting started from, or null when not bisecting. */
+	bisectStartRef: string | null;
+	/** Use "Initial commit"/"Initial commit" wording (commit path) over "No commits yet". */
+	fromCommit: boolean;
+	/** Suppress the trailing footer; the caller appends its own. */
+	noWarn: boolean;
+	/** Repo has no commit to compare against (initial-commit state). */
+	isInitial: boolean;
+}
+
+async function abbrevTodoEntries(
+	gitCtx: GitRepo,
+	entries: { hash: string; subject: string; empty?: boolean }[],
+): Promise<RebaseTodoView[]> {
+	return Promise.all(
+		entries.map(async (e) => ({
+			shortHash: await uniqueAbbrev(gitCtx, e.hash),
+			subject: e.subject,
+			empty: e.empty,
+		})),
+	);
+}
+
+/**
+ * Gather all data needed to render the full long-form `git status` output.
+ * Used by the status command handler and also by commit/cherry-pick failure
+ * paths (via `cli/status#generateLongFormStatus`), which output `git status`
+ * to stdout on failure.
  *
  * @param opts.fromCommit - When true, uses "Initial commit" instead of
  *   "No commits yet" for repos with no commits, matching real git's
@@ -40,7 +117,7 @@ export interface StatusEntry {
  * @param opts.index - Pre-loaded index to use instead of reading from
  *   disk. Used by `commit -a` to show status after auto-staging.
  */
-export async function generateLongFormStatus(
+export async function gatherLongStatus(
 	gitCtx: GitContext,
 	opts?: {
 		fromCommit?: boolean;
@@ -48,7 +125,7 @@ export async function generateLongFormStatus(
 		noWarn?: boolean;
 		index?: Index;
 	},
-): Promise<string> {
+): Promise<LongStatusData> {
 	const head = await readHead(gitCtx);
 	const headHash = await resolveHead(gitCtx);
 	let branchName: string;
@@ -78,313 +155,72 @@ export async function generateLongFormStatus(
 	const trackedPaths = new Set(index.entries.map((e) => e.path));
 	const collapsedUntracked = collapseUntrackedDirs(untracked, trackedPaths);
 
-	return formatLongStatus(
-		gitCtx,
+	// ── operation state ──
+	const cherryPickHeadRef = await resolveRef(gitCtx, "CHERRY_PICK_HEAD");
+	const revertHeadRef = await resolveRef(gitCtx, "REVERT_HEAD");
+	const mergeHeadRef = await resolveRef(gitCtx, "MERGE_HEAD");
+
+	const rebaseInProgress = await isRebaseInProgress(gitCtx);
+	const rebaseRaw = rebaseInProgress ? await readRebaseState(gitCtx) : null;
+
+	let rebase: RebaseStatusView | null = null;
+	if (rebaseRaw) {
+		const isDetachedRebase = rebaseRaw.headName === "detached HEAD";
+		rebase = {
+			ontoShort: await uniqueAbbrev(gitCtx, rebaseRaw.onto),
+			origBranch: isDetachedRebase ? null : branchNameFromRef(rebaseRaw.headName),
+			doneCount: rebaseRaw.done.length,
+			doneTail: await abbrevTodoEntries(gitCtx, rebaseRaw.done.slice(-2)),
+			todoCount: rebaseRaw.todo.length,
+			todoHead: await abbrevTodoEntries(gitCtx, rebaseRaw.todo.slice(0, 2)),
+			hasMergeMsg: await gitCtx.fs.exists(joinPath(gitCtx.gitDir, "MERGE_MSG")),
+		};
+	}
+
+	// Tracking info (only for non-detached, non-rebase, non-initial states).
+	let tracking: TrackingInfo | null = null;
+	if (!isDetached && !rebaseRaw && !isInitial) {
+		const config = await readConfig(gitCtx);
+		tracking = await getTrackingInfo(gitCtx, config, branchName);
+	}
+
+	let detachPointShort: string | null = null;
+	let detachedAt = false;
+	if (isDetached && !rebaseRaw) {
+		const detachPoint = await readDetachPoint(gitCtx);
+		if (detachPoint) {
+			detachPointShort = await uniqueAbbrev(gitCtx, detachPoint);
+			detachedAt = headHash === detachPoint;
+		}
+	}
+
+	let bisectStartRef: string | null = null;
+	if (await isBisectInProgress(gitCtx)) {
+		const bisectStart = await readStateFile(gitCtx, "BISECT_START");
+		bisectStartRef = bisectStart?.trim() ?? "";
+	}
+
+	return {
 		headHash,
 		isDetached,
 		branchName,
-		index,
+		indexHasConflicts: hasConflicts(index),
 		staged,
 		unstaged,
 		unmerged,
 		collapsedUntracked,
-		{ fromCommit: opts?.fromCommit, noWarn: opts?.noWarn, isInitial },
-	);
-}
-
-// ── Long-form formatting ────────────────────────────────────────────
-
-async function pushRebaseTodoLines(
-	gitCtx: GitRepo,
-	lines: string[],
-	rebaseState: {
-		done: { hash: string; subject: string; empty?: boolean }[];
-		todo: { hash: string; subject: string; empty?: boolean }[];
-	},
-): Promise<void> {
-	const todoLine = async (e: { hash: string; subject: string; empty?: boolean }): Promise<string> =>
-		`   pick ${await uniqueAbbrev(gitCtx, e.hash)} # ${e.subject}${e.empty ? " # empty" : ""}`;
-	if (rebaseState.done.length > 0) {
-		const n = rebaseState.done.length;
-		lines.push(`Last command${n === 1 ? "" : "s"} done (${n} command${n === 1 ? "" : "s"} done):`);
-		for (const e of rebaseState.done.slice(-2)) {
-			lines.push(await todoLine(e));
-		}
-		if (n > 2) {
-			lines.push("  (see more in file .git/rebase-merge/done)");
-		}
-	}
-	if (rebaseState.todo.length > 0) {
-		const n = rebaseState.todo.length;
-		lines.push(
-			`Next command${n === 1 ? "" : "s"} to do (${n} remaining command${n === 1 ? "" : "s"}):`,
-		);
-		for (const e of rebaseState.todo.slice(0, 2)) {
-			lines.push(await todoLine(e));
-		}
-		lines.push('  (use "git rebase --edit-todo" to view and edit)');
-	} else {
-		lines.push("No commands remaining.");
-	}
-}
-
-async function formatLongStatus(
-	gitCtx: GitContext,
-	headHash: ObjectId | null,
-	isDetached: boolean,
-	branchName: string,
-	index: Index,
-	staged: StatusEntry[],
-	unstaged: StatusEntry[],
-	unmerged: StatusEntry[],
-	collapsedUntracked: string[],
-	opts?: { fromCommit?: boolean; noWarn?: boolean; isInitial?: boolean },
-): Promise<string> {
-	const lines: string[] = [];
-
-	let hasIntermediateState = false;
-	const cherryPickHeadRef = await resolveRef(gitCtx, "CHERRY_PICK_HEAD");
-	const revertHeadRef = await resolveRef(gitCtx, "REVERT_HEAD");
-	const mergeHeadRef = await resolveRef(gitCtx, "MERGE_HEAD");
-	const whenceIsCommit = !cherryPickHeadRef && !mergeHeadRef;
-
-	const rebaseInProgress = await isRebaseInProgress(gitCtx);
-	const rebaseState = rebaseInProgress ? await readRebaseState(gitCtx) : null;
-
-	// Branch header line
-	if (isDetached && rebaseState) {
-		const ontoShort = await uniqueAbbrev(gitCtx, rebaseState.onto);
-		lines.push(`interactive rebase in progress; onto ${ontoShort}`);
-	} else if (isDetached) {
-		const detachPoint = await readDetachPoint(gitCtx);
-		if (detachPoint) {
-			const atOrFrom = headHash === detachPoint ? "at" : "from";
-			lines.push(`HEAD detached ${atOrFrom} ${await uniqueAbbrev(gitCtx, detachPoint)}`);
-		} else {
-			lines.push("Not currently on any branch.");
-		}
-	} else {
-		lines.push(`On branch ${branchName}`);
-	}
-
-	const showInitial = opts?.isInitial ?? !headHash;
-
-	// Tracking info (only for non-detached, non-rebase, non-initial states)
-	if (!isDetached && !rebaseState && !showInitial) {
-		const config = await readConfig(gitCtx);
-		const tracking = await getTrackingInfo(gitCtx, config, branchName);
-		if (tracking) {
-			const trackingText = formatLongTrackingInfo(tracking, {
-				abbreviated: opts?.fromCommit,
-			});
-			for (const tl of trackingText.trimEnd().split("\n")) {
-				lines.push(tl);
-			}
-			hasIntermediateState = true;
-		}
-	}
-
-	// In-progress operation indicators
-	// Real git prints a blank line between tracking info and operation-state
-	// sections (e.g. during cherry-pick/rebase) in long status output.
-	if (hasIntermediateState && (rebaseState || cherryPickHeadRef || revertHeadRef || mergeHeadRef)) {
-		lines.push("");
-	}
-	if (rebaseState && mergeHeadRef) {
-		await pushRebaseTodoLines(gitCtx, lines, rebaseState);
-		lines.push("");
-		if (unmerged.length > 0) {
-			lines.push("You have unmerged paths.");
-			lines.push('  (fix conflicts and run "git commit")');
-			lines.push('  (use "git merge --abort" to abort the merge)');
-		} else {
-			lines.push("All conflicts fixed but you are still merging.");
-			lines.push('  (use "git commit" to conclude merge)');
-		}
-		hasIntermediateState = true;
-	} else if (rebaseState) {
-		const hasUnmerged = hasConflicts(index);
-		const hasMergeMsg = await gitCtx.fs.exists(joinPath(gitCtx.gitDir, "MERGE_MSG"));
-
-		await pushRebaseTodoLines(gitCtx, lines, rebaseState);
-
-		const isDetachedRebase = rebaseState.headName === "detached HEAD";
-		const origBranch = isDetachedRebase ? null : branchNameFromRef(rebaseState.headName);
-		const ontoShort = await uniqueAbbrev(gitCtx, rebaseState.onto);
-		const branchSuffix = origBranch ? ` branch '${origBranch}' on '${ontoShort}'` : "";
-
-		if (hasUnmerged) {
-			lines.push(`You are currently rebasing${branchSuffix}.`);
-			lines.push('  (fix conflicts and then run "git rebase --continue")');
-			lines.push('  (use "git rebase --skip" to skip this patch)');
-			lines.push('  (use "git rebase --abort" to check out the original branch)');
-		} else if (hasMergeMsg) {
-			lines.push(`You are currently rebasing${branchSuffix}.`);
-			lines.push('  (all conflicts fixed: run "git rebase --continue")');
-		} else {
-			const editMsg = branchSuffix
-				? `You are currently editing a commit while rebasing${branchSuffix}.`
-				: "You are currently editing a commit during a rebase.";
-			lines.push(editMsg);
-			lines.push('  (use "git commit --amend" to amend the current commit)');
-			lines.push('  (use "git rebase --continue" once you are satisfied with your changes)');
-		}
-
-		hasIntermediateState = true;
-	} else {
-		if (cherryPickHeadRef) {
-			lines.push(
-				`You are currently cherry-picking commit ${await uniqueAbbrev(gitCtx, cherryPickHeadRef)}.`,
-			);
-			if (unmerged.length > 0) {
-				lines.push('  (fix conflicts and run "git cherry-pick --continue")');
-			} else {
-				lines.push('  (all conflicts fixed: run "git cherry-pick --continue")');
-			}
-			lines.push('  (use "git cherry-pick --skip" to skip this patch)');
-			lines.push('  (use "git cherry-pick --abort" to cancel the cherry-pick operation)');
-			hasIntermediateState = true;
-		} else if (revertHeadRef) {
-			lines.push(
-				`You are currently reverting commit ${await uniqueAbbrev(gitCtx, revertHeadRef)}.`,
-			);
-			if (unmerged.length > 0) {
-				lines.push('  (fix conflicts and run "git revert --continue")');
-			} else {
-				lines.push('  (all conflicts fixed: run "git revert --continue")');
-			}
-			lines.push('  (use "git revert --skip" to skip this patch)');
-			lines.push('  (use "git revert --abort" to cancel the revert operation)');
-			hasIntermediateState = true;
-		} else if (mergeHeadRef) {
-			if (unmerged.length > 0) {
-				lines.push("You have unmerged paths.");
-				lines.push('  (fix conflicts and run "git commit")');
-				lines.push('  (use "git merge --abort" to abort the merge)');
-			} else {
-				lines.push("All conflicts fixed but you are still merging.");
-				lines.push('  (use "git commit" to conclude merge)');
-			}
-			hasIntermediateState = true;
-		}
-	}
-
-	if (await isBisectInProgress(gitCtx)) {
-		const bisectStart = await readStateFile(gitCtx, "BISECT_START");
-		const ref = bisectStart?.trim() ?? "";
-		lines.push(`You are currently bisecting, started from branch '${ref}'.`);
-		lines.push('  (use "git bisect reset" to get back to the original branch)');
-		hasIntermediateState = true;
-	}
-
-	if (showInitial) {
-		lines.push("");
-		lines.push(opts?.fromCommit ? "Initial commit" : "No commits yet");
-		hasIntermediateState = true;
-	}
-
-	let unstageHint: string | null = null;
-	if (whenceIsCommit) {
-		unstageHint = headHash
-			? '  (use "git restore --staged <file>..." to unstage)'
-			: '  (use "git rm --cached <file>..." to unstage)';
-	}
-
-	const hasUnstagedDeletions = unstaged.some((e) => e.status === "deleted");
-	const addHint = hasUnstagedDeletions
-		? '  (use "git add/rm <file>..." to update what will be committed)'
-		: '  (use "git add <file>..." to update what will be committed)';
-
-	let hasSections = false;
-
-	if (staged.length > 0) {
-		if (hasIntermediateState) lines.push("");
-		lines.push("Changes to be committed:");
-		if (unstageHint) lines.push(unstageHint);
-		for (const entry of staged) {
-			lines.push(`\t${formatStatusEntry(entry.status, entry.path, entry.displayPath)}`);
-		}
-		lines.push("");
-		hasSections = true;
-	}
-
-	if (unmerged.length > 0) {
-		if (!hasSections && hasIntermediateState) lines.push("");
-		lines.push("Unmerged paths:");
-		if (whenceIsCommit) {
-			if (headHash) {
-				lines.push('  (use "git restore --staged <file>..." to unstage)');
-			} else {
-				lines.push('  (use "git rm --cached <file>..." to unstage)');
-			}
-		}
-		const hasDeleteConflicts = unmerged.some(
-			(e) =>
-				e.status === "deleted by us" ||
-				e.status === "deleted by them" ||
-				e.status === "both deleted",
-		);
-		if (hasDeleteConflicts) {
-			lines.push('  (use "git add/rm <file>..." as appropriate to mark resolution)');
-		} else {
-			lines.push('  (use "git add <file>..." to mark resolution)');
-		}
-		for (const entry of unmerged) {
-			lines.push(`\t${formatMergeStatusEntry(entry.status, entry.path)}`);
-		}
-		lines.push("");
-		hasSections = true;
-	}
-
-	if (unstaged.length > 0) {
-		if (!hasSections && hasIntermediateState) lines.push("");
-		lines.push("Changes not staged for commit:");
-		lines.push(addHint);
-		lines.push('  (use "git restore <file>..." to discard changes in working directory)');
-		for (const entry of unstaged) {
-			lines.push(`\t${formatStatusEntry(entry.status, entry.path)}`);
-		}
-		lines.push("");
-		hasSections = true;
-	}
-
-	if (collapsedUntracked.length > 0) {
-		if (!hasSections && hasIntermediateState) lines.push("");
-		lines.push("Untracked files:");
-		lines.push('  (use "git add <file>..." to include in what will be committed)');
-		for (const path of collapsedUntracked) {
-			lines.push(`\t${path}`);
-		}
-		lines.push("");
-		hasSections = true;
-	}
-
-	const commitable = staged.length > 0 || (!!mergeHeadRef && unmerged.length === 0);
-	if (!hasSections && hasIntermediateState && (opts?.noWarn || commitable)) {
-		lines.push("");
-	}
-	if (!commitable && !opts?.noWarn) {
-		if (
-			!hasSections &&
-			hasIntermediateState &&
-			unstaged.length === 0 &&
-			unmerged.length === 0 &&
-			collapsedUntracked.length === 0
-		) {
-			lines.push("");
-		}
-		if (unstaged.length > 0 || unmerged.length > 0) {
-			lines.push('no changes added to commit (use "git add" and/or "git commit -a")');
-		} else if (collapsedUntracked.length > 0) {
-			lines.push('nothing added to commit but untracked files present (use "git add" to track)');
-		} else if (showInitial) {
-			lines.push('nothing to commit (create/copy files and use "git add" to track)');
-		} else {
-			lines.push("nothing to commit, working tree clean");
-		}
-	}
-
-	return `${lines.join("\n")}\n`;
+		rebase,
+		cherryPickShort: cherryPickHeadRef ? await uniqueAbbrev(gitCtx, cherryPickHeadRef) : null,
+		revertShort: revertHeadRef ? await uniqueAbbrev(gitCtx, revertHeadRef) : null,
+		hasMergeHead: !!mergeHeadRef,
+		detachPointShort,
+		detachedAt,
+		tracking,
+		bisectStartRef,
+		fromCommit: opts?.fromCommit ?? false,
+		noWarn: opts?.noWarn ?? false,
+		isInitial,
+	};
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────
@@ -563,16 +399,6 @@ export function collapseUntrackedDirs(
 	return [...result].sort();
 }
 
-function formatStatusEntry(status: string, path: string, displayPath?: string): string {
-	const label = `${status}:`;
-	return label.padEnd(12) + (displayPath ?? path);
-}
-
-function formatMergeStatusEntry(status: string, path: string): string {
-	const label = `${status}:`;
-	return label.padEnd(17) + path;
-}
-
 // ── Tracking info ───────────────────────────────────────────────────
 
 export interface TrackingInfo {
@@ -614,45 +440,4 @@ export async function getTrackingInfo(
 
 	const { ahead, behind } = await countAheadBehind(ctx, branchHash, upstreamHash);
 	return { upstream: displayName, ahead, behind, gone: false };
-}
-
-/**
- * Format tracking info for `git status` / `git checkout` long-form display.
- * Returns multi-line output like:
- *   "Your branch is up to date with 'origin/main'.\n"
- *   "Your branch is ahead of 'origin/main' by 3 commits.\n  (use ...)\n"
- *
- * @param opts.abbreviated - When true, omits the hint for the diverged
- *   case. Real git uses abbreviated tracking in `cmd_commit` (nothing to
- *   commit path) which suppresses the diverged hint but keeps ahead/behind.
- */
-export function formatLongTrackingInfo(
-	info: TrackingInfo,
-	opts?: { abbreviated?: boolean },
-): string {
-	if (info.gone) {
-		return `Your branch is based on '${info.upstream}', but the upstream is gone.\n  (use "git branch --unset-upstream" to fixup)\n`;
-	}
-	if (info.ahead === 0 && info.behind === 0) {
-		return `Your branch is up to date with '${info.upstream}'.\n`;
-	}
-	if (info.ahead > 0 && info.behind === 0) {
-		const plural = info.ahead === 1 ? "commit" : "commits";
-		return (
-			`Your branch is ahead of '${info.upstream}' by ${info.ahead} ${plural}.\n` +
-			`  (use "git push" to publish your local commits)\n`
-		);
-	}
-	if (info.behind > 0 && info.ahead === 0) {
-		const plural = info.behind === 1 ? "commit" : "commits";
-		return (
-			`Your branch is behind '${info.upstream}' by ${info.behind} ${plural}, and can be fast-forwarded.\n` +
-			`  (use "git pull" to update your local branch)\n`
-		);
-	}
-	const header =
-		`Your branch and '${info.upstream}' have diverged,\n` +
-		`and have ${info.ahead} and ${info.behind} different commits each, respectively.\n`;
-	if (opts?.abbreviated) return header;
-	return header + `  (use "git pull" if you want to integrate the remote branch with yours)\n`;
 }

@@ -13,7 +13,7 @@ import {
 	readStashRef,
 	saveStash,
 } from "../lib/stash.ts";
-import { generateLongFormStatus } from "../lib/status-format.ts";
+import { generateLongFormStatus } from "../cli/status.ts";
 import { diffTrees } from "../lib/tree-ops.ts";
 import type { GitContext, GitRepo, ObjectId, TreeDiffEntry } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";

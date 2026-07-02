@@ -23,7 +23,8 @@ import {
 	updateRef,
 } from "../lib/refs/refs.ts";
 import { resolveRevision } from "../lib/refs/rev-parse.ts";
-import { formatLongTrackingInfo, getTrackingInfo } from "../lib/status-format.ts";
+import { formatLongTrackingInfo } from "../format/status.ts";
+import { getTrackingInfo } from "../lib/status-format.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { applyWorktreeOps, checkoutTrees } from "../lib/worktree/unpack-trees.ts";
 import { checkoutEntry } from "../lib/worktree/worktree.ts";

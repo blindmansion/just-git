@@ -15,7 +15,8 @@ import { readCommit } from "../lib/object-db.ts";
 import { clearDetachPoint, writeDetachPoint } from "../lib/operation-state.ts";
 import { logRef } from "../lib/refs/reflog.ts";
 import { createSymbolicRef, readHead, resolveHead, updateRef } from "../lib/refs/refs.ts";
-import { formatLongTrackingInfo, getTrackingInfo } from "../lib/status-format.ts";
+import { formatLongTrackingInfo } from "../format/status.ts";
+import { getTrackingInfo } from "../lib/status-format.ts";
 import { firstLine } from "../lib/text-utils.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import {

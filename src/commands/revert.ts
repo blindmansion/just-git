@@ -19,7 +19,7 @@ import {
 } from "../lib/operation-state.ts";
 import { logRef } from "../lib/refs/reflog.ts";
 import { readHead, resolveHead, resolveRef, updateRef } from "../lib/refs/refs.ts";
-import { generateLongFormStatus } from "../lib/status-format.ts";
+import { generateLongFormStatus } from "../cli/status.ts";
 import type { Signer } from "../lib/signing.ts";
 import { buildTreeFromIndex, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, Identity, ObjectId } from "../lib/types.ts";
