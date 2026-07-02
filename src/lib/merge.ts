@@ -1,4 +1,4 @@
-import { formatDiffStat } from "./commit-summary.ts";
+import { type DiffStats, gatherCommitStats } from "./commit-summary.ts";
 import { readIndex, writeIndex } from "./index.ts";
 import { readCommit } from "./object-db.ts";
 import { advanceBranchRef } from "./refs/refs.ts";
@@ -300,17 +300,32 @@ export async function buildMergeMessage(
 
 // ── Fast-forward merge (high-level) ─────────────────────────────────
 
+/**
+ * Data outcome of a fast-forward merge. The abbreviated hashes and gathered
+ * diffstat are returned so the *command* layer renders the `Updating`/
+ * `Fast-forward` output (byte-fidelity presentation is not `lib`'s job).
+ */
+export type FastForwardResult =
+	| { ok: true; oldShort: string; newShort: string; stats: DiffStats }
+	| {
+			ok: false;
+			oldShort: string;
+			newShort: string;
+			stdout: string;
+			stderr: string;
+			exitCode: number;
+	  };
+
 export async function handleFastForward(
 	gitCtx: GitContext,
 	headHash: ObjectId,
 	theirsHash: ObjectId,
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+): Promise<FastForwardResult> {
 	const headCommit = await readCommit(gitCtx, headHash);
 	const theirsCommit = await readCommit(gitCtx, theirsHash);
 
 	const oldShort = await uniqueAbbrev(gitCtx, headHash);
 	const newShort = await uniqueAbbrev(gitCtx, theirsHash);
-	const updatingLine = `Updating ${oldShort}..${newShort}\n`;
 
 	if (gitCtx.workTree) {
 		const currentIndex = await readIndex(gitCtx);
@@ -321,11 +336,7 @@ export async function handleFastForward(
 				stderr: string;
 				exitCode: number;
 			};
-			return {
-				stdout: updatingLine + err.stdout,
-				stderr: err.stderr,
-				exitCode: err.exitCode,
-			};
+			return { ok: false, oldShort, newShort, ...err };
 		}
 		await writeIndex(gitCtx, { version: 2, entries: result.newEntries });
 		await applyWorktreeOps(gitCtx, result.worktreeOps);
@@ -333,12 +344,8 @@ export async function handleFastForward(
 
 	await advanceBranchRef(gitCtx, theirsHash);
 
-	const diffstat = await formatDiffStat(gitCtx, headCommit.tree, theirsCommit.tree);
-	return {
-		stdout: `${updatingLine}Fast-forward\n${diffstat}`,
-		stderr: "",
-		exitCode: 0,
-	};
+	const stats = await gatherCommitStats(gitCtx, headCommit.tree, theirsCommit.tree);
+	return { ok: true, oldShort, newShort, stats };
 }
 
 /**
@@ -350,15 +357,16 @@ export async function handleFastForward(
  * plain HEAD..target commit diff, independent of any local modifications.
  *
  * This mirrors {@link handleFastForward} minus the ref advance, returning the
- * diffstat for the caller to wrap with the squash status lines. On a
- * worktree-overwrite failure the merge error output is returned verbatim.
+ * gathered diffstat for the caller to render and wrap with the squash status
+ * lines. On a worktree-overwrite failure the merge error output is returned
+ * verbatim.
  */
 export async function squashFastForward(
 	gitCtx: GitContext,
 	headHash: ObjectId,
 	theirsHash: ObjectId,
 ): Promise<
-	{ ok: true; diffstat: string } | { ok: false; stdout: string; stderr: string; exitCode: number }
+	{ ok: true; stats: DiffStats } | { ok: false; stdout: string; stderr: string; exitCode: number }
 > {
 	const headCommit = await readCommit(gitCtx, headHash);
 	const theirsCommit = await readCommit(gitCtx, theirsHash);
@@ -374,6 +382,6 @@ export async function squashFastForward(
 		await applyWorktreeOps(gitCtx, result.worktreeOps);
 	}
 
-	const diffstat = await formatDiffStat(gitCtx, headCommit.tree, theirsCommit.tree);
-	return { ok: true, diffstat };
+	const stats = await gatherCommitStats(gitCtx, headCommit.tree, theirsCommit.tree);
+	return { ok: true, stats };
 }

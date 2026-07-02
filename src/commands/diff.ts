@@ -2,7 +2,8 @@ import type { GitExtensions } from "../git.ts";
 import { formatCombinedDiffEntry } from "../format/combined-diff.ts";
 import { getCwdPrefix } from "../lib/command-utils.ts";
 import { resolveAttributes } from "../lib/attributes/bound-attributes.ts";
-import { type FileStat, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
+import type { FileStat } from "../lib/commit-summary.ts";
+import { formatShortstatParts, renderStatLines } from "../format/commit-summary.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff/algorithm.ts";
 import {
 	boundDiffAttributes,
@@ -869,8 +870,10 @@ async function buildFileStats(gitCtx: GitContext, items: DiffFileResult[]): Prom
 			continue;
 		}
 
-		const displayPath =
-			item.status === "R" && item.oldPath ? formatRenamePath(item.oldPath, item.path) : item.path;
+		const rename =
+			item.status === "R" && item.oldPath
+				? { oldPath: item.oldPath, newPath: item.path }
+				: undefined;
 
 		const oldBytes = item.oldHash ? await readBlobBytes(gitCtx, item.oldHash) : new Uint8Array(0);
 		const newBytes = await readNewContentBytes(gitCtx, item);
@@ -879,13 +882,14 @@ async function buildFileStats(gitCtx: GitContext, items: DiffFileResult[]): Prom
 
 		if (st.binary) {
 			stats.push({
-				path: displayPath,
+				path: item.path,
 				sortKey: item.path,
 				insertions: 0,
 				deletions: 0,
 				isBinary: true,
 				oldSize: st.oldBytes.byteLength,
 				newSize: st.newBytes.byteLength,
+				...(rename && { rename }),
 			});
 		} else {
 			const { ins, del } = countInsertionsDeletions(
@@ -893,10 +897,11 @@ async function buildFileStats(gitCtx: GitContext, items: DiffFileResult[]): Prom
 				decoder.decode(st.newBytes),
 			);
 			stats.push({
-				path: displayPath,
+				path: item.path,
 				sortKey: item.path,
 				insertions: ins,
 				deletions: del,
+				...(rename && { rename }),
 			});
 		}
 	}

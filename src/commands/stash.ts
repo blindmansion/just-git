@@ -1,5 +1,6 @@
 import type { GitExtensions } from "../git.ts";
-import { formatDiffStat } from "../lib/commit-summary.ts";
+import { gatherCommitStats } from "../lib/commit-summary.ts";
+import { renderDiffStat } from "../format/commit-summary.ts";
 import { formatUnifiedDiff } from "../lib/diff/algorithm.ts";
 import { getConflictedPaths, readIndex } from "../lib/index.ts";
 import { readBlobContent, readCommit } from "../lib/object-db.ts";
@@ -350,7 +351,7 @@ async function handleShow(
 		return { stdout: output, stderr: "", exitCode: 0 };
 	}
 
-	const output = await formatDiffStat(gitCtx, parent.tree, stashCommit.tree);
+	const output = renderDiffStat(await gatherCommitStats(gitCtx, parent.tree, stashCommit.tree));
 	return { stdout: output, stderr: "", exitCode: 0 };
 }
 

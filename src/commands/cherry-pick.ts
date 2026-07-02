@@ -5,7 +5,8 @@ import {
 	hasStagedChanges,
 	resolveCommandSigner,
 } from "../lib/command-utils.ts";
-import { formatCommitSummary } from "../lib/commit-summary.ts";
+import { gatherCommitStats } from "../lib/commit-summary.ts";
+import { renderCommitSummary } from "../format/commit-summary.ts";
 import { getStage0Entries, readIndex, writeIndex } from "../lib/index.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import {
@@ -365,14 +366,14 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 			const branchName =
 				head2?.type === "symbolic" ? branchNameFromRef(head2.target) : "detached HEAD";
 			const parentTree = headCommit.tree;
-			const summary = await formatCommitSummary(
-				gitCtx,
-				parentTree,
-				treeHash,
-				theirsCommit.author,
+			const stats = await gatherCommitStats(gitCtx, parentTree, treeHash);
+			const summary = renderCommitSummary({
+				author: theirsCommit.author,
 				committer,
-				true,
-			);
+				showDate: true,
+				isMerge: false,
+				stats,
+			});
 
 			const header = await formatCommitOneLiner(gitCtx, branchName, commitHash, cherryPickMessage);
 			const mergeMessages = result.messages.length > 0 ? `${result.messages.join("\n")}\n` : "";
@@ -547,14 +548,14 @@ async function handleContinue(
 		head?.type === "symbolic",
 	);
 	const branchName = head?.type === "symbolic" ? branchNameFromRef(head.target) : "detached HEAD";
-	const summary = await formatCommitSummary(
-		gitCtx,
-		parentTree,
-		treeHash,
-		originalCommit.author,
+	const stats = await gatherCommitStats(gitCtx, parentTree, treeHash);
+	const summary = renderCommitSummary({
+		author: originalCommit.author,
 		committer,
-		true,
-	);
+		showDate: true,
+		isMerge: false,
+		stats,
+	});
 
 	const header = await formatCommitOneLiner(gitCtx, branchName, commitHash, messageText);
 	return {

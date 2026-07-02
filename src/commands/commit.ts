@@ -1,7 +1,8 @@
 import type { CommandContext, GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import { resolveCommandSigner } from "../lib/command-utils.ts";
-import { formatCommitSummary } from "../lib/commit-summary.ts";
+import { gatherCommitStats } from "../lib/commit-summary.ts";
+import { renderCommitSummary } from "../format/commit-summary.ts";
 import {
 	getStage0Entries,
 	hasConflicts,
@@ -464,15 +465,8 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 			const showDate =
 				author.timestamp !== committer.timestamp || author.timezone !== committer.timezone;
 			const isMerge = parents.length > 1;
-			const summary = await formatCommitSummary(
-				gitCtx,
-				parentTree,
-				treeHash,
-				author,
-				committer,
-				showDate,
-				isMerge,
-			);
+			const stats = isMerge ? null : await gatherCommitStats(gitCtx, parentTree, treeHash);
+			const summary = renderCommitSummary({ author, committer, showDate, isMerge, stats });
 
 			const header = await formatCommitOneLiner(
 				gitCtx,

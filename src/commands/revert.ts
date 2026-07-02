@@ -5,7 +5,8 @@ import {
 	hasStagedChanges,
 	resolveCommandSigner,
 } from "../lib/command-utils.ts";
-import { formatCommitSummary } from "../lib/commit-summary.ts";
+import { gatherCommitStats } from "../lib/commit-summary.ts";
+import { renderCommitSummary } from "../format/commit-summary.ts";
 import { getStage0Entries, readIndex, writeIndex } from "../lib/index.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import {
@@ -580,17 +581,19 @@ async function finalizeRevertCommit(options: {
 	);
 	const branchName =
 		updatedHead?.type === "symbolic" ? branchNameFromRef(updatedHead.target) : "detached HEAD";
-	const summary = await formatCommitSummary(
-		gitCtx,
-		headTreeHash,
-		treeHash,
+	const showDate =
+		author.name !== committer.name ||
+		author.email !== committer.email ||
+		author.timestamp !== committer.timestamp ||
+		author.timezone !== committer.timezone;
+	const stats = await gatherCommitStats(gitCtx, headTreeHash, treeHash);
+	const summary = renderCommitSummary({
 		author,
 		committer,
-		author.name !== committer.name ||
-			author.email !== committer.email ||
-			author.timestamp !== committer.timestamp ||
-			author.timezone !== committer.timezone,
-	);
+		showDate,
+		isMerge: false,
+		stats,
+	});
 	const header = await formatCommitOneLiner(gitCtx, branchName, commitHash, displayMessage);
 	return { commitHash, stdout: `${header}\n${summary}` };
 }

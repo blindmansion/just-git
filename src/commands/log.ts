@@ -1,5 +1,6 @@
 import type { GitExtensions } from "../git.ts";
-import { computeDiffStats, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
+import { computeDiffStats } from "../lib/commit-summary.ts";
+import { formatShortstatParts, renderStatLines } from "../format/commit-summary.ts";
 import { type CommitEntry, CommitHeap, walkCommits } from "../lib/commit-walk.ts";
 import { parseDate } from "../lib/date.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff/algorithm.ts";
@@ -8,7 +9,7 @@ import {
 	resolveDiffPresentation,
 	resolveDiffStat,
 } from "../lib/diff/driver.ts";
-import { CommitGraph } from "../lib/graph.ts";
+import { CommitGraph } from "../format/graph.ts";
 import {
 	type DateMode,
 	expandFormat,

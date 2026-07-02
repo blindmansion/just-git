@@ -1,5 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
+import { renderCommitSummary } from "../format/commit-summary.ts";
 import { handleAbort, handleContinue, handleSkip, performRebase } from "../lib/rebase-engine.ts";
 import { isRebaseInProgress, rebaseMergeDir } from "../lib/rebase.ts";
 import { readHead } from "../lib/refs/refs.ts";
@@ -32,7 +33,27 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 				return handleAbort(gitCtx, ctx.env);
 			}
 			if (args.continue) {
-				return handleContinue(gitCtx, ctx.env, (await bindAttributes(gitCtx, "rebase"))?.merge);
+				const res = await handleContinue(
+					gitCtx,
+					ctx.env,
+					(await bindAttributes(gitCtx, "rebase"))?.merge,
+				);
+				if (res.finalizedCommit) {
+					const { header, author, committer, showDate, stats } = res.finalizedCommit;
+					const summary = renderCommitSummary({
+						author,
+						committer,
+						showDate,
+						isMerge: false,
+						stats,
+					});
+					return {
+						stdout: `${header}\n${summary}${res.stdout}`,
+						stderr: res.stderr,
+						exitCode: res.exitCode,
+					};
+				}
+				return res;
 			}
 			if (args.skip) {
 				return handleSkip(gitCtx, ctx.env, (await bindAttributes(gitCtx, "rebase"))?.merge);

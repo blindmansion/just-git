@@ -1,6 +1,7 @@
 import type { GitExtensions } from "../git.ts";
 import { formatCombinedDiffEntry } from "../format/combined-diff.ts";
-import { computeDiffStats, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
+import { computeDiffStats } from "../lib/commit-summary.ts";
+import { formatShortstatParts, renderStatLines } from "../format/commit-summary.ts";
 import { formatDate } from "../lib/date.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff/algorithm.ts";
 import {

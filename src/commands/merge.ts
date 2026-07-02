@@ -2,7 +2,8 @@ import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import { handleOperationAbort, resolveCommandSigner } from "../lib/command-utils.ts";
 import { walkCommits } from "../lib/commit-walk.ts";
-import { formatDiffStat } from "../lib/commit-summary.ts";
+import { gatherCommitStats } from "../lib/commit-summary.ts";
+import { renderDiffStat, renderFastForward } from "../format/commit-summary.ts";
 import { formatDate } from "../lib/date.ts";
 import { getConflictedPaths, getStage0Entries, readIndex } from "../lib/index.ts";
 import {
@@ -192,34 +193,40 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 
 			if (isFastForward && !args.squash) {
 				const head = await readHead(gitCtx);
-				const result = await handleFastForward(gitCtx, headHash, theirsHash);
-				if (result.exitCode === 0 && args.message) {
-					result.stdout = result.stdout.replace(
-						/^Fast-forward$/m,
-						"Fast-forward (no commit created; -m option ignored)",
-					);
+				const ff = await handleFastForward(gitCtx, headHash, theirsHash);
+				if (!ff.ok) {
+					return {
+						stdout: `Updating ${ff.oldShort}..${ff.newShort}\n${ff.stdout}`,
+						stderr: ff.stderr,
+						exitCode: ff.exitCode,
+					};
 				}
-				if (result.exitCode === 0) {
-					await deleteStateFile(gitCtx, "MERGE_MSG");
-					const refName = head?.type === "symbolic" ? head.target : "HEAD";
-					await logRef(
-						gitCtx,
-						ctx.env,
-						refName,
-						headHash,
-						theirsHash,
-						`merge ${branch}: Fast-forward${args.message ? " (no commit created; -m option ignored)" : ""}`,
-						head?.type === "symbolic",
-					);
-					await ext?.capabilities?.hooks?.postMerge?.({
-						repo: gitCtx,
-						headHash,
-						theirsHash,
-						strategy: "fast-forward",
-						commitHash: null,
-					});
-				}
-				return result;
+				await deleteStateFile(gitCtx, "MERGE_MSG");
+				const refName = head?.type === "symbolic" ? head.target : "HEAD";
+				await logRef(
+					gitCtx,
+					ctx.env,
+					refName,
+					headHash,
+					theirsHash,
+					`merge ${branch}: Fast-forward${args.message ? " (no commit created; -m option ignored)" : ""}`,
+					head?.type === "symbolic",
+				);
+				await ext?.capabilities?.hooks?.postMerge?.({
+					repo: gitCtx,
+					headHash,
+					theirsHash,
+					strategy: "fast-forward",
+					commitHash: null,
+				});
+				const ffLabel = args.message
+					? "Fast-forward (no commit created; -m option ignored)"
+					: "Fast-forward";
+				return {
+					stdout: renderFastForward(ff.oldShort, ff.newShort, ff.stats, ffLabel),
+					stderr: "",
+					exitCode: 0,
+				};
 			}
 
 			const rawMessage = args.message;
@@ -399,7 +406,7 @@ async function handleThreeWayMerge(
 		commitHash,
 	});
 
-	const diffstat = await formatDiffStat(gitCtx, headCommit.tree, treeHash);
+	const diffstat = renderDiffStat(await gatherCommitStats(gitCtx, headCommit.tree, treeHash));
 	const mergeMessages = result.messages.length > 0 ? `${result.messages.join("\n")}\n` : "";
 	return {
 		stdout: `${mergeMessages}Merge made by the 'ort' strategy.\n${diffstat}`,
@@ -470,7 +477,7 @@ async function handleSquashMerge(
 			? "Fast-forward (no commit created; -m option ignored)"
 			: "Fast-forward";
 		return {
-			stdout: `${ffPrefix}${ffLabel}\nSquash commit -- not updating HEAD\n${ff.diffstat}`,
+			stdout: `${ffPrefix}${ffLabel}\nSquash commit -- not updating HEAD\n${renderDiffStat(ff.stats)}`,
 			stderr: "",
 			exitCode: 0,
 		};
@@ -644,7 +651,7 @@ async function handleContinue(
 		commitHash,
 	});
 
-	const diffstat = await formatDiffStat(gitCtx, headCommit.tree, treeHash);
+	const diffstat = renderDiffStat(await gatherCommitStats(gitCtx, headCommit.tree, treeHash));
 	const branchName = head?.type === "symbolic" ? branchNameFromRef(head.target) : "detached HEAD";
 	const header = await formatCommitOneLiner(gitCtx, branchName, commitHash, messageText);
 

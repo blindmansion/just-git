@@ -6,7 +6,8 @@ import {
 	sequencerDirtyWorktreeError,
 } from "../lib/command-utils.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
-import { formatDiffStat } from "../lib/commit-summary.ts";
+import { gatherCommitStats } from "../lib/commit-summary.ts";
+import { renderDiffStat, renderFastForward } from "../format/commit-summary.ts";
 import {
 	autoFollowReachableTags,
 	collectFetchHaves,
@@ -380,12 +381,28 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				const rebaseBases = await findAllMergeBases(gitCtx, headHash, theirsHash);
 				if ((rebaseBases[0] ?? null) === headHash) {
 					const ffResult = await handleFastForward(gitCtx, headHash, theirsHash);
-					if (ffResult.exitCode === 0) {
-						const refName = head?.type === "symbolic" ? head.target : "HEAD";
-						// The reflog action keeps the original pull flags even though the
-						// fast-forward is performed via merge --ff-only internally.
-						const pullFFMsg = `pull${pullMode.noFf ? " --no-ff" : ""}: Fast-forward`;
-						await appendReflog(gitCtx, refName, {
+					if (!ffResult.ok) {
+						return {
+							stdout: `Updating ${ffResult.oldShort}..${ffResult.newShort}\n${ffResult.stdout}`,
+							stderr: fetchOutput + ffResult.stderr,
+							exitCode: ffResult.exitCode,
+						};
+					}
+					const refName = head?.type === "symbolic" ? head.target : "HEAD";
+					// The reflog action keeps the original pull flags even though the
+					// fast-forward is performed via merge --ff-only internally.
+					const pullFFMsg = `pull${pullMode.noFf ? " --no-ff" : ""}: Fast-forward`;
+					await appendReflog(gitCtx, refName, {
+						oldHash: headHash,
+						newHash: theirsHash,
+						name: ident.name,
+						email: ident.email,
+						timestamp: ident.timestamp,
+						tz: ident.tz,
+						message: pullFFMsg,
+					});
+					if (head?.type === "symbolic") {
+						await appendReflog(gitCtx, "HEAD", {
 							oldHash: headHash,
 							newHash: theirsHash,
 							name: ident.name,
@@ -394,35 +411,25 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 							tz: ident.tz,
 							message: pullFFMsg,
 						});
-						if (head?.type === "symbolic") {
-							await appendReflog(gitCtx, "HEAD", {
-								oldHash: headHash,
-								newHash: theirsHash,
-								name: ident.name,
-								email: ident.email,
-								timestamp: ident.timestamp,
-								tz: ident.tz,
-								message: pullFFMsg,
-							});
-						}
-						await ext?.capabilities?.hooks?.postMerge?.({
-							repo: gitCtx,
-							headHash,
-							theirsHash,
-							strategy: "fast-forward",
-							commitHash: null,
-						});
-						await ext?.capabilities?.hooks?.postPull?.({
-							repo: gitCtx,
-							remote: remoteName,
-							branch: pullBranch,
-							strategy: "fast-forward",
-							commitHash: theirsHash,
-						});
 					}
+					await ext?.capabilities?.hooks?.postMerge?.({
+						repo: gitCtx,
+						headHash,
+						theirsHash,
+						strategy: "fast-forward",
+						commitHash: null,
+					});
+					await ext?.capabilities?.hooks?.postPull?.({
+						repo: gitCtx,
+						remote: remoteName,
+						branch: pullBranch,
+						strategy: "fast-forward",
+						commitHash: theirsHash,
+					});
 					return {
-						...ffResult,
-						stderr: fetchOutput + ffResult.stderr,
+						stdout: renderFastForward(ffResult.oldShort, ffResult.newShort, ffResult.stats),
+						stderr: fetchOutput,
+						exitCode: 0,
 					};
 				}
 
@@ -535,11 +542,27 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 
 			if (isFastForward && !noFf) {
 				const ffResult = await handleFastForward(gitCtx, headHash, theirsHash);
-				if (ffResult.exitCode === 0) {
-					const refName = head?.type === "symbolic" ? head.target : "HEAD";
-					const ffFlagStr = ffOnly ? " --ff-only" : "";
-					const pullFFMsg = `pull${ffFlagStr}: Fast-forward`;
-					await appendReflog(gitCtx, refName, {
+				if (!ffResult.ok) {
+					return {
+						stdout: `Updating ${ffResult.oldShort}..${ffResult.newShort}\n${ffResult.stdout}`,
+						stderr: fetchOutput + ffResult.stderr,
+						exitCode: ffResult.exitCode,
+					};
+				}
+				const refName = head?.type === "symbolic" ? head.target : "HEAD";
+				const ffFlagStr = ffOnly ? " --ff-only" : "";
+				const pullFFMsg = `pull${ffFlagStr}: Fast-forward`;
+				await appendReflog(gitCtx, refName, {
+					oldHash: headHash,
+					newHash: theirsHash,
+					name: ident.name,
+					email: ident.email,
+					timestamp: ident.timestamp,
+					tz: ident.tz,
+					message: pullFFMsg,
+				});
+				if (head?.type === "symbolic") {
+					await appendReflog(gitCtx, "HEAD", {
 						oldHash: headHash,
 						newHash: theirsHash,
 						name: ident.name,
@@ -548,35 +571,25 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 						tz: ident.tz,
 						message: pullFFMsg,
 					});
-					if (head?.type === "symbolic") {
-						await appendReflog(gitCtx, "HEAD", {
-							oldHash: headHash,
-							newHash: theirsHash,
-							name: ident.name,
-							email: ident.email,
-							timestamp: ident.timestamp,
-							tz: ident.tz,
-							message: pullFFMsg,
-						});
-					}
-					await ext?.capabilities?.hooks?.postMerge?.({
-						repo: gitCtx,
-						headHash,
-						theirsHash,
-						strategy: "fast-forward",
-						commitHash: null,
-					});
-					await ext?.capabilities?.hooks?.postPull?.({
-						repo: gitCtx,
-						remote: remoteName,
-						branch: pullBranch,
-						strategy: "fast-forward",
-						commitHash: theirsHash,
-					});
 				}
+				await ext?.capabilities?.hooks?.postMerge?.({
+					repo: gitCtx,
+					headHash,
+					theirsHash,
+					strategy: "fast-forward",
+					commitHash: null,
+				});
+				await ext?.capabilities?.hooks?.postPull?.({
+					repo: gitCtx,
+					remote: remoteName,
+					branch: pullBranch,
+					strategy: "fast-forward",
+					commitHash: theirsHash,
+				});
 				return {
-					...ffResult,
-					stderr: fetchOutput + ffResult.stderr,
+					stdout: renderFastForward(ffResult.oldShort, ffResult.newShort, ffResult.stats),
+					stderr: fetchOutput,
+					exitCode: 0,
 				};
 			}
 
@@ -733,7 +746,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				});
 			}
 
-			const diffstat = await formatDiffStat(gitCtx, headCommit.tree, treeHash);
+			const diffstat = renderDiffStat(await gatherCommitStats(gitCtx, headCommit.tree, treeHash));
 			const mergeMessages =
 				mergeResult.messages.length > 0 ? `${mergeResult.messages.join("\n")}\n` : "";
 			return {

@@ -6,7 +6,7 @@ import {
 	sequencerDirtyWorktreeError,
 } from "./command-utils.ts";
 import { bindAttributes } from "./attributes/bound-attributes.ts";
-import { formatCommitSummary } from "./commit-summary.ts";
+import { type DiffStats, gatherCommitStats } from "./commit-summary.ts";
 import {
 	getConflictedPaths,
 	getStage0Entries,
@@ -53,7 +53,7 @@ import {
 	updateRef,
 } from "./refs/refs.ts";
 import { buildTreeFromIndex, flattenTree, flattenTreeToMap } from "./tree-ops.ts";
-import type { GitContext, GitRepo, Index, ObjectId } from "./types.ts";
+import type { GitContext, GitRepo, Identity, Index, ObjectId } from "./types.ts";
 import {
 	applyWorktreeOps,
 	checkoutTrees,
@@ -1145,12 +1145,28 @@ export async function handleAbort(
 
 // ── --continue ──────────────────────────────────────────────────────
 
+/**
+ * Result of `git rebase --continue`. When the step finalized a
+ * conflict-resolved commit, `finalizedCommit` carries the data for the command
+ * layer to render its commit summary (prepended to `stdout`); `lib` no longer
+ * assembles that presentation itself.
+ */
+export interface ContinueOutcome extends CommandResult {
+	finalizedCommit?: {
+		header: string;
+		author: Identity;
+		committer: Identity;
+		showDate: boolean;
+		stats: DiffStats;
+	};
+}
+
 export async function handleContinue(
 	gitCtx: GitContext,
 	env: Map<string, string>,
 	mergeDriver?: ContentMergeFn,
-): Promise<CommandResult> {
-	let continueStdout = "";
+): Promise<ContinueOutcome> {
+	let finalizedCommit: ContinueOutcome["finalizedCommit"];
 
 	const state = await readRebaseState(gitCtx);
 	if (!state) {
@@ -1279,20 +1295,15 @@ export async function handleContinue(
 				`rebase (continue): ${continueSubject}`,
 			);
 
-			// Output commit summary (matches git's print_commit_summary)
+			// Gather the commit-summary data (matches git's print_commit_summary);
+			// the command layer renders it and prepends it to stdout.
 			const label = await headLabel(gitCtx);
 			const showDate =
 				authorSource.author.timestamp !== committer.timestamp ||
 				authorSource.author.timezone !== committer.timezone;
-			const summary = await formatCommitSummary(
-				gitCtx,
-				headCommit.tree,
-				indexTree,
-				authorSource.author,
-				committer,
-				showDate,
-			);
-			continueStdout = `${await formatCommitOneLiner(gitCtx, label, commitHash, message)}\n${summary}`;
+			const header = await formatCommitOneLiner(gitCtx, label, commitHash, message);
+			const stats = await gatherCommitStats(gitCtx, headCommit.tree, indexTree);
+			finalizedCommit = { header, author: authorSource.author, committer, showDate, stats };
 		}
 
 		const finishingFinalStep = state.todo.length === 0;
@@ -1310,8 +1321,8 @@ export async function handleContinue(
 	// State was already advanced when the pick was attempted (before
 	// conflict), so no need to advance again. Just continue.
 	const pickResult = await runPickLoop(gitCtx, env, mergeDriver);
-	if (continueStdout) {
-		pickResult.stdout = continueStdout + pickResult.stdout;
+	if (finalizedCommit) {
+		return { ...pickResult, finalizedCommit };
 	}
 	return pickResult;
 }
