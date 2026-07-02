@@ -7,6 +7,7 @@ import {
 	dependencyDepth,
 	dependents,
 	directoryMatrix,
+	exportConsumers,
 	externalPackages,
 	findCycles,
 	formatMatrix,
@@ -16,6 +17,7 @@ import {
 	isRuntimeEdge,
 	parentDir,
 	relPathOf,
+	symbolEdges,
 	typeOnlyEdges,
 	valueEdges,
 } from "./index.ts";
@@ -151,6 +153,41 @@ describe("import-graph introspection", () => {
 		expect(m.internalEdges).toBeGreaterThan(0);
 		// transport is consumed through a small public surface.
 		expect(m.publicSurface).toBeLessThan(m.size);
+	});
+
+	test("symbolEdges explode imports to the binding level", async () => {
+		const graph = await buildImportGraph({ include: "test/introspection" });
+		const edges = symbolEdges(graph);
+
+		// Every symbol edge points at a resolved internal target and carries the
+		// name of an actual export of that module.
+		expect(edges.length).toBeGreaterThan(0);
+		for (const e of edges) {
+			expect(e.id).toBe(`${e.toRel}#${e.importedName}`);
+			expect(e.importedName).not.toBe("*");
+		}
+
+		// `relPathOf` is exported from query.ts and imported by index.ts (a value).
+		const relPathUses = edges.filter((e) => e.importedName === "relPathOf");
+		expect(relPathUses.some((e) => e.fromRel === "index.ts" && e.runtime)).toBe(true);
+
+		// `ImportGraph` is a pure type, so its bindings are non-runtime.
+		const importGraphUses = edges.filter((e) => e.importedName === "ImportGraph");
+		expect(importGraphUses.length).toBeGreaterThan(0);
+		expect(importGraphUses.every((e) => !e.runtime)).toBe(true);
+	});
+
+	test("exportConsumers rolls symbol edges up per export", async () => {
+		const graph = await buildImportGraph({ include: "test/introspection" });
+		const consumers = exportConsumers(graph, { runtimeOnly: true });
+
+		// The heavily-reused `relPathOf` helper is consumed by several files.
+		const relPathConsumers = consumers.get("query.ts#relPathOf");
+		expect(relPathConsumers).toBeDefined();
+		expect(relPathConsumers?.has("index.ts")).toBe(true);
+
+		// runtimeOnly drops pure-type exports entirely.
+		expect(consumers.has("types.ts#ImportGraph")).toBe(false);
 	});
 
 	test("path helpers", async () => {

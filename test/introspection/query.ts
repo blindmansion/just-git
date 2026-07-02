@@ -3,7 +3,7 @@
 // lines: traversal, reverse lookup, cycle detection, external-dependency
 // rollups, directory-level layering matrices, and layering-rule checks.
 
-import type { EdgeTarget, ImportEdge, ImportGraph, ModuleNode } from "./types.ts";
+import type { EdgeTarget, ImportEdge, ImportGraph, ModuleNode, SymbolKind } from "./types.ts";
 
 /**
  * Whether an edge represents a *runtime* dependency — i.e. it survives type
@@ -510,6 +510,97 @@ export function typeImportCandidates(graph: ImportGraph): ImportEdge[] {
 			e.bindings.length > 0 &&
 			e.bindings.every((b) => !b.isTypeOnly && b.kind === "type"),
 	);
+}
+
+/**
+ * A single named import binding resolved to the internal export it targets —
+ * the import graph "exploded" to one row per binding. Where {@link groupMatrix}
+ * collapses edges to file→file for layering, this keeps the *symbol* so you can
+ * ask the granular question "which function depends on what" (and, in reverse,
+ * "which of a module's exports are used together"). Namespace (`import * as`)
+ * and side-effect imports carry no single export name and are omitted.
+ */
+export interface SymbolEdge {
+	/** Absolute path of the importing file. */
+	fromFile: string;
+	/** Absolute path of the target internal module. */
+	toFile: string;
+	/** Root-relative path of the importing file. */
+	fromRel: string;
+	/** Root-relative path of the target module. */
+	toRel: string;
+	/** Export name in the target module (`"default"` for a default import). */
+	importedName: string;
+	/** Local name the binding is bound to in the importing file. */
+	localName: string;
+	/** Checker classification of the binding, resolved through aliases. */
+	kind: SymbolKind;
+	/** This specific binding is type-only (`import type` or inline `type`). */
+	isTypeOnly: boolean;
+	/** Survives type erasure — a genuine runtime symbol dependency. */
+	runtime: boolean;
+	/** Stable id of the target export: `${toRel}#${importedName}`. */
+	id: string;
+}
+
+/**
+ * Explode internal import edges into one {@link SymbolEdge} per named binding.
+ * The building block for symbol-level analysis; roll it up however you need
+ * (see {@link exportConsumers}). Pass `edgeFilter` to restrict the source
+ * edges (e.g. `isRuntimeEdge`); the per-binding `runtime` flag is always set
+ * regardless so you can filter bindings after the fact.
+ */
+export function symbolEdges(
+	graph: ImportGraph,
+	opts: { edgeFilter?: (edge: ImportEdge) => boolean } = {},
+): SymbolEdge[] {
+	const out: SymbolEdge[] = [];
+	for (const edge of graph.edges) {
+		if (edge.target !== "internal" || !edge.toFile) continue;
+		if (opts.edgeFilter && !opts.edgeFilter(edge)) continue;
+		const fromRel = relPathOf(graph, edge.fromFile);
+		const toRel = relPathOf(graph, edge.toFile);
+		for (const b of edge.bindings) {
+			if (b.importedName === "*") continue; // namespace: no single export
+			out.push({
+				fromFile: edge.fromFile,
+				toFile: edge.toFile,
+				fromRel,
+				toRel,
+				importedName: b.importedName,
+				localName: b.localName,
+				kind: b.kind,
+				isTypeOnly: b.isTypeOnly,
+				runtime: !b.isTypeOnly && (b.kind === "value" || b.kind === "value-and-type"),
+				id: `${toRel}#${b.importedName}`,
+			});
+		}
+	}
+	return out;
+}
+
+/**
+ * Consumers of each internal export: export id (`${relPath}#name`) → the set of
+ * root-relative files that import it. Rolls up {@link symbolEdges}. Pass
+ * `runtimeOnly` to drop type-only uses. Reverse-lookup companion to a call
+ * graph for planning splits: exports with disjoint consumer sets are natural
+ * seams, and a module whose exports share one consumer set is cohesive.
+ */
+export function exportConsumers(
+	graph: ImportGraph,
+	opts: { runtimeOnly?: boolean } = {},
+): Map<string, Set<string>> {
+	const result = new Map<string, Set<string>>();
+	for (const s of symbolEdges(graph)) {
+		if (opts.runtimeOnly && !s.runtime) continue;
+		let set = result.get(s.id);
+		if (!set) {
+			set = new Set();
+			result.set(s.id, set);
+		}
+		set.add(s.fromRel);
+	}
+	return result;
 }
 
 /** Serialise a graph to a JSON-friendly object (Maps become arrays/records). */

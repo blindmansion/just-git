@@ -68,6 +68,7 @@ Typical questions and the helper that answers them:
 | Question                                 | Helper                                                          |
 | ---------------------------------------- | --------------------------------------------------------------- |
 | What depends on / is depended on by X?   | `dependencies`, `dependents`, `buildReverseIndex`               |
+| Which _symbol_ of X does each file use?  | `symbolEdges` (per-binding) / `exportConsumers` (per-export)    |
 | Are there import cycles? (runtime ones!) | `findCycles(g, { edgeFilter: isRuntimeEdge })`                  |
 | How do directories import each other?    | `directoryMatrix` / `groupMatrix` + `formatMatrix`              |
 | What are the hubs / leaves?              | `degrees(g, { edgeFilter: isRuntimeEdge })`                     |
