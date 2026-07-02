@@ -93,6 +93,7 @@ The same bootstrap powers analyses that aren't about imports at all:
 | Who calls this function? Recursion? Dead helpers?            | `buildCallGraph` + `callers` / `callCycles` / `uncalledFunctions` |
 | Which tests exercise a src file? What's untested?            | `buildTestTopology` + `testsCovering` / `.uncovered`              |
 | I changed these files — which tests must I run?              | `impactedTests(topo, changed)`                                    |
+| Which types/interfaces are the same shape under diff names?  | `findDuplicateTypeShapes` (+ `collectTypeShapes`)                 |
 
 ```bash
 bun -e '

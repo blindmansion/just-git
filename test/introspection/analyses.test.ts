@@ -6,13 +6,16 @@ import {
 	buildTypeGraph,
 	callCycles,
 	callers,
+	collectTypeShapes,
 	createAnalysisProgram,
 	fileMetrics,
+	findDuplicateTypeShapes,
 	godFiles,
 	impactedTests,
 	testsCovering,
 	typeCycles,
 	typeReferrers,
+	typeShapeSignature,
 } from "./index.ts";
 
 // These exercise the non-import-graph analyses that share the program bootstrap.
@@ -63,6 +66,48 @@ describe("type graph", () => {
 		const tg = await buildTypeGraph({ include: "src", root: "src" });
 		expect(tg.nodes.size).toBeGreaterThan(0);
 		expect(tg.edges.length).toBeGreaterThan(0);
+	});
+});
+
+describe("type shapes", () => {
+	test("buckets structurally identical declarations under different names", async () => {
+		// CallEdge and TypeEdge are both `{ fromId: string; toId: string }` — a
+		// real duplicate pair inside the toolkit, so this is deterministic.
+		const dupes = await findDuplicateTypeShapes({
+			include: "test/introspection",
+			root: "test/introspection",
+		});
+		const group = dupes.find(
+			(g) =>
+				g.members.some((m) => m.id === "call-graph.ts#CallEdge") &&
+				g.members.some((m) => m.id === "type-graph.ts#TypeEdge"),
+		);
+		expect(group).toBeDefined();
+		expect(group?.distinctNames).toBe(true);
+		// Every member of a group shares one signature, and it's the group's key.
+		for (const g of dupes) {
+			expect(g.members.length).toBeGreaterThanOrEqual(2);
+			for (const m of g.members) expect(m.signature).toBe(g.signature);
+		}
+	});
+
+	test("signatures are name-independent and drop trivial shapes", async () => {
+		const prog = await createAnalysisProgram({
+			include: "test/introspection",
+			root: "test/introspection",
+		});
+		const shapes = await collectTypeShapes(prog);
+		const callEdge = shapes.find((s) => s.id === "call-graph.ts#CallEdge");
+		const typeEdge = shapes.find((s) => s.id === "type-graph.ts#TypeEdge");
+		expect(callEdge?.signature).toBe(typeEdge?.signature);
+
+		// typeShapeSignature runs off the same checker without throwing.
+		expect(typeof typeShapeSignature).toBe("function");
+
+		// Trivial buckets (primitives / empty objects) are excluded by default.
+		const withTrivial = await findDuplicateTypeShapes(prog, { skipTrivial: false });
+		const withoutTrivial = await findDuplicateTypeShapes(prog);
+		expect(withTrivial.length).toBeGreaterThanOrEqual(withoutTrivial.length);
 	});
 });
 

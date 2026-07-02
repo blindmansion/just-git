@@ -66,6 +66,15 @@ export {
 	typeReferrers,
 } from "./type-graph.ts";
 export {
+	collectTypeShapes,
+	type DuplicateShapeGroup,
+	type DuplicateShapeOptions,
+	findDuplicateTypeShapes,
+	type ShapeKind,
+	type TypeShape,
+	typeShapeSignature,
+} from "./type-shape.ts";
+export {
 	buildCallGraph,
 	type CallEdge,
 	type CallGraph,
