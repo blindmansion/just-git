@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import {
-	checkRefFormat,
-	isValidBranchName,
-	isValidTagName,
-	RefFormatFlag,
-} from "../../src/lib/refs.ts";
 import { runScenario } from "../util.ts";
 import { TEST_ENV } from "../fixtures.ts";
+import {
+	checkRefFormat,
+	RefFormatFlag,
+	isValidBranchName,
+	isValidTagName,
+} from "../../src/lib/ref-name.ts";
 
 describe("checkRefFormat", () => {
 	describe("rejects invalid full refnames", () => {

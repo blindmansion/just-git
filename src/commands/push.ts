@@ -3,15 +3,7 @@ import { isRejection } from "../hooks.ts";
 import { getConfigValue, readConfig, writeConfig } from "../lib/config.ts";
 import { isAncestor } from "../lib/merge.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
-import {
-	deleteRef,
-	listRefs,
-	readHead,
-	resolveHead,
-	resolveRef,
-	shortenRef,
-	updateRef,
-} from "../lib/refs.ts";
+import { deleteRef, listRefs, readHead, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
 import { parseRefspec } from "../lib/transport/refspec.ts";
 import { resolveRemoteTransport } from "../lib/transport/resolver.ts";
 import type { PushRefUpdate } from "../lib/transport/transport.ts";
@@ -22,6 +14,7 @@ import { uniqueAbbrev } from "../lib/abbrev.ts";
 import type { TransferRefLine } from "../lib/ref-format.ts";
 import { formatTransferRefLines } from "../lib/ref-format.ts";
 import { requireGitContext } from "../lib/commit-requirements.ts";
+import { shortenRef } from "../lib/ref-name.ts";
 
 export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("push", {

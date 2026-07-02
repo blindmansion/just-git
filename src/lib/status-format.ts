@@ -6,12 +6,13 @@ import { readCommit } from "./object-db.ts";
 import { readDetachPoint, readStateFile } from "./operation-state.ts";
 import { join as joinPath, comparePaths } from "./path.ts";
 import { isRebaseInProgress, readRebaseState } from "./rebase.ts";
-import { branchNameFromRef, readHead, resolveHead, resolveRef } from "./refs.ts";
+import { readHead, resolveHead, resolveRef } from "./refs.ts";
 import { detectRenames } from "./rename-detection.ts";
 import { flattenTreeToMap } from "./tree-ops.ts";
 import type { GitContext, GitRepo, Index, ObjectId, TreeDiffEntry } from "./types.ts";
 import { diffIndexToWorkTree } from "./worktree/worktree.ts";
 import { uniqueAbbrev } from "./abbrev.ts";
+import { branchNameFromRef } from "./ref-name.ts";
 
 export interface StatusEntry {
 	/** Path used for sorting (new path for renames). */

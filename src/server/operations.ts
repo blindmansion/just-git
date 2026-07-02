@@ -14,7 +14,6 @@ import { parseTag } from "../lib/objects/tag.ts";
 import { findBestDeltas } from "../lib/pack/delta.ts";
 import type { DeltaPackInput, PackInput } from "../lib/pack/packfile.ts";
 import { readPackStreaming, writePackDeltified, writePackStreaming } from "../lib/pack/packfile.ts";
-import { checkRefFormat } from "../lib/refs.ts";
 import { computeShallowBoundary } from "../lib/shallow.ts";
 import {
 	collectEnumeration,
@@ -58,6 +57,7 @@ import {
 	type DeferrableObjectStore,
 	type PendingObjectBatch,
 } from "../store/repo-store.ts";
+import { checkRefFormat } from "../lib/ref-name.ts";
 
 // ── Pack cache ──────────────────────────────────────────────────────
 

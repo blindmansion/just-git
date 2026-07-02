@@ -11,14 +11,7 @@ import {
 import { getReflogIdentity } from "../lib/identity.ts";
 import { join } from "../lib/path.ts";
 import { appendReflog, ZERO_HASH } from "../lib/reflog.ts";
-import {
-	deleteRef,
-	ensureRemoteHead,
-	listRefs,
-	resolveRef,
-	shortenRef,
-	updateRef,
-} from "../lib/refs.ts";
+import { deleteRef, ensureRemoteHead, listRefs, resolveRef, updateRef } from "../lib/refs.ts";
 import { applyShallowUpdates } from "../lib/shallow.ts";
 import { mapRefspec, parseRefspec, type Refspec } from "../lib/transport/refspec.ts";
 import type { RemoteRef } from "../lib/transport/transport.ts";
@@ -30,6 +23,7 @@ import { buildAbbrevResolver } from "../lib/abbrev.ts";
 import type { TransferRefLine } from "../lib/ref-format.ts";
 import { formatTransferRefLines, buildRefUpdateLines } from "../lib/ref-format.ts";
 import { requireGitContext } from "../lib/commit-requirements.ts";
+import { shortenRef } from "../lib/ref-name.ts";
 
 export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("fetch", {

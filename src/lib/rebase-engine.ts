@@ -46,7 +46,6 @@ import {
 } from "./reflog.ts";
 import {
 	advanceBranchRef,
-	branchNameFromRef,
 	createSymbolicRef,
 	deleteRef,
 	readHead,
@@ -72,6 +71,7 @@ import { firstLine, stripCommentLines, ensureTrailingNewline } from "./text-util
 import { uniqueAbbrev } from "./abbrev.ts";
 import { formatCommitOneLiner } from "./ref-format.ts";
 import { requireCommitter, writeCommitAndAdvance } from "./commit-requirements.ts";
+import { branchNameFromRef } from "./ref-name.ts";
 
 /**
  * Return the display label for the current HEAD — either the branch name

@@ -20,14 +20,7 @@ import {
 	reflogRewrite,
 	ZERO_HASH,
 } from "./reflog.ts";
-import {
-	branchNameFromRef,
-	deleteRef,
-	deleteRefEffects,
-	readHead,
-	resolveHead,
-	updateRef,
-} from "./refs.ts";
+import { deleteRef, deleteRefEffects, readHead, resolveHead, updateRef } from "./refs.ts";
 import { isSubmoduleMode } from "./symlink.ts";
 import { buildTreeFromIndex, diffTrees, flattenTree, flattenTreeToMap } from "./tree-ops.ts";
 import type { GitContext, GitRepo, IndexEntry, ObjectId } from "./types.ts";
@@ -35,6 +28,7 @@ import { applyWorktreeOps, resetHard, type WorktreeOp } from "./worktree/unpack-
 import { checkoutEntry, cleanEmptyDirs, walkWorkTree } from "./worktree/worktree.ts";
 import { firstLine } from "./text-utils.ts";
 import { uniqueAbbrev } from "./abbrev.ts";
+import { branchNameFromRef } from "./ref-name.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
 

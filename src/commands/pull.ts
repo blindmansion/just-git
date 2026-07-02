@@ -24,15 +24,7 @@ import { deleteStateFile, writeStateFile } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 import { appendReflog } from "../lib/reflog.ts";
-import {
-	branchNameFromRef,
-	ensureRemoteHead,
-	readHead,
-	resolveHead,
-	resolveRef,
-	shortenRef,
-	updateRef,
-} from "../lib/refs.ts";
+import { ensureRemoteHead, readHead, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
 import { applyShallowUpdates } from "../lib/shallow.ts";
 import { mapRefspec, parseRefspec } from "../lib/transport/refspec.ts";
 import type { RemoteRef } from "../lib/transport/transport.ts";
@@ -50,6 +42,7 @@ import {
 	requireVerifiedCommit,
 	writeCommitAndAdvance,
 } from "../lib/commit-requirements.ts";
+import { branchNameFromRef, shortenRef } from "../lib/ref-name.ts";
 
 function pullUpToDateMessage(
 	head: Awaited<ReturnType<typeof readHead>>,

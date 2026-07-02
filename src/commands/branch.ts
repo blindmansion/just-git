@@ -8,11 +8,8 @@ import { readDetachPoint } from "../lib/operation-state.ts";
 import { isRebaseInProgress, readRebaseState } from "../lib/rebase.ts";
 import { appendReflog, logRef, readReflog, writeReflog, ZERO_HASH } from "../lib/reflog.ts";
 import {
-	branchNameFromRef,
 	createSymbolicRef,
 	deleteRef,
-	FileSystemRefStore,
-	isValidBranchName,
 	listRefs,
 	readHead,
 	resolveHead,
@@ -32,6 +29,8 @@ import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 import { firstLine } from "../lib/text-utils.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
 import { requireGitContext, requireCommit } from "../lib/commit-requirements.ts";
+import { FileSystemRefStore } from "../lib/ref-store.ts";
+import { isValidBranchName, branchNameFromRef } from "../lib/ref-name.ts";
 
 /** The leading marker `git branch` shows: current, checked out elsewhere, or plain. */
 function branchMarker(isCurrent: boolean, inOtherWorktree?: boolean): string {

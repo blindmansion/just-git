@@ -11,7 +11,7 @@ import { createGitCommand } from "../../src/commands/git";
 import { createServer, MemoryStorage, type GitServer } from "../../src/server/index";
 import { readIndex } from "../../src/lib/index";
 import { readReflog } from "../../src/lib/reflog";
-import { FileSystemRefStore, listRefs, readHead, resolveRef } from "../../src/lib/refs";
+import { listRefs, readHead, resolveRef } from "../../src/lib/refs";
 import { findRepo } from "../../src/lib/repo";
 import type { GitContext } from "../../src/lib/types";
 import { listWorktrees } from "../../src/lib/worktree-admin";
@@ -583,6 +583,7 @@ async function executeCommand(
 // ── Replay engine ────────────────────────────────────────────────
 
 import type { Divergence } from "./compare";
+import { FileSystemRefStore } from "../../src/lib/ref-store.ts";
 
 interface StepDivergence {
 	seq: number;

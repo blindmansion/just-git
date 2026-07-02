@@ -22,7 +22,6 @@ import { logRef, ZERO_HASH } from "../lib/reflog.ts";
 import {
 	createSymbolicRef,
 	deleteRef,
-	isValidBranchName,
 	readHead,
 	resolveHead,
 	resolveRef,
@@ -35,6 +34,7 @@ import { branchCheckedOutAt } from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 import { requireGitContext, requireCommit } from "../lib/commit-requirements.ts";
+import { isValidBranchName } from "../lib/ref-name.ts";
 
 function fromNameOf(head: Ref | null, hash: ObjectId | null): string {
 	return head?.type === "symbolic"

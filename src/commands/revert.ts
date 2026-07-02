@@ -22,7 +22,7 @@ import {
 	writeStateFile,
 } from "../lib/operation-state.ts";
 import { logRef } from "../lib/reflog.ts";
-import { branchNameFromRef, readHead, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
+import { readHead, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
 import { generateLongFormStatus } from "../lib/status-format.ts";
 import type { Signer } from "../lib/signing.ts";
 import { buildTreeFromIndex, flattenTreeToMap } from "../lib/tree-ops.ts";
@@ -42,6 +42,7 @@ import {
 	requireAuthor,
 	writeCommitAndAdvance,
 } from "../lib/commit-requirements.ts";
+import { branchNameFromRef } from "../lib/ref-name.ts";
 
 type RevertMode = "commit" | "no-commit";
 
