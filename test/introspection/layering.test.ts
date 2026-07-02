@@ -24,7 +24,7 @@ import {
  * `lib`/`parse` and `store`/`repo`/`proxy` are peers (no edges between them),
  * so their relative order within the list is arbitrary.
  */
-const LAYERS = ["lib", "parse", "store", "repo", "proxy", "server", "commands"] as const;
+const LAYERS = ["lib", "parse", "store", "repo", "proxy", "server", "cli", "commands"] as const;
 
 /**
  * Top-level `src/*.ts` modules are exempt: they are either pure *contracts*

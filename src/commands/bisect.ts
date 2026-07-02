@@ -9,7 +9,7 @@ import {
 	readBisectState,
 	readBisectTerms,
 } from "../lib/bisect.ts";
-import { detachHeadCore, switchBranchCore } from "../lib/worktree/checkout-utils.ts";
+import { detachHeadCore, switchBranchCore } from "../cli/checkout-core.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { walkCommits } from "../lib/commit-walk.ts";
 import { readStateFile, writeStateFile } from "../lib/operation-state.ts";

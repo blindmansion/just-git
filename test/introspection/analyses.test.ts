@@ -160,12 +160,14 @@ describe("concern classifier", () => {
 		expect(expand?.formats).toBe(true);
 		expect(expand?.handlesData).toBe(false);
 
-		// commit-summary is split (P2): the gather is pure data in lib, the
-		// renderer is pure presentation in format/.
+		// commit-summary and checkout are split (P2): the gather is pure data in
+		// lib, the renderer is pure presentation in format/.
 		expect(by("lib/commit-summary.ts", "computeDiffStats")?.kind).toBe("data");
 		expect(by("format/commit-summary.ts", "renderCommitSummary")?.kind).toBe("formatting");
+		expect(by("lib/worktree/checkout-utils.ts", "computeCheckoutStatus")?.kind).toBe("data");
+		expect(by("format/checkout.ts", "renderCheckoutSummary")?.kind).toBe("formatting");
 		// A still-mixed function couples async data access with formatted output.
-		expect(by("lib/worktree/checkout-utils.ts", "formatCheckoutSummary")?.kind).toBe("mixed");
+		expect(by("lib/status-format.ts", "formatLongStatus")?.kind).toBe("mixed");
 		// A pure counting helper is neither formatting nor data.
 		expect(by("lib/commit-summary.ts", "countLines")?.kind).toBe("logic");
 

@@ -1,6 +1,6 @@
 import type { FileSystem } from "../fs.ts";
 import type { CommandContext, GitExtensions } from "../git.ts";
-import { guessRemoteBranch, maybeSetupTracking } from "../lib/worktree/checkout-utils.ts";
+import { guessRemoteBranch, setupTracking } from "../lib/worktree/checkout-utils.ts";
 import { hasStagedChanges } from "../lib/command-utils.ts";
 import { movePath } from "../lib/fs-utils.ts";
 import { buildIndex, defaultStat, readIndex, writeIndex } from "../lib/index.ts";
@@ -224,7 +224,7 @@ async function handleAdd(
 			`branch: Created from ${commitish}`,
 		);
 		if (plan.trackingRef) {
-			await maybeSetupTracking(gitCtx, basename(plan.createBranchRef), plan.trackingRef);
+			await setupTracking(gitCtx, basename(plan.createBranchRef), plan.trackingRef);
 		}
 	}
 

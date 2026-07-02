@@ -1,17 +1,22 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
-	buildDetachPreamble,
 	clearOperationState,
-	detachHeadCore,
+	computeCheckoutStatus,
 	findPreviousCheckoutTarget,
-	formatCheckoutSummary,
-	formatPrevHeadPosition,
+	gatherDetachPreamble,
+	gatherPrevHead,
 	guessRemoteBranch,
-	maybeSetupTracking,
 	requireResolvedIndex,
-	switchBranchCore,
+	setupTracking,
 } from "../lib/worktree/checkout-utils.ts";
+import { detachHeadCore, switchBranchCore } from "../cli/checkout-core.ts";
+import {
+	renderCancelWarnings,
+	renderCheckoutSummary,
+	renderDetachPreamble,
+	renderTrackingSetup,
+} from "../format/checkout.ts";
 import { formatLongTrackingInfo, getTrackingInfo } from "../lib/status-format.ts";
 import { clearIndex, readIndex, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
@@ -247,7 +252,7 @@ async function switchCreateBranch(
 			}
 			await createSymbolicRef(gitCtx, "HEAD", refName);
 			await clearDetachPoint(gitCtx);
-			const opWarning = await clearOperationState(gitCtx);
+			const opWarning = renderCancelWarnings(await clearOperationState(gitCtx));
 			await logRef(
 				gitCtx,
 				env,
@@ -316,14 +321,16 @@ async function switchCreateBranch(
 	const head = await readHead(gitCtx);
 	let detachPreamble = "";
 	if (head?.type === "direct" && currentHash) {
-		detachPreamble = await buildDetachPreamble(gitCtx, currentHash, targetHash);
+		detachPreamble = renderDetachPreamble(
+			await gatherDetachPreamble(gitCtx, currentHash, targetHash),
+		);
 	}
 
 	const fromName = fromNameOf(head, currentHash);
 	await updateRef(gitCtx, refName, targetHash);
 	await createSymbolicRef(gitCtx, "HEAD", refName);
 	await clearDetachPoint(gitCtx);
-	const opWarning = await clearOperationState(gitCtx);
+	const opWarning = renderCancelWarnings(await clearOperationState(gitCtx));
 
 	const startLabel = startPoint ?? "HEAD";
 
@@ -359,7 +366,8 @@ async function switchCreateBranch(
 		await writeConfig(gitCtx, config);
 		trackingMsg = `branch '${branchName}' set up to track '${remote}/${trackingParts.slice(1).join("/")}'.\n`;
 	} else if (startPoint) {
-		trackingMsg = await maybeSetupTracking(gitCtx, branchName, startPoint);
+		const setup = await setupTracking(gitCtx, branchName, startPoint);
+		trackingMsg = setup ? renderTrackingSetup(branchName, setup) : "";
 	}
 
 	await ext?.capabilities?.hooks?.postCheckout?.({
@@ -381,9 +389,13 @@ async function switchCreateBranch(
 
 	let stdout = "";
 	if (trackingMsg) {
-		stdout = (await formatCheckoutSummary(gitCtx, targetCommit.tree, currentIndex)) + trackingMsg;
+		stdout =
+			renderCheckoutSummary(await computeCheckoutStatus(gitCtx, targetCommit.tree, currentIndex)) +
+			trackingMsg;
 	} else if (startPoint) {
-		stdout = await formatCheckoutSummary(gitCtx, targetCommit.tree, currentIndex);
+		stdout = renderCheckoutSummary(
+			await computeCheckoutStatus(gitCtx, targetCommit.tree, currentIndex),
+		);
 		const config = await readConfig(gitCtx);
 		const trackingInfo = await getTrackingInfo(gitCtx, config, branchName);
 		if (trackingInfo) {
@@ -482,7 +494,7 @@ async function switchOrphanBranch(
 	// Build "Previous HEAD position was ..." preamble when leaving detached HEAD
 	let detachPreamble = "";
 	if (head?.type === "direct" && prevHead) {
-		detachPreamble = await formatPrevHeadPosition(gitCtx, prevHead);
+		detachPreamble = renderDetachPreamble(await gatherPrevHead(gitCtx, prevHead));
 	}
 
 	// Unlike checkout --orphan, switch --orphan clears tracked files from
@@ -505,7 +517,7 @@ async function switchOrphanBranch(
 
 	await createSymbolicRef(gitCtx, "HEAD", refName);
 	await clearDetachPoint(gitCtx);
-	const opWarning = await clearOperationState(gitCtx);
+	const opWarning = renderCancelWarnings(await clearOperationState(gitCtx));
 
 	await ext?.capabilities?.hooks?.postCheckout?.({
 		repo: gitCtx,

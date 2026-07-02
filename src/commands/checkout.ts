@@ -2,15 +2,15 @@ import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import {
 	clearOperationState,
-	detachHeadCore,
+	computeCheckoutStatus,
 	findPreviousBranch,
-	formatCheckoutSummary,
 	guessRemoteBranch,
 	requireResolvedIndex,
 	restoreConflicted,
 	restoreFiles,
-	switchBranchCore,
 } from "../lib/worktree/checkout-utils.ts";
+import { detachHeadCore, switchBranchCore } from "../cli/checkout-core.ts";
+import { renderCancelWarnings, renderCheckoutSummary } from "../format/checkout.ts";
 import { getCwdPrefix } from "../lib/command-utils.ts";
 import { findEntry, readIndex, writeIndex } from "../lib/index.ts";
 import { peelToCommit, readCommit } from "../lib/object-db.ts";
@@ -235,7 +235,7 @@ async function createOrphanBranch(
 
 	await createSymbolicRef(gitCtx, "HEAD", refName);
 	await clearDetachPoint(gitCtx);
-	const opWarning = await clearOperationState(gitCtx);
+	const opWarning = renderCancelWarnings(await clearOperationState(gitCtx));
 
 	await ext?.capabilities?.hooks?.postCheckout?.({
 		repo: gitCtx,
@@ -246,7 +246,7 @@ async function createOrphanBranch(
 
 	let stdout = "";
 	if (prevTree) {
-		stdout = await formatCheckoutSummary(gitCtx, prevTree, currentIndex);
+		stdout = renderCheckoutSummary(await computeCheckoutStatus(gitCtx, prevTree, currentIndex));
 	}
 
 	return {
@@ -337,7 +337,7 @@ async function createAndSwitch(
 
 	await createSymbolicRef(gitCtx, "HEAD", refName);
 	await clearDetachPoint(gitCtx);
-	const opWarning = await clearOperationState(gitCtx);
+	const opWarning = renderCancelWarnings(await clearOperationState(gitCtx));
 
 	const fromName =
 		head?.type === "symbolic" ? head.target.replace(/^refs\/heads\//, "") : (headHash ?? ZERO_HASH);
@@ -370,7 +370,9 @@ async function createAndSwitch(
 	let stdout = "";
 	if ((force || startPoint) && targetHash) {
 		const targetCommit = await readCommit(gitCtx, targetHash);
-		stdout = await formatCheckoutSummary(gitCtx, targetCommit.tree, currentIndex);
+		stdout = renderCheckoutSummary(
+			await computeCheckoutStatus(gitCtx, targetCommit.tree, currentIndex),
+		);
 	}
 
 	const config = await readConfig(gitCtx);

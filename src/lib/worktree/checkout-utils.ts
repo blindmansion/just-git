@@ -1,24 +1,14 @@
-import type { GitExtensions } from "../../git.ts";
 import { findOrphanedCommits } from "../commit-walk.ts";
 import { addEntry, defaultStat, readIndex, writeIndex } from "../index.ts";
 import { hashObject, readCommit } from "../object-db.ts";
-import { clearAllOperationState, clearDetachPoint, writeDetachPoint } from "../operation-state.ts";
+import { clearAllOperationState } from "../operation-state.ts";
 import { join } from "../path.ts";
 import { matchPathspecs, parsePathspec } from "../attributes/pathspec.ts";
-import { logRef, readReflog } from "../refs/reflog.ts";
-import {
-	createSymbolicRef,
-	listRefs,
-	readHead,
-	resolveHead,
-	resolveRef,
-	updateRef,
-} from "../refs/refs.ts";
-import { formatLongTrackingInfo, getTrackingInfo } from "../status-format.ts";
+import { readReflog } from "../refs/reflog.ts";
+import { listRefs, resolveRef } from "../refs/refs.ts";
 import { isSubmoduleMode } from "../symlink.ts";
 import { flattenTree, flattenTreeToMap } from "../tree-ops.ts";
 import type { GitContext, GitRepo, ObjectId } from "../types.ts";
-import { applyWorktreeOps, checkoutTrees } from "./unpack-trees.ts";
 import { checkoutEntry } from "./worktree.ts";
 import type { CommandResult } from "../command-errors.ts";
 import { fatal, err, isCommandError } from "../command-errors.ts";
@@ -26,7 +16,6 @@ import { firstLine } from "../text-utils.ts";
 import { uniqueAbbrev } from "../abbrev.ts";
 import { requireCommit } from "../commit-requirements.ts";
 import { readConfig, writeConfig, getConfigValue } from "../config/store.ts";
-import { ZERO_HASH } from "../hex.ts";
 
 /**
  * Scan the HEAD reflog for the most recent "checkout: moving from X to Y"
@@ -81,23 +70,22 @@ export async function findPreviousBranch(
 	return previous?.kind === "branch" ? previous : null;
 }
 
+/** Which in-progress operations were cancelled by a checkout/switch. */
+export interface ClearedOperations {
+	cherryPickCancelled: boolean;
+	revertCancelled: boolean;
+}
+
 /**
  * Clear merge/cherry-pick operation state after a successful checkout.
- * Real git clears these when switching branches.
- * Returns a warning string if a cherry-pick was cancelled.
+ * Real git clears these when switching branches. Returns which operations
+ * were cancelled so the caller can render the appropriate warnings.
  */
-export async function clearOperationState(gitCtx: GitContext): Promise<string> {
-	let warning = "";
-	const cpHead = await resolveRef(gitCtx, "CHERRY_PICK_HEAD");
-	if (cpHead) {
-		warning = "warning: cancelling a cherry picking in progress\n";
-	}
-	const revertHead = await resolveRef(gitCtx, "REVERT_HEAD");
-	if (revertHead) {
-		warning += "warning: cancelling a revert in progress\n";
-	}
+export async function clearOperationState(gitCtx: GitContext): Promise<ClearedOperations> {
+	const cherryPickCancelled = !!(await resolveRef(gitCtx, "CHERRY_PICK_HEAD"));
+	const revertCancelled = !!(await resolveRef(gitCtx, "REVERT_HEAD"));
 	await clearAllOperationState(gitCtx);
-	return warning;
+	return { cherryPickCancelled, revertCancelled };
 }
 
 /**
@@ -279,8 +267,15 @@ export async function restoreConflicted(
 	return { stdout: "", stderr: "", exitCode: 0 };
 }
 
+/** One file's status in the checkout/switch stdout summary. */
+export interface CheckoutFileChange {
+	status: "A" | "M" | "D";
+	path: string;
+}
+
 /**
- * Format the file change summary shown by `git checkout`/`git switch` on stdout.
+ * Compute the file change summary shown by `git checkout`/`git switch` on
+ * stdout, as structured data (renderer lives in `format/checkout.ts`).
  *
  * Matches real git's `show_local_changes` which runs `diff-index HEAD`
  * (non-cached): compares the new HEAD tree to the effective worktree
@@ -288,12 +283,12 @@ export async function restoreConflicted(
  * the difference is staged (index differs from tree) or unstaged
  * (worktree differs from index which matches the tree).
  */
-export async function formatCheckoutSummary(
+export async function computeCheckoutStatus(
 	ctx: GitContext,
 	targetTreeHash: ObjectId,
 	index: { entries: { path: string; hash: string; stage: number }[] },
-): Promise<string> {
-	if (!ctx.workTree) return "";
+): Promise<CheckoutFileChange[]> {
+	if (!ctx.workTree) return [];
 
 	const treeEntries = await flattenTree(ctx, targetTreeHash);
 	const treeMap = new Map<string, string>();
@@ -323,20 +318,20 @@ export async function formatCheckoutSummary(
 		}
 	}
 
-	const lines: string[] = [];
+	const changes: CheckoutFileChange[] = [];
 
 	for (const [path, treeHash] of treeMap) {
 		const indexHash = indexMap.get(path);
 		if (indexHash === undefined) {
-			lines.push(`D\t${path}`);
+			changes.push({ status: "D", path });
 			continue;
 		}
 
 		const wtHash = wtHashMap.get(path);
 		if (wtHash === null) {
-			lines.push(`D\t${path}`);
+			changes.push({ status: "D", path });
 		} else if (indexHash !== treeHash || (wtHash !== undefined && wtHash !== treeHash)) {
-			lines.push(`M\t${path}`);
+			changes.push({ status: "M", path });
 		}
 	}
 
@@ -344,288 +339,76 @@ export async function formatCheckoutSummary(
 		if (!treeMap.has(path)) {
 			const wtHash = wtHashMap.get(path);
 			if (wtHash != null) {
-				lines.push(`A\t${path}`);
+				changes.push({ status: "A", path });
 			}
 		}
 	}
 
-	if (lines.length === 0) return "";
-	lines.sort((a, b) => {
-		const pathA = a.slice(2);
-		const pathB = b.slice(2);
-		return pathA < pathB ? -1 : pathA > pathB ? 1 : 0;
-	});
-	return `${lines.join("\n")}\n`;
+	return changes;
 }
 
 const ORPHAN_DISPLAY_THRESHOLD = 5;
 
 /**
- * Format the "Warning: you are leaving N commits behind" message.
- * Real git truncates the list when count > threshold.
+ * Structured data for the preamble shown when leaving detached HEAD.
+ * Rendered by `format/checkout.ts`.
  */
-async function formatOrphanWarning(
-	gitCtx: GitRepo,
-	orphans: { hash: string; subject: string }[],
-): Promise<string> {
-	const count = orphans.length;
-	const plural = count === 1 ? "commit" : "commits";
-	const keepWord = count === 1 ? "it" : "them";
-	const displayCount = count > ORPHAN_DISPLAY_THRESHOLD ? ORPHAN_DISPLAY_THRESHOLD - 1 : count;
-	const displayed = orphans.slice(0, displayCount);
-	const abbrevs = await Promise.all(displayed.map((o) => uniqueAbbrev(gitCtx, o.hash)));
-	const lines = displayed.map((o, i) => `  ${abbrevs[i]} ${o.subject}`);
-	const remaining = count - displayCount;
-	if (remaining > 0) {
-		lines.push(` ... and ${remaining} more.`);
-	}
-	const branchExample = abbrevs[0]!;
-	return (
-		`Warning: you are leaving ${count} ${plural} behind, not connected to\n` +
-		`any of your branches:\n` +
-		`\n` +
-		`${lines.join("\n")}\n` +
-		`\n` +
-		`If you want to keep ${keepWord} by creating a new branch, this may be a good time\n` +
-		`to do so with:\n` +
-		`\n` +
-		` git branch <new-branch-name> ${branchExample}\n` +
-		`\n`
-	);
-}
+export type DetachPreamble =
+	| {
+			kind: "orphan";
+			count: number;
+			commits: { abbrev: string; subject: string }[];
+			remaining: number;
+			branchExample: string;
+	  }
+	| { kind: "prev-head"; abbrev: string; subject: string }
+	| { kind: "none" };
 
 /**
- * Format "Previous HEAD position was <short> <subject>\n".
+ * Gather the "Previous HEAD position was <short> <subject>" data for a commit.
  */
-export async function formatPrevHeadPosition(gitCtx: GitRepo, hash: ObjectId): Promise<string> {
+export async function gatherPrevHead(
+	gitCtx: GitRepo,
+	hash: ObjectId,
+): Promise<{ kind: "prev-head"; abbrev: string; subject: string }> {
 	const commit = await readCommit(gitCtx, hash);
-	return `Previous HEAD position was ${await uniqueAbbrev(gitCtx, hash)} ${firstLine(commit.message)}\n`;
-}
-
-/**
- * Build the preamble shown when leaving detached HEAD.
- * If orphaned commits exist, returns the orphan warning; otherwise
- * returns the "Previous HEAD position was ..." line (or "" when
- * currentHash === targetHash).
- */
-export async function buildDetachPreamble(
-	gitCtx: GitRepo,
-	currentHash: ObjectId,
-	targetHash: ObjectId,
-): Promise<string> {
-	const orphans = await findOrphanedCommits(gitCtx, currentHash, {
-		targetHash,
-	});
-	if (orphans.length > 0) {
-		return formatOrphanWarning(gitCtx, orphans);
-	}
-	if (currentHash !== targetHash) {
-		return formatPrevHeadPosition(gitCtx, currentHash);
-	}
-	return "";
-}
-
-/**
- * Core branch-switching logic shared by `checkout` and `switch`.
- * Handles: already-on check, conflict check, tree checkout, detach
- * preamble, HEAD/reflog update, post-checkout hook, and tracking info.
- * Callers perform their own pre-checks (hooks, active-operation guards).
- */
-export async function switchBranchCore(
-	gitCtx: GitContext,
-	branchName: string,
-	refName: string,
-	targetHash: ObjectId,
-	env: Map<string, string>,
-	ext?: GitExtensions,
-	opts?: { isNew?: boolean },
-): Promise<CommandResult> {
-	const head = await readHead(gitCtx);
-	if (head?.type === "symbolic" && head.target === refName) {
-		return {
-			stdout: "",
-			stderr: `Already on '${branchName}'\n`,
-			exitCode: 0,
-		};
-	}
-
-	let currentIndex = await readIndex(gitCtx);
-	const conflictErr = requireResolvedIndex(currentIndex);
-	if (conflictErr) return conflictErr;
-
-	const currentHash = await resolveHead(gitCtx);
-	const targetCommit = await readCommit(gitCtx, targetHash);
-	const targetTree = targetCommit.tree;
-
-	let currentTree: ObjectId | null = null;
-	if (currentHash) {
-		const currentCommit = await readCommit(gitCtx, currentHash);
-		currentTree = currentCommit.tree;
-	}
-
-	if (currentTree !== targetTree) {
-		const result = await checkoutTrees(gitCtx, currentTree, targetTree, currentIndex);
-		if (!result.success) {
-			return result.errorOutput ?? err("error: checkout would overwrite local changes");
-		}
-		currentIndex = { version: 2, entries: result.newEntries };
-		await writeIndex(gitCtx, currentIndex);
-		await applyWorktreeOps(gitCtx, result.worktreeOps);
-	}
-
-	let detachPreamble = "";
-	if (head?.type === "direct" && currentHash) {
-		detachPreamble = await buildDetachPreamble(gitCtx, currentHash, targetHash);
-	}
-
-	const fromName =
-		head?.type === "symbolic"
-			? head.target.replace(/^refs\/heads\//, "")
-			: (currentHash ?? ZERO_HASH);
-	await createSymbolicRef(gitCtx, "HEAD", refName);
-	await clearDetachPoint(gitCtx);
-	const opWarning = await clearOperationState(gitCtx);
-
-	await logRef(
-		gitCtx,
-		env,
-		"HEAD",
-		currentHash,
-		targetHash,
-		`checkout: moving from ${fromName} to ${branchName}`,
-	);
-
-	await ext?.capabilities?.hooks?.postCheckout?.({
-		repo: gitCtx,
-		prevHead: currentHash,
-		newHead: targetHash,
-		isBranchCheckout: true,
-	});
-
-	let stdout = await formatCheckoutSummary(gitCtx, targetTree, currentIndex);
-
-	const config = await readConfig(gitCtx);
-	const trackingInfo = await getTrackingInfo(gitCtx, config, branchName);
-	if (trackingInfo) {
-		stdout += formatLongTrackingInfo(trackingInfo);
-	}
-
 	return {
-		stdout,
-		stderr: `${detachPreamble}Switched to ${opts?.isNew ? "a new " : ""}branch '${branchName}'\n${opWarning}`,
-		exitCode: 0,
+		kind: "prev-head",
+		abbrev: await uniqueAbbrev(gitCtx, hash),
+		subject: firstLine(commit.message),
 	};
 }
 
 /**
- * Core detach-HEAD logic shared by `checkout` and `switch`.
- * Handles: conflict check, tree checkout, ref update, reflog,
- * post-checkout hook, and checkout summary.
- *
- * When `detachAdviceTarget` is set and HEAD was previously on a branch,
- * the full detached-HEAD advice is shown (checkout behavior). Otherwise
- * only "HEAD is now at ..." is shown (switch behavior).
+ * Gather the preamble data shown when leaving detached HEAD.
+ * If orphaned commits exist, returns the orphan-warning data; otherwise
+ * the previous-HEAD-position data (or `none` when currentHash === targetHash).
  */
-export async function detachHeadCore(
-	gitCtx: GitContext,
+export async function gatherDetachPreamble(
+	gitCtx: GitRepo,
+	currentHash: ObjectId,
 	targetHash: ObjectId,
-	env: Map<string, string>,
-	ext?: GitExtensions,
-	opts?: {
-		detachAdviceTarget?: string;
-	},
-): Promise<CommandResult> {
-	let currentIndex = await readIndex(gitCtx);
-	const conflictErr = requireResolvedIndex(currentIndex);
-	if (conflictErr) return conflictErr;
-
-	const currentHash = await resolveHead(gitCtx);
-	const targetCommit = await readCommit(gitCtx, targetHash);
-	const targetTree = targetCommit.tree;
-
-	let currentTree: ObjectId | null = null;
-	if (currentHash) {
-		const currentCommit = await readCommit(gitCtx, currentHash);
-		currentTree = currentCommit.tree;
-	}
-
-	if (currentTree !== targetTree) {
-		const result = await checkoutTrees(gitCtx, currentTree, targetTree, currentIndex);
-		if (!result.success) {
-			return result.errorOutput ?? err("error: checkout would overwrite local changes");
-		}
-		currentIndex = { version: 2, entries: result.newEntries };
-		await writeIndex(gitCtx, currentIndex);
-		await applyWorktreeOps(gitCtx, result.worktreeOps);
-	}
-
-	const head = await readHead(gitCtx);
-	const wasAlreadyDetachedAtTarget = head?.type === "direct" && currentHash === targetHash;
-
-	await updateRef(gitCtx, "HEAD", targetHash);
-	if (!wasAlreadyDetachedAtTarget) {
-		await writeDetachPoint(gitCtx, targetHash);
-		const fromName =
-			head?.type === "symbolic"
-				? head.target.replace(/^refs\/heads\//, "")
-				: (currentHash ?? ZERO_HASH);
-		await logRef(
-			gitCtx,
-			env,
-			"HEAD",
-			currentHash,
-			targetHash,
-			`checkout: moving from ${fromName} to ${targetHash}`,
-		);
-	}
-	const opWarning = await clearOperationState(gitCtx);
-
-	await ext?.capabilities?.hooks?.postCheckout?.({
-		repo: gitCtx,
-		prevHead: currentHash,
-		newHead: targetHash,
-		isBranchCheckout: false,
+): Promise<DetachPreamble> {
+	const orphans = await findOrphanedCommits(gitCtx, currentHash, {
+		targetHash,
 	});
-
-	const shortHash = await uniqueAbbrev(gitCtx, targetHash);
-	const subject = firstLine(targetCommit.message);
-	const alreadyDetached = head?.type === "direct";
-
-	let stderr = "";
-
-	if (alreadyDetached && currentHash && currentHash !== targetHash) {
-		stderr += await buildDetachPreamble(gitCtx, currentHash, targetHash);
+	if (orphans.length > 0) {
+		const count = orphans.length;
+		const displayCount = count > ORPHAN_DISPLAY_THRESHOLD ? ORPHAN_DISPLAY_THRESHOLD - 1 : count;
+		const displayed = orphans.slice(0, displayCount);
+		const abbrevs = await Promise.all(displayed.map((o) => uniqueAbbrev(gitCtx, o.hash)));
+		return {
+			kind: "orphan",
+			count,
+			commits: displayed.map((o, i) => ({ abbrev: abbrevs[i]!, subject: o.subject })),
+			remaining: count - displayCount,
+			branchExample: abbrevs[0]!,
+		};
 	}
-
-	if (alreadyDetached || !opts?.detachAdviceTarget) {
-		stderr += `HEAD is now at ${shortHash} ${subject}\n`;
-	} else {
-		stderr =
-			`Note: switching to '${opts.detachAdviceTarget}'.\n` +
-			`\n` +
-			`You are in 'detached HEAD' state. You can look around, make experimental\n` +
-			`changes and commit them, and you can discard any commits you make in this\n` +
-			`state without impacting any branches by switching back to a branch.\n` +
-			`\n` +
-			`If you want to create a new branch to retain commits you create, you may\n` +
-			`do so (now or later) by using -c with the switch command. Example:\n` +
-			`\n` +
-			`  git switch -c <new-branch-name>\n` +
-			`\n` +
-			`Or undo this operation with:\n` +
-			`\n` +
-			`  git switch -\n` +
-			`\n` +
-			`Turn off this advice by setting config variable advice.detachedHead to false\n` +
-			`\n` +
-			`HEAD is now at ${shortHash} ${subject}\n`;
+	if (currentHash !== targetHash) {
+		return gatherPrevHead(gitCtx, currentHash);
 	}
-
-	stderr += opWarning;
-
-	const stdout = await formatCheckoutSummary(gitCtx, targetTree, currentIndex);
-
-	return { stdout, stderr, exitCode: 0 };
+	return { kind: "none" };
 }
 
 // ── Remote tracking ref detection and auto-setup ─────────────────────
@@ -663,21 +446,27 @@ async function resolveRemoteTrackingRef(
 	return null;
 }
 
+/** The remote/branch a local branch was set up to track. */
+export interface TrackingSetup {
+	remote: string;
+	branch: string;
+}
+
 /**
  * Auto-set branch tracking config when creating a branch from a remote tracking ref,
  * respecting `branch.autoSetupMerge` config (default: true).
- * Returns a message string for display, or empty string if no tracking was set.
+ * Returns the remote/branch that was configured, or null if no tracking was set.
  */
-export async function maybeSetupTracking(
+export async function setupTracking(
 	gitCtx: GitContext,
 	branchName: string,
 	startPoint: string,
-): Promise<string> {
+): Promise<TrackingSetup | null> {
 	const tracking = await resolveRemoteTrackingRef(gitCtx, startPoint);
-	if (!tracking) return "";
+	if (!tracking) return null;
 
 	const autoSetup = await getConfigValue(gitCtx, "branch.autoSetupMerge");
-	if (autoSetup === "false") return "";
+	if (autoSetup === "false") return null;
 
 	const config = await readConfig(gitCtx);
 	const section = `branch "${branchName}"`;
@@ -686,7 +475,7 @@ export async function maybeSetupTracking(
 	config[section].merge = `refs/heads/${tracking.branch}`;
 	await writeConfig(gitCtx, config);
 
-	return `branch '${branchName}' set up to track '${tracking.remote}/${tracking.branch}'.\n`;
+	return { remote: tracking.remote, branch: tracking.branch };
 }
 
 /**

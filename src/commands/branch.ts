@@ -1,5 +1,6 @@
 import type { GitExtensions } from "../git.ts";
-import { maybeSetupTracking } from "../lib/worktree/checkout-utils.ts";
+import { setupTracking } from "../lib/worktree/checkout-utils.ts";
+import { renderTrackingSetup } from "../format/checkout.ts";
 import { getReflogIdentity } from "../lib/identity.ts";
 import { isAncestor } from "../lib/merge.ts";
 import { readCommit } from "../lib/object-db.ts";
@@ -397,7 +398,8 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 
 				let trackingMsg = "";
 				if (startPoint) {
-					trackingMsg = await maybeSetupTracking(gitCtx, args.name, startPoint);
+					const setup = await setupTracking(gitCtx, args.name, startPoint);
+					trackingMsg = setup ? renderTrackingSetup(args.name, setup) : "";
 				}
 				return { stdout: "", stderr: trackingMsg, exitCode: 0 };
 			}
