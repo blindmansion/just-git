@@ -19,6 +19,7 @@ import type { GitContext, GitRepo, ObjectId, TreeDiffEntry } from "../lib/types.
 import { a, type Command, f, o } from "../parse/index.ts";
 import type { CommandResult } from "../cli/command-errors.ts";
 import { fatal, err, isCommandError } from "../cli/command-errors.ts";
+import { renderStashApplyError, renderStashDropError } from "../cli/stash.ts";
 import { requireGitContext } from "../cli/commit-requirements.ts";
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -214,19 +215,13 @@ async function handlePop(gitCtx: GitContext, refArg: string | undefined): Promis
 
 	const result = await applyStash(gitCtx, stashIndex);
 	if (!result.ok) {
+		const base = renderStashApplyError(result.error);
 		const mergeOutput = result.messages?.length ? `${result.messages.join("\n")}\n` : "";
-		if (result.stdout) {
-			return {
-				stdout: `${mergeOutput}${result.stdout}The stash entry is kept in case you need it again.\n`,
-				stderr: result.stderr,
-				exitCode: result.exitCode,
-			};
-		}
-		const statusOutput = await generateLongFormStatus(gitCtx);
+		const body = base.stdout || (await generateLongFormStatus(gitCtx));
 		return {
-			stdout: `${mergeOutput}${statusOutput}The stash entry is kept in case you need it again.\n`,
-			stderr: result.stderr,
-			exitCode: result.exitCode,
+			stdout: `${mergeOutput}${body}The stash entry is kept in case you need it again.\n`,
+			stderr: base.stderr,
+			exitCode: base.exitCode,
 		};
 	}
 
@@ -240,9 +235,9 @@ async function handlePop(gitCtx: GitContext, refArg: string | undefined): Promis
 		};
 	}
 
-	const dropErr = await dropStash(gitCtx, stashIndex);
-	if (dropErr) {
-		return err(dropErr);
+	const drop = await dropStash(gitCtx, stashIndex);
+	if (!drop.ok) {
+		return renderStashDropError(drop.stashIndex);
 	}
 
 	const mergeOutput = result.messages.length > 0 ? `${result.messages.join("\n")}\n` : "";
@@ -263,15 +258,13 @@ async function handleApply(gitCtx: GitContext, refArg: string | undefined): Prom
 
 	const result = await applyStash(gitCtx, stashIndex);
 	if (!result.ok) {
+		const base = renderStashApplyError(result.error);
 		const mergeOutput = result.messages?.length ? `${result.messages.join("\n")}\n` : "";
-		let stdout = result.stdout;
-		if (!stdout) {
-			stdout = await generateLongFormStatus(gitCtx);
-		}
+		const body = base.stdout || (await generateLongFormStatus(gitCtx));
 		return {
-			stdout: `${mergeOutput}${stdout}`,
-			stderr: result.stderr,
-			exitCode: result.exitCode,
+			stdout: `${mergeOutput}${body}`,
+			stderr: base.stderr,
+			exitCode: base.exitCode,
 		};
 	}
 
@@ -306,9 +299,9 @@ async function handleDrop(gitCtx: GitContext, refArg: string | undefined): Promi
 		return err(`error: stash@{${stashIndex}} is not a valid reference`);
 	}
 
-	const dropErr = await dropStash(gitCtx, stashIndex);
-	if (dropErr) {
-		return err(dropErr);
+	const drop = await dropStash(gitCtx, stashIndex);
+	if (!drop.ok) {
+		return renderStashDropError(drop.stashIndex);
 	}
 
 	const refLabel = refArg ? `stash@{${stashIndex}}` : `refs/stash@{${stashIndex}}`;

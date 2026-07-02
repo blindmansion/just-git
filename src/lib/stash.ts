@@ -365,15 +365,36 @@ interface StashApplySuccess {
 	messages: string[];
 }
 
+/**
+ * Structured reasons an apply/pop can fail. The command tier
+ * (`cli/stash#renderStashApplyError`) renders each to git-exact bytes + exit
+ * code; `lib` never speaks the CLI contract.
+ */
+export type StashApplyError =
+	| { kind: "noWorkTree" }
+	| { kind: "invalidStashRef"; stashIndex: number }
+	| { kind: "noCommits" }
+	| { kind: "unmergedIndex"; paths: string[] }
+	| { kind: "invalidStashCommit" }
+	| {
+			kind: "wouldOverwrite";
+			dirty: string[];
+			untracked: string[];
+			/** Untracked-from-stash paths that also blocked restoration (appended). */
+			untrackedExists: string[];
+	  }
+	| { kind: "untrackedExists"; paths: string[] };
+
 interface StashApplyFailure {
 	ok: false;
-	stdout: string;
-	stderr: string;
-	exitCode: number;
+	error: StashApplyError;
 	messages?: string[];
 }
 
 type StashApplyResult = StashApplySuccess | StashApplyFailure;
+
+/** Outcome of restoring untracked files: the blocked paths on failure. */
+type RestoreUntrackedResult = { ok: true } | { ok: false; exists: string[] };
 
 /**
  * Restore untracked files from a stash's 3rd parent commit.
@@ -382,7 +403,7 @@ type StashApplyResult = StashApplySuccess | StashApplyFailure;
 async function restoreUntrackedFiles(
 	ctx: GitContext,
 	untrackedCommitHash: ObjectId,
-): Promise<StashApplyResult> {
+): Promise<RestoreUntrackedResult> {
 	const workTree = ctx.workTree as string;
 	const uCommit = await readCommit(ctx, untrackedCommitHash);
 	const uEntries = await flattenTree(ctx, uCommit.tree);
@@ -399,15 +420,10 @@ async function restoreUntrackedFiles(
 
 	if (alreadyExist.length > 0) {
 		alreadyExist.sort(compareOverwritePaths);
-		return {
-			ok: false,
-			stdout: "",
-			stderr: `${alreadyExist.map((p) => `${p} already exists, no checkout`).join("\n")}\nerror: could not restore untracked files from stash\n`,
-			exitCode: 1,
-		};
+		return { ok: false, exists: alreadyExist };
 	}
 
-	return { ok: true, hasConflicts: false, messages: [] };
+	return { ok: true };
 }
 
 /**
@@ -427,54 +443,24 @@ export async function applyStash(
 	ctx: GitContext,
 	stashIndex: number = 0,
 ): Promise<StashApplyResult> {
-	if (!ctx.workTree)
-		return {
-			ok: false,
-			stdout: "",
-			stderr: "fatal: this operation must be run in a work tree\n",
-			exitCode: 128,
-		};
+	if (!ctx.workTree) return { ok: false, error: { kind: "noWorkTree" } };
 
 	const stashHash = await readStashRef(ctx, stashIndex);
-	if (!stashHash)
-		return {
-			ok: false,
-			stdout: "",
-			stderr: `error: stash@{${stashIndex}} is not a valid reference\n`,
-			exitCode: 1,
-		};
+	if (!stashHash) return { ok: false, error: { kind: "invalidStashRef", stashIndex } };
 
 	const headHash = await resolveHead(ctx);
-	if (!headHash)
-		return {
-			ok: false,
-			stdout: "",
-			stderr: "error: your current branch does not have any commits yet\n",
-			exitCode: 1,
-		};
+	if (!headHash) return { ok: false, error: { kind: "noCommits" } };
 
 	// Refuse to apply when the index has unresolved conflicts
 	const currentIndex = await readIndex(ctx);
 	const unmergedPaths = getConflictedPaths(currentIndex).sort();
 	if (unmergedPaths.length > 0) {
-		const msgs = unmergedPaths.map((p) => `${p}: needs merge`);
-		return {
-			ok: false,
-			stdout: `${msgs.join("\n")}\n`,
-			stderr: "error: could not write index\n",
-			exitCode: 1,
-		};
+		return { ok: false, error: { kind: "unmergedIndex", paths: unmergedPaths } };
 	}
 
 	const stashCommit = await readCommit(ctx, stashHash);
 	const stashParentHash = stashCommit.parents[0];
-	if (!stashParentHash)
-		return {
-			ok: false,
-			stdout: "",
-			stderr: "error: invalid stash commit (no parent)\n",
-			exitCode: 1,
-		};
+	if (!stashParentHash) return { ok: false, error: { kind: "invalidStashCommit" } };
 
 	const stashParent = await readCommit(ctx, stashParentHash);
 	const untrackedParentHash = stashCommit.parents[2];
@@ -492,7 +478,12 @@ export async function applyStash(
 	if (stashParent.tree === stashCommit.tree) {
 		if (untrackedParentHash) {
 			const uResult = await restoreUntrackedFiles(ctx, untrackedParentHash);
-			if (!uResult.ok) return { ...uResult, messages: ["Already up to date."] };
+			if (!uResult.ok)
+				return {
+					ok: false,
+					error: { kind: "untrackedExists", paths: uResult.exists },
+					messages: ["Already up to date."],
+				};
 		}
 		return {
 			ok: true,
@@ -559,29 +550,23 @@ export async function applyStash(
 	if (dirtyOverwritten.length > 0 || untrackedOverwritten.length > 0) {
 		dirtyOverwritten.sort(compareOverwritePaths);
 		untrackedOverwritten.sort(compareOverwritePaths);
-		let stderr = "";
-		if (dirtyOverwritten.length > 0) {
-			stderr += `error: Your local changes to the following files would be overwritten by merge:\n${dirtyOverwritten.map((p) => `\t${p}`).join("\n")}\nPlease commit your changes or stash them before you merge.\n`;
-		}
-		if (untrackedOverwritten.length > 0) {
-			stderr += `error: The following untracked working tree files would be overwritten by merge:\n${untrackedOverwritten.map((p) => `\t${p}`).join("\n")}\nPlease move or remove them before you merge.\n`;
-		}
-		stderr += "Aborting\n";
 
 		// Real git still attempts untracked file restoration even when the
 		// tracked merge is blocked, appending any untracked errors.
+		let untrackedExists: string[] = [];
 		if (untrackedParentHash) {
 			const uResult = await restoreUntrackedFiles(ctx, untrackedParentHash);
-			if (!uResult.ok) {
-				stderr += uResult.stderr;
-			}
+			if (!uResult.ok) untrackedExists = uResult.exists;
 		}
 
 		return {
 			ok: false,
-			stdout: "",
-			stderr,
-			exitCode: 1,
+			error: {
+				kind: "wouldOverwrite",
+				dirty: dirtyOverwritten,
+				untracked: untrackedOverwritten,
+				untrackedExists,
+			},
 		};
 	}
 
@@ -662,7 +647,11 @@ export async function applyStash(
 	if (untrackedParentHash) {
 		const uResult = await restoreUntrackedFiles(ctx, untrackedParentHash);
 		if (!uResult.ok) {
-			return { ...uResult, messages: result.messages };
+			return {
+				ok: false,
+				error: { kind: "untrackedExists", paths: uResult.exists },
+				messages: result.messages,
+			};
 		}
 	}
 
@@ -673,52 +662,61 @@ export async function applyStash(
 	};
 }
 
+/** Outcome of a drop: reflog effects on success, or the bad index to report. */
+export type DropStashResult =
+	| { ok: true; effects: ReflogEffect[] }
+	| { ok: false; stashIndex: number };
+
 /**
  * GitRepo-shaped core of {@link dropStash}: given the stash reflog `entries`
  * (materialized by the shell via `readReflog`), drop `stash@{stashIndex}` and
  * renumber. The `refs/stash` update rides on `refStore` (already on `GitRepo`);
  * the reflog change comes back as {@link ReflogEffect}s for the shell to apply.
  *
- * Returns the verbatim `error` message the stash flow surfaces (or `null`) and
- * the effects to apply; on error the effects list is empty.
+ * On an invalid reference the result carries `ok: false` + the offending
+ * `stashIndex`; the command tier words the error and picks the exit code.
  */
 export async function dropStashFrom(
 	repo: GitRepo,
 	entries: ReflogEntry[],
 	stashIndex: number = 0,
-): Promise<{ error: string | null; effects: ReflogEffect[] }> {
+): Promise<DropStashResult> {
 	if (entries.length === 0) {
-		return { error: `error: stash@{${stashIndex}} is not a valid reference`, effects: [] };
+		return { ok: false, stashIndex };
 	}
 
 	// stash@{N} = entries[entries.length - 1 - N]
 	const reflogIdx = entries.length - 1 - stashIndex;
 	if (reflogIdx < 0 || reflogIdx >= entries.length) {
-		return { error: `error: stash@{${stashIndex}} is not a valid reference`, effects: [] };
+		return { ok: false, stashIndex };
 	}
 
 	const remaining = [...entries.slice(0, reflogIdx), ...entries.slice(reflogIdx + 1)];
 
 	// No stashes left — drop the ref (deleteRefEffects also clears its reflog).
 	if (remaining.length === 0) {
-		return { error: null, effects: await deleteRefEffects(repo, STASH_REF) };
+		return { ok: true, effects: await deleteRefEffects(repo, STASH_REF) };
 	}
 
 	// Renumber: point refs/stash at the new top, rewrite the reflog.
 	const newTop = remaining[remaining.length - 1];
 	if (newTop) await updateRef(repo, STASH_REF, newTop.newHash);
-	return { error: null, effects: [reflogRewrite(STASH_REF, remaining)] };
+	return { ok: true, effects: [reflogRewrite(STASH_REF, remaining)] };
 }
 
 /**
- * Drop a stash entry and renumber the reflog.
- * Returns an error message string, or null on success.
+ * Drop a stash entry and renumber the reflog. Returns the bad `stashIndex` on
+ * an invalid reference (`ok: false`), otherwise `ok: true`.
  */
-export async function dropStash(ctx: GitContext, stashIndex: number = 0): Promise<string | null> {
+export async function dropStash(
+	ctx: GitContext,
+	stashIndex: number = 0,
+): Promise<{ ok: true } | { ok: false; stashIndex: number }> {
 	const entries = await readReflog(ctx, STASH_REF);
-	const { error, effects } = await dropStashFrom(ctx, entries, stashIndex);
-	await applyReflogEffects(ctx, effects);
-	return error;
+	const result = await dropStashFrom(ctx, entries, stashIndex);
+	if (!result.ok) return result;
+	await applyReflogEffects(ctx, result.effects);
+	return { ok: true };
 }
 
 /**
