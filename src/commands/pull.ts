@@ -14,6 +14,7 @@ import { getReflogIdentity } from "../lib/identity.ts";
 import { getConflictedPaths, hasConflicts, readIndex } from "../lib/index.ts";
 import { buildMergeMessage, findAllMergeBases, handleFastForward } from "../lib/merge.ts";
 import { applyMergeResult, mergeOrtRecursive } from "../lib/merge-ort.ts";
+import { renderApplyMerge } from "../cli/merge.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { deleteStateFile, writeStateFile } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";
@@ -615,8 +616,6 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			const headCommit = await readCommit(gitCtx, headHash);
 			const applyResult = await applyMergeResult(gitCtx, mergeResult, headCommit.tree, {
 				labels,
-				errorExitCode: 2,
-				operationName: "merge",
 			});
 
 			if (!applyResult.ok) {
@@ -626,7 +625,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				// worktree-overwrite check fails. Mirror the merge command's behavior
 				// (only on a staged failure, only when HEAD is on a branch), using the
 				// pull action string.
-				if (applyResult.failureKind === "staged" && head?.type === "symbolic") {
+				if (applyResult.kind === "staged" && head?.type === "symbolic") {
 					const pullFlagStr = noFf ? " --no-ff" : "";
 					await appendReflog(gitCtx, "HEAD", {
 						oldHash: headHash,
@@ -638,10 +637,15 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 						message: `pull${pullFlagStr}: updating HEAD`,
 					});
 				}
+				const rendered = renderApplyMerge(applyResult, {
+					operationName: "merge",
+					callerCommand: "merge",
+					errorExitCode: 2,
+				});
 				return {
-					stdout: applyResult.stdout,
-					stderr: fetchOutput + applyResult.stderr,
-					exitCode: applyResult.exitCode,
+					stdout: rendered.stdout,
+					stderr: fetchOutput + rendered.stderr,
+					exitCode: rendered.exitCode,
 				};
 			}
 

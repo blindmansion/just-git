@@ -5,11 +5,8 @@ import { gatherCommitStats } from "../lib/commit-summary.ts";
 import { renderCommitOneLiner, renderCommitSummary } from "../format/commit-summary.ts";
 import { getStage0Entries, readIndex, writeIndex } from "../lib/index.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
-import {
-	type ApplyMergeFailure,
-	applyMergeResult,
-	mergeOrtNonRecursive,
-} from "../lib/merge-ort.ts";
+import { applyMergeResult, mergeOrtNonRecursive } from "../lib/merge-ort.ts";
+import { renderApplyMerge } from "../cli/merge.ts";
 import { readCommit } from "../lib/object-db.ts";
 import {
 	clearCherryPickState,
@@ -234,14 +231,15 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 			// ── Apply merge result ────────────────────────────────────
 			const applyResult = await applyMergeResult(gitCtx, result, headCommit.tree, {
 				labels,
-				errorExitCode: 128,
-				operationName: "merge",
-				callerCommand: "revert",
 				skipStagedChangeCheck: true,
 			});
 
 			if (!applyResult.ok) {
-				return applyResult as ApplyMergeFailure;
+				return renderApplyMerge(applyResult, {
+					operationName: "merge",
+					callerCommand: "revert",
+					errorExitCode: 128,
+				});
 			}
 
 			// ── Handle conflicts ──────────────────────────────────────

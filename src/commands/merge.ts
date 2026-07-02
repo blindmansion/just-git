@@ -17,7 +17,8 @@ import {
 	squashFastForward,
 } from "../lib/merge.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
-import { type ApplyMergeFailure, applyMergeResult, mergeOrtRecursive } from "../lib/merge-ort.ts";
+import { applyMergeResult, mergeOrtRecursive } from "../lib/merge-ort.ts";
+import { renderApplyMerge } from "../cli/merge.ts";
 import { peelToCommit, readCommit } from "../lib/object-db.ts";
 import {
 	clearMergeState,
@@ -291,11 +292,7 @@ async function handleThreeWayMerge(
 	);
 
 	// Step 2: Apply merge result to index and worktree
-	const applyResult = await applyMergeResult(gitCtx, result, headCommit.tree, {
-		labels,
-		errorExitCode: 2,
-		operationName: "merge",
-	});
+	const applyResult = await applyMergeResult(gitCtx, result, headCommit.tree, { labels });
 
 	if (!applyResult.ok) {
 		await deleteStateFile(gitCtx, "MERGE_MSG");
@@ -303,10 +300,14 @@ async function handleThreeWayMerge(
 		// (dirty worktree) because the reflog is written before the worktree
 		// update is attempted. Squash merges don't write one because they
 		// never update HEAD.
-		if (applyResult.failureKind === "staged" && head?.type === "symbolic") {
+		if (applyResult.kind === "staged" && head?.type === "symbolic") {
 			await logRef(gitCtx, env, "HEAD", headHash, headHash, `merge ${branchName}: updating HEAD`);
 		}
-		return applyResult as ApplyMergeFailure;
+		return renderApplyMerge(applyResult, {
+			operationName: "merge",
+			callerCommand: "merge",
+			errorExitCode: 2,
+		});
 	}
 
 	// Step 3: Handle conflicts or create merge commit
@@ -504,20 +505,20 @@ async function handleSquashMerge(
 		(await bindAttributes(gitCtx, "merge"))?.merge,
 	);
 
-	const applyResult = await applyMergeResult(gitCtx, result, headCommit.tree, {
-		labels,
-		errorExitCode: 2,
-		operationName: "merge",
-	});
+	const applyResult = await applyMergeResult(gitCtx, result, headCommit.tree, { labels });
 
 	if (!applyResult.ok) {
 		await deleteStateFile(gitCtx, "MERGE_MSG");
 		// Real git writes a no-op `updating HEAD` reflog entry for a non-FF
 		// squash merge failure: the reflog write precedes the worktree update.
-		if (applyResult.failureKind === "staged" && head?.type === "symbolic") {
+		if (applyResult.kind === "staged" && head?.type === "symbolic") {
 			await logRef(gitCtx, env, "HEAD", headHash, headHash, `merge ${branchName}: updating HEAD`);
 		}
-		return applyResult as ApplyMergeFailure;
+		return renderApplyMerge(applyResult, {
+			operationName: "merge",
+			callerCommand: "merge",
+			errorExitCode: 2,
+		});
 	}
 
 	// Real git always persists the generated squash log in SQUASH_MSG.

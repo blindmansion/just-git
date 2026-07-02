@@ -5,11 +5,8 @@ import { gatherCommitStats } from "../lib/commit-summary.ts";
 import { renderCommitOneLiner, renderCommitSummary } from "../format/commit-summary.ts";
 import { getStage0Entries, readIndex, writeIndex } from "../lib/index.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
-import {
-	type ApplyMergeFailure,
-	applyMergeResult,
-	mergeOrtNonRecursive,
-} from "../lib/merge-ort.ts";
+import { applyMergeResult, mergeOrtNonRecursive } from "../lib/merge-ort.ts";
+import { renderApplyMerge } from "../cli/merge.ts";
 import { readCommit } from "../lib/object-db.ts";
 import {
 	clearCherryPickState,
@@ -267,15 +264,16 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 			// ── Apply merge result (worktree safety + index) ─────────
 			const applyResult = await applyMergeResult(gitCtx, result, headCommit.tree, {
 				labels,
-				errorExitCode: 128,
-				operationName: "merge",
-				callerCommand: "cherry-pick",
 				skipStagedChangeCheck: true,
 				preflightOnewayCheck: !!args.noCommit,
 			});
 
 			if (!applyResult.ok) {
-				return applyResult as ApplyMergeFailure;
+				return renderApplyMerge(applyResult, {
+					operationName: "merge",
+					callerCommand: "cherry-pick",
+					errorExitCode: 128,
+				});
 			}
 
 			// ── Handle conflicts ──────────────────────────────────────

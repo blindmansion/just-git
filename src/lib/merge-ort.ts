@@ -2010,98 +2010,11 @@ function getOrCreate(paths: Map<string, ConflictInfo>, path: string): ConflictIn
 
 // ── Apply merge result ──────────────────────────────────────────────
 
-/**
- * Format precondition error messages for merge-ort operations.
- *
- * - `git merge`: ort-style (space-separated files, "Merge with strategy ort failed.")
- * - `git cherry-pick` / `git rebase`: sequencer-style (tab-indented, standard unpack message + fatal line)
- */
-function formatMergeOrtError(
-	files: string[],
-	operationName: string,
-	callerCommand: string,
-	errorType: "local" | "untracked",
-	checkPhase: "staged" | "worktree",
-): string {
-	const header =
-		errorType === "untracked"
-			? `error: The following untracked working tree files would be overwritten by ${operationName}:`
-			: `error: Your local changes to the following files would be overwritten by ${operationName}:`;
-
-	if (callerCommand === "merge") {
-		if (checkPhase === "staged") {
-			// Staged-change check: pure ort format (space-separated, two-space indent)
-			return `${header}\n  ${files.join(" ")}\nMerge with strategy ort failed.\n`;
-		}
-		// Worktree check: standard unpack-trees message + ort trailer
-		const fileList = files.map((f) => `\t${f}`).join("\n");
-		const hint =
-			errorType === "untracked"
-				? `Please move or remove them before you ${operationName}.`
-				: `Please commit your changes or stash them before you ${operationName}.`;
-		return `${header}\n${fileList}\n${hint}\nAborting\nMerge with strategy ort failed.\n`;
-	}
-
-	// Sequencer-style (cherry-pick/rebase): tab-indented + "fatal: <cmd> failed"
-	const fileList = files.map((f) => `\t${f}`).join("\n");
-	const hint =
-		errorType === "untracked"
-			? `Please move or remove them before you ${operationName}.`
-			: `Please commit your changes or stash them before you ${operationName}.`;
-	return `${header}\n${fileList}\n${hint}\nAborting\nfatal: ${callerCommand} failed\n`;
-}
-
-/**
- * Format multi-block worktree errors for merge-ort when both local changes
- * and untracked files are present. Produces separate error blocks with a
- * single "Aborting" + trailer at the end.
- */
-function formatMergeOrtWorktreeMultiBlock(
-	localFiles: string[],
-	untrackedFiles: string[],
-	operationName: string,
-	callerCommand: string,
-): string {
-	const blocks: string[] = [];
-
-	if (localFiles.length > 0) {
-		const fileList = localFiles.map((f) => `\t${f}`).join("\n");
-		blocks.push(
-			`error: Your local changes to the following files would be overwritten by ${operationName}:\n${fileList}\nPlease commit your changes or stash them before you ${operationName}.\n`,
-		);
-	}
-
-	if (untrackedFiles.length > 0) {
-		const fileList = untrackedFiles.map((f) => `\t${f}`).join("\n");
-		blocks.push(
-			`error: The following untracked working tree files would be overwritten by ${operationName}:\n${fileList}\nPlease move or remove them before you ${operationName}.\n`,
-		);
-	}
-
-	const trailer =
-		callerCommand === "merge"
-			? "Merge with strategy ort failed."
-			: `fatal: ${callerCommand} failed`;
-
-	return `${blocks.join("")}Aborting\n${trailer}\n`;
-}
-
 interface ApplyMergeOptions {
 	/** Labels for conflict marker display. */
 	labels: { a: string; b: string };
-	/** Error exit code for precondition failures (default 2 for merge, 128 for cherry-pick). */
-	errorExitCode?: number;
-	/** Operation name for error messages. */
-	operationName?: string;
 	/** Skip the staged-change check (e.g., for rebase). */
 	skipStagedChangeCheck?: boolean;
-	/**
-	 * The top-level command that initiated this merge (e.g. "merge", "cherry-pick", "rebase").
-	 * Controls error message formatting:
-	 * - "merge": ort-style (space-separated files, "Merge with strategy ort failed.")
-	 * - "cherry-pick"/"rebase": sequencer-style (tab-indented, "Please commit..." + "fatal: <cmd> failed")
-	 */
-	callerCommand?: string;
 	/**
 	 * Run an additional oneway merge safety check before the twoway merge.
 	 * Real git uses checkout_fast_forward (oneway merge) for cherry-pick -n,
@@ -2129,13 +2042,19 @@ interface ApplyMergeSuccess {
 	mergedTreeHash: ObjectId;
 }
 
-export interface ApplyMergeFailure {
-	ok: false;
-	stdout: string;
-	stderr: string;
-	exitCode: number;
-	failureKind?: "staged" | "worktree";
-}
+/**
+ * A precondition failure from {@link applyMergeResult}. Carries only structured
+ * data — the sorted path lists and which phase refused — never rendered bytes or
+ * an exit code. `cli/merge#renderApplyMerge` turns this into the git-exact
+ * `CommandResult`.
+ *
+ * - `staged`: the index-vs-HEAD check found staged changes that would be lost.
+ * - `worktree`: the worktree-safety unpack refused (dirty local files and/or
+ *   untracked files that would be overwritten).
+ */
+export type ApplyMergeFailure =
+	| { ok: false; kind: "staged"; localFiles: string[] }
+	| { ok: false; kind: "worktree"; localFiles: string[]; untrackedFiles: string[] };
 
 type ApplyMergeResultType = ApplyMergeSuccess | ApplyMergeFailure;
 
@@ -2180,15 +2099,7 @@ export async function applyMergeResult(
 		if (stagedChangeErrors.length > 0) {
 			const sorted = [...stagedChangeErrors].sort();
 			if (!options.atomicCheckout) await restoreStagedAdditions(ctx, currentIndex, headMap);
-			const opName = options.operationName ?? "merge";
-			const caller = options.callerCommand ?? "merge";
-			return {
-				ok: false,
-				stdout: "",
-				stderr: formatMergeOrtError(sorted, opName, caller, "local", "staged"),
-				exitCode: options.errorExitCode ?? 2,
-				failureKind: "staged",
-			};
+			return { ok: false, kind: "staged", localFiles: sorted };
 		}
 	}
 
@@ -2209,8 +2120,6 @@ export async function applyMergeResult(
 		);
 		if (!preflightResult.success) {
 			if (!options.atomicCheckout) await restoreStagedAdditions(ctx, currentIndex, headMap);
-			const opName = options.operationName ?? "merge";
-			const caller = options.callerCommand ?? "merge";
 			const localFiles = preflightResult.errors
 				.filter(
 					(e) =>
@@ -2226,21 +2135,7 @@ export async function applyMergeResult(
 				)
 				.map((e) => e.path)
 				.sort();
-			let stderr: string;
-			if (localFiles.length > 0 && untrackedFiles.length > 0) {
-				stderr = formatMergeOrtWorktreeMultiBlock(localFiles, untrackedFiles, opName, caller);
-			} else if (untrackedFiles.length > 0) {
-				stderr = formatMergeOrtError(untrackedFiles, opName, caller, "untracked", "worktree");
-			} else {
-				stderr = formatMergeOrtError(localFiles, opName, caller, "local", "worktree");
-			}
-			return {
-				ok: false,
-				stdout: "",
-				stderr,
-				exitCode: options.errorExitCode ?? 2,
-				failureKind: "worktree",
-			};
+			return { ok: false, kind: "worktree", localFiles, untrackedFiles };
 		}
 	}
 
@@ -2263,8 +2158,6 @@ export async function applyMergeResult(
 
 		if (!checkoutResult.success) {
 			if (!options.atomicCheckout) await restoreStagedAdditions(ctx, currentIndex, headMap);
-			const opName = options.operationName ?? "merge";
-			const caller = options.callerCommand ?? "merge";
 
 			// Separate error types into distinct groups (matching git's display_error_msgs)
 			const localFiles = checkoutResult.errors
@@ -2283,32 +2176,7 @@ export async function applyMergeResult(
 				.map((e) => e.path)
 				.sort();
 
-			const blocks: string[] = [];
-			if (localFiles.length > 0) {
-				blocks.push(formatMergeOrtError(localFiles, opName, caller, "local", "worktree"));
-			}
-			if (untrackedFiles.length > 0) {
-				blocks.push(formatMergeOrtError(untrackedFiles, opName, caller, "untracked", "worktree"));
-			}
-
-			// When we have multiple blocks, each already ends with the trailer
-			// (e.g., "Aborting\nMerge with strategy ort failed.\n").
-			// We want "Aborting" + trailer only once at the end.
-			// So strip trailer from all but the last block.
-			let stderr: string;
-			if (blocks.length > 1) {
-				stderr = formatMergeOrtWorktreeMultiBlock(localFiles, untrackedFiles, opName, caller);
-			} else {
-				stderr = blocks[0] ?? "";
-			}
-
-			return {
-				ok: false,
-				stdout: "",
-				stderr,
-				exitCode: options.errorExitCode ?? 2,
-				failureKind: "worktree",
-			};
+			return { ok: false, kind: "worktree", localFiles, untrackedFiles };
 		}
 
 		// Apply worktree operations (checkout new/changed files, delete removed)
