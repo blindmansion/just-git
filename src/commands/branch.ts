@@ -5,7 +5,7 @@ import { isAncestor } from "../lib/merge.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { readDetachPoint } from "../lib/operation-state.ts";
 import { isRebaseInProgress, readRebaseState } from "../lib/rebase.ts";
-import { appendReflog, logRef, readReflog, writeReflog, ZERO_HASH } from "../lib/refs/reflog.ts";
+import { appendReflog, logRef, readReflog, writeReflog } from "../lib/refs/reflog.ts";
 import {
 	createSymbolicRef,
 	deleteRef,
@@ -31,6 +31,7 @@ import { requireGitContext, requireCommit } from "../lib/commit-requirements.ts"
 import { FileSystemRefStore } from "../lib/refs/store.ts";
 import { isValidBranchName, branchNameFromRef } from "../lib/refs/name.ts";
 import { readConfig, writeConfig, getConfigValue } from "../lib/config/store.ts";
+import { ZERO_HASH } from "../lib/hex.ts";
 
 /** The leading marker `git branch` shows: current, checked out elsewhere, or plain. */
 function branchMarker(isCurrent: boolean, inOtherWorktree?: boolean): string {

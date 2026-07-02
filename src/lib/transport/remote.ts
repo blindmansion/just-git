@@ -137,5 +137,3 @@ export function resolveAuth(env: ReadonlyMap<string, string>): HttpAuth | undefi
 
 	return undefined;
 }
-
-export type { HttpAuth } from "./transport.ts";

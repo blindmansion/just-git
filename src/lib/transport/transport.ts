@@ -25,6 +25,13 @@ import {
 	v2CapabilitiesFromRaw,
 } from "./smart-http-v2.ts";
 
+// ── Auth ─────────────────────────────────────────────────────────────
+
+/** HTTP authentication credentials for the Smart HTTP transport. */
+export type HttpAuth =
+	| { type: "basic"; username: string; password: string }
+	| { type: "bearer"; token: string };
+
 // ── Transport interface ──────────────────────────────────────────────
 
 /** A ref advertised by the remote. */
@@ -773,9 +780,6 @@ export class SmartHttpTransport implements Transport {
 		return { updates: [...serverResults, ...rejectedResults] };
 	}
 }
-
-export type { HttpAuth } from "./smart-http.ts";
-
 // ── Shared helpers ───────────────────────────────────────────────────
 
 /**

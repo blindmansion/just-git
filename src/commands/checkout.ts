@@ -15,7 +15,7 @@ import { getCwdPrefix } from "../lib/command-utils.ts";
 import { findEntry, readIndex, writeIndex } from "../lib/index.ts";
 import { peelToCommit, readCommit } from "../lib/object-db.ts";
 import { clearDetachPoint } from "../lib/operation-state.ts";
-import { logRef, ZERO_HASH } from "../lib/refs/reflog.ts";
+import { logRef } from "../lib/refs/reflog.ts";
 import {
 	createSymbolicRef,
 	readHead,
@@ -34,6 +34,7 @@ import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 import { requireGitContext, requireCommit } from "../lib/commit-requirements.ts";
 import { isValidBranchName } from "../lib/refs/name.ts";
 import { readConfig, writeConfig } from "../lib/config/store.ts";
+import { ZERO_HASH } from "../lib/hex.ts";
 
 export function registerCheckoutCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("checkout", {

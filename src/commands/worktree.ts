@@ -6,7 +6,7 @@ import { movePath } from "../lib/fs-utils.ts";
 import { buildIndex, defaultStat, readIndex, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { basename, dirname, join, resolve } from "../lib/path.ts";
-import { logRef, ZERO_HASH } from "../lib/refs/reflog.ts";
+import { logRef } from "../lib/refs/reflog.ts";
 import { resolveHead, resolveRef, updateRef } from "../lib/refs/refs.ts";
 import { resolveRevision } from "../lib/refs/rev-parse.ts";
 import { flattenTree, flattenTreeToMap } from "../lib/tree-ops.ts";
@@ -31,6 +31,7 @@ import type { CommandResult } from "../lib/command-errors.ts";
 import { fatal, isCommandError } from "../lib/command-errors.ts";
 import { requireGitContext } from "../lib/commit-requirements.ts";
 import { FileSystemRefStore } from "../lib/refs/store.ts";
+import { ZERO_HASH } from "../lib/hex.ts";
 
 const USAGE =
 	"usage: git worktree add [<options>] <path> [<commit-ish>]\n" +

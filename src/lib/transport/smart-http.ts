@@ -16,13 +16,6 @@ import type { FetchFunction, ProgressCallback } from "../../hooks.ts";
 import type { RemoteRef, ShallowFetchOptions } from "./transport.ts";
 import { ZERO_HASH } from "../hex.ts";
 
-// ── Auth ─────────────────────────────────────────────────────────────
-
-/** HTTP authentication credentials for Smart HTTP transport. */
-export type HttpAuth =
-	| { type: "basic"; username: string; password: string }
-	| { type: "bearer"; token: string };
-
 // ── Ref discovery ────────────────────────────────────────────────────
 
 export interface DiscoverResult {

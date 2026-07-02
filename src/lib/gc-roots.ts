@@ -2,10 +2,11 @@ import { readIndex } from "./index.ts";
 import { objectExists } from "./object-db.ts";
 import { join } from "./path.ts";
 import { listRefs, resolveHead, resolveRef } from "./refs/refs.ts";
-import { readReflogAt, ZERO_HASH } from "./refs/reflog.ts";
+import { readReflogAt } from "./refs/reflog.ts";
 import type { GitContext, ObjectId } from "./types.ts";
 import { enumerateWorktrees } from "./worktree-admin.ts";
 import { FileSystemRefStore } from "./refs/store.ts";
+import { ZERO_HASH } from "./hex.ts";
 
 /**
  * Collect all root object IDs that must be kept (reachable from HEAD, refs,

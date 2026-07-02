@@ -281,5 +281,3 @@ export async function logRef(
 		logRefEffects(identity, refName, oldHash, newHash, message, alsoHead),
 	);
 }
-
-export { ZERO_HASH } from "../hex.ts";

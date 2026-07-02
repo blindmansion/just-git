@@ -18,7 +18,6 @@ import {
 	type ReflogEffect,
 	type ReflogEntry,
 	reflogRewrite,
-	ZERO_HASH,
 } from "./refs/reflog.ts";
 import { deleteRef, deleteRefEffects, readHead, resolveHead, updateRef } from "./refs/refs.ts";
 import { isSubmoduleMode } from "./symlink.ts";
@@ -29,6 +28,7 @@ import { checkoutEntry, cleanEmptyDirs, walkWorkTree } from "./worktree/worktree
 import { firstLine } from "./text-utils.ts";
 import { uniqueAbbrev } from "./abbrev.ts";
 import { branchNameFromRef } from "./refs/name.ts";
+import { ZERO_HASH } from "./hex.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
 

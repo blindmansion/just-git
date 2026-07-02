@@ -1,5 +1,5 @@
 import { objectExists } from "./object-db.ts";
-import { appendReflog, ZERO_HASH } from "./refs/reflog.ts";
+import { appendReflog } from "./refs/reflog.ts";
 import { listRefs, resolveRef, updateRef } from "./refs/refs.ts";
 import { INFINITE_DEPTH, isShallowRepo, readShallowCommits } from "./refs/shallow.ts";
 import { resolveRemoteTransport } from "./transport/resolver.ts";
@@ -10,6 +10,7 @@ import type { CommandResult } from "./command-errors.ts";
 import { fatal } from "./command-errors.ts";
 import type { TransferRefLine } from "./ref-format.ts";
 import { shortenRef } from "./refs/name.ts";
+import { ZERO_HASH } from "./hex.ts";
 
 interface NormalizedFetchArgs {
 	depth?: number;

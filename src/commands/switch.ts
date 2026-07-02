@@ -17,7 +17,7 @@ import { clearIndex, readIndex, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { clearDetachPoint, readStateFile } from "../lib/operation-state.ts";
 import { isRebaseInProgress } from "../lib/rebase.ts";
-import { logRef, ZERO_HASH } from "../lib/refs/reflog.ts";
+import { logRef } from "../lib/refs/reflog.ts";
 import {
 	createSymbolicRef,
 	deleteRef,
@@ -35,6 +35,7 @@ import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 import { requireGitContext, requireCommit } from "../lib/commit-requirements.ts";
 import { isValidBranchName } from "../lib/refs/name.ts";
 import { readConfig, writeConfig } from "../lib/config/store.ts";
+import { ZERO_HASH } from "../lib/hex.ts";
 
 function fromNameOf(head: Ref | null, hash: ObjectId | null): string {
 	return head?.type === "symbolic"

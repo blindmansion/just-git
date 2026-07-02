@@ -1,11 +1,12 @@
 import type { GitExtensions } from "../git.ts";
-import { readReflog, reflogPath, ZERO_HASH } from "../lib/refs/reflog.ts";
+import { readReflog, reflogPath } from "../lib/refs/reflog.ts";
 import { resolveRef } from "../lib/refs/refs.ts";
 import type { GitContext } from "../lib/types.ts";
 import { a, type Command, o } from "../parse/index.ts";
 import { isCommandError } from "../lib/command-errors.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
 import { requireGitContext } from "../lib/commit-requirements.ts";
+import { ZERO_HASH } from "../lib/hex.ts";
 
 async function formatReflogEntryLine(
 	gitCtx: GitContext,

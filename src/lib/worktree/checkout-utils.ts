@@ -5,7 +5,7 @@ import { hashObject, readCommit } from "../object-db.ts";
 import { clearAllOperationState, clearDetachPoint, writeDetachPoint } from "../operation-state.ts";
 import { join } from "../path.ts";
 import { matchPathspecs, parsePathspec } from "../attributes/pathspec.ts";
-import { logRef, readReflog, ZERO_HASH } from "../refs/reflog.ts";
+import { logRef, readReflog } from "../refs/reflog.ts";
 import {
 	createSymbolicRef,
 	listRefs,
@@ -26,6 +26,7 @@ import { firstLine } from "../text-utils.ts";
 import { uniqueAbbrev } from "../abbrev.ts";
 import { requireCommit } from "../commit-requirements.ts";
 import { readConfig, writeConfig, getConfigValue } from "../config/store.ts";
+import { ZERO_HASH } from "../hex.ts";
 
 /**
  * Scan the HEAD reflog for the most recent "checkout: moving from X to Y"

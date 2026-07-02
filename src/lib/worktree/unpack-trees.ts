@@ -65,7 +65,7 @@ export interface RejectedPath {
  * For a two-way merge:  base=null, head=old, remote=new
  * For a three-way merge: base=merge-base, head=ours, remote=theirs
  */
-interface PathState {
+export interface PathState {
 	path: string;
 
 	/** Hash in the ancestor/base tree, or null if absent. */
@@ -118,7 +118,7 @@ function isUntracked(state: PathState): boolean {
 // =====================================================================
 
 /** What to do with a path after the merge function decides. */
-enum MergeAction {
+export enum MergeAction {
 	/** Keep the current index entry as-is. No worktree change needed. */
 	KEEP = "KEEP",
 
@@ -1209,6 +1209,3 @@ export async function mergeAbort(
 
 	return result;
 }
-
-export { MergeAction };
-export type { PathState };

@@ -9,7 +9,7 @@ import {
 } from "../lib/fetch-helpers.ts";
 import { getReflogIdentity } from "../lib/identity.ts";
 import { join } from "../lib/path.ts";
-import { appendReflog, ZERO_HASH } from "../lib/refs/reflog.ts";
+import { appendReflog } from "../lib/refs/reflog.ts";
 import { deleteRef, ensureRemoteHead, listRefs, resolveRef, updateRef } from "../lib/refs/refs.ts";
 import { applyShallowUpdates } from "../lib/refs/shallow.ts";
 import { mapRefspec, parseRefspec, type Refspec } from "../lib/transport/refspec.ts";
@@ -24,6 +24,7 @@ import { formatTransferRefLines, buildRefUpdateLines } from "../lib/ref-format.t
 import { requireGitContext } from "../lib/commit-requirements.ts";
 import { shortenRef } from "../lib/refs/name.ts";
 import { readConfig } from "../lib/config/store.ts";
+import { ZERO_HASH } from "../lib/hex.ts";
 
 export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("fetch", {
