@@ -15,7 +15,7 @@ import {
 	type FormatContext,
 	formatPreset,
 	parseFormatArg,
-} from "../lib/log-format.ts";
+} from "../format/log.ts";
 import { findAllMergeBases } from "../lib/merge.ts";
 import { peelToCommit, readBlobBytes, readCommit } from "../lib/object-db.ts";
 import type { Pathspec } from "../lib/attributes/pathspec.ts";

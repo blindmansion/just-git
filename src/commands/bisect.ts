@@ -4,8 +4,6 @@ import {
 	type BisectState,
 	cleanBisectState,
 	findBisectionCommit,
-	formatBisectStatus,
-	formatBisectingLine,
 	formatFirstBadCommit,
 	isBisectInProgress,
 	readBisectState,
@@ -24,6 +22,7 @@ import { fatal, isCommandError } from "../lib/command-errors.ts";
 import { firstLine } from "../lib/text-utils.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
 import { requireGitContext, requireWorkTree, requireRevision } from "../lib/commit-requirements.ts";
+import { formatBisectStatus, formatBisectingLine } from "../format/bisect.ts";
 
 // ── Reserved subcommand names (cannot be used as custom terms) ──────
 

@@ -1,7 +1,7 @@
-import { formatDate } from "./date.ts";
-import type { Commit, ObjectId } from "./types.ts";
-import { firstLine } from "./text-utils.ts";
-import { abbreviateHash } from "./abbrev.ts";
+import { formatDate } from "../lib/date.ts";
+import type { Commit, ObjectId } from "../lib/types.ts";
+import { firstLine } from "../lib/text-utils.ts";
+import { abbreviateHash } from "../lib/abbrev.ts";
 
 export type DateMode =
 	| "default"

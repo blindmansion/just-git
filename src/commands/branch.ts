@@ -15,7 +15,7 @@ import {
 	resolveRef,
 	updateRef,
 } from "../lib/refs/refs.ts";
-import { formatBranchTrackingInfo, getTrackingInfo } from "../lib/status-format.ts";
+import { getTrackingInfo } from "../lib/status-format.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import {
 	branchCheckedOutAt,
@@ -32,6 +32,7 @@ import { FileSystemRefStore } from "../lib/refs/store.ts";
 import { isValidBranchName, branchNameFromRef } from "../lib/refs/name.ts";
 import { readConfig, writeConfig, getConfigValue } from "../lib/config/store.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
+import { formatBranchTrackingInfo } from "../format/status.ts";
 
 /** The leading marker `git branch` shows: current, checked out elsewhere, or plain. */
 function branchMarker(isCurrent: boolean, inOtherWorktree?: boolean): string {

@@ -1,5 +1,5 @@
 import type { GitExtensions } from "../git.ts";
-import { formatCombinedDiffEntry } from "../lib/diff/combined.ts";
+import { formatCombinedDiffEntry } from "../format/combined-diff.ts";
 import { computeDiffStats, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
 import { formatDate } from "../lib/date.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff/algorithm.ts";
@@ -9,12 +9,7 @@ import {
 	resolveDiffPresentation,
 	resolveDiffStat,
 } from "../lib/diff/driver.ts";
-import {
-	expandFormat,
-	type FormatContext,
-	formatPreset,
-	parseFormatArg,
-} from "../lib/log-format.ts";
+import { expandFormat, type FormatContext, formatPreset, parseFormatArg } from "../format/log.ts";
 import { readBlobBytes, readCommit, readObject, readTag } from "../lib/object-db.ts";
 import { detectRenames, formatRenamePath, type RenamePair } from "../lib/diff/rename-detection.ts";
 import { parseRevPath } from "../lib/refs/rev-parse.ts";

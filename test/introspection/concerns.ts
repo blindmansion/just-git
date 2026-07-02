@@ -91,7 +91,7 @@ function isErrorConstruction(node: ts.Node): boolean {
 		: ts.isPropertyAccessExpression(expr)
 			? expr.name.text
 			: "";
-	return name.endsWith('Error');
+	return name.endsWith("Error");
 }
 
 interface FnInfo {

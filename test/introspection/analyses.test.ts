@@ -149,25 +149,25 @@ describe("call graph", () => {
 
 describe("concern classifier", () => {
 	test("separates formatting from data on known lib files", async () => {
-		const concerns = await classifyConcerns({ include: "src/lib", root: "src/lib" });
+		const concerns = await classifyConcerns({ include: ["src/lib", "src/format"], root: "src" });
 		const by = (relPath: string, name: string) =>
 			concerns.find((c) => c.relPath === relPath && c.name === name);
 
-		// log-format.ts is a pure presentation module: expandFormat formats and
+		// format/log.ts is a pure presentation module: expandFormat formats and
 		// touches no data.
-		const expand = by("log-format.ts", "expandFormat");
+		const expand = by("format/log.ts", "expandFormat");
 		expect(expand?.kind).toBe("formatting");
 		expect(expand?.formats).toBe(true);
 		expect(expand?.handlesData).toBe(false);
 
 		// commit-summary.ts couples async data access with formatted output.
-		expect(by("commit-summary.ts", "formatCommitSummary")?.kind).toBe("mixed");
+		expect(by("lib/commit-summary.ts", "formatCommitSummary")?.kind).toBe("mixed");
 		// A pure counting helper is neither formatting nor data.
-		expect(by("commit-summary.ts", "countLines")?.kind).toBe("logic");
+		expect(by("lib/commit-summary.ts", "countLines")?.kind).toBe("logic");
 
 		// Error-message templates don't make a data reader "formatting": a bare
 		// `.join` / `path` builder isn't presentation either.
-		expect(by("path.ts", "join")?.kind).toBe("logic");
+		expect(by("lib/path.ts", "join")?.kind).toBe("logic");
 
 		// every record's derived kind agrees with its two axes.
 		for (const c of concerns) {
@@ -184,7 +184,7 @@ describe("concern classifier", () => {
 	});
 
 	test("fileConcernProfiles roll functions up per file", async () => {
-		const concerns = await classifyConcerns({ include: "src/lib", root: "src/lib" });
+		const concerns = await classifyConcerns({ include: ["src/lib", "src/format"], root: "src" });
 		const profiles = fileConcernProfiles(concerns);
 
 		// Profiles partition the functions: summed counts reconcile with the input.
@@ -195,8 +195,8 @@ describe("concern classifier", () => {
 			expect(p.formattingRatio).toBeCloseTo((p.formatting + p.mixed) / p.functions);
 		}
 
-		// log-format.ts is presentation-dominant.
-		const logFormat = profiles.find((p) => p.relPath === "log-format.ts");
+		// format/log.ts is presentation-dominant.
+		const logFormat = profiles.find((p) => p.relPath === "format/log.ts");
 		expect(logFormat?.dominant).toBe("formatting");
 	});
 });

@@ -3,7 +3,6 @@ import { readIndex } from "../lib/index.ts";
 import { readHead, resolveHead } from "../lib/refs/refs.ts";
 import {
 	collapseUntrackedDirs,
-	formatBranchTrackingInfo,
 	generateLongFormStatus,
 	getTrackingInfo,
 	getStagedChanges,
@@ -18,6 +17,7 @@ import { isCommandError } from "../lib/command-errors.ts";
 import { requireGitContext } from "../lib/commit-requirements.ts";
 import { branchNameFromRef } from "../lib/refs/name.ts";
 import { readConfig } from "../lib/config/store.ts";
+import { formatBranchTrackingInfo } from "../format/status.ts";
 
 export function registerStatusCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("status", {

@@ -1,9 +1,10 @@
 import type { GitExtensions } from "../git.ts";
 import { collectAllRoots } from "../lib/gc-roots.ts";
-import { formatRepackStderr, repackFromTips } from "../lib/repack.ts";
+import { repackFromTips } from "../lib/repack.ts";
 import { type Command, f } from "../parse/index.ts";
 import { isCommandError } from "../lib/command-errors.ts";
 import { requireGitContext } from "../lib/commit-requirements.ts";
+import { formatRepackStderr } from "../format/repack.ts";
 
 export function registerRepackCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("repack", {

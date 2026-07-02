@@ -1,7 +1,7 @@
 import type { GitExtensions } from "../git.ts";
 import { CommitHeap, walkCommits } from "../lib/commit-walk.ts";
 import { parseDate } from "../lib/date.ts";
-import { expandFormat, type FormatContext, parseFormatArg } from "../lib/log-format.ts";
+import { expandFormat, type FormatContext, parseFormatArg } from "../format/log.ts";
 import { findAllMergeBases } from "../lib/merge.ts";
 import { peelToCommit, readCommit } from "../lib/object-db.ts";
 import type { Pathspec } from "../lib/attributes/pathspec.ts";

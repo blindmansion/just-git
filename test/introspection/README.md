@@ -66,20 +66,20 @@ for (const c of findCycles(g, { edgeFilter: isRuntimeEdge }))
 
 Typical questions and the helper that answers them:
 
-| Question                                 | Helper                                                          |
-| ---------------------------------------- | --------------------------------------------------------------- |
-| What depends on / is depended on by X?   | `dependencies`, `dependents`, `buildReverseIndex`               |
-| Which _symbol_ of X does each file use?  | `symbolEdges` (per-binding) / `exportConsumers` (per-export)    |
+| Question                                 | Helper                                                             |
+| ---------------------------------------- | ------------------------------------------------------------------ |
+| What depends on / is depended on by X?   | `dependencies`, `dependents`, `buildReverseIndex`                  |
+| Which _symbol_ of X does each file use?  | `symbolEdges` (per-binding) / `exportConsumers` (per-export)       |
 | Which of a module's exports are co-used? | `coUsageClusters` (Jaccard over consumer sets — split-seam finder) |
-| Are there import cycles? (runtime ones!) | `findCycles(g, { edgeFilter: isRuntimeEdge })`                  |
-| How do directories import each other?    | `directoryMatrix` / `groupMatrix` + `formatMatrix`              |
-| What are the hubs / leaves?              | `degrees(g, { edgeFilter: isRuntimeEdge })`                     |
-| What's the dependency hierarchy/depth?   | `dependencyDepth(g, { edgeFilter: isRuntimeEdge })`             |
-| Should these files be a directory?       | `groupMetrics(g, [...])` (cohesion vs coupling)                 |
-| Does the code respect a layering?        | `findLayerViolations(g, layers, { edgeFilter: isRuntimeEdge })` |
-| What external deps are used?             | `externalPackages` + `formatCounts`                             |
-| Imports that should be `import type`?    | `typeImportCandidates`                                          |
-| Pure re-export/barrel files?             | `barrelFiles`                                                   |
+| Are there import cycles? (runtime ones!) | `findCycles(g, { edgeFilter: isRuntimeEdge })`                     |
+| How do directories import each other?    | `directoryMatrix` / `groupMatrix` + `formatMatrix`                 |
+| What are the hubs / leaves?              | `degrees(g, { edgeFilter: isRuntimeEdge })`                        |
+| What's the dependency hierarchy/depth?   | `dependencyDepth(g, { edgeFilter: isRuntimeEdge })`                |
+| Should these files be a directory?       | `groupMetrics(g, [...])` (cohesion vs coupling)                    |
+| Does the code respect a layering?        | `findLayerViolations(g, layers, { edgeFilter: isRuntimeEdge })`    |
+| What external deps are used?             | `externalPackages` + `formatCounts`                                |
+| Imports that should be `import type`?    | `typeImportCandidates`                                             |
+| Pure re-export/barrel files?             | `barrelFiles`                                                      |
 
 Almost every import-graph analysis takes an optional `edgeFilter` so
 `isRuntimeEdge` (or any predicate) composes uniformly.

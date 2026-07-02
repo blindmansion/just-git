@@ -1,5 +1,5 @@
 import type { GitExtensions } from "../git.ts";
-import { formatCombinedDiffEntry } from "../lib/diff/combined.ts";
+import { formatCombinedDiffEntry } from "../format/combined-diff.ts";
 import { getCwdPrefix } from "../lib/command-utils.ts";
 import { resolveAttributes } from "../lib/attributes/bound-attributes.ts";
 import { type FileStat, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";

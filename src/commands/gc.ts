@@ -7,11 +7,12 @@ import { writePackedRefs } from "../lib/refs/refs.ts";
 import { enumerateWorktrees } from "../lib/worktree-admin.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { type Command, f } from "../parse/index.ts";
-import { formatRepackStderr, repackFromTips } from "../lib/repack.ts";
+import { repackFromTips } from "../lib/repack.ts";
 import { isCommandError } from "../lib/command-errors.ts";
 import { requireGitContext } from "../lib/commit-requirements.ts";
 import { readConfig } from "../lib/config/store.ts";
 import type { GitConfig } from "../lib/config/parse.ts";
+import { formatRepackStderr } from "../format/repack.ts";
 
 export function registerGcCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("gc", {
