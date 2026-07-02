@@ -218,9 +218,7 @@ describe("signature type references", () => {
 		// Explicit return of the type.
 		expect(by("lib/command-errors.ts#fatal")?.positions).toEqual(["return"]);
 		// Union return `CommandResult | null` still counts.
-		expect(by("lib/worktree/checkout-utils.ts#requireResolvedIndex")?.positions).toContain(
-			"return",
-		);
+		expect(by("lib/rebase-engine.ts#checkUntrackedConflicts")?.positions).toContain("return");
 		// The type in a parameter is recorded as a param position, not a return.
 		const isCmdErr = by("lib/command-errors.ts#isCommandError");
 		expect(isCmdErr?.positions).toContain("param");

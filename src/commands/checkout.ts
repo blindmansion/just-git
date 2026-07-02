@@ -5,11 +5,10 @@ import {
 	computeCheckoutStatus,
 	findPreviousBranch,
 	guessRemoteBranch,
-	requireResolvedIndex,
 	restoreConflicted,
 	restoreFiles,
 } from "../lib/worktree/checkout-utils.ts";
-import { detachHeadCore, switchBranchCore } from "../cli/checkout-core.ts";
+import { detachHeadCore, switchBranchCore, requireResolvedIndex } from "../cli/checkout-core.ts";
 import { renderCancelWarnings, renderCheckoutSummary } from "../format/checkout.ts";
 import { getCwdPrefix } from "../lib/command-utils.ts";
 import { findEntry, readIndex, writeIndex } from "../lib/index.ts";

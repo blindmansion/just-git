@@ -22,7 +22,6 @@ import {
 	clearOperationState,
 	computeCheckoutStatus,
 	gatherDetachPreamble,
-	requireResolvedIndex,
 } from "../lib/worktree/checkout-utils.ts";
 import { applyWorktreeOps, checkoutTrees } from "../lib/worktree/unpack-trees.ts";
 import {
@@ -30,6 +29,39 @@ import {
 	renderCheckoutSummary,
 	renderDetachPreamble,
 } from "../format/checkout.ts";
+
+/**
+ * Build the "<path>: needs merge" file list that real git prints to
+ * stdout when checkout is blocked by unmerged index entries.
+ */
+function formatUnmergedList(index: { entries: { path: string; stage: number }[] }): string {
+	const seen = new Set<string>();
+	const lines: string[] = [];
+	for (const e of index.entries) {
+		if (e.stage > 0 && !seen.has(e.path)) {
+			seen.add(e.path);
+			lines.push(`${e.path}: needs merge`);
+		}
+	}
+	lines.sort();
+	return lines.length > 0 ? `${lines.join("\n")}\n` : "";
+}
+
+/**
+ * Return an error result if the index has unmerged entries, or null if clean.
+ * Combines hasConflicts check + formatUnmergedList output, matching the
+ * standard "you need to resolve your current index first" message.
+ */
+export function requireResolvedIndex(index: {
+	entries: { path: string; stage: number }[];
+}): CommandResult | null {
+	if (!index.entries.some((e) => e.stage > 0)) return null;
+	return {
+		stdout: formatUnmergedList(index),
+		stderr: "error: you need to resolve your current index first\n",
+		exitCode: 1,
+	};
+}
 
 /**
  * Core branch-switching logic shared by `checkout` and `switch`.

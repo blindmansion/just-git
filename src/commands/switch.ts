@@ -7,10 +7,9 @@ import {
 	gatherDetachPreamble,
 	gatherPrevHead,
 	guessRemoteBranch,
-	requireResolvedIndex,
 	setupTracking,
 } from "../lib/worktree/checkout-utils.ts";
-import { detachHeadCore, switchBranchCore } from "../cli/checkout-core.ts";
+import { detachHeadCore, switchBranchCore, requireResolvedIndex } from "../cli/checkout-core.ts";
 import {
 	renderCancelWarnings,
 	renderCheckoutSummary,
