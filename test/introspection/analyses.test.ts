@@ -12,6 +12,7 @@ import {
 	findDuplicateTypeShapes,
 	godFiles,
 	impactedTests,
+	moduleCallCohesion,
 	testsCovering,
 	typeCycles,
 	typeReferrers,
@@ -121,6 +122,26 @@ describe("call graph", () => {
 		if (buildId) expect(callers(cg, buildId)).toBeDefined();
 		// callCycles returns arrays (possibly empty) without throwing.
 		expect(Array.isArray(callCycles(cg))).toBe(true);
+	});
+
+	test("moduleCallCohesion rolls calls up per file", async () => {
+		const cg = await buildCallGraph({ include: "test/introspection", root: "test/introspection" });
+		const rows = moduleCallCohesion(cg);
+		expect(rows.length).toBeGreaterThan(0);
+
+		// Totals reconcile with the raw graph: summed functions == node count, and
+		// summed intra + fanOut edges == every edge with both ends resolved.
+		const totalFns = rows.reduce((s, r) => s + r.functions, 0);
+		expect(totalFns).toBe(cg.nodes.size);
+		const totalIntra = rows.reduce((s, r) => s + r.intraEdges, 0);
+		const totalFanOut = rows.reduce((s, r) => s + r.fanOut, 0);
+		const resolved = cg.edges.filter((e) => cg.nodes.has(e.fromId) && cg.nodes.has(e.toId)).length;
+		expect(totalIntra + totalFanOut).toBe(resolved);
+
+		// cohesion is intraEdges / functions and rows are sorted largest-first.
+		for (const r of rows) expect(r.cohesion).toBeCloseTo(r.intraEdges / r.functions);
+		for (let i = 1; i < rows.length; i++)
+			expect(rows[i - 1]?.functions ?? 0).toBeGreaterThanOrEqual(rows[i]?.functions ?? 0);
 	});
 });
 

@@ -17,6 +17,8 @@ export { buildImportGraph } from "./build-graph.ts";
 export {
 	barrelFiles,
 	buildReverseIndex,
+	type CoUsage,
+	coUsageClusters,
 	type Degree,
 	degrees,
 	dependencies,
@@ -83,6 +85,8 @@ export {
 	callers,
 	type FunctionKind,
 	type FunctionNode,
+	type ModuleCohesion,
+	moduleCallCohesion,
 	uncalledFunctions,
 } from "./call-graph.ts";
 export {

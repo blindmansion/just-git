@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	barrelFiles,
 	buildImportGraph,
+	coUsageClusters,
 	degrees,
 	dependencies,
 	dependencyDepth,
@@ -188,6 +189,34 @@ describe("import-graph introspection", () => {
 
 		// runtimeOnly drops pure-type exports entirely.
 		expect(consumers.has("types.ts#ImportGraph")).toBe(false);
+	});
+
+	test("coUsageClusters groups exports by shared consumers", async () => {
+		const graph = await buildImportGraph({ include: "test/introspection" });
+		const rows = coUsageClusters(graph);
+
+		// Every row has consistent bookkeeping: clusters partition the exports and
+		// singletons count the size-1 clusters.
+		for (const r of rows) {
+			expect(r.clusters.reduce((n, c) => n + c.length, 0)).toBe(r.exports);
+			expect(r.singletons).toBe(r.clusters.filter((c) => c.length === 1).length);
+			expect(r.clusters.length).toBeGreaterThan(0);
+		}
+
+		// query.ts is the toolkit's export hub — many exports, so it appears with a
+		// nonzero fan-in.
+		const query = rows.find((r) => r.module === "query.ts");
+		expect(query).toBeDefined();
+		expect(query?.fanIn ?? 0).toBeGreaterThan(0);
+
+		// A stricter threshold can only merge fewer exports, never more, so cluster
+		// counts are monotonic in the threshold.
+		const loose = coUsageClusters(graph, { threshold: 0.1 });
+		const strict = coUsageClusters(graph, { threshold: 0.9 });
+		const clustersOf = (rs: typeof rows, m: string) =>
+			rs.find((r) => r.module === m)?.clusters.length ?? 0;
+		for (const r of rows)
+			expect(clustersOf(strict, r.module)).toBeGreaterThanOrEqual(clustersOf(loose, r.module));
 	});
 
 	test("path helpers", async () => {

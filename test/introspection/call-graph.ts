@@ -202,6 +202,54 @@ export function callers(graph: CallGraph, id: string): string[] {
 		.sort();
 }
 
+/** Per-module intra-file call cohesion (see {@link moduleCallCohesion}). */
+export interface ModuleCohesion {
+	/** Root-relative path of the module. */
+	module: string;
+	/** Number of named functions declared in the module. */
+	functions: number;
+	/** Call edges whose caller and callee both live in this module. */
+	intraEdges: number;
+	/** Call edges from a function here to a function in another module. */
+	fanOut: number;
+	/** `intraEdges / functions` — how internally wired the module is. */
+	cohesion: number;
+}
+
+/**
+ * Roll the call graph up per module: how many of a file's calls stay within the
+ * file (cohesion) vs reach out (fanOut). High cohesion means a self-contained
+ * engine; near-zero cohesion on a multi-function file flags a grab-bag of
+ * unrelated helpers (a split candidate) or a pure data bucket. The intra-module
+ * companion to {@link coUsageClusters}'s external co-usage view.
+ */
+export function moduleCallCohesion(graph: CallGraph): ModuleCohesion[] {
+	const functions = new Map<string, number>();
+	const intra = new Map<string, number>();
+	const fanOut = new Map<string, number>();
+	for (const n of graph.nodes.values())
+		functions.set(n.relPath, (functions.get(n.relPath) ?? 0) + 1);
+	for (const e of graph.edges) {
+		const a = graph.nodes.get(e.fromId);
+		const b = graph.nodes.get(e.toId);
+		if (!a || !b) continue;
+		if (a.relPath === b.relPath) intra.set(a.relPath, (intra.get(a.relPath) ?? 0) + 1);
+		else fanOut.set(a.relPath, (fanOut.get(a.relPath) ?? 0) + 1);
+	}
+	const rows: ModuleCohesion[] = [];
+	for (const [module, fns] of functions) {
+		const intraEdges = intra.get(module) ?? 0;
+		rows.push({
+			module,
+			functions: fns,
+			intraEdges,
+			fanOut: fanOut.get(module) ?? 0,
+			cohesion: fns > 0 ? intraEdges / fns : 0,
+		});
+	}
+	return rows.sort((a, b) => b.functions - a.functions);
+}
+
 /** Recursion clusters: mutually-recursive function groups (and self-recursion). */
 export function callCycles(graph: CallGraph): string[][] {
 	const succ = new Map<string, Set<string>>();

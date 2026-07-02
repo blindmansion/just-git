@@ -603,6 +603,100 @@ export function exportConsumers(
 	return result;
 }
 
+/** Co-usage clustering of one module's exports (see {@link coUsageClusters}). */
+export interface CoUsage {
+	/** Root-relative path of the module. */
+	module: string;
+	/** Number of exports that have at least one (matching) consumer. */
+	exports: number;
+	/** Total consumer count summed across those exports (symbol fan-in). */
+	fanIn: number;
+	/** Export names grouped so members share a consumer set above the threshold. */
+	clusters: string[][];
+	/** Clusters of exactly one export (no co-used sibling) — split-seam signal. */
+	singletons: number;
+}
+
+/**
+ * Group each module's exports by how often they are imported *together*. Two
+ * exports join the same cluster when the Jaccard overlap of their consumer sets
+ * (files importing them) is at least `threshold`. The reverse-lookup companion
+ * to the call graph for planning splits: a module whose exports fall into many
+ * disjoint clusters (esp. singletons) is fragmented — its consumers use
+ * unrelated slices — whereas one big cluster means cohesive co-use.
+ *
+ * Caveat: foundational *data buckets* (`object-db`, `index`, `path`, `hex`)
+ * over-fragment here because each accessor is used independently; fragmentation
+ * is only a split signal when paired with distinct concerns (confirm with the
+ * call graph). Rolls up {@link exportConsumers}; defaults to runtime uses.
+ */
+export function coUsageClusters(
+	graph: ImportGraph,
+	opts: { threshold?: number; runtimeOnly?: boolean; minExports?: number } = {},
+): CoUsage[] {
+	const threshold = opts.threshold ?? 0.5;
+	const minExports = opts.minExports ?? 1;
+	const consumers = exportConsumers(graph, { runtimeOnly: opts.runtimeOnly ?? true });
+
+	const byModule = new Map<string, Map<string, Set<string>>>();
+	for (const [id, set] of consumers) {
+		const hash = id.lastIndexOf("#");
+		const module = id.slice(0, hash);
+		const name = id.slice(hash + 1);
+		let exps = byModule.get(module);
+		if (!exps) {
+			exps = new Map();
+			byModule.set(module, exps);
+		}
+		exps.set(name, set);
+	}
+
+	const result: CoUsage[] = [];
+	for (const [module, exps] of byModule) {
+		if (exps.size < minExports) continue;
+		const names = [...exps.keys()];
+		const parent = new Map(names.map((n) => [n, n]));
+		const find = (x: string): string => {
+			let r = x;
+			while (parent.get(r) !== r) r = parent.get(r) as string;
+			for (let c = x; c !== r; ) {
+				const next = parent.get(c) as string;
+				parent.set(c, r);
+				c = next;
+			}
+			return r;
+		};
+		for (let i = 0; i < names.length; i++) {
+			for (let j = i + 1; j < names.length; j++) {
+				const a = exps.get(names[i] as string) as Set<string>;
+				const b = exps.get(names[j] as string) as Set<string>;
+				let inter = 0;
+				for (const x of a) if (b.has(x)) inter++;
+				const union = a.size + b.size - inter;
+				if (union > 0 && inter / union >= threshold) {
+					parent.set(find(names[i] as string), find(names[j] as string));
+				}
+			}
+		}
+		const groups = new Map<string, string[]>();
+		for (const n of names) {
+			const r = find(n);
+			const g = groups.get(r);
+			if (g) g.push(n);
+			else groups.set(r, [n]);
+		}
+		const clusters = [...groups.values()].sort((x, y) => y.length - x.length);
+		result.push({
+			module,
+			exports: exps.size,
+			fanIn: [...exps.values()].reduce((sum, s) => sum + s.size, 0),
+			clusters,
+			singletons: clusters.filter((c) => c.length === 1).length,
+		});
+	}
+	return result.sort((a, b) => b.clusters.length - a.clusters.length || b.exports - a.exports);
+}
+
 /** Serialise a graph to a JSON-friendly object (Maps become arrays/records). */
 export function serializeGraph(graph: ImportGraph): unknown {
 	return {
