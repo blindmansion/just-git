@@ -1,5 +1,13 @@
 import type { Ref } from "../lib/types.ts";
-import type { DeltaObjectRow, Storage, StoredObject, RawRefEntry, RefOps } from "./repo-store.ts";
+import type {
+	DeltaObjectRow,
+	ObjectRow,
+	RawRefEntry,
+	RefOps,
+	RefRow,
+	Storage,
+	StoredObject,
+} from "./repo-store.ts";
 
 // ── better-sqlite3 types ────────────────────────────────────────────
 
@@ -423,14 +431,6 @@ export class BetterSqlite3Storage implements Storage {
 
 // ── Shared helpers ──────────────────────────────────────────────────
 
-type ObjectRow = {
-	hash?: string;
-	type: string;
-	content: Uint8Array;
-	encoding: string;
-	base_hash: string | null;
-};
-
 function rowToStored(row: ObjectRow | null): StoredObject | null {
 	if (!row) return null;
 	return {
@@ -440,8 +440,6 @@ function rowToStored(row: ObjectRow | null): StoredObject | null {
 		content: new Uint8Array(row.content),
 	};
 }
-
-type RefRow = { name: string; type: string; hash: string | null; target: string | null };
 
 function rowToRef(row: RefRow | null): Ref | null {
 	if (!row) return null;

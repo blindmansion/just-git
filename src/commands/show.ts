@@ -20,7 +20,7 @@ import { detectRenames, formatRenamePath, type RenamePair } from "../lib/diff/re
 import { parseRevPath } from "../lib/refs/rev-parse.ts";
 import { parseTree } from "../lib/objects/tree.ts";
 import { join } from "../lib/path.ts";
-import { diffTrees, flattenTreeToMap } from "../lib/tree-ops.ts";
+import { diffTrees, type FlatTreeEntry, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type {
 	Commit,
 	GitContext,
@@ -506,12 +506,6 @@ async function formatDiffsWithRenames(
 
 // ── Combined diff for merge commits ─────────────────────────────────
 
-interface FlatEntry {
-	path: string;
-	mode: string;
-	hash: string;
-}
-
 async function formatCombinedDiff(ctx: GitRepo, commit: Commit): Promise<string> {
 	if (commit.parents.length < 2) return "";
 
@@ -556,8 +550,8 @@ async function formatCombinedDiff(ctx: GitRepo, commit: Commit): Promise<string>
 async function formatCombinedEntry(
 	ctx: GitRepo,
 	path: string,
-	parentMaps: Map<string, FlatEntry>[],
-	resultMap: Map<string, FlatEntry>,
+	parentMaps: Map<string, FlatTreeEntry>[],
+	resultMap: Map<string, FlatTreeEntry>,
 ): Promise<string> {
 	const resultEntry = resultMap.get(path);
 	const parentEntries = parentMaps.map((pm) => pm.get(path) ?? null);

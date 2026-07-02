@@ -1,6 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { computeDiffStats, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
-import { CommitHeap, walkCommits } from "../lib/commit-walk.ts";
+import { type CommitEntry, CommitHeap, walkCommits } from "../lib/commit-walk.ts";
 import { parseDate } from "../lib/date.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff/algorithm.ts";
 import {
@@ -397,11 +397,6 @@ function buildMatcher(pattern: string): (text: string) => boolean {
 	} catch {
 		return (text: string) => text.includes(pattern);
 	}
-}
-
-interface CommitEntry {
-	hash: ObjectId;
-	commit: Commit;
 }
 
 /**

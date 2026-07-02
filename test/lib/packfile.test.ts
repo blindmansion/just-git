@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
 	applyDelta,
-	type PackInput,
 	type PackObject,
 	readPack,
 	readPackStreaming,
 	writePack,
 } from "../../src/lib/pack/packfile.ts";
+import type { RawObject } from "../../src/lib/types.ts";
 import { deflate, inflate, inflateObject } from "../../src/lib/pack/zlib.ts";
 import { isolatedGitEnv } from "../real-git.ts";
 
@@ -71,15 +71,15 @@ describe("inflateObject output bounding", () => {
 
 const enc = new TextEncoder();
 
-function blob(content: string): PackInput {
+function blob(content: string): RawObject {
 	return { type: "blob", content: enc.encode(content) };
 }
 
-function commit(content: string): PackInput {
+function commit(content: string): RawObject {
 	return { type: "commit", content: enc.encode(content) };
 }
 
-// function tree(bytes: Uint8Array): PackInput {
+// function tree(bytes: Uint8Array): RawObject {
 // 	return { type: "tree", content: bytes };
 // }
 
@@ -124,7 +124,7 @@ describe("readPack", () => {
 			"author Test <test@test.com> 1000000000 +0000\n" +
 			"committer Test <test@test.com> 1000000000 +0000\n\nInitial commit\n";
 
-		const input: PackInput[] = [
+		const input: RawObject[] = [
 			blob("file content A"),
 			blob("file content B"),
 			commit(commitContent),
@@ -174,7 +174,7 @@ describe("readPack", () => {
 			"type commit\n" +
 			"tag v1.0\n" +
 			"tagger Test <test@test.com> 1000000000 +0000\n\nRelease v1.0\n";
-		const input: PackInput[] = [{ type: "tag", content: enc.encode(tagContent) }];
+		const input: RawObject[] = [{ type: "tag", content: enc.encode(tagContent) }];
 		const pack = await writePack(input);
 		const objects = await readPack(pack);
 		expect(objects[0]!.type).toBe("tag");
@@ -188,7 +188,7 @@ describe("readPack", () => {
 	});
 
 	test("round-trips many objects", async () => {
-		const input: PackInput[] = [];
+		const input: RawObject[] = [];
 		for (let i = 0; i < 200; i++) {
 			input.push(blob(`content-${i}-${"padding".repeat(i % 20)}`));
 		}
@@ -241,7 +241,7 @@ describe("readPackStreaming", () => {
 	});
 
 	test("produces identical results to readPack", async () => {
-		const input: PackInput[] = [
+		const input: RawObject[] = [
 			blob("file content A"),
 			blob("file content B"),
 			commit(
@@ -300,7 +300,7 @@ describe("readPackStreaming", () => {
 	});
 
 	test("handles many objects", async () => {
-		const input: PackInput[] = [];
+		const input: RawObject[] = [];
 		for (let i = 0; i < 200; i++) {
 			input.push(blob(`content-${i}-${"padding".repeat(i % 20)}`));
 		}
@@ -463,7 +463,7 @@ describe("real git interop", () => {
 
 		const tmpDir = await mkdtemp(join(tmpdir(), "packtest-"));
 		try {
-			const input: PackInput[] = [
+			const input: RawObject[] = [
 				blob("file one content\n"),
 				blob("file two content\n"),
 				blob("another file\nwith multiple lines\n"),

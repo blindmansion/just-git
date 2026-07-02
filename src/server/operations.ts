@@ -12,7 +12,8 @@ import { isAncestor } from "../lib/merge.ts";
 import { resolveRef } from "../lib/refs/refs.ts";
 import { parseTag } from "../lib/objects/tag.ts";
 import { findBestDeltas } from "../lib/pack/delta.ts";
-import type { DeltaPackInput, PackInput } from "../lib/pack/packfile.ts";
+import type { DeltaPackInput } from "../lib/pack/packfile.ts";
+import type { PushCommand } from "../lib/transport/smart-http.ts";
 import { readPackStreaming, writePackDeltified, writePackStreaming } from "../lib/pack/packfile.ts";
 import { computeShallowBoundary } from "../lib/refs/shallow.ts";
 import {
@@ -21,11 +22,10 @@ import {
 	enumerateObjectsWithContent,
 	type WalkObjectWithContent,
 } from "../lib/transport/object-walk.ts";
-import type { GitRepo, ObjectId } from "../lib/types.ts";
+import type { GitRepo, ObjectId, RawObject } from "../lib/types.ts";
 import type { ShallowUpdate } from "../lib/refs/shallow.ts";
 import {
 	type AdvertisedRef,
-	type PushCommand,
 	type V2FetchResponseOptions,
 	type V2LsRefsRef,
 	buildRefAdvertisement,
@@ -625,7 +625,7 @@ async function buildPackStreaming(
 	const extraTags = includeTag ? await collectIncludedTags(repo, sentHashes) : [];
 
 	const totalCount = walkList.length + extraTags.length;
-	async function* streamObjects(): AsyncGenerator<PackInput> {
+	async function* streamObjects(): AsyncGenerator<RawObject> {
 		for (const batch of chunkArray(walkList, OBJECT_READ_BATCH_SIZE)) {
 			const prefetched = repo.objectStore.readMany
 				? await repo.objectStore.readMany(batch.map((obj) => obj.hash))

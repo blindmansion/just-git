@@ -21,6 +21,7 @@ import {
 	parsePktLineStream,
 	type PktLine,
 	pktLineText,
+	type V2Section,
 	type V2WantedRef,
 } from "./pkt-line.ts";
 import { type DiscoverResult, parseRefAdvertisement } from "./smart-http.ts";
@@ -331,14 +332,6 @@ function parseFetchV2ResponseBatch(
 	};
 }
 
-type StreamSection =
-	| "none"
-	| "acknowledgments"
-	| "shallow-info"
-	| "wanted-refs"
-	| "packfile"
-	| "skip";
-
 /**
  * Streaming counterpart to {@link parseFetchV2ResponseBatch}: walks the
  * pkt-line stream incrementally so band-2 progress reaches `onProgress` live
@@ -355,7 +348,7 @@ async function parseFetchV2ResponseStreaming(
 	const wantedRefs: V2WantedRef[] = [];
 	const packChunks: Uint8Array[] = [];
 	let totalPackBytes = 0;
-	let section: StreamSection = "none";
+	let section: V2Section = "none";
 
 	for await (const line of parsePktLinesFromStream(body)) {
 		if (line.type === "flush" || line.type === "response-end") break;
@@ -415,7 +408,7 @@ async function parseFetchV2ResponseStreaming(
 	return { packData, acks, shallowLines, unshallowLines, wantedRefs };
 }
 
-function streamSectionForHeader(text: string): StreamSection {
+function streamSectionForHeader(text: string): V2Section {
 	switch (text) {
 		case "acknowledgments":
 			return "acknowledgments";

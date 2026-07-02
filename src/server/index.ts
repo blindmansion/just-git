@@ -29,12 +29,12 @@ export {
 	parseV2FetchArgs,
 } from "./protocol.ts";
 export type {
-	PushCommand,
 	V2CommandRequest,
 	V2FetchRequest,
 	V2FetchResponseOptions,
 	V2LsRefsRef,
 } from "./protocol.ts";
+export type { PushCommand } from "../lib/transport/smart-http.ts";
 
 // Types
 export type {

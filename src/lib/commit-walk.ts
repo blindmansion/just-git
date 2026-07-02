@@ -5,7 +5,7 @@ import { firstLine } from "./text-utils.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
 
-interface CommitEntry {
+export interface CommitEntry {
 	hash: ObjectId;
 	commit: Commit;
 }

@@ -46,12 +46,6 @@ interface PackObjectMeta extends PackObject {
 	nextOffset: number;
 }
 
-/** Input for writing a pack: type + raw content. */
-export interface PackInput {
-	type: ObjectType;
-	content: Uint8Array;
-}
-
 /** Input for writing a deltified pack entry. */
 export interface DeltaPackInput {
 	hash: ObjectId;
@@ -599,7 +593,7 @@ export function applyDelta(base: Uint8Array, delta: Uint8Array): Uint8Array {
  * objects only — no delta compression. The result is a valid `.pack`
  * file with header, entries, and SHA-1 trailer.
  */
-export async function writePack(objects: PackInput[]): Promise<Uint8Array> {
+export async function writePack(objects: RawObject[]): Promise<Uint8Array> {
 	const chunks: Uint8Array[] = [];
 
 	const header = new Uint8Array(12);
@@ -681,7 +675,7 @@ export async function writePackDeltified(objects: DeltaPackInput[]): Promise<Pac
  */
 export async function* writePackStreaming(
 	count: number,
-	objects: AsyncIterable<PackInput>,
+	objects: AsyncIterable<RawObject>,
 ): AsyncGenerator<Uint8Array> {
 	const hasher = createHasher();
 

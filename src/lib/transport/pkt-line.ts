@@ -382,7 +382,13 @@ export interface V2FetchSections {
 	errors: string[];
 }
 
-type V2Section = "none" | "acknowledgments" | "shallow-info" | "wanted-refs" | "packfile" | "skip";
+export type V2Section =
+	| "none"
+	| "acknowledgments"
+	| "shallow-info"
+	| "wanted-refs"
+	| "packfile"
+	| "skip";
 
 /**
  * Demultiplex a buffered protocol-v2 `fetch` response into its sections.

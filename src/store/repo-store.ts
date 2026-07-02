@@ -89,6 +89,25 @@ export type DeltaObjectRow =
 			content: Uint8Array;
 	  };
 
+/**
+ * A `git_objects` row as read back from a SQL backend, in the table's
+ * `snake_case` column shape. Every SQL backend shares the same schema, so they
+ * share this row type and map it to {@link StoredObject} on read.
+ */
+export type ObjectRow = {
+	hash?: string;
+	type: string;
+	content: Uint8Array;
+	encoding: string;
+	base_hash: string | null;
+};
+
+/**
+ * A `git_refs` row as read back from a SQL backend, in the table's
+ * `snake_case`/column shape. Mapped to a {@link RawRefEntry} on read.
+ */
+export type RefRow = { name: string; type: string; hash: string | null; target: string | null };
+
 /** Options for creating a new repo via `GitServer.createRepo`. */
 export interface CreateRepoOptions {
 	/** Default branch name for the initial `HEAD -> refs/heads/<branch>` symref. */

@@ -22,7 +22,8 @@ import {
 	type AuthorizedFetchSet,
 	type ReceivePackLimitOptions,
 } from "./operations.ts";
-import { buildReportStatus, type PushCommand } from "./protocol.ts";
+import { buildReportStatus } from "./protocol.ts";
+import type { PushCommand } from "../lib/transport/smart-http.ts";
 import type { ServerHooks, Auth, RefUpdate, SshChannel, Rejection } from "./types.ts";
 import { RequestLimitError } from "./errors.ts";
 

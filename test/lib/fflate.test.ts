@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import zlib from "node:zlib";
 import { pureDeflate, pureInflate, pureInflateWithConsumed } from "../../src/lib/pack/fflate.ts";
-import { type PackInput, readPack, writePack } from "../../src/lib/pack/packfile.ts";
+import { readPack, writePack } from "../../src/lib/pack/packfile.ts";
+import type { RawObject } from "../../src/lib/types.ts";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -298,7 +299,7 @@ describe("pureDeflate", () => {
 
 describe("packfile parsing via pure inflate", () => {
 	test("can read a pack using only vendored inflate", async () => {
-		const inputs: PackInput[] = [
+		const inputs: RawObject[] = [
 			{ type: "blob", content: enc.encode("hello world") },
 			{ type: "blob", content: enc.encode("second blob\nwith newlines\n") },
 			{
@@ -360,7 +361,7 @@ describe("packfile parsing via pure inflate", () => {
 	});
 
 	test("handles a pack with 200 objects", async () => {
-		const inputs: PackInput[] = [];
+		const inputs: RawObject[] = [];
 		for (let i = 0; i < 200; i++) {
 			inputs.push({
 				type: "blob",

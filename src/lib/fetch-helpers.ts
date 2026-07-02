@@ -1,5 +1,5 @@
 import { objectExists } from "./object-db.ts";
-import { appendReflog } from "./refs/reflog.ts";
+import { appendReflog, type ReflogIdentity } from "./refs/reflog.ts";
 import { listRefs, resolveRef, updateRef } from "./refs/refs.ts";
 import { INFINITE_DEPTH, isShallowRepo, readShallowCommits } from "./refs/shallow.ts";
 import { resolveRemoteTransport } from "./transport/resolver.ts";
@@ -19,13 +19,6 @@ interface NormalizedFetchArgs {
 interface PreparedShallowFetch {
 	existingShallows?: Set<ObjectId>;
 	shallowOpts?: ShallowFetchOptions;
-}
-
-interface ReflogWriteIdentity {
-	name: string;
-	email: string;
-	timestamp: number;
-	tz: string;
 }
 
 type ResolvedRemoteTransport = NonNullable<Awaited<ReturnType<typeof resolveRemoteTransport>>>;
@@ -96,7 +89,7 @@ export async function autoFollowReachableTags(options: {
 	gitCtx: GitContext;
 	transport: Transport;
 	remoteRefs: RemoteRef[];
-	ident: ReflogWriteIdentity;
+	ident: ReflogIdentity;
 	reflogAction: "fetch" | "pull";
 }): Promise<TransferRefLine[]> {
 	const { gitCtx, transport, remoteRefs, ident, reflogAction } = options;
