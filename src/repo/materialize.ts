@@ -1,8 +1,12 @@
-import { createTreeAttributesProvider } from "../lib/attributes.ts";
-import { type BoundAttributes, bindAttributes } from "../lib/bound-attributes.ts";
+import { createTreeAttributesProvider } from "../lib/attributes/attributes.ts";
+import { type BoundAttributes, bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import { readBlobBytes, readBlobContent } from "../lib/object-db.ts";
 import { dirname, join } from "../lib/path.ts";
-import { isInsideWorkTree, verifyPath, verifySymlinkTarget } from "../lib/path-safety.ts";
+import {
+	isInsideWorkTree,
+	verifyPath,
+	verifySymlinkTarget,
+} from "../lib/attributes/path-safety.ts";
 import { isSubmoduleMode, isSymlinkMode } from "../lib/symlink.ts";
 import type { FlatTreeEntry } from "../lib/tree-ops.ts";
 import type { GitRepo, ObjectId } from "../lib/types.ts";

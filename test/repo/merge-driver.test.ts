@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { everyPath } from "../../src/lib/attribute-resolver.ts";
+import { everyPath } from "../../src/lib/attributes/attribute-resolver.ts";
 import { withCapabilities } from "../../src/lib/capabilities.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import type { CapabilityContext, GitRepo } from "../../src/lib/types.ts";

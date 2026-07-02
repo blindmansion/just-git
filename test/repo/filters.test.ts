@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { gitAttributes } from "../../src/lib/attribute-resolver.ts";
-import { createAttributesProvider } from "../../src/lib/attributes.ts";
-import { bindAttributes } from "../../src/lib/bound-attributes.ts";
+import { gitAttributes } from "../../src/lib/attributes/attribute-resolver.ts";
+import { createAttributesProvider } from "../../src/lib/attributes/attributes.ts";
+import { bindAttributes } from "../../src/lib/attributes/bound-attributes.ts";
 import { withCapabilities } from "../../src/lib/capabilities.ts";
-import type { FilterConfig, FilterInput } from "../../src/lib/filters.ts";
+import type { FilterConfig, FilterInput } from "../../src/lib/attributes/filters.ts";
 import { readCommit } from "../../src/lib/object-db.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import type { GitContext, GitRepo } from "../../src/lib/types.ts";

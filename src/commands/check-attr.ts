@@ -1,6 +1,6 @@
 import type { CommandContext, GitExtensions } from "../git.ts";
-import type { AttrValue } from "../lib/attributes.ts";
-import { createAttributesProvider } from "../lib/attributes.ts";
+import type { AttrValue } from "../lib/attributes/attributes.ts";
+import { createAttributesProvider } from "../lib/attributes/attributes.ts";
 import { getCwdPrefix } from "../lib/command-utils.ts";
 import { join, relative } from "../lib/path.ts";
 import { a, type Command, f } from "../parse/index.ts";

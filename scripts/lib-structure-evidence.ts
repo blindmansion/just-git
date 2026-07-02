@@ -56,18 +56,10 @@ if (cu) {
 }
 
 // ── 5. Candidate directory cohesion / coupling ──────────────────────────────
+// `attributes/` is now a real directory (see the subdirectory matrix above);
+// only still-flat candidates remain here.
 const candidates: Record<string, string[]> = {
 	"worktree/": ["worktree", "unpack-trees", "checkout-utils", "tree-ops", "command-utils"],
-	"attributes/": [
-		"attribute-resolver",
-		"attributes",
-		"bound-attributes",
-		"filters",
-		"ignore",
-		"pathspec",
-		"wildmatch",
-		"path-safety",
-	],
 	"refs/": ["refs", "reflog", "rev-parse", "shallow", "range-syntax"],
 	"diff/": [
 		"diff-algorithm",

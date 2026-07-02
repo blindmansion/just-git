@@ -6,7 +6,7 @@ import {
 	type FetchFunction,
 	type NetworkPolicy,
 } from "../../hooks.ts";
-import { emptyAttributesProvider } from "../attributes.ts";
+import { emptyAttributesProvider } from "../attributes/attributes.ts";
 import { buildCapabilityContext, makeConfigView } from "../config.ts";
 import { findRepo } from "../repo.ts";
 import type {

@@ -12,7 +12,7 @@ import {
 	type ProgressCallback,
 	isRejection,
 } from "./hooks.ts";
-import type { AttributeResolver } from "./lib/attribute-resolver.ts";
+import type { AttributeResolver } from "./lib/attributes/attribute-resolver.ts";
 import { withCapabilities } from "./lib/capabilities.ts";
 import { findRepo as findRepoOnFs } from "./lib/repo.ts";
 import type { SigningCapability } from "./lib/signing.ts";

@@ -1,9 +1,9 @@
 import type { AttrLookup, AttrValue } from "./attributes.ts";
 import { parseAttributesText } from "./attributes.ts";
-import { diff3Merge, splitLinesWithSentinel, stripSentinel } from "./diff3.ts";
+import { diff3Merge, splitLinesWithSentinel, stripSentinel } from "../diff3.ts";
 import type { FilterDriver } from "./filters.ts";
-import type { MergeDriver, MergeDriverInput, MergeDriverResult } from "./merge-ort.ts";
-import type { CapabilityContext, ObjectId } from "./types.ts";
+import type { MergeDriver, MergeDriverInput, MergeDriverResult } from "../merge-ort.ts";
+import type { CapabilityContext, ObjectId } from "../types.ts";
 
 // ── The seam ────────────────────────────────────────────────────────
 

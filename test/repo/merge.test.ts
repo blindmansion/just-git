@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { everyPath } from "../../src/lib/attribute-resolver.ts";
+import { everyPath } from "../../src/lib/attributes/attribute-resolver.ts";
 import { withCapabilities } from "../../src/lib/capabilities.ts";
 import type { GitRepo, Identity } from "../../src/lib/types.ts";
 import { merge } from "../../src/repo/operations.ts";

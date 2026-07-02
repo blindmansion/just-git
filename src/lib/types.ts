@@ -6,8 +6,8 @@ import type {
 	IdentityOverride,
 	ProgressCallback,
 } from "../hooks.ts";
-import type { AttributeResolver } from "./attribute-resolver.ts";
-import type { AttributesProvider } from "./attributes.ts";
+import type { AttributeResolver } from "./attributes/attribute-resolver.ts";
+import type { AttributesProvider } from "./attributes/attributes.ts";
 import type { PackObject } from "./pack/packfile.ts";
 import type { SigningCapability } from "./signing.ts";
 

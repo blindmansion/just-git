@@ -18,8 +18,8 @@ import {
 } from "../lib/log-format.ts";
 import { findAllMergeBases } from "../lib/merge.ts";
 import { peelToCommit, readBlobBytes, readCommit } from "../lib/object-db.ts";
-import type { Pathspec } from "../lib/pathspec.ts";
-import { matchPathspecs, parsePathspec } from "../lib/pathspec.ts";
+import type { Pathspec } from "../lib/attributes/pathspec.ts";
+import { matchPathspecs, parsePathspec } from "../lib/attributes/pathspec.ts";
 import { parseRangeSyntax } from "../lib/range-syntax.ts";
 import { branchNameFromRef, listRefs, readHead, resolveHead } from "../lib/refs.ts";
 import { detectRenames, formatRenamePath, type RenamePair } from "../lib/rename-detection.ts";

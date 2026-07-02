@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { everyPath, gitAttributes } from "../../src/lib/attribute-resolver.ts";
-import { bindAttributes } from "../../src/lib/bound-attributes.ts";
+import { everyPath, gitAttributes } from "../../src/lib/attributes/attribute-resolver.ts";
+import { bindAttributes } from "../../src/lib/attributes/bound-attributes.ts";
 import { withCapabilities } from "../../src/lib/capabilities.ts";
-import type { FilterConfig } from "../../src/lib/filters.ts";
+import type { FilterConfig } from "../../src/lib/attributes/filters.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import type { GitContext } from "../../src/lib/types.ts";
 import { TEST_ENV, textMergeDriver } from "../fixtures.ts";

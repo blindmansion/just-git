@@ -1,5 +1,5 @@
 import { bytesToHex, hexToBytes } from "./hex.ts";
-import { verifyPath } from "./path-safety.ts";
+import { verifyPath } from "./attributes/path-safety.ts";
 import { join } from "./path.ts";
 import { sha1 } from "./sha1.ts";
 import type { GitContext, Index, IndexEntry, IndexStat } from "./types.ts";

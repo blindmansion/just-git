@@ -1,12 +1,12 @@
-import { parseTree } from "./objects/tree.ts";
-import { join } from "./path.ts";
+import { parseTree } from "../objects/tree.ts";
+import { join } from "../path.ts";
 import {
 	FileMode,
 	type GitContext,
 	type ObjectId,
 	type ObjectStore,
 	type TreeEntry,
-} from "./types.ts";
+} from "../types.ts";
 import { WM_MATCH, WM_PATHNAME, wildmatch } from "./wildmatch.ts";
 
 const decoder = new TextDecoder();

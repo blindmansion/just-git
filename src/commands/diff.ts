@@ -1,7 +1,7 @@
 import type { GitExtensions } from "../git.ts";
 import { formatCombinedDiffEntry } from "../lib/combined-diff.ts";
 import { getCwdPrefix } from "../lib/command-utils.ts";
-import { resolveAttributes } from "../lib/bound-attributes.ts";
+import { resolveAttributes } from "../lib/attributes/bound-attributes.ts";
 import { type FileStat, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algorithm.ts";
 import {
@@ -14,7 +14,7 @@ import { getStage0Entries, readIndex } from "../lib/index.ts";
 import { findAllMergeBases } from "../lib/merge.ts";
 import { hashObject, readBlobBytes, readCommit } from "../lib/object-db.ts";
 import { join, comparePaths } from "../lib/path.ts";
-import { matchPathspecs, type Pathspec, parsePathspec } from "../lib/pathspec.ts";
+import { matchPathspecs, type Pathspec, parsePathspec } from "../lib/attributes/pathspec.ts";
 import { parseRangeSyntax } from "../lib/range-syntax.ts";
 import { resolveHead } from "../lib/refs.ts";
 import { detectRenames, formatRenamePath, type RenamePair } from "../lib/rename-detection.ts";

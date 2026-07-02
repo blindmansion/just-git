@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { WM_CASEFOLD, WM_MATCH, WM_PATHNAME, wildmatch } from "../../src/lib/wildmatch.ts";
+import {
+	WM_CASEFOLD,
+	WM_MATCH,
+	WM_PATHNAME,
+	wildmatch,
+} from "../../src/lib/attributes/wildmatch.ts";
 
 function match(pattern: string, text: string, flags = 0): boolean {
 	return wildmatch(pattern, text, flags) === WM_MATCH;

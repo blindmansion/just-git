@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { FetchFunction } from "../../src/hooks.ts";
-import { emptyAttributesProvider } from "../../src/lib/attributes.ts";
+import { emptyAttributesProvider } from "../../src/lib/attributes/attributes.ts";
 import type { CapabilityContext } from "../../src/lib/types.ts";
 import { allowlist, httpTransport, pipe, withAuth, withRetry } from "../../src/transport.ts";
 

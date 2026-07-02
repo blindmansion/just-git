@@ -4,7 +4,7 @@ import { compilePattern, grepContent, type GrepMatch } from "../lib/grep.ts";
 import { readIndex } from "../lib/index.ts";
 import { peelToCommit, readBlobContent, readCommit } from "../lib/object-db.ts";
 import { join, relative } from "../lib/path.ts";
-import { matchPathspecs, parsePathspec, type Pathspec } from "../lib/pathspec.ts";
+import { matchPathspecs, parsePathspec, type Pathspec } from "../lib/attributes/pathspec.ts";
 import { flattenTree, type FlatTreeEntry } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";

@@ -10,7 +10,7 @@
 import { describe, expect, test } from "bun:test";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { everyPath, gitAttributes } from "../../src/lib/attribute-resolver.ts";
+import { everyPath, gitAttributes } from "../../src/lib/attributes/attribute-resolver.ts";
 import type { MergeDriver } from "../../src/lib/merge-ort.ts";
 import { resolveHead } from "../../src/lib/refs.ts";
 import { findRepo } from "../../src/lib/repo.ts";

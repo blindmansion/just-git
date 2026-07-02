@@ -5,7 +5,7 @@ import { addEntry, defaultStat, readIndex, writeIndex } from "./index.ts";
 import { hashObject, readCommit } from "./object-db.ts";
 import { clearAllOperationState, clearDetachPoint, writeDetachPoint } from "./operation-state.ts";
 import { join } from "./path.ts";
-import { matchPathspecs, parsePathspec } from "./pathspec.ts";
+import { matchPathspecs, parsePathspec } from "./attributes/pathspec.ts";
 import { logRef, readReflog, ZERO_HASH } from "./reflog.ts";
 import {
 	createSymbolicRef,

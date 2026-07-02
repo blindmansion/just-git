@@ -12,7 +12,7 @@ import {
 	handleFastForward,
 	squashFastForward,
 } from "../lib/merge.ts";
-import { bindAttributes } from "../lib/bound-attributes.ts";
+import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import { type ApplyMergeFailure, applyMergeResult, mergeOrtRecursive } from "../lib/merge-ort.ts";
 import { peelToCommit, readCommit } from "../lib/object-db.ts";
 import {

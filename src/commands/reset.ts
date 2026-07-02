@@ -14,7 +14,7 @@ import {
 import { peelToCommit, readCommit } from "../lib/object-db.ts";
 import { clearAllOperationState } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";
-import { containsWildcard, matchPathspecs, parsePathspec } from "../lib/pathspec.ts";
+import { containsWildcard, matchPathspecs, parsePathspec } from "../lib/attributes/pathspec.ts";
 import { logRef } from "../lib/reflog.ts";
 import { readHead, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
 import { resolveRevision } from "../lib/rev-parse.ts";

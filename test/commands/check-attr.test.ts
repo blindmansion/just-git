@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { gitAttributes } from "../../src/lib/attribute-resolver.ts";
-import { bindAttributes } from "../../src/lib/bound-attributes.ts";
+import { gitAttributes } from "../../src/lib/attributes/attribute-resolver.ts";
+import { bindAttributes } from "../../src/lib/attributes/bound-attributes.ts";
 import { TEST_ENV } from "../fixtures.ts";
 
 const enc = new TextEncoder();

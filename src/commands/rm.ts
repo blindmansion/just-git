@@ -3,7 +3,7 @@ import { getCwdPrefix } from "../lib/command-utils.ts";
 import { readIndex, removeEntry, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { join, relative, resolve } from "../lib/path.ts";
-import { containsWildcard, matchPathspecs, parsePathspec } from "../lib/pathspec.ts";
+import { containsWildcard, matchPathspecs, parsePathspec } from "../lib/attributes/pathspec.ts";
 import { resolveHead } from "../lib/refs.ts";
 import { hashWorktreeEntry, lstatSafe } from "../lib/symlink.ts";
 import { flattenTree } from "../lib/tree-ops.ts";

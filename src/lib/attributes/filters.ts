@@ -1,4 +1,4 @@
-import type { CapabilityContext, ObjectId } from "./types.ts";
+import type { CapabilityContext, ObjectId } from "../types.ts";
 
 // ── Driver shape ────────────────────────────────────────────────────
 

@@ -1,4 +1,4 @@
-import { bindAttributes } from "../lib/bound-attributes.ts";
+import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import { type MergeConflict } from "../lib/merge.ts";
 import { mergeOrtRecursive, mergeOrtNonRecursive } from "../lib/merge-ort.ts";
 import type { MergeDriver, MergeDriverResult } from "../lib/merge-ort.ts";

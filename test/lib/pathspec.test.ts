@@ -9,7 +9,7 @@ import {
 	PATHSPEC_LITERAL,
 	PATHSPEC_TOP,
 	parsePathspec,
-} from "../../src/lib/pathspec.ts";
+} from "../../src/lib/attributes/pathspec.ts";
 
 // ── containsWildcard ────────────────────────────────────────────────
 

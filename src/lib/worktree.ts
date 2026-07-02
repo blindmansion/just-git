@@ -1,8 +1,8 @@
-import { resolveAttributes } from "./bound-attributes.ts";
-import { type IgnoreStack, isIgnored, loadBaseIgnore, pushDirIgnore } from "./ignore.ts";
+import { resolveAttributes } from "./attributes/bound-attributes.ts";
+import { type IgnoreStack, isIgnored, loadBaseIgnore, pushDirIgnore } from "./attributes/ignore.ts";
 import { addEntry, defaultStat } from "./index.ts";
 import { hashObject, readObject, writeObject } from "./object-db.ts";
-import { isInsideWorkTree, verifyPath, verifySymlinkTarget } from "./path-safety.ts";
+import { isInsideWorkTree, verifyPath, verifySymlinkTarget } from "./attributes/path-safety.ts";
 import { dirname, join, comparePaths } from "./path.ts";
 import { hashWorktreeEntry, isSubmoduleMode, isSymlinkMode, lstatSafe } from "./symlink.ts";
 import { flattenTree } from "./tree-ops.ts";

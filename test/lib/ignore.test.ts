@@ -5,7 +5,7 @@ import {
 	parseIgnoreFile,
 	parsePatternLine,
 	pushDirIgnore,
-} from "../../src/lib/ignore.ts";
+} from "../../src/lib/attributes/ignore.ts";
 import { runScenario } from "../util";
 
 // ── parsePatternLine ────────────────────────────────────────────────

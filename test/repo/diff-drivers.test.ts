@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
-import { type DiffDriver, gitAttributes } from "../../src/lib/attribute-resolver.ts";
+import { type DiffDriver, gitAttributes } from "../../src/lib/attributes/attribute-resolver.ts";
 import { TEST_ENV } from "../fixtures.ts";
 
 const enc = new TextEncoder();

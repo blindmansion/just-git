@@ -18,7 +18,7 @@
  */
 
 import { defaultStat, getStage0Entries } from "./index.ts";
-import { isInsideWorkTree, verifyPath } from "./path-safety.ts";
+import { isInsideWorkTree, verifyPath } from "./attributes/path-safety.ts";
 import { dirname, join, comparePaths } from "./path.ts";
 import { hashWorktreeEntry, lstatSafe } from "./symlink.ts";
 import { flattenTreeToMap } from "./tree-ops.ts";

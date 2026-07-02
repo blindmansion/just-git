@@ -4,9 +4,9 @@ import {
 	everyPath,
 	gitAttributes,
 	pipeAttributes,
-} from "../../src/lib/attribute-resolver.ts";
-import type { AttrValue } from "../../src/lib/attributes.ts";
-import type { FilterDriver } from "../../src/lib/filters.ts";
+} from "../../src/lib/attributes/attribute-resolver.ts";
+import type { AttrValue } from "../../src/lib/attributes/attributes.ts";
+import type { FilterDriver } from "../../src/lib/attributes/filters.ts";
 import type { MergeDriver } from "../../src/lib/merge-ort.ts";
 import type { CapabilityContext } from "../../src/lib/types.ts";
 

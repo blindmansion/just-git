@@ -3,7 +3,7 @@ import { restoreConflicted, restoreFiles } from "../lib/checkout-utils.ts";
 import { getCwdPrefix } from "../lib/command-utils.ts";
 import { addEntry, defaultStat, readIndex, removeEntry, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
-import { matchPathspecs, parsePathspec } from "../lib/pathspec.ts";
+import { matchPathspecs, parsePathspec } from "../lib/attributes/pathspec.ts";
 import { resolveHead } from "../lib/refs.ts";
 import { flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";

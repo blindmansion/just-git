@@ -1,5 +1,5 @@
 import type { GitExtensions } from "../git.ts";
-import { bindAttributes } from "../lib/bound-attributes.ts";
+import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import { handleAbort, handleContinue, handleSkip, performRebase } from "../lib/rebase-engine.ts";
 import { isRebaseInProgress, rebaseMergeDir } from "../lib/rebase.ts";
 import { readHead } from "../lib/refs.ts";

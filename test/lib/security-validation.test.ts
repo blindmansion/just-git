@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { InMemoryFs } from "just-bash";
-import { verifyPath, isInsideWorkTree, verifySymlinkTarget } from "../../src/lib/path-safety.ts";
+import {
+	verifyPath,
+	isInsideWorkTree,
+	verifySymlinkTarget,
+} from "../../src/lib/attributes/path-safety.ts";
 import { parseTree } from "../../src/lib/objects/tree.ts";
 import { PackedObjectStore, envelope } from "../../src/lib/object-store.ts";
 import { writePack } from "../../src/lib/pack/packfile.ts";

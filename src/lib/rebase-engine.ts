@@ -5,7 +5,7 @@ import {
 	resolveCommandSigner,
 	sequencerDirtyWorktreeError,
 } from "./command-utils.ts";
-import { bindAttributes } from "./bound-attributes.ts";
+import { bindAttributes } from "./attributes/bound-attributes.ts";
 import { formatCommitSummary } from "./commit-summary.ts";
 import { getConfigValue } from "./config.ts";
 import {

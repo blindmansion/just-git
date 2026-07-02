@@ -1,5 +1,5 @@
 import type { ConfigOverrides } from "../hooks.ts";
-import { createAttributesProvider, emptyAttributesProvider } from "./attributes.ts";
+import { createAttributesProvider, emptyAttributesProvider } from "./attributes/attributes.ts";
 import { join } from "./path.ts";
 import type { CapabilityContext, ConfigView, GitContext, GitOperation, GitRepo } from "./types.ts";
 

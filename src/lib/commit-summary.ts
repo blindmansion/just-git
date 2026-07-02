@@ -2,7 +2,7 @@
  * Shared commit summary formatting (shortstat + mode lines).
  * Used by git commit, git cherry-pick, and git merge.
  */
-import type { BoundAttributes } from "./bound-attributes.ts";
+import type { BoundAttributes } from "./attributes/bound-attributes.ts";
 import { formatDate } from "./date.ts";
 import { myersDiff, splitLinesWithNL } from "./diff-algorithm.ts";
 import { resolveDiffStat } from "./diff-driver.ts";

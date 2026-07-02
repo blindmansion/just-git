@@ -1,6 +1,6 @@
-import { getConfigValue } from "./config.ts";
-import { join } from "./path.ts";
-import type { GitContext } from "./types.ts";
+import { getConfigValue } from "../config.ts";
+import { join } from "../path.ts";
+import type { GitContext } from "../types.ts";
 import { WM_MATCH, WM_PATHNAME, wildmatch } from "./wildmatch.ts";
 
 // ── Types ───────────────────────────────────────────────────────────

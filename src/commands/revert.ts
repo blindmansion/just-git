@@ -8,7 +8,7 @@ import {
 import { formatCommitSummary } from "../lib/commit-summary.ts";
 import { getConfigValue } from "../lib/config.ts";
 import { getStage0Entries, readIndex, writeIndex } from "../lib/index.ts";
-import { bindAttributes } from "../lib/bound-attributes.ts";
+import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import {
 	type ApplyMergeFailure,
 	applyMergeResult,

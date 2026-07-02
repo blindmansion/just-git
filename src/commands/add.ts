@@ -1,6 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { getCwdPrefix } from "../lib/command-utils.ts";
-import { isIgnored, loadBaseIgnore, pushDirIgnore } from "../lib/ignore.ts";
+import { isIgnored, loadBaseIgnore, pushDirIgnore } from "../lib/attributes/ignore.ts";
 import { readIndex, removeEntry, writeIndex } from "../lib/index.ts";
 import { join, relative, resolve } from "../lib/path.ts";
 import {
@@ -10,7 +10,7 @@ import {
 	PATHSPEC_EXCLUDE,
 	type Pathspec,
 	parsePathspec,
-} from "../lib/pathspec.ts";
+} from "../lib/attributes/pathspec.ts";
 import type { GitContext, Index } from "../lib/types.ts";
 import { stageFile, walkWorkTree } from "../lib/worktree.ts";
 import { a, type Command, f } from "../parse/index.ts";

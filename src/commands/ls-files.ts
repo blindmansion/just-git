@@ -1,7 +1,7 @@
 import type { GitExtensions } from "../git.ts";
 import { readIndex } from "../lib/index.ts";
 import { join } from "../lib/path.ts";
-import { matchPathspecs, parsePathspec } from "../lib/pathspec.ts";
+import { matchPathspecs, parsePathspec } from "../lib/attributes/pathspec.ts";
 import { hashWorktreeEntry, lstatSafe } from "../lib/symlink.ts";
 import type { GitContext, Index, IndexEntry } from "../lib/types.ts";
 import { walkWorkTree } from "../lib/worktree.ts";
