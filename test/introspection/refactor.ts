@@ -251,6 +251,74 @@ class ImportEditor {
 		const stmt = `import ${item.typeOnly ? "type " : ""}{ ${binding} } from ${JSON.stringify(spec)};`;
 		this.edits.push({ start: this.insertAnchor, end: this.insertAnchor, newText: `\n${stmt}` });
 	}
+
+	/**
+	 * Remove a *set* of named bindings from `target` in a single pass. Unlike
+	 * repeated {@link removeNamed} calls (whose per-element edits overlap when
+	 * neighbouring specifiers are both removed), this rewrites each affected
+	 * clause once from its surviving elements, so the edits are always disjoint.
+	 */
+	removeNamedMany(target: string, names: ReadonlySet<string>): void {
+		if (names.size === 0) return;
+		for (const decl of this.namedDeclsFor(target)) {
+			const nb = decl.importClause?.namedBindings;
+			if (!nb || !ts.isNamedImports(nb)) continue;
+			const survivors = nb.elements.filter(
+				(el) => !names.has(el.propertyName?.text ?? el.name.text),
+			);
+			if (survivors.length === nb.elements.length) continue;
+
+			const hasDefault = decl.importClause?.name !== undefined;
+			if (survivors.length === 0 && !hasDefault) {
+				let end = decl.getEnd();
+				if (this.text[end] === "\n") end++;
+				this.edits.push({ start: leadingDocStart(this.text, decl, this.sf), end, newText: "" });
+			} else if (survivors.length === 0 && hasDefault) {
+				// Keep the default binding, drop the whole `{ … }` clause (and its
+				// preceding comma): edit from the default name's end to `}`.
+				const defEnd = (decl.importClause as ts.ImportClause).name!.getEnd();
+				this.edits.push({ start: defEnd, end: nb.getEnd(), newText: "" });
+			} else {
+				const rebuilt = survivors
+					.map((el) => this.text.slice(el.getStart(this.sf), el.getEnd()))
+					.join(", ");
+				const first = nb.elements[0] as ts.ImportSpecifier;
+				const last = nb.elements.at(-1) as ts.ImportSpecifier;
+				this.edits.push({ start: first.getStart(this.sf), end: last.getEnd(), newText: rebuilt });
+			}
+		}
+	}
+
+	/**
+	 * Ensure every `item` is imported from `spec` (resolving to `target`). Merges
+	 * into an existing compatible statement when present, otherwise emits a single
+	 * new statement carrying all of them — never one statement per binding.
+	 */
+	ensureNamedMany(spec: string, target: string | undefined, items: NamedItem[]): void {
+		const pending = target
+			? items.filter((i) => !this.alreadyImports(target, i.importedName))
+			: items;
+		if (pending.length === 0) return;
+
+		if (target) {
+			const mergeInto = this.namedDeclsFor(target).find(
+				(d) => !(d.importClause?.isTypeOnly && pending.some((i) => !i.typeOnly)),
+			);
+			if (mergeInto) {
+				const nb = mergeInto.importClause?.namedBindings as ts.NamedImports;
+				const typeOnlyStmt = mergeInto.importClause?.isTypeOnly ?? false;
+				const text = pending.map((i) => formatBinding(i, typeOnlyStmt)).join(", ");
+				const lastEl = nb.elements.at(-1);
+				const at = lastEl ? lastEl.getEnd() : nb.getStart(this.sf) + 1;
+				this.edits.push({ start: at, end: at, newText: `, ${text}` });
+				return;
+			}
+		}
+		const allType = pending.every((i) => i.typeOnly);
+		const bindings = pending.map((i) => formatBinding(i, allType)).join(", ");
+		const stmt = `import ${allType ? "type " : ""}{ ${bindings} } from ${JSON.stringify(spec)};`;
+		this.edits.push({ start: this.insertAnchor, end: this.insertAnchor, newText: `\n${stmt}` });
+	}
 }
 
 /** Render a named specifier: `X`, `X as Y`, `type X`, prefixing `type ` only when the statement isn't already type-only. */
@@ -611,6 +679,82 @@ export async function moveDeclaration(
 	);
 	result.changedFiles.sort();
 
+	if (!opts.dryRun) await flushWrites(writes);
+	return result;
+}
+
+/**
+ * Redirect consumer imports of specific named symbols from one module to new
+ * homes, **without moving any declarations**. The companion to
+ * {@link moveDeclaration} for manual in-place module splits: you author the
+ * destination files by hand (so shared private helpers and constants land
+ * exactly where you want), then this rewrites every consumer's
+ * `import { X } from "<from>"` to pull `X` from `mapping[X]` instead. Symbols
+ * not present in `mapping` keep importing from `fromRel`.
+ *
+ * Matching is textual over import statements (specifier + named element), so it
+ * works even while the source module is mid-split and doesn't yet type-check —
+ * but every destination module in `mapping` must already exist on disk so its
+ * specifier resolves.
+ *
+ * @example
+ * await redirectSymbols("src/lib/refs.ts", {
+ *   shortenRef: "src/lib/ref-name.ts",
+ *   FileSystemRefStore: "src/lib/ref-store.ts",
+ * });
+ */
+export async function redirectSymbols(
+	fromRel: string,
+	mapping: Record<string, string>,
+	opts: RefactorOptions = {},
+): Promise<RefactorResult> {
+	const scope = opts.scope ?? ["src", "test"];
+	const fromFile = abs(fromRel);
+	const destOf = new Map(Object.entries(mapping).map(([name, rel]) => [name, abs(rel)]));
+	const destFiles = new Set(destOf.values());
+	const result: RefactorResult = {
+		movedFiles: [],
+		changedFiles: [],
+		notes: [],
+		dryRun: !!opts.dryRun,
+	};
+
+	const { checker, sourceFiles } = await createAnalysisProgram({ include: scope });
+	const writes: PendingWrite[] = [];
+	const redirected = new Map<string, number>();
+
+	for (const sf of sourceFiles) {
+		const file = path.resolve(sf.fileName);
+		if (file === fromFile || destFiles.has(file)) continue;
+		const editor = new ImportEditor(sf, checker);
+		// Collect this file's redirects, grouped by destination, so removals and
+		// insertions each happen in one batched pass (no overlapping edits when a
+		// consumer imports several redirected symbols from the same statement).
+		const toRemove = new Set<string>();
+		const byDest = new Map<string, NamedItem[]>();
+		for (const [name, toFile] of destOf) {
+			const binding = findImportedBinding(sf, checker, fromFile, name);
+			if (!binding) continue;
+			toRemove.add(name);
+			(byDest.get(toFile) ?? byDest.set(toFile, []).get(toFile)!).push(binding);
+			redirected.set(name, (redirected.get(name) ?? 0) + 1);
+		}
+		if (toRemove.size === 0) continue;
+		editor.removeNamedMany(fromFile, toRemove);
+		for (const [toFile, items] of byDest) {
+			editor.ensureNamedMany(relativeSpecifier(file, toFile), toFile, items);
+		}
+		if (editor.edits.length) {
+			recordWrite(result, writes, file, applyEdits(sf.getFullText(), editor.edits));
+		}
+	}
+
+	for (const [name, dest] of destOf) {
+		result.notes.push(
+			`${name} → ${relOf(dest)}: redirected ${redirected.get(name) ?? 0} consumer(s)`,
+		);
+	}
+	result.changedFiles.sort();
 	if (!opts.dryRun) await flushWrites(writes);
 	return result;
 }

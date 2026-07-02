@@ -81,5 +81,6 @@ export {
 	moveModules,
 	type RefactorOptions,
 	type RefactorResult,
+	redirectSymbols,
 	relativeSpecifier,
 } from "./refactor.ts";
