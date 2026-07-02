@@ -12,7 +12,7 @@ import {
 	type StatusEntry,
 	type TrackingInfo,
 } from "../lib/status-format.ts";
-import { diffIndexToWorkTree } from "../lib/worktree.ts";
+import { diffIndexToWorkTree } from "../lib/worktree/worktree.ts";
 import { type Command, f } from "../parse/index.ts";
 import { comparePaths } from "../lib/path.ts";
 import { isCommandError } from "../lib/command-errors.ts";

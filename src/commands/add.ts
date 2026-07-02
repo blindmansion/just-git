@@ -12,7 +12,7 @@ import {
 	parsePathspec,
 } from "../lib/attributes/pathspec.ts";
 import type { GitContext, Index } from "../lib/types.ts";
-import { stageFile, walkWorkTree } from "../lib/worktree.ts";
+import { stageFile, walkWorkTree } from "../lib/worktree/worktree.ts";
 import { a, type Command, f } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 import { requireGitContext, requireWorkTree } from "../lib/commit-requirements.ts";

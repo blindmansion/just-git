@@ -26,7 +26,7 @@ import { branchNameFromRef, readHead, resolveHead, resolveRef, updateRef } from 
 import { generateLongFormStatus } from "../lib/status-format.ts";
 import { buildTreeFromIndex, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext } from "../lib/types.ts";
-import { applyWorktreeOps, mergeAbort } from "../lib/unpack-trees.ts";
+import { applyWorktreeOps, mergeAbort } from "../lib/worktree/unpack-trees.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 import { firstLine, stripCommentLines, ensureTrailingNewline } from "../lib/text-utils.ts";

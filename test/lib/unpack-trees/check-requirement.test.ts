@@ -3,7 +3,7 @@ import {
 	checkSingleRequirement,
 	PreconditionRequirement,
 	UnpackError,
-} from "../../../src/lib/unpack-trees.ts";
+} from "../../../src/lib/worktree/unpack-trees.ts";
 import { HASH_A, HASH_B, HASH_C, makeState } from "./helpers.ts";
 
 describe("checkSingleRequirement", () => {

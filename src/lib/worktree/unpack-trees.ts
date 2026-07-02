@@ -17,14 +17,14 @@
  *   5. If any fail, collect errors and report them
  */
 
-import { defaultStat, getStage0Entries } from "./index.ts";
-import { isInsideWorkTree, verifyPath } from "./attributes/path-safety.ts";
-import { dirname, join, comparePaths } from "./path.ts";
-import { hashWorktreeEntry, lstatSafe } from "./symlink.ts";
-import { flattenTreeToMap } from "./tree-ops.ts";
-import type { GitContext, Index, IndexEntry, ObjectId } from "./types.ts";
+import { defaultStat, getStage0Entries } from "../index.ts";
+import { isInsideWorkTree, verifyPath } from "../attributes/path-safety.ts";
+import { dirname, join, comparePaths } from "../path.ts";
+import { hashWorktreeEntry, lstatSafe } from "../symlink.ts";
+import { flattenTreeToMap } from "../tree-ops.ts";
+import type { GitContext, Index, IndexEntry, ObjectId } from "../types.ts";
 import { checkoutEntry, cleanEmptyDirs, walkWorkTree } from "./worktree.ts";
-import { err } from "./command-errors.ts";
+import { err } from "../command-errors.ts";
 
 // =====================================================================
 // SECTION 1: Error Types

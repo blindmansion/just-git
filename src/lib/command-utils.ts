@@ -8,8 +8,8 @@ import { logRef } from "./reflog.ts";
 import { type Signer, asSignatureFormat } from "./signing.ts";
 import { flattenTreeToMap } from "./tree-ops.ts";
 import type { ConfigView, GitContext, GitRepo, Index, ObjectId } from "./types.ts";
-import { applyWorktreeOps, mergeAbort } from "./unpack-trees.ts";
-import { diffIndexToWorkTree } from "./worktree.ts";
+import { applyWorktreeOps, mergeAbort } from "./worktree/unpack-trees.ts";
+import { diffIndexToWorkTree } from "./worktree/worktree.ts";
 
 /**
  * Check whether the index has staged changes relative to a HEAD tree.

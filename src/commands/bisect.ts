@@ -11,7 +11,7 @@ import {
 	readBisectState,
 	readBisectTerms,
 } from "../lib/bisect.ts";
-import { detachHeadCore, switchBranchCore } from "../lib/checkout-utils.ts";
+import { detachHeadCore, switchBranchCore } from "../lib/worktree/checkout-utils.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { readStateFile, writeStateFile } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";

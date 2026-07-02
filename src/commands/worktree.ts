@@ -1,6 +1,6 @@
 import type { FileSystem } from "../fs.ts";
 import type { CommandContext, GitExtensions } from "../git.ts";
-import { guessRemoteBranch, maybeSetupTracking } from "../lib/checkout-utils.ts";
+import { guessRemoteBranch, maybeSetupTracking } from "../lib/worktree/checkout-utils.ts";
 import { hasStagedChanges } from "../lib/command-utils.ts";
 import { movePath } from "../lib/fs-utils.ts";
 import { buildIndex, defaultStat, readIndex, writeIndex } from "../lib/index.ts";
@@ -11,7 +11,7 @@ import { FileSystemRefStore, resolveHead, resolveRef, updateRef } from "../lib/r
 import { resolveRevision } from "../lib/rev-parse.ts";
 import { flattenTree, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext } from "../lib/types.ts";
-import { checkoutEntry, diffIndexToWorkTree } from "../lib/worktree.ts";
+import { checkoutEntry, diffIndexToWorkTree } from "../lib/worktree/worktree.ts";
 import {
 	branchCheckedOutAt,
 	deriveWorktreeId,

@@ -20,7 +20,7 @@ import { resolveHead } from "../lib/refs.ts";
 import { detectRenames, formatRenamePath, type RenamePair } from "../lib/rename-detection.ts";
 import { diffTrees, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, IndexEntry, ObjectId, TreeDiffEntry } from "../lib/types.ts";
-import { diffIndexToWorkTree, readCleanedWorktreeContent } from "../lib/worktree.ts";
+import { diffIndexToWorkTree, readCleanedWorktreeContent } from "../lib/worktree/worktree.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import type { CommandResult } from "../lib/command-errors.ts";
 import { fatal, isCommandError } from "../lib/command-errors.ts";

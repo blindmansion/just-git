@@ -4,7 +4,7 @@ import { readIndex, writeIndex } from "./index.ts";
 import { readCommit } from "./object-db.ts";
 import { advanceBranchRef } from "./refs.ts";
 import type { ConfigView, GitContext, GitRepo, IndexEntry, ObjectId } from "./types.ts";
-import { applyWorktreeOps, fastForwardMerge } from "./unpack-trees.ts";
+import { applyWorktreeOps, fastForwardMerge } from "./worktree/unpack-trees.ts";
 import { uniqueAbbrev } from "./abbrev.ts";
 
 // ── Types ───────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@ import { join } from "../lib/path.ts";
 import { matchPathspecs, parsePathspec } from "../lib/attributes/pathspec.ts";
 import { hashWorktreeEntry, lstatSafe } from "../lib/symlink.ts";
 import type { GitContext, Index, IndexEntry } from "../lib/types.ts";
-import { walkWorkTree } from "../lib/worktree.ts";
+import { walkWorkTree } from "../lib/worktree/worktree.ts";
 import { a, type Command, f } from "../parse/index.ts";
 import { isCommandError } from "../lib/command-errors.ts";
 import { requireGitContext, requireWorkTree } from "../lib/commit-requirements.ts";

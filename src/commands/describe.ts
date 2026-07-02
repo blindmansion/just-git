@@ -5,7 +5,7 @@ import { readIndex } from "../lib/index.ts";
 import { listRefs, resolveHead } from "../lib/refs.ts";
 import { resolveRevision } from "../lib/rev-parse.ts";
 import { flattenTreeToMap } from "../lib/tree-ops.ts";
-import { diffIndexToWorkTree } from "../lib/worktree.ts";
+import { diffIndexToWorkTree } from "../lib/worktree/worktree.ts";
 import { WM_MATCH, wildmatch } from "../lib/attributes/wildmatch.ts";
 import { parseTag } from "../lib/objects/tag.ts";
 import type { GitContext, GitRepo, ObjectId } from "../lib/types.ts";

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { RejectedPath } from "../../../src/lib/unpack-trees.ts";
-import { formatErrors, UnpackError } from "../../../src/lib/unpack-trees.ts";
+import type { RejectedPath } from "../../../src/lib/worktree/unpack-trees.ts";
+import { formatErrors, UnpackError } from "../../../src/lib/worktree/unpack-trees.ts";
 
 describe("formatErrors", () => {
 	const checkoutOpts = {

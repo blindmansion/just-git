@@ -1,5 +1,5 @@
 import type { GitExtensions } from "../git.ts";
-import { maybeSetupTracking } from "../lib/checkout-utils.ts";
+import { maybeSetupTracking } from "../lib/worktree/checkout-utils.ts";
 import { getConfigValue, readConfig, writeConfig } from "../lib/config.ts";
 import { getReflogIdentity } from "../lib/identity.ts";
 import { isAncestor } from "../lib/merge.ts";

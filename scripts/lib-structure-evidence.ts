@@ -56,10 +56,10 @@ if (cu) {
 }
 
 // ── 5. Candidate directory cohesion / coupling ──────────────────────────────
-// `attributes/` is now a real directory (see the subdirectory matrix above);
-// only still-flat candidates remain here.
+// `attributes/` and `worktree/` are now real directories (see the subdirectory
+// matrix above); only still-flat candidates remain here. `tree-ops` stays at
+// root as a repo-wide tree-data leaf (33 importers), not a worktree concern.
 const candidates: Record<string, string[]> = {
-	"worktree/": ["worktree", "unpack-trees", "checkout-utils", "tree-ops", "command-utils"],
 	"refs/": ["refs", "reflog", "rev-parse", "shallow", "range-syntax"],
 	"diff/": [
 		"diff-algorithm",

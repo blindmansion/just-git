@@ -63,8 +63,8 @@ import {
 	type RejectedPath,
 	resetHard,
 	UnpackError,
-} from "./unpack-trees.ts";
-import { walkWorkTree } from "./worktree.ts";
+} from "./worktree/unpack-trees.ts";
+import { walkWorkTree } from "./worktree/worktree.ts";
 import { comparePaths } from "./path.ts";
 import type { CommandResult } from "./command-errors.ts";
 import { fatal, err, isCommandError } from "./command-errors.ts";

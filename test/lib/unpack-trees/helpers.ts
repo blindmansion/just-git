@@ -6,8 +6,8 @@
  */
 
 import type { ObjectId } from "../../../src/lib/types.ts";
-import type { PathState, UnpackOptions } from "../../../src/lib/unpack-trees.ts";
-import { onewayMerge, twowayMerge } from "../../../src/lib/unpack-trees.ts";
+import type { PathState, UnpackOptions } from "../../../src/lib/worktree/unpack-trees.ts";
+import { onewayMerge, twowayMerge } from "../../../src/lib/worktree/unpack-trees.ts";
 
 // ── Deterministic fake hashes ───────────────────────────────────────
 

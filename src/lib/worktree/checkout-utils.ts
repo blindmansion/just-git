@@ -1,12 +1,12 @@
-import type { GitExtensions } from "../git.ts";
-import { findOrphanedCommits } from "./commit-walk.ts";
-import { getConfigValue, readConfig, writeConfig } from "./config.ts";
-import { addEntry, defaultStat, readIndex, writeIndex } from "./index.ts";
-import { hashObject, readCommit } from "./object-db.ts";
-import { clearAllOperationState, clearDetachPoint, writeDetachPoint } from "./operation-state.ts";
-import { join } from "./path.ts";
-import { matchPathspecs, parsePathspec } from "./attributes/pathspec.ts";
-import { logRef, readReflog, ZERO_HASH } from "./reflog.ts";
+import type { GitExtensions } from "../../git.ts";
+import { findOrphanedCommits } from "../commit-walk.ts";
+import { getConfigValue, readConfig, writeConfig } from "../config.ts";
+import { addEntry, defaultStat, readIndex, writeIndex } from "../index.ts";
+import { hashObject, readCommit } from "../object-db.ts";
+import { clearAllOperationState, clearDetachPoint, writeDetachPoint } from "../operation-state.ts";
+import { join } from "../path.ts";
+import { matchPathspecs, parsePathspec } from "../attributes/pathspec.ts";
+import { logRef, readReflog, ZERO_HASH } from "../reflog.ts";
 import {
 	createSymbolicRef,
 	listRefs,
@@ -14,18 +14,18 @@ import {
 	resolveHead,
 	resolveRef,
 	updateRef,
-} from "./refs.ts";
-import { formatLongTrackingInfo, getTrackingInfo } from "./status-format.ts";
-import { isSubmoduleMode } from "./symlink.ts";
-import { flattenTree, flattenTreeToMap } from "./tree-ops.ts";
-import type { GitContext, GitRepo, ObjectId } from "./types.ts";
+} from "../refs.ts";
+import { formatLongTrackingInfo, getTrackingInfo } from "../status-format.ts";
+import { isSubmoduleMode } from "../symlink.ts";
+import { flattenTree, flattenTreeToMap } from "../tree-ops.ts";
+import type { GitContext, GitRepo, ObjectId } from "../types.ts";
 import { applyWorktreeOps, checkoutTrees } from "./unpack-trees.ts";
 import { checkoutEntry } from "./worktree.ts";
-import type { CommandResult } from "./command-errors.ts";
-import { fatal, err, isCommandError } from "./command-errors.ts";
-import { firstLine } from "./text-utils.ts";
-import { uniqueAbbrev } from "./abbrev.ts";
-import { requireCommit } from "./commit-requirements.ts";
+import type { CommandResult } from "../command-errors.ts";
+import { fatal, err, isCommandError } from "../command-errors.ts";
+import { firstLine } from "../text-utils.ts";
+import { uniqueAbbrev } from "../abbrev.ts";
+import { requireCommit } from "../commit-requirements.ts";
 
 /**
  * Scan the HEAD reflog for the most recent "checkout: moving from X to Y"

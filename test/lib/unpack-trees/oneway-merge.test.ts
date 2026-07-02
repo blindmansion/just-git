@@ -3,7 +3,7 @@ import {
 	MergeAction,
 	onewayMerge,
 	PreconditionRequirement,
-} from "../../../src/lib/unpack-trees.ts";
+} from "../../../src/lib/worktree/unpack-trees.ts";
 import { HASH_A, HASH_B, makeState, onewayOpts } from "./helpers.ts";
 
 describe("onewayMerge", () => {

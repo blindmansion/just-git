@@ -14,7 +14,7 @@ import { createTransportForUrl, resolveInProcessRemote } from "../lib/transport/
 import type { RemoteRef, ShallowFetchOptions, Transport } from "../lib/transport/transport.ts";
 import { flattenTree } from "../lib/tree-ops.ts";
 import type { GitContext, GitRepo, ObjectId } from "../lib/types.ts";
-import { checkoutTree } from "../lib/worktree.ts";
+import { checkoutTree } from "../lib/worktree/worktree.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err } from "../lib/command-errors.ts";
 

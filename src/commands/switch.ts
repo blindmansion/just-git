@@ -11,7 +11,7 @@ import {
 	maybeSetupTracking,
 	requireResolvedIndex,
 	switchBranchCore,
-} from "../lib/checkout-utils.ts";
+} from "../lib/worktree/checkout-utils.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
 import { formatLongTrackingInfo, getTrackingInfo } from "../lib/status-format.ts";
 import { clearIndex, readIndex, writeIndex } from "../lib/index.ts";
@@ -30,7 +30,7 @@ import {
 } from "../lib/refs.ts";
 import { buildTreeFromIndex } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId, Ref } from "../lib/types.ts";
-import { applyWorktreeOps, checkoutTrees } from "../lib/unpack-trees.ts";
+import { applyWorktreeOps, checkoutTrees } from "../lib/worktree/unpack-trees.ts";
 import { branchCheckedOutAt } from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";

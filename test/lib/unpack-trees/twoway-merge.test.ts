@@ -3,7 +3,7 @@ import {
 	MergeAction,
 	PreconditionRequirement,
 	twowayMerge,
-} from "../../../src/lib/unpack-trees.ts";
+} from "../../../src/lib/worktree/unpack-trees.ts";
 import { HASH_A, HASH_B, HASH_C, makeState, twowayOpts } from "./helpers.ts";
 
 const opts = twowayOpts();

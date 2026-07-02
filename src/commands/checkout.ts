@@ -10,7 +10,7 @@ import {
 	restoreConflicted,
 	restoreFiles,
 	switchBranchCore,
-} from "../lib/checkout-utils.ts";
+} from "../lib/worktree/checkout-utils.ts";
 import { getCwdPrefix } from "../lib/command-utils.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
 import { findEntry, readIndex, writeIndex } from "../lib/index.ts";
@@ -28,8 +28,8 @@ import {
 import { resolveRevision } from "../lib/rev-parse.ts";
 import { formatLongTrackingInfo, getTrackingInfo } from "../lib/status-format.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
-import { applyWorktreeOps, checkoutTrees } from "../lib/unpack-trees.ts";
-import { checkoutEntry } from "../lib/worktree.ts";
+import { applyWorktreeOps, checkoutTrees } from "../lib/worktree/unpack-trees.ts";
+import { checkoutEntry } from "../lib/worktree/worktree.ts";
 import { branchCheckedOutAt } from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";

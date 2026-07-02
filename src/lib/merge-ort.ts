@@ -29,7 +29,7 @@ import { join, comparePaths } from "./path.ts";
 import { detectRenames, type RenamePair } from "./rename-detection.ts";
 import { isSymlinkMode } from "./symlink.ts";
 import { buildTreeFromIndex, type FlatTreeEntry, flattenTreeToMap } from "./tree-ops.ts";
-import { checkoutEntry } from "./worktree.ts";
+import { checkoutEntry } from "./worktree/worktree.ts";
 import type {
 	CapabilityContext,
 	GitContext,
@@ -46,7 +46,7 @@ import {
 	twowayMerge,
 	UnpackError,
 	unpackTrees,
-} from "./unpack-trees.ts";
+} from "./worktree/unpack-trees.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
 
