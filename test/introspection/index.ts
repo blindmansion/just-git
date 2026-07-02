@@ -15,6 +15,14 @@ export {
 } from "./program.ts";
 export { buildImportGraph } from "./build-graph.ts";
 export {
+	classifyConcerns,
+	type ConcernKind,
+	type ConcernOptions,
+	type FileConcernProfile,
+	fileConcernProfiles,
+	type FunctionConcern,
+} from "./concerns.ts";
+export {
 	barrelFiles,
 	buildReverseIndex,
 	type CoUsage,

@@ -21,7 +21,8 @@ layering/cycle question is asked over _runtime_ edges.
 - `format.ts` — `formatMatrix` / `formatCounts` for readable script output.
 - `metrics.ts` — AST-only size/shape metrics + `godFiles` finder (no checker, fast).
 - `type-graph.ts` — type→type reference graph (finds type-level tangles/cycles).
-- `call-graph.ts` — function-level call graph (who-calls-whom, recursion, dead helpers).
+- `call-graph.ts` — function-level call graph (who-calls-whom, recursion, dead helpers, per-module cohesion).
+- `concerns.ts` — formatting-vs-data concern classifier (which functions format, retrieve data, or do both).
 - `test-topology.ts` — maps tests↔source (coverage, untested files, change impact).
 - `index.ts` — barrel; import everything from here.
 - `*.test.ts` — worked examples (`introspection`, `analyses`) and the live `layering` policy.
@@ -69,6 +70,7 @@ Typical questions and the helper that answers them:
 | ---------------------------------------- | --------------------------------------------------------------- |
 | What depends on / is depended on by X?   | `dependencies`, `dependents`, `buildReverseIndex`               |
 | Which _symbol_ of X does each file use?  | `symbolEdges` (per-binding) / `exportConsumers` (per-export)    |
+| Which of a module's exports are co-used? | `coUsageClusters` (Jaccard over consumer sets — split-seam finder) |
 | Are there import cycles? (runtime ones!) | `findCycles(g, { edgeFilter: isRuntimeEdge })`                  |
 | How do directories import each other?    | `directoryMatrix` / `groupMatrix` + `formatMatrix`              |
 | What are the hubs / leaves?              | `degrees(g, { edgeFilter: isRuntimeEdge })`                     |
@@ -91,6 +93,8 @@ The same bootstrap powers analyses that aren't about imports at all:
 | Which files are god-files? (exports/LOC/fn length)           | `fileMetrics` + `godFiles`                                        |
 | Type-level tangles / cycles (e.g. `hooks.ts`↔`lib/types.ts`) | `buildTypeGraph` + `typeCycles` / `typeReferrers`                 |
 | Who calls this function? Recursion? Dead helpers?            | `buildCallGraph` + `callers` / `callCycles` / `uncalledFunctions` |
+| How internally wired is each module (call cohesion)?         | `buildCallGraph` + `moduleCallCohesion`                           |
+| Is formatting tangled with data retrieval?                   | `classifyConcerns` + `fileConcernProfiles`                        |
 | Which tests exercise a src file? What's untested?            | `buildTestTopology` + `testsCovering` / `.uncovered`              |
 | I changed these files — which tests must I run?              | `impactedTests(topo, changed)`                                    |
 | Which types/interfaces are the same shape under diff names?  | `findDuplicateTypeShapes` (+ `collectTypeShapes`)                 |
