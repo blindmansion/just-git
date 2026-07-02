@@ -6,13 +6,13 @@ import { readReflogAt, writeReflogAt } from "../lib/refs/reflog.ts";
 import { writePackedRefs } from "../lib/refs/refs.ts";
 import { enumerateWorktrees } from "../lib/worktree-admin.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
-import { type Command, f } from "../parse/index.ts";
+import { type Command, f } from "./kit/parse/index.ts";
 import { repackFromTips } from "../lib/repack.ts";
-import { isCommandError } from "../cli/command-errors.ts";
-import { requireGitContext } from "../cli/commit-requirements.ts";
+import { isCommandError } from "./kit/command-errors.ts";
+import { requireGitContext } from "./kit/commit-requirements.ts";
 import { readConfig } from "../lib/config/store.ts";
 import type { GitConfig } from "../lib/config/parse.ts";
-import { formatRepackStderr } from "../format/repack.ts";
+import { formatRepackStderr } from "./kit/format/repack.ts";
 
 export function registerGcCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("gc", {

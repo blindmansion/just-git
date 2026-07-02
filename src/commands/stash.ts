@@ -1,6 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { gatherCommitStats } from "../lib/commit-summary.ts";
-import { renderDiffStat } from "../format/commit-summary.ts";
+import { renderDiffStat } from "./kit/format/commit-summary.ts";
 import { formatUnifiedDiff } from "../lib/diff/algorithm.ts";
 import { getConflictedPaths, readIndex } from "../lib/index.ts";
 import { readBlobContent, readCommit } from "../lib/object-db.ts";
@@ -13,14 +13,14 @@ import {
 	readStashRef,
 	saveStash,
 } from "../lib/stash.ts";
-import { generateLongFormStatus } from "../cli/status.ts";
+import { generateLongFormStatus } from "./kit/status.ts";
 import { diffTrees } from "../lib/tree-ops.ts";
 import type { GitContext, GitRepo, ObjectId, TreeDiffEntry } from "../lib/types.ts";
-import { a, type Command, f, o } from "../parse/index.ts";
-import type { CommandResult } from "../cli/command-errors.ts";
-import { fatal, err, isCommandError } from "../cli/command-errors.ts";
-import { renderStashApplyError, renderStashDropError } from "../cli/stash.ts";
-import { requireGitContext } from "../cli/commit-requirements.ts";
+import { a, type Command, f, o } from "./kit/parse/index.ts";
+import type { CommandResult } from "./kit/command-errors.ts";
+import { fatal, err, isCommandError } from "./kit/command-errors.ts";
+import { renderStashApplyError, renderStashDropError } from "./kit/stash.ts";
+import { requireGitContext } from "./kit/commit-requirements.ts";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 

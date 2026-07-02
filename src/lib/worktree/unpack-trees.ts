@@ -867,7 +867,7 @@ function buildResult(
  *   2. Call opts.mergeFn(state) for each path → MergeDecision
  *   3. Check preconditions for each decision → collect RejectedPaths
  *   4. If any errors: return the structured rejections (the command tier renders
- *      them via `format/unpack-trees#renderUnpackErrors`)
+ *      them via `commands/kit/format/unpack-trees#renderUnpackErrors`)
  *   5. If all clear: build new index entries + WorktreeOps, return success
  */
 export async function unpackTrees(
@@ -1045,7 +1045,7 @@ export async function resetHard(
  *
  * On failure the structured `errors` are returned as-is; the command tier
  * renders them (with its own revision name) via
- * `format/unpack-trees#renderMergeAbortError`.
+ * `commands/kit/format/unpack-trees#renderMergeAbortError`.
  */
 export async function mergeAbort(
 	ctx: GitContext,

@@ -1,6 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { restoreConflicted, restoreFiles } from "../lib/worktree/checkout-utils.ts";
-import { renderRestoreOutcome } from "../cli/restore.ts";
+import { renderRestoreOutcome } from "./kit/restore.ts";
 import { getCwdPrefix } from "../lib/command-utils.ts";
 import { addEntry, defaultStat, readIndex, removeEntry, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
@@ -9,9 +9,9 @@ import { resolveHead } from "../lib/refs/refs.ts";
 import { flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { checkoutEntry } from "../lib/worktree/worktree.ts";
-import { a, type Command, f, o } from "../parse/index.ts";
-import { fatal, err, isCommandError } from "../cli/command-errors.ts";
-import { requireGitContext, requireCommit } from "../cli/commit-requirements.ts";
+import { a, type Command, f, o } from "./kit/parse/index.ts";
+import { fatal, err, isCommandError } from "./kit/command-errors.ts";
+import { requireGitContext, requireCommit } from "./kit/commit-requirements.ts";
 
 export function registerRestoreCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("restore", {

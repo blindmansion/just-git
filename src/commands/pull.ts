@@ -3,8 +3,8 @@ import { isRejection } from "../hooks.ts";
 import { getSequencerDirtyState } from "../lib/command-utils.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import { gatherCommitStats } from "../lib/commit-summary.ts";
-import { renderDiffStat, renderFastForward } from "../format/commit-summary.ts";
-import { renderUnpackErrors } from "../format/unpack-trees.ts";
+import { renderDiffStat, renderFastForward } from "./kit/format/commit-summary.ts";
+import { renderUnpackErrors } from "./kit/format/unpack-trees.ts";
 import {
 	autoFollowReachableTags,
 	collectFetchHaves,
@@ -14,7 +14,7 @@ import { getReflogIdentity } from "../lib/identity.ts";
 import { getConflictedPaths, hasConflicts, readIndex } from "../lib/index.ts";
 import { buildMergeMessage, findAllMergeBases, handleFastForward } from "../lib/merge.ts";
 import { applyMergeResult, mergeOrtRecursive } from "../lib/merge-ort.ts";
-import { renderApplyMerge } from "../cli/merge.ts";
+import { renderApplyMerge } from "./kit/merge.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { deleteStateFile, writeStateFile } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";
@@ -31,10 +31,10 @@ import { applyShallowUpdates } from "../lib/refs/shallow.ts";
 import { mapRefspec, parseRefspec } from "../lib/transport/refspec.ts";
 import type { RemoteRef } from "../lib/transport/transport.ts";
 import type { GitContext, ObjectId, Ref } from "../lib/types.ts";
-import { a, type Command, f, o } from "../parse/index.ts";
+import { a, type Command, f, o } from "./kit/parse/index.ts";
 import { performRebase } from "../lib/rebase-engine.ts";
-import { renderRebaseOutcome } from "../cli/rebase.ts";
-import { fatal, isCommandError } from "../cli/command-errors.ts";
+import { renderRebaseOutcome } from "./kit/rebase.ts";
+import { fatal, isCommandError } from "./kit/command-errors.ts";
 import { buildAbbrevResolver } from "../lib/abbrev.ts";
 import { formatTransferRefLines, buildRefUpdateLines } from "../lib/ref-format.ts";
 import {
@@ -43,12 +43,12 @@ import {
 	requireCommitter,
 	requireAuthor,
 	requireVerifiedCommit,
-} from "../cli/commit-requirements.ts";
+} from "./kit/commit-requirements.ts";
 import { writeCommitAndAdvance } from "../lib/commit-write.ts";
 import { branchNameFromRef, shortenRef } from "../lib/refs/name.ts";
 import { readConfig, getConfigValue } from "../lib/config/store.ts";
-import { sequencerDirtyWorktreeError, resolveCommandSigner } from "../cli/command-utils.ts";
-import { normalizeFetchDepth, resolveRemoteTransportOrError } from "../cli/fetch-helpers.ts";
+import { sequencerDirtyWorktreeError, resolveCommandSigner } from "./kit/command-utils.ts";
+import { normalizeFetchDepth, resolveRemoteTransportOrError } from "./kit/fetch-helpers.ts";
 
 function pullUpToDateMessage(
 	head: Awaited<ReturnType<typeof readHead>>,

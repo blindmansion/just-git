@@ -89,7 +89,7 @@ export async function clearOperationState(gitCtx: GitContext): Promise<ClearedOp
 
 /**
  * Structured result of a `restore*` operation. Carries semantic success or the
- * kind of failure encountered; the CLI mapper (`cli/restore#renderRestoreOutcome`)
+ * kind of failure encountered; the CLI mapper (`commands/kit/restore#renderRestoreOutcome`)
  * turns each variant into git-exact stderr text + exit code.
  */
 export type RestoreOutcome =
@@ -252,7 +252,7 @@ export interface CheckoutFileChange {
 
 /**
  * Compute the file change summary shown by `git checkout`/`git switch` on
- * stdout, as structured data (renderer lives in `format/checkout.ts`).
+ * stdout, as structured data (renderer lives in `commands/kit/format/checkout.ts`).
  *
  * Matches real git's `show_local_changes` which runs `diff-index HEAD`
  * (non-cached): compares the new HEAD tree to the effective worktree
@@ -328,7 +328,7 @@ const ORPHAN_DISPLAY_THRESHOLD = 5;
 
 /**
  * Structured data for the preamble shown when leaving detached HEAD.
- * Rendered by `format/checkout.ts`.
+ * Rendered by `commands/kit/format/checkout.ts`.
  */
 export type DetachPreamble =
 	| {

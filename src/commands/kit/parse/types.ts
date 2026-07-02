@@ -2,8 +2,8 @@
 // Value type mappings
 // ============================================================================
 
-import type { CommandContext } from "../git.ts";
-import type { ExecResult } from "../hooks.ts";
+import type { CommandContext } from "../../../git.ts";
+import type { ExecResult } from "../../../hooks.ts";
 
 export type { CommandContext, ExecResult };
 

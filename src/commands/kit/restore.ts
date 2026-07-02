@@ -1,5 +1,5 @@
 import { type CommandResult, err, fatal } from "./command-errors.ts";
-import type { RestoreOutcome } from "../lib/worktree/checkout-utils.ts";
+import type { RestoreOutcome } from "../../lib/worktree/checkout-utils.ts";
 
 /**
  * Map a lib-owned {@link RestoreOutcome} to a `CommandResult`, owning the

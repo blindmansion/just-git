@@ -5,18 +5,18 @@
 // `isCommandError`). This is command-layer glue — it speaks the CLI contract —
 // so it lives above `lib`, which only surfaces data / typed failures.
 
-import type { FileSystem } from "../fs.ts";
-import type { GitExtensions } from "../git.ts";
-import { abbreviateHash } from "../lib/abbrev.ts";
-import { withCapabilities } from "../lib/capabilities.ts";
+import type { FileSystem } from "../../fs.ts";
+import type { GitExtensions } from "../../git.ts";
+import { abbreviateHash } from "../../lib/abbrev.ts";
+import { withCapabilities } from "../../lib/capabilities.ts";
 import { type CommandResult, err, fatal } from "./command-errors.ts";
-import { resolveIdentityFrom } from "../lib/identity.ts";
-import { hasConflicts } from "../lib/index.ts";
-import { peelToCommit, readCommit } from "../lib/object-db.ts";
-import { resolveHead } from "../lib/refs/refs.ts";
-import { findRepo } from "../lib/repo.ts";
-import { resolveRevision } from "../lib/refs/rev-parse.ts";
-import { commitSigningPayload, resolveVerifierOpts } from "../lib/signing.ts";
+import { resolveIdentityFrom } from "../../lib/identity.ts";
+import { hasConflicts } from "../../lib/index.ts";
+import { peelToCommit, readCommit } from "../../lib/object-db.ts";
+import { resolveHead } from "../../lib/refs/refs.ts";
+import { findRepo } from "../../lib/repo.ts";
+import { resolveRevision } from "../../lib/refs/rev-parse.ts";
+import { commitSigningPayload, resolveVerifierOpts } from "../../lib/signing.ts";
 import type {
 	Commit,
 	ConfigView,
@@ -25,9 +25,9 @@ import type {
 	Identity,
 	Index,
 	ObjectId,
-} from "../lib/types.ts";
-import { readConfigView } from "../lib/config/view.ts";
-import { configBool } from "../lib/config/parse.ts";
+} from "../../lib/types.ts";
+import { readConfigView } from "../../lib/config/view.ts";
+import { configBool } from "../../lib/config/parse.ts";
 
 const NOT_A_GIT_REPO = fatal("not a git repository (or any of the parent directories): .git");
 

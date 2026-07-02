@@ -2,7 +2,7 @@ import type { CommandContext, GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
 import { gatherCommitStats } from "../lib/commit-summary.ts";
-import { renderCommitOneLiner, renderCommitSummary } from "../format/commit-summary.ts";
+import { renderCommitOneLiner, renderCommitSummary } from "./kit/format/commit-summary.ts";
 import {
 	getStage0Entries,
 	hasConflicts,
@@ -24,20 +24,20 @@ import { join } from "../lib/path.ts";
 import { isRebaseInProgress } from "../lib/rebase.ts";
 import { logRef } from "../lib/refs/reflog.ts";
 import { readHead, resolveHead, resolveRef, updateRef } from "../lib/refs/refs.ts";
-import { generateLongFormStatus } from "../cli/status.ts";
+import { generateLongFormStatus } from "./kit/status.ts";
 import { buildTreeFromIndex } from "../lib/tree-ops.ts";
 import { diffIndexToWorkTree, stageFile } from "../lib/worktree/worktree.ts";
-import { type Command, f, o } from "../parse/index.ts";
-import { fatal, err, isCommandError } from "../cli/command-errors.ts";
+import { type Command, f, o } from "./kit/parse/index.ts";
+import { fatal, err, isCommandError } from "./kit/command-errors.ts";
 import { firstLine, stripCommentLines, ensureTrailingNewline } from "../lib/text-utils.ts";
 import {
 	requireGitContext,
 	requireWorkTree,
 	requireCommitter,
 	requireAuthor,
-} from "../cli/commit-requirements.ts";
+} from "./kit/commit-requirements.ts";
 import { branchNameFromRef } from "../lib/refs/name.ts";
-import { resolveCommandSigner } from "../cli/command-utils.ts";
+import { resolveCommandSigner } from "./kit/command-utils.ts";
 
 function stdinToText(stdin: CommandContext["stdin"]): string {
 	const raw = stdin as string;

@@ -25,7 +25,7 @@ import {
 
 const line = (s = "") => console.log(s);
 const HELPERS_PRODUCE = new Set(["err", "fatal", "ambiguousArgError"]);
-const CMD_ERRORS = "cli/command-errors.ts";
+const CMD_ERRORS = "commands/kit/command-errors.ts";
 
 line("# CommandResult footprint in src/lib\n");
 

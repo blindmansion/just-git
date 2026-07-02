@@ -1,7 +1,7 @@
 import type { GitExtensions } from "../git.ts";
 import { readIndex } from "../lib/index.ts";
 import { readHead, resolveHead } from "../lib/refs/refs.ts";
-import { generateLongFormStatus } from "../cli/status.ts";
+import { generateLongFormStatus } from "./kit/status.ts";
 import {
 	collapseUntrackedDirs,
 	getTrackingInfo,
@@ -11,13 +11,13 @@ import {
 	type TrackingInfo,
 } from "../lib/status-format.ts";
 import { diffIndexToWorkTree } from "../lib/worktree/worktree.ts";
-import { type Command, f } from "../parse/index.ts";
+import { type Command, f } from "./kit/parse/index.ts";
 import { comparePaths } from "../lib/path.ts";
-import { isCommandError } from "../cli/command-errors.ts";
-import { requireGitContext } from "../cli/commit-requirements.ts";
+import { isCommandError } from "./kit/command-errors.ts";
+import { requireGitContext } from "./kit/commit-requirements.ts";
 import { branchNameFromRef } from "../lib/refs/name.ts";
 import { readConfig } from "../lib/config/store.ts";
-import { formatBranchTrackingInfo } from "../format/status.ts";
+import { formatBranchTrackingInfo } from "./kit/format/status.ts";
 
 export function registerStatusCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("status", {

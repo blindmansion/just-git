@@ -3,9 +3,9 @@ import { addEntry, findEntry, readIndex, removeEntry, writeIndex } from "../lib/
 import { basename, dirname, join, relative, resolve } from "../lib/path.ts";
 import type { IndexEntry } from "../lib/types.ts";
 import { cleanEmptyDirs } from "../lib/worktree/worktree.ts";
-import { a, type Command, f } from "../parse/index.ts";
-import { fatal, err, isCommandError } from "../cli/command-errors.ts";
-import { requireGitContext, requireWorkTree } from "../cli/commit-requirements.ts";
+import { a, type Command, f } from "./kit/parse/index.ts";
+import { fatal, err, isCommandError } from "./kit/command-errors.ts";
+import { requireGitContext, requireWorkTree } from "./kit/commit-requirements.ts";
 
 export function registerMvCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("mv", {

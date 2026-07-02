@@ -9,7 +9,7 @@ import type {
 	ClearedOperations,
 	DetachPreamble,
 	TrackingSetup,
-} from "../lib/worktree/checkout-utils.ts";
+} from "../../../lib/worktree/checkout-utils.ts";
 
 /**
  * Render the file change summary git prints to stdout on `checkout`/`switch`,

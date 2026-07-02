@@ -5,16 +5,16 @@
 // pure data-gathering counterparts like `getSequencerDirtyState`).
 
 import { type CommandResult, err, fatal } from "./command-errors.ts";
-import type { SequencerDirtyState } from "../lib/command-utils.ts";
-import { readConfigView } from "../lib/config/view.ts";
-import { readIndex, writeIndex } from "../lib/index.ts";
-import { readCommit } from "../lib/object-db.ts";
-import { logRef } from "../lib/refs/reflog.ts";
-import { advanceBranchRef, readHead, resolveHead, resolveRef } from "../lib/refs/refs.ts";
-import { type Signer, resolveConfiguredSigner, SigningError } from "../lib/signing.ts";
-import type { ConfigView, GitContext, GitRepo } from "../lib/types.ts";
-import { applyWorktreeOps, mergeAbort } from "../lib/worktree/unpack-trees.ts";
-import { renderMergeAbortError } from "../format/unpack-trees.ts";
+import type { SequencerDirtyState } from "../../lib/command-utils.ts";
+import { readConfigView } from "../../lib/config/view.ts";
+import { readIndex, writeIndex } from "../../lib/index.ts";
+import { readCommit } from "../../lib/object-db.ts";
+import { logRef } from "../../lib/refs/reflog.ts";
+import { advanceBranchRef, readHead, resolveHead, resolveRef } from "../../lib/refs/refs.ts";
+import { type Signer, resolveConfiguredSigner, SigningError } from "../../lib/signing.ts";
+import type { ConfigView, GitContext, GitRepo } from "../../lib/types.ts";
+import { applyWorktreeOps, mergeAbort } from "../../lib/worktree/unpack-trees.ts";
+import { renderMergeAbortError } from "./format/unpack-trees.ts";
 
 /**
  * Render the sequencer "dirty worktree" refusal for `rebase` / `pull --rebase`

@@ -6,8 +6,8 @@ import {
 	renderCommitOneLiner,
 	renderDiffStat,
 	renderFastForward,
-} from "../format/commit-summary.ts";
-import { renderUnpackErrors } from "../format/unpack-trees.ts";
+} from "./kit/format/commit-summary.ts";
+import { renderUnpackErrors } from "./kit/format/unpack-trees.ts";
 import { formatDate } from "../lib/date.ts";
 import { getConflictedPaths, getStage0Entries, readIndex } from "../lib/index.ts";
 import {
@@ -18,7 +18,7 @@ import {
 } from "../lib/merge.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import { applyMergeResult, mergeOrtRecursive } from "../lib/merge-ort.ts";
-import { renderApplyMerge } from "../cli/merge.ts";
+import { renderApplyMerge } from "./kit/merge.ts";
 import { peelToCommit, readCommit } from "../lib/object-db.ts";
 import {
 	clearMergeState,
@@ -32,8 +32,8 @@ import { readHead, resolveRef, updateRef } from "../lib/refs/refs.ts";
 import { resolveRevision } from "../lib/refs/rev-parse.ts";
 import { buildTreeFromIndex } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
-import { a, type Command, f, o } from "../parse/index.ts";
-import { fatal, err, isCommandError } from "../cli/command-errors.ts";
+import { a, type Command, f, o } from "./kit/parse/index.ts";
+import { fatal, err, isCommandError } from "./kit/command-errors.ts";
 import { firstLine, stripCommentLines, ensureTrailingNewline } from "../lib/text-utils.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
 import {
@@ -43,11 +43,11 @@ import {
 	requireCommitter,
 	requireAuthor,
 	requireVerifiedCommit,
-} from "../cli/commit-requirements.ts";
+} from "./kit/commit-requirements.ts";
 import { writeCommitAndAdvance } from "../lib/commit-write.ts";
 import { branchNameFromRef } from "../lib/refs/name.ts";
 import { getConfigValue } from "../lib/config/store.ts";
-import { handleOperationAbort, resolveCommandSigner } from "../cli/command-utils.ts";
+import { handleOperationAbort, resolveCommandSigner } from "./kit/command-utils.ts";
 
 export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("merge", {

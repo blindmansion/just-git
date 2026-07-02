@@ -5,10 +5,10 @@ import { readHead, resolveRef } from "../lib/refs/refs.ts";
 import { parseRevPath, resolveRevision } from "../lib/refs/rev-parse.ts";
 import { flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext } from "../lib/types.ts";
-import { a, type Command, f } from "../parse/index.ts";
-import { fatal, isCommandError, ambiguousArgError } from "../cli/command-errors.ts";
+import { a, type Command, f } from "./kit/parse/index.ts";
+import { fatal, isCommandError, ambiguousArgError } from "./kit/command-errors.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
-import { requireGitContext } from "../cli/commit-requirements.ts";
+import { requireGitContext } from "./kit/commit-requirements.ts";
 
 export function registerRevParseCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("rev-parse", {

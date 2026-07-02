@@ -24,24 +24,32 @@ import {
  * own layer or any *lower* one; importing a higher layer at runtime is a
  * violation. Entries are root-relative path prefixes.
  *
- * `lib`/`parse` and `store`/`repo`/`proxy` are peers (no edges between them),
- * so their relative order within the list is arbitrary.
+ * `lib` and `store`/`repo`/`proxy` are peers (no edges between them), so their
+ * relative order within the list is arbitrary.
  *
- * `format` (pure renderers: `(data struct) → string`) sits above the data core
- * and below `cli`/`commands`: it may import `lib`/`repo` data types, but no
- * data-core layer may import it, so any `data → format` runtime edge is a
- * violation. This is the machine-checkable form of "presentation is owned by the
- * command tier" (see `local-docs/plans/lib-formatting-data-separation.md`).
+ * The command tier is `commands/` (leaf handlers) sitting on top of its private
+ * substrate `commands/kit/` (the `CommandResult` contract + cross-command
+ * orchestration). Two pure sub-namespaces live *below* the orchestration inside
+ * the kit: argument parsing (`commands/kit/parse`) and the renderers
+ * (`commands/kit/format`, i.e. `(data struct) → string`). Layer membership is by
+ * longest-prefix match, so these nested prefixes are first-class layers:
+ *
+ *   - No data-core layer may import the kit, so any `data → commands/kit` runtime
+ *     edge is a violation ("presentation/orchestration is owned by the command
+ *     tier"; see `local-docs/plans/lib-formatting-data-separation.md`).
+ *   - `format`/`parse` sit below the orchestration, so a renderer or the parser
+ *     reaching *up* into the orchestration (e.g. importing `command-errors` /
+ *     `CommandResult`) is a violation — this keeps them pure.
  */
 const LAYERS = [
 	"lib",
-	"parse",
 	"store",
 	"repo",
 	"proxy",
 	"server",
-	"format",
-	"cli",
+	"commands/kit/parse",
+	"commands/kit/format",
+	"commands/kit",
 	"commands",
 ] as const;
 
@@ -110,7 +118,7 @@ describe("src layering policy", () => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────
-// The CLI command contract is owned by `cli/`, never `lib/`.
+// The CLI command contract is owned by `commands/kit/`, never `lib/`.
 //
 // `lib` gathers structured data; the command tier renders it and decides the
 // exit code. These guards are the end-state of the formatting/data-separation
@@ -136,7 +144,7 @@ describe("lib is free of the CLI command contract", () => {
 	test("no lib file imports the command-errors module", async () => {
 		const graph = await buildImportGraph({ include: "src", root: "src" });
 		const commandErrors = [...graph.nodes.values()].find(
-			(n) => n.relPath === "cli/command-errors.ts",
+			(n) => n.relPath === "commands/kit/command-errors.ts",
 		);
 		expect(commandErrors).toBeDefined();
 		const libImporters = dependents(graph, commandErrors!.file)

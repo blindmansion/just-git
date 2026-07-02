@@ -14,8 +14,8 @@ import type { RemoteRef, ShallowFetchOptions, Transport } from "../lib/transport
 import { flattenTree } from "../lib/tree-ops.ts";
 import type { GitContext, GitRepo, ObjectId } from "../lib/types.ts";
 import { checkoutTree } from "../lib/worktree/worktree.ts";
-import { a, type Command, f, o } from "../parse/index.ts";
-import { fatal, err } from "../cli/command-errors.ts";
+import { a, type Command, f, o } from "./kit/parse/index.ts";
+import { fatal, err } from "./kit/command-errors.ts";
 import { readConfig, writeConfig } from "../lib/config/store.ts";
 
 export function registerCloneCommand(parent: Command, ext?: GitExtensions) {

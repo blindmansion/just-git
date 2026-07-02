@@ -3,7 +3,7 @@ import type {
 	RebaseStatusView,
 	RebaseTodoView,
 	TrackingInfo,
-} from "../lib/status-format.ts";
+} from "../../../lib/status-format.ts";
 
 /**
  * Format tracking info for `git status` / `git checkout` long-form display.

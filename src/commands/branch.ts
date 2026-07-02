@@ -1,6 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { setupTracking } from "../lib/worktree/checkout-utils.ts";
-import { renderTrackingSetup } from "../format/checkout.ts";
+import { renderTrackingSetup } from "./kit/format/checkout.ts";
 import { getReflogIdentity } from "../lib/identity.ts";
 import { isAncestor } from "../lib/merge.ts";
 import { readCommit } from "../lib/object-db.ts";
@@ -24,16 +24,16 @@ import {
 	listWorktrees,
 	setWorktreeHead,
 } from "../lib/worktree-admin.ts";
-import { a, type Command, f, o } from "../parse/index.ts";
-import { fatal, err, isCommandError } from "../cli/command-errors.ts";
+import { a, type Command, f, o } from "./kit/parse/index.ts";
+import { fatal, err, isCommandError } from "./kit/command-errors.ts";
 import { firstLine } from "../lib/text-utils.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
-import { requireGitContext, requireCommit } from "../cli/commit-requirements.ts";
+import { requireGitContext, requireCommit } from "./kit/commit-requirements.ts";
 import { FileSystemRefStore } from "../lib/refs/store.ts";
 import { isValidBranchName, branchNameFromRef } from "../lib/refs/name.ts";
 import { readConfig, writeConfig, getConfigValue } from "../lib/config/store.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
-import { formatBranchTrackingInfo } from "../format/status.ts";
+import { formatBranchTrackingInfo } from "./kit/format/status.ts";
 
 /** The leading marker `git branch` shows: current, checked out elsewhere, or plain. */
 function branchMarker(isCurrent: boolean, inOtherWorktree?: boolean): string {

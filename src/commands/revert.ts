@@ -2,11 +2,11 @@ import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import { hasStagedChanges } from "../lib/command-utils.ts";
 import { gatherCommitStats } from "../lib/commit-summary.ts";
-import { renderCommitOneLiner, renderCommitSummary } from "../format/commit-summary.ts";
+import { renderCommitOneLiner, renderCommitSummary } from "./kit/format/commit-summary.ts";
 import { getStage0Entries, readIndex, writeIndex } from "../lib/index.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import { applyMergeResult, mergeOrtNonRecursive } from "../lib/merge-ort.ts";
-import { renderApplyMerge } from "../cli/merge.ts";
+import { renderApplyMerge } from "./kit/merge.ts";
 import { readCommit } from "../lib/object-db.ts";
 import {
 	clearCherryPickState,
@@ -16,14 +16,14 @@ import {
 } from "../lib/operation-state.ts";
 import { logRef } from "../lib/refs/reflog.ts";
 import { readHead, resolveHead, resolveRef, updateRef } from "../lib/refs/refs.ts";
-import { generateLongFormStatus } from "../cli/status.ts";
+import { generateLongFormStatus } from "./kit/status.ts";
 import type { Signer } from "../lib/signing.ts";
 import { buildTreeFromIndex, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, Identity, ObjectId } from "../lib/types.ts";
 import { applyWorktreeOps, mergeAbort } from "../lib/worktree/unpack-trees.ts";
-import { renderMergeAbortError } from "../format/unpack-trees.ts";
-import { a, type Command, f, o } from "../parse/index.ts";
-import { fatal, err, isCommandError } from "../cli/command-errors.ts";
+import { renderMergeAbortError } from "./kit/format/unpack-trees.ts";
+import { a, type Command, f, o } from "./kit/parse/index.ts";
+import { fatal, err, isCommandError } from "./kit/command-errors.ts";
 import { firstLine, stripCommentLines, ensureTrailingNewline } from "../lib/text-utils.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
 import {
@@ -33,11 +33,11 @@ import {
 	requireCommit,
 	requireCommitter,
 	requireAuthor,
-} from "../cli/commit-requirements.ts";
+} from "./kit/commit-requirements.ts";
 import { writeCommitAndAdvance } from "../lib/commit-write.ts";
 import { branchNameFromRef } from "../lib/refs/name.ts";
 import { getConfigValue } from "../lib/config/store.ts";
-import { handleOperationAbort, resolveCommandSigner } from "../cli/command-utils.ts";
+import { handleOperationAbort, resolveCommandSigner } from "./kit/command-utils.ts";
 
 type RevertMode = "commit" | "no-commit";
 

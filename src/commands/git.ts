@@ -1,6 +1,6 @@
 import type { GitCommandName, GitExtensions } from "../git.ts";
-import { type Command, a, command } from "../parse/index.ts";
-import { generateHelp } from "../parse/help.ts";
+import { type Command, a, command } from "./kit/parse/index.ts";
+import { generateHelp } from "./kit/parse/help.ts";
 import { registerAddCommand } from "./add.ts";
 import { registerBisectCommand } from "./bisect.ts";
 import { registerBlameCommand } from "./blame.ts";

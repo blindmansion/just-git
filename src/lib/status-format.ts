@@ -51,7 +51,7 @@ export interface RebaseStatusView {
 /**
  * Everything the long-form `git status` renderer needs, fully resolved.
  * All async reads (refs, config, rebase state, abbreviations, …) happen while
- * gathering this struct so the renderer (`format/status#renderLongStatus`)
+ * gathering this struct so the renderer (`commands/kit/format/status#renderLongStatus`)
  * stays pure and synchronous.
  */
 export interface LongStatusData {
@@ -102,7 +102,7 @@ async function abbrevTodoEntries(
 /**
  * Gather all data needed to render the full long-form `git status` output.
  * Used by the status command handler and also by commit/cherry-pick failure
- * paths (via `cli/status#generateLongFormStatus`), which output `git status`
+ * paths (via `commands/kit/status#generateLongFormStatus`), which output `git status`
  * to stdout on failure.
  *
  * @param opts.fromCommit - When true, uses "Initial commit" instead of

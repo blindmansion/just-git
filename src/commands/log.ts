@@ -1,6 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { computeDiffStats } from "../lib/commit-summary.ts";
-import { formatShortstatParts, renderStatLines } from "../format/commit-summary.ts";
+import { formatShortstatParts, renderStatLines } from "./kit/format/commit-summary.ts";
 import { type CommitEntry, CommitHeap, walkCommits } from "../lib/commit-walk.ts";
 import { parseDate } from "../lib/date.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff/algorithm.ts";
@@ -9,14 +9,14 @@ import {
 	resolveDiffPresentation,
 	resolveDiffStat,
 } from "../lib/diff/driver.ts";
-import { CommitGraph } from "../format/graph.ts";
+import { CommitGraph } from "./kit/format/graph.ts";
 import {
 	type DateMode,
 	expandFormat,
 	type FormatContext,
 	formatPreset,
 	parseFormatArg,
-} from "../format/log.ts";
+} from "./kit/format/log.ts";
 import { findAllMergeBases } from "../lib/merge.ts";
 import { peelToCommit, readBlobBytes, readCommit } from "../lib/object-db.ts";
 import type { Pathspec } from "../lib/attributes/pathspec.ts";
@@ -28,10 +28,10 @@ import { resolveRevision } from "../lib/refs/rev-parse.ts";
 import { diffTrees } from "../lib/tree-ops.ts";
 import type { Commit, GitRepo, ObjectId, TreeDiffEntry } from "../lib/types.ts";
 import { worktreeHeadCommits } from "../lib/worktree-admin.ts";
-import { a, type Command, f, o } from "../parse/index.ts";
-import { fatal, isCommandError, ambiguousArgError } from "../cli/command-errors.ts";
+import { a, type Command, f, o } from "./kit/parse/index.ts";
+import { fatal, isCommandError, ambiguousArgError } from "./kit/command-errors.ts";
 import { buildAbbrevResolver } from "../lib/abbrev.ts";
-import { requireGitContext, requireHead } from "../cli/commit-requirements.ts";
+import { requireGitContext, requireHead } from "./kit/commit-requirements.ts";
 import { branchNameFromRef } from "../lib/refs/name.ts";
 
 const decoder = new TextDecoder();

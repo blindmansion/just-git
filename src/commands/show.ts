@@ -1,7 +1,7 @@
 import type { GitExtensions } from "../git.ts";
-import { formatCombinedDiffEntry } from "../format/combined-diff.ts";
+import { formatCombinedDiffEntry } from "./kit/format/combined-diff.ts";
 import { computeDiffStats } from "../lib/commit-summary.ts";
-import { formatShortstatParts, renderStatLines } from "../format/commit-summary.ts";
+import { formatShortstatParts, renderStatLines } from "./kit/format/commit-summary.ts";
 import { formatDate } from "../lib/date.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff/algorithm.ts";
 import {
@@ -10,7 +10,12 @@ import {
 	resolveDiffPresentation,
 	resolveDiffStat,
 } from "../lib/diff/driver.ts";
-import { expandFormat, type FormatContext, formatPreset, parseFormatArg } from "../format/log.ts";
+import {
+	expandFormat,
+	type FormatContext,
+	formatPreset,
+	parseFormatArg,
+} from "./kit/format/log.ts";
 import { readBlobBytes, readCommit, readObject, readTag } from "../lib/object-db.ts";
 import { detectRenames, formatRenamePath, type RenamePair } from "../lib/diff/rename-detection.ts";
 import { parseRevPath } from "../lib/refs/rev-parse.ts";
@@ -26,15 +31,15 @@ import type {
 	Tree,
 	TreeDiffEntry,
 } from "../lib/types.ts";
-import { a, type Command, f, o } from "../parse/index.ts";
-import { fatal, isCommandError } from "../cli/command-errors.ts";
+import { a, type Command, f, o } from "./kit/parse/index.ts";
+import { fatal, isCommandError } from "./kit/command-errors.ts";
 import { uniqueAbbrev, buildAbbrevResolver } from "../lib/abbrev.ts";
 import {
 	requireGitContext,
 	requireHead,
 	requireRevision,
 	requireCommit,
-} from "../cli/commit-requirements.ts";
+} from "./kit/commit-requirements.ts";
 
 const decoder = new TextDecoder();
 

@@ -1,7 +1,7 @@
 import type { GitExtensions } from "../git.ts";
 import { CommitHeap, walkCommits } from "../lib/commit-walk.ts";
 import { parseDate } from "../lib/date.ts";
-import { expandFormat, type FormatContext, parseFormatArg } from "../format/log.ts";
+import { expandFormat, type FormatContext, parseFormatArg } from "./kit/format/log.ts";
 import { findAllMergeBases } from "../lib/merge.ts";
 import { peelToCommit, readCommit } from "../lib/object-db.ts";
 import type { Pathspec } from "../lib/attributes/pathspec.ts";
@@ -11,11 +11,11 @@ import { listRefs, resolveHead } from "../lib/refs/refs.ts";
 import { resolveRevision } from "../lib/refs/rev-parse.ts";
 import { diffTrees } from "../lib/tree-ops.ts";
 import type { Commit, GitRepo, ObjectId } from "../lib/types.ts";
-import { a, type Command, f, o } from "../parse/index.ts";
-import { isCommandError, ambiguousArgError } from "../cli/command-errors.ts";
+import { a, type Command, f, o } from "./kit/parse/index.ts";
+import { isCommandError, ambiguousArgError } from "./kit/command-errors.ts";
 import { firstLine } from "../lib/text-utils.ts";
 import { buildAbbrevResolver } from "../lib/abbrev.ts";
-import { requireGitContext, requireHead } from "../cli/commit-requirements.ts";
+import { requireGitContext, requireHead } from "./kit/commit-requirements.ts";
 
 export function registerShortlogCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("shortlog", {

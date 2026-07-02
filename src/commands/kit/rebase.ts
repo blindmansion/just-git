@@ -1,17 +1,17 @@
-import { renderCommitOneLiner, renderCommitSummary } from "../format/commit-summary.ts";
+import { renderCommitOneLiner, renderCommitSummary } from "./format/commit-summary.ts";
 import type { CommandResult } from "./command-errors.ts";
 import { err, fatal } from "./command-errors.ts";
-import type { SequencerDirtyState } from "../lib/command-utils.ts";
+import type { SequencerDirtyState } from "../../lib/command-utils.ts";
 import type {
 	FinalizedRebaseCommit,
 	RebaseConflict,
 	RebaseOutcome,
 	RebaseProgress,
 	RebaseStep,
-} from "../lib/rebase-engine.ts";
-import type { RebaseTodoEntry } from "../lib/rebase.ts";
-import { renderUnpackErrors } from "../format/unpack-trees.ts";
-import type { RejectedPath } from "../lib/worktree/unpack-trees.ts";
+} from "../../lib/rebase-engine.ts";
+import type { RebaseTodoEntry } from "../../lib/rebase.ts";
+import { renderUnpackErrors } from "./format/unpack-trees.ts";
+import type { RejectedPath } from "../../lib/worktree/unpack-trees.ts";
 
 /**
  * Map a {@link RebaseOutcome} produced by the rebase engine to the CLI

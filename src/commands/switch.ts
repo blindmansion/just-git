@@ -14,14 +14,14 @@ import {
 	renderCheckoutUnpackFailure,
 	requireResolvedIndex,
 	switchBranchCore,
-} from "../cli/checkout-core.ts";
+} from "./kit/checkout-core.ts";
 import {
 	renderCancelWarnings,
 	renderCheckoutSummary,
 	renderDetachPreamble,
 	renderTrackingSetup,
-} from "../format/checkout.ts";
-import { formatLongTrackingInfo } from "../format/status.ts";
+} from "./kit/format/checkout.ts";
+import { formatLongTrackingInfo } from "./kit/format/status.ts";
 import { getTrackingInfo } from "../lib/status-format.ts";
 import { clearIndex, readIndex, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
@@ -40,9 +40,9 @@ import { buildTreeFromIndex } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId, Ref } from "../lib/types.ts";
 import { applyWorktreeOps, checkoutTrees } from "../lib/worktree/unpack-trees.ts";
 import { branchCheckedOutAt } from "../lib/worktree-admin.ts";
-import { a, type Command, f, o } from "../parse/index.ts";
-import { fatal, isCommandError } from "../cli/command-errors.ts";
-import { requireGitContext, requireCommit } from "../cli/commit-requirements.ts";
+import { a, type Command, f, o } from "./kit/parse/index.ts";
+import { fatal, isCommandError } from "./kit/command-errors.ts";
+import { requireGitContext, requireCommit } from "./kit/commit-requirements.ts";
 import { isValidBranchName } from "../lib/refs/name.ts";
 import { readConfig, writeConfig } from "../lib/config/store.ts";
 import { ZERO_HASH } from "../lib/hex.ts";

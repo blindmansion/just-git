@@ -1,7 +1,7 @@
 import type { GitExtensions } from "../git.ts";
 import { resolve } from "../lib/path.ts";
 import { initRepository } from "../lib/repo.ts";
-import { a, type Command, f, o } from "../parse/index.ts";
+import { a, type Command, f, o } from "./kit/parse/index.ts";
 
 export function registerInitCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("init", {

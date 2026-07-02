@@ -4,7 +4,7 @@
  * This module is the *data* half of the commit-summary concern: it diffs trees,
  * detects renames, and computes per-file insertion/deletion counts and mode
  * changes as plain data structs. Turning that data into human output lives in
- * the presentation sibling `src/format/commit-summary.ts`. Used by git commit,
+ * the presentation sibling `src/commands/kit/format/commit-summary.ts`. Used by git commit,
  * cherry-pick, merge, and the diffstat commands.
  */
 import type { BoundAttributes } from "./attributes/bound-attributes.ts";

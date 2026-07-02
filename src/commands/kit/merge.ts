@@ -3,8 +3,8 @@
 // lists) to the git-exact `CommandResult` (stderr text + exit code). `lib/merge-ort.ts`
 // surfaces only data; this is where the CLI contract is assembled.
 
-import type { ApplyMergeFailure } from "../lib/merge-ort.ts";
-import { renderMergeOrtError, renderMergeOrtWorktreeMultiBlock } from "../format/merge-ort.ts";
+import type { ApplyMergeFailure } from "../../lib/merge-ort.ts";
+import { renderMergeOrtError, renderMergeOrtWorktreeMultiBlock } from "./format/merge-ort.ts";
 import type { CommandResult } from "./command-errors.ts";
 
 /** Presentation context for wording an {@link ApplyMergeFailure}. */

@@ -4,8 +4,8 @@
 // Usage: bun scripts/gen-cli-help.ts > docs/CLI.md
 
 import { createGitCommand } from "../src/commands/git.ts";
-import { generateHelp } from "../src/parse/help.ts";
-import type { Command } from "../src/parse/index.ts";
+import { generateHelp } from "../src/commands/kit/parse/help.ts";
+import type { Command } from "../src/commands/kit/parse/index.ts";
 
 const git = createGitCommand();
 

@@ -2045,7 +2045,7 @@ interface ApplyMergeSuccess {
 /**
  * A precondition failure from {@link applyMergeResult}. Carries only structured
  * data — the sorted path lists and which phase refused — never rendered bytes or
- * an exit code. `cli/merge#renderApplyMerge` turns this into the git-exact
+ * an exit code. `commands/kit/merge#renderApplyMerge` turns this into the git-exact
  * `CommandResult`.
  *
  * - `staged`: the index-vs-HEAD check found staged changes that would be lost.

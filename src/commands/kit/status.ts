@@ -1,6 +1,6 @@
-import { renderLongStatus } from "../format/status.ts";
-import { gatherLongStatus } from "../lib/status-format.ts";
-import type { GitContext, Index, ObjectId } from "../lib/types.ts";
+import { renderLongStatus } from "./format/status.ts";
+import { gatherLongStatus } from "../../lib/status-format.ts";
+import type { GitContext, Index, ObjectId } from "../../lib/types.ts";
 
 /**
  * Produce the full long-form `git status` output as a string: gather the

@@ -22,11 +22,11 @@ import { flattenTree, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { applyWorktreeOps, resetHard } from "../lib/worktree/unpack-trees.ts";
 import { diffIndexToWorkTree } from "../lib/worktree/worktree.ts";
-import { a, type Command, f } from "../parse/index.ts";
-import { fatal, isCommandError, ambiguousArgError } from "../cli/command-errors.ts";
+import { a, type Command, f } from "./kit/parse/index.ts";
+import { fatal, isCommandError, ambiguousArgError } from "./kit/command-errors.ts";
 import { firstLine } from "../lib/text-utils.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
-import { requireGitContext, requireWorkTree } from "../cli/commit-requirements.ts";
+import { requireGitContext, requireWorkTree } from "./kit/commit-requirements.ts";
 
 export function registerResetCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("reset", {

@@ -2,38 +2,38 @@
  * Core branch-switching / detach-HEAD orchestration shared by the `checkout`,
  * `switch`, and `bisect` commands. This is command-layer glue, not a lib data
  * primitive: it drives lib mutations + gatherers and assembles the final
- * `CommandResult` output via the `format/checkout` renderers.
+ * `CommandResult` output via the `commands/kit/format/checkout` renderers.
  */
-import type { GitExtensions } from "../git.ts";
-import { uniqueAbbrev } from "../lib/abbrev.ts";
+import type { GitExtensions } from "../../git.ts";
+import { uniqueAbbrev } from "../../lib/abbrev.ts";
 import type { CommandResult } from "./command-errors.ts";
-import { readConfig } from "../lib/config/store.ts";
-import { ZERO_HASH } from "../lib/hex.ts";
-import { readIndex, writeIndex } from "../lib/index.ts";
-import { readCommit } from "../lib/object-db.ts";
-import { clearDetachPoint, writeDetachPoint } from "../lib/operation-state.ts";
-import { logRef } from "../lib/refs/reflog.ts";
-import { createSymbolicRef, readHead, resolveHead, updateRef } from "../lib/refs/refs.ts";
-import { formatLongTrackingInfo } from "../format/status.ts";
-import { getTrackingInfo } from "../lib/status-format.ts";
-import { firstLine } from "../lib/text-utils.ts";
-import type { GitContext, ObjectId } from "../lib/types.ts";
+import { readConfig } from "../../lib/config/store.ts";
+import { ZERO_HASH } from "../../lib/hex.ts";
+import { readIndex, writeIndex } from "../../lib/index.ts";
+import { readCommit } from "../../lib/object-db.ts";
+import { clearDetachPoint, writeDetachPoint } from "../../lib/operation-state.ts";
+import { logRef } from "../../lib/refs/reflog.ts";
+import { createSymbolicRef, readHead, resolveHead, updateRef } from "../../lib/refs/refs.ts";
+import { formatLongTrackingInfo } from "./format/status.ts";
+import { getTrackingInfo } from "../../lib/status-format.ts";
+import { firstLine } from "../../lib/text-utils.ts";
+import type { GitContext, ObjectId } from "../../lib/types.ts";
 import {
 	clearOperationState,
 	computeCheckoutStatus,
 	gatherDetachPreamble,
-} from "../lib/worktree/checkout-utils.ts";
+} from "../../lib/worktree/checkout-utils.ts";
 import {
 	applyWorktreeOps,
 	checkoutTrees,
 	type RejectedPath,
-} from "../lib/worktree/unpack-trees.ts";
+} from "../../lib/worktree/unpack-trees.ts";
 import {
 	renderCancelWarnings,
 	renderCheckoutSummary,
 	renderDetachPreamble,
-} from "../format/checkout.ts";
-import { renderUnpackErrors } from "../format/unpack-trees.ts";
+} from "./format/checkout.ts";
+import { renderUnpackErrors } from "./format/unpack-trees.ts";
 
 /**
  * Map a blocked `checkoutTrees` result (worktree-safety rejections) to the

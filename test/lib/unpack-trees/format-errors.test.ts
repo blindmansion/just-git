@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { renderMergeAbortError, renderUnpackErrors } from "../../../src/format/unpack-trees.ts";
+import {
+	renderMergeAbortError,
+	renderUnpackErrors,
+} from "../../../src/commands/kit/format/unpack-trees.ts";
 import type { RejectedPath } from "../../../src/lib/worktree/unpack-trees.ts";
 import { UnpackError } from "../../../src/lib/worktree/unpack-trees.ts";
 

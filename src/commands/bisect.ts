@@ -8,7 +8,7 @@ import {
 	readBisectState,
 	readBisectTerms,
 } from "../lib/bisect.ts";
-import { detachHeadCore, switchBranchCore } from "../cli/checkout-core.ts";
+import { detachHeadCore, switchBranchCore } from "./kit/checkout-core.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { walkCommits } from "../lib/commit-walk.ts";
 import { readStateFile, writeStateFile } from "../lib/operation-state.ts";
@@ -16,13 +16,17 @@ import { join } from "../lib/path.ts";
 import { readHead, resolveHead, resolveRef, updateRef } from "../lib/refs/refs.ts";
 import { resolveRevision } from "../lib/refs/rev-parse.ts";
 import type { GitContext } from "../lib/types.ts";
-import { a, type Command, f, o } from "../parse/index.ts";
-import type { CommandResult } from "../cli/command-errors.ts";
-import { fatal, isCommandError } from "../cli/command-errors.ts";
+import { a, type Command, f, o } from "./kit/parse/index.ts";
+import type { CommandResult } from "./kit/command-errors.ts";
+import { fatal, isCommandError } from "./kit/command-errors.ts";
 import { firstLine } from "../lib/text-utils.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
-import { requireGitContext, requireWorkTree, requireRevision } from "../cli/commit-requirements.ts";
-import { formatBisectStatus, formatBisectingLine, renderFirstBadCommit } from "../format/bisect.ts";
+import { requireGitContext, requireWorkTree, requireRevision } from "./kit/commit-requirements.ts";
+import {
+	formatBisectStatus,
+	formatBisectingLine,
+	renderFirstBadCommit,
+} from "./kit/format/bisect.ts";
 
 // ── Reserved subcommand names (cannot be used as custom terms) ──────
 

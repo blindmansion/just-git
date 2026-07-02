@@ -367,7 +367,7 @@ interface StashApplySuccess {
 
 /**
  * Structured reasons an apply/pop can fail. The command tier
- * (`cli/stash#renderStashApplyError`) renders each to git-exact bytes + exit
+ * (`commands/kit/stash#renderStashApplyError`) renders each to git-exact bytes + exit
  * code; `lib` never speaks the CLI contract.
  */
 export type StashApplyError =

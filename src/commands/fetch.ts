@@ -14,16 +14,16 @@ import { mapRefspec, parseRefspec, type Refspec } from "../lib/transport/refspec
 import type { RemoteRef } from "../lib/transport/transport.ts";
 import type { ExecResult } from "../hooks.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
-import { a, type Command, f, o } from "../parse/index.ts";
-import { fatal, isCommandError } from "../cli/command-errors.ts";
+import { a, type Command, f, o } from "./kit/parse/index.ts";
+import { fatal, isCommandError } from "./kit/command-errors.ts";
 import { buildAbbrevResolver } from "../lib/abbrev.ts";
 import type { TransferRefLine } from "../lib/ref-format.ts";
 import { formatTransferRefLines, buildRefUpdateLines } from "../lib/ref-format.ts";
-import { requireGitContext } from "../cli/commit-requirements.ts";
+import { requireGitContext } from "./kit/commit-requirements.ts";
 import { shortenRef } from "../lib/refs/name.ts";
 import { readConfig } from "../lib/config/store.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
-import { normalizeFetchDepth, resolveRemoteTransportOrError } from "../cli/fetch-helpers.ts";
+import { normalizeFetchDepth, resolveRemoteTransportOrError } from "./kit/fetch-helpers.ts";
 
 export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("fetch", {

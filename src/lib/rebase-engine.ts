@@ -70,7 +70,7 @@ import { getConfigValue } from "./config/store.ts";
 //
 // The rebase engine gathers data and mutates on-disk state, but never
 // assembles the CLI stdout/stderr/exit-code contract itself. Every
-// entrypoint returns a {@link RebaseOutcome}; `cli/rebase#renderRebaseOutcome`
+// entrypoint returns a {@link RebaseOutcome}; `commands/kit/rebase#renderRebaseOutcome`
 // maps each variant to a `CommandResult`.
 
 /** Progress marker for one replayed step: "Rebasing (current/total)". */
@@ -110,7 +110,7 @@ export interface FinalizedRebaseCommit {
 }
 
 /**
- * Structured result of a rebase engine entrypoint. `cli/rebase#renderRebaseOutcome`
+ * Structured result of a rebase engine entrypoint. `commands/kit/rebase#renderRebaseOutcome`
  * maps each variant to the stdout/stderr/exit-code contract; `lib` never assembles
  * that CLI text itself.
  */

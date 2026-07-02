@@ -1,4 +1,4 @@
-import type { BisectResult, BisectState } from "../lib/bisect.ts";
+import type { BisectResult, BisectState } from "../../../lib/bisect.ts";
 
 export interface FirstBadCommitInfo {
 	hash: string;

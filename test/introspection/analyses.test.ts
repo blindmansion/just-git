@@ -150,27 +150,32 @@ describe("call graph", () => {
 
 describe("concern classifier", () => {
 	test("separates formatting from data on known lib files", async () => {
-		const concerns = await classifyConcerns({ include: ["src/lib", "src/format"], root: "src" });
+		const concerns = await classifyConcerns({
+			include: ["src/lib", "src/commands/kit/format"],
+			root: "src",
+		});
 		const by = (relPath: string, name: string) =>
 			concerns.find((c) => c.relPath === relPath && c.name === name);
 
-		// format/log.ts is a pure presentation module: expandFormat formats and
-		// touches no data.
-		const expand = by("format/log.ts", "expandFormat");
+		// commands/kit/format/log.ts is a pure presentation module: expandFormat formats
+		// and touches no data.
+		const expand = by("commands/kit/format/log.ts", "expandFormat");
 		expect(expand?.kind).toBe("formatting");
 		expect(expand?.formats).toBe(true);
 		expect(expand?.handlesData).toBe(false);
 
 		// commit-summary and checkout are split (P2): the gather is pure data in
-		// lib, the renderer is pure presentation in format/.
+		// lib, the renderer is pure presentation in commands/kit/format/.
 		expect(by("lib/commit-summary.ts", "computeDiffStats")?.kind).toBe("data");
-		expect(by("format/commit-summary.ts", "renderCommitSummary")?.kind).toBe("formatting");
+		expect(by("commands/kit/format/commit-summary.ts", "renderCommitSummary")?.kind).toBe(
+			"formatting",
+		);
 		expect(by("lib/worktree/checkout-utils.ts", "computeCheckoutStatus")?.kind).toBe("data");
-		expect(by("format/checkout.ts", "renderCheckoutSummary")?.kind).toBe("formatting");
+		expect(by("commands/kit/format/checkout.ts", "renderCheckoutSummary")?.kind).toBe("formatting");
 		// status long-form is split (A): the gather is pure data in lib, the
-		// renderer is pure presentation in format/.
+		// renderer is pure presentation in commands/kit/format/.
 		expect(by("lib/status-format.ts", "gatherLongStatus")?.kind).toBe("data");
-		expect(by("format/status.ts", "renderLongStatus")?.kind).toBe("formatting");
+		expect(by("commands/kit/format/status.ts", "renderLongStatus")?.kind).toBe("formatting");
 		// A pure counting helper is neither formatting nor data.
 		expect(by("lib/commit-summary.ts", "countLines")?.kind).toBe("logic");
 
@@ -193,7 +198,10 @@ describe("concern classifier", () => {
 	});
 
 	test("fileConcernProfiles roll functions up per file", async () => {
-		const concerns = await classifyConcerns({ include: ["src/lib", "src/format"], root: "src" });
+		const concerns = await classifyConcerns({
+			include: ["src/lib", "src/commands/kit/format"],
+			root: "src",
+		});
 		const profiles = fileConcernProfiles(concerns);
 
 		// Profiles partition the functions: summed counts reconcile with the input.
@@ -204,29 +212,30 @@ describe("concern classifier", () => {
 			expect(p.formattingRatio).toBeCloseTo((p.formatting + p.mixed) / p.functions);
 		}
 
-		// format/log.ts is presentation-dominant.
-		const logFormat = profiles.find((p) => p.relPath === "format/log.ts");
+		// commands/kit/format/log.ts is presentation-dominant.
+		const logFormat = profiles.find((p) => p.relPath === "commands/kit/format/log.ts");
 		expect(logFormat?.dominant).toBe("formatting");
 	});
 });
 
 describe("signature type references", () => {
 	test("finds functions with a target type in return/param position", async () => {
-		const refs = await functionsReferencingType({ include: ["src/lib", "src/cli"], root: "src" }, [
-			"CommandResult",
-		]);
+		const refs = await functionsReferencingType(
+			{ include: ["src/lib", "src/commands/kit"], root: "src" },
+			["CommandResult"],
+		);
 		const by = (id: string) => refs.find((r) => r.id === id);
 
 		// Explicit return of the type. command-errors.ts is the CLI command
-		// contract and now lives in cli/, not lib/ (Track B complete).
-		expect(by("cli/command-errors.ts#fatal")?.positions).toEqual(["return"]);
-		expect(by("cli/command-errors.ts#ambiguousArgError")?.positions).toContain("return");
+		// contract and now lives in commands/kit/, not lib/ (Track B complete).
+		expect(by("commands/kit/command-errors.ts#fatal")?.positions).toEqual(["return"]);
+		expect(by("commands/kit/command-errors.ts#ambiguousArgError")?.positions).toContain("return");
 		// The rebase engine no longer speaks the CommandResult contract: it
-		// returns a structured RebaseOutcome that cli/rebase.ts renders (Track B2).
+		// returns a structured RebaseOutcome that commands/kit/rebase.ts renders (Track B2).
 		expect(by("lib/rebase-engine.ts#checkUntrackedConflicts")).toBeUndefined();
 		expect(by("lib/rebase-engine.ts#performRebase")).toBeUndefined();
 		// The type in a parameter is recorded as a param position, not a return.
-		const isCmdErr = by("cli/command-errors.ts#isCommandError");
+		const isCmdErr = by("commands/kit/command-errors.ts#isCommandError");
 		expect(isCmdErr?.positions).toContain("param");
 		expect(isCmdErr?.positions).not.toContain("return");
 

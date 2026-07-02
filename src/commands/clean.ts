@@ -11,9 +11,9 @@ import { readIndex } from "../lib/index.ts";
 import { join } from "../lib/path.ts";
 import { matchPathspecs, parsePathspec } from "../lib/attributes/pathspec.ts";
 import type { GitContext } from "../lib/types.ts";
-import { a, type Command, f, o } from "../parse/index.ts";
-import { fatal, isCommandError } from "../cli/command-errors.ts";
-import { requireGitContext, requireWorkTree } from "../cli/commit-requirements.ts";
+import { a, type Command, f, o } from "./kit/parse/index.ts";
+import { fatal, isCommandError } from "./kit/command-errors.ts";
+import { requireGitContext, requireWorkTree } from "./kit/commit-requirements.ts";
 import { getConfigValue } from "../lib/config/store.ts";
 
 export function registerCleanCommand(parent: Command, ext?: GitExtensions) {

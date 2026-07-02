@@ -305,7 +305,7 @@ export async function buildMergeMessage(
  * diffstat are returned so the *command* layer renders the `Updating`/
  * `Fast-forward` output (byte-fidelity presentation is not `lib`'s job). On a
  * worktree-overwrite failure the structured `rejected` paths are surfaced for
- * the command tier to render via `format/unpack-trees#renderUnpackErrors`.
+ * the command tier to render via `commands/kit/format/unpack-trees#renderUnpackErrors`.
  */
 export type FastForwardResult =
 	| { ok: true; oldShort: string; newShort: string; stats: DiffStats }

@@ -6,11 +6,11 @@
  * byte-exact output git prints after commit/cherry-pick/merge and for
  * `diff`/`log`/`show` `--stat`/`--shortstat`. No I/O.
  */
-import type { DiffStats, FileStat, ModeChange } from "../lib/commit-summary.ts";
-import { formatDate } from "../lib/date.ts";
-import { formatRenamePath } from "../lib/diff/rename-detection.ts";
-import { firstLine } from "../lib/text-utils.ts";
-import type { Identity } from "../lib/types.ts";
+import type { DiffStats, FileStat, ModeChange } from "../../../lib/commit-summary.ts";
+import { formatDate } from "../../../lib/date.ts";
+import { formatRenamePath } from "../../../lib/diff/rename-detection.ts";
+import { firstLine } from "../../../lib/text-utils.ts";
+import type { Identity } from "../../../lib/types.ts";
 
 const STAT_WIDTH = 80;
 

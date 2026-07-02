@@ -9,9 +9,9 @@ import { diffIndexToWorkTree } from "../lib/worktree/worktree.ts";
 import { WM_MATCH, wildmatch } from "../lib/attributes/wildmatch.ts";
 import { parseTag } from "../lib/objects/tag.ts";
 import type { GitContext, GitRepo, ObjectId } from "../lib/types.ts";
-import { a, type Command, f, o } from "../parse/index.ts";
-import { fatal, isCommandError } from "../cli/command-errors.ts";
-import { requireGitContext, requireWorkTree } from "../cli/commit-requirements.ts";
+import { a, type Command, f, o } from "./kit/parse/index.ts";
+import { fatal, isCommandError } from "./kit/command-errors.ts";
+import { requireGitContext, requireWorkTree } from "./kit/commit-requirements.ts";
 
 interface TagCandidate {
 	name: string;

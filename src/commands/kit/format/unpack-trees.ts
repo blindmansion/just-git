@@ -5,7 +5,7 @@
  * (the lib layer surfaces the rejections; exit codes are decided by the command
  * tier). No I/O.
  */
-import { type RejectedPath, UnpackError } from "../lib/worktree/unpack-trees.ts";
+import { type RejectedPath, UnpackError } from "../../../lib/worktree/unpack-trees.ts";
 
 /** Context needed to word an unpack-trees error block. */
 export interface UnpackErrorContext {
