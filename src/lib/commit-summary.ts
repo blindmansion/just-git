@@ -4,10 +4,10 @@
  */
 import type { BoundAttributes } from "./attributes/bound-attributes.ts";
 import { formatDate } from "./date.ts";
-import { myersDiff, splitLinesWithNL } from "./diff-algorithm.ts";
-import { resolveDiffStat } from "./diff-driver.ts";
+import { myersDiff, splitLinesWithNL } from "./diff/algorithm.ts";
+import { resolveDiffStat } from "./diff/driver.ts";
 import { readBlobBytes } from "./object-db.ts";
-import { detectRenames, formatRenamePath, type RenamePair } from "./rename-detection.ts";
+import { detectRenames, formatRenamePath, type RenamePair } from "./diff/rename-detection.ts";
 import { diffTrees } from "./tree-ops.ts";
 import type { GitRepo, Identity, ObjectId, TreeDiffEntry } from "./types.ts";
 

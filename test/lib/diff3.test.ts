@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { diff3Merge, diff3MergeRegions, merge } from "../../src/lib/diff3";
+import { diff3Merge, diff3MergeRegions, merge } from "../../src/lib/diff/diff3.ts";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 

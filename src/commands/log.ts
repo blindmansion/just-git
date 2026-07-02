@@ -2,12 +2,12 @@ import type { GitExtensions } from "../git.ts";
 import { computeDiffStats, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
 import { CommitHeap, walkCommits } from "../lib/commit-walk.ts";
 import { parseDate } from "../lib/date.ts";
-import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algorithm.ts";
+import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff/algorithm.ts";
 import {
 	boundDiffAttributes,
 	resolveDiffPresentation,
 	resolveDiffStat,
-} from "../lib/diff-driver.ts";
+} from "../lib/diff/driver.ts";
 import { CommitGraph } from "../lib/graph.ts";
 import {
 	type DateMode,
@@ -22,7 +22,7 @@ import type { Pathspec } from "../lib/attributes/pathspec.ts";
 import { matchPathspecs, parsePathspec } from "../lib/attributes/pathspec.ts";
 import { parseRangeSyntax } from "../lib/refs/range-syntax.ts";
 import { listRefs, readHead, resolveHead } from "../lib/refs/refs.ts";
-import { detectRenames, formatRenamePath, type RenamePair } from "../lib/rename-detection.ts";
+import { detectRenames, formatRenamePath, type RenamePair } from "../lib/diff/rename-detection.ts";
 import { resolveRevision } from "../lib/refs/rev-parse.ts";
 import { diffTrees } from "../lib/tree-ops.ts";
 import type { Commit, GitRepo, ObjectId, TreeDiffEntry } from "../lib/types.ts";

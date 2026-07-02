@@ -1,7 +1,7 @@
-import { splitLines } from "./diff-algorithm.ts";
-import { myersDiff } from "./diff-algorithm.ts";
+import { splitLines } from "./diff/algorithm.ts";
+import { myersDiff } from "./diff/algorithm.ts";
 import { readBlobContent, readCommit } from "./object-db.ts";
-import { detectRenames } from "./rename-detection.ts";
+import { detectRenames } from "./diff/rename-detection.ts";
 import { diffTrees, flattenTreeToMap } from "./tree-ops.ts";
 import type { Commit, GitRepo, Identity, ObjectId } from "./types.ts";
 

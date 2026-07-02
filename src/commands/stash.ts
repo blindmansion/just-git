@@ -1,6 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { formatDiffStat } from "../lib/commit-summary.ts";
-import { formatUnifiedDiff } from "../lib/diff-algorithm.ts";
+import { formatUnifiedDiff } from "../lib/diff/algorithm.ts";
 import { getConflictedPaths, readIndex } from "../lib/index.ts";
 import { readBlobContent, readCommit } from "../lib/object-db.ts";
 import { resolveHead } from "../lib/refs/refs.ts";

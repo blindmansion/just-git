@@ -10,8 +10,8 @@
  *
  * Used by: git status, git diff --cached, commit summary, merge diffstat.
  */
-import { readBlobBytes } from "./object-db.ts";
-import type { GitRepo, TreeDiffEntry } from "./types.ts";
+import { readBlobBytes } from "../object-db.ts";
+import type { GitRepo, TreeDiffEntry } from "../types.ts";
 
 // ── Types ────────────────────────────────────────────────────────────
 

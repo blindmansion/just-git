@@ -379,7 +379,7 @@ async function walkTsFiles(dir: string): Promise<string[]> {
  *
  * @example
  * await moveModules([{ from: "src/lib/foo.ts", to: "src/lib/util/foo.ts" }]);
- * await moveModules([{ from: "src/lib/diff-algorithm.ts", to: "src/lib/diff/diff-algorithm.ts" }]);
+ * await moveModules([{ from: "src/lib/diff-algorithm.ts", to: "src/lib/diff/algorithm.ts" }]);
  */
 export async function moveModules(
 	specs: { from: string; to: string }[],

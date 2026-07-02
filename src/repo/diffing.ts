@@ -11,10 +11,10 @@ import {
 	splitLines,
 	type Hunk,
 	type HunkLine,
-} from "../lib/diff-algorithm.ts";
+} from "../lib/diff/algorithm.ts";
 import { findAllMergeBases as _findMergeBases, isAncestor as _isAncestor } from "../lib/merge.ts";
 import { readBlobContent, readCommit as _readCommit } from "../lib/object-db.ts";
-import { detectRenames, type RenamePair } from "../lib/rename-detection.ts";
+import { detectRenames, type RenamePair } from "../lib/diff/rename-detection.ts";
 import { diffTrees as _diffTrees, flattenTree as _flattenTree } from "../lib/tree-ops.ts";
 import type { FlatTreeEntry } from "../lib/tree-ops.ts";
 import type { GitRepo, Identity, ObjectId, TreeDiffEntry } from "../lib/types.ts";

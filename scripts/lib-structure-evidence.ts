@@ -6,7 +6,6 @@ import {
 	findCycles,
 	formatMatrix,
 	groupMatrix,
-	groupMetrics,
 	internalNodes,
 	isRuntimeEdge,
 	parentDir,
@@ -55,33 +54,8 @@ if (cu) {
 	line(`  ${cu.exports.map((e) => e.name).join(", ")}`);
 }
 
-// ── 5. Candidate directory cohesion / coupling ──────────────────────────────
-// `attributes/`, `worktree/`, and `refs/` are now real directories (see the
-// subdirectory matrix above); only still-flat candidates remain here.
-// `tree-ops` stays at root as a repo-wide tree-data leaf (33 importers), not a
-// worktree concern.
-const candidates: Record<string, string[]> = {
-	"diff/": [
-		"diff-algorithm",
-		"diff-driver",
-		"diff3",
-		"combined-diff",
-		"patch-id",
-		"rename-detection",
-	],
-};
-line("\n## candidate directories (cohesion vs coupling)\n");
-line("name".padEnd(14) + "sz  intra  fanOut  fanIn  surface  importers");
-for (const [name, members] of Object.entries(candidates)) {
-	const m = groupMetrics(graph, members);
-	line(
-		name.padEnd(14) +
-			`${m.size}`.padStart(2) +
-			`${m.internalEdges}`.padStart(7) +
-			`${m.fanOut}`.padStart(8) +
-			`${m.fanIn}`.padStart(7) +
-			`  ${m.publicSurface}/${m.size}`.padStart(9) +
-			`${m.externalImporters}`.padStart(11) +
-			(m.missing.length ? `  MISSING: ${m.missing.join(", ")}` : ""),
-	);
-}
+// ── 5. Candidate directories: all extracted ─────────────────────────────────
+// `attributes/`, `worktree/`, `refs/`, and `diff/` are now real directories —
+// see the subdirectory matrix above for their cohesion/coupling. No flat
+// candidates remain. (`tree-ops` intentionally stays at root as a repo-wide
+// tree-data leaf with ~33 importers, not a worktree concern.)

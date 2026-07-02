@@ -1,15 +1,15 @@
 import type { GitExtensions } from "../git.ts";
-import { formatCombinedDiffEntry } from "../lib/combined-diff.ts";
+import { formatCombinedDiffEntry } from "../lib/diff/combined.ts";
 import { getCwdPrefix } from "../lib/command-utils.ts";
 import { resolveAttributes } from "../lib/attributes/bound-attributes.ts";
 import { type FileStat, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
-import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algorithm.ts";
+import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff/algorithm.ts";
 import {
 	boundDiffAttributes,
 	resolveCombinedDiffPresentation,
 	resolveDiffPresentation,
 	resolveDiffStat,
-} from "../lib/diff-driver.ts";
+} from "../lib/diff/driver.ts";
 import { getStage0Entries, readIndex } from "../lib/index.ts";
 import { findAllMergeBases } from "../lib/merge.ts";
 import { hashObject, readBlobBytes, readCommit } from "../lib/object-db.ts";
@@ -17,7 +17,7 @@ import { join, comparePaths } from "../lib/path.ts";
 import { matchPathspecs, type Pathspec, parsePathspec } from "../lib/attributes/pathspec.ts";
 import { parseRangeSyntax } from "../lib/refs/range-syntax.ts";
 import { resolveHead } from "../lib/refs/refs.ts";
-import { detectRenames, formatRenamePath, type RenamePair } from "../lib/rename-detection.ts";
+import { detectRenames, formatRenamePath, type RenamePair } from "../lib/diff/rename-detection.ts";
 import { diffTrees, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, IndexEntry, ObjectId, TreeDiffEntry } from "../lib/types.ts";
 import { diffIndexToWorkTree, readCleanedWorktreeContent } from "../lib/worktree/worktree.ts";

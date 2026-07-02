@@ -7,7 +7,7 @@
 //   FSTTCS 2007
 //   http://www.cis.upenn.edu/~bcpierce/papers/diff3-short.pdf
 
-import { computeChangedLines } from "./diff-algorithm.ts";
+import { computeChangedLines } from "./algorithm.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
 

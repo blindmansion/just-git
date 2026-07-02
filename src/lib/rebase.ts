@@ -1,6 +1,6 @@
 import { readObject } from "./object-db.ts";
 import { parseCommit } from "./objects/commit.ts";
-import { computePatchId } from "./patch-id.ts";
+import { computePatchId } from "./diff/patch-id.ts";
 import { join } from "./path.ts";
 import type { Commit, GitContext, GitRepo, Identity, ObjectId } from "./types.ts";
 

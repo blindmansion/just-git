@@ -6,7 +6,7 @@ import { readDetachPoint, readStateFile } from "./operation-state.ts";
 import { join as joinPath, comparePaths } from "./path.ts";
 import { isRebaseInProgress, readRebaseState } from "./rebase.ts";
 import { readHead, resolveHead, resolveRef } from "./refs/refs.ts";
-import { detectRenames } from "./rename-detection.ts";
+import { detectRenames } from "./diff/rename-detection.ts";
 import { flattenTreeToMap } from "./tree-ops.ts";
 import type { GitContext, GitRepo, Index, ObjectId, TreeDiffEntry } from "./types.ts";
 import { diffIndexToWorkTree } from "./worktree/worktree.ts";
