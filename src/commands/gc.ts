@@ -8,7 +8,7 @@ import { enumerateWorktrees } from "../lib/worktree-admin.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { type Command, f } from "../parse/index.ts";
 import { repackFromTips } from "../lib/repack.ts";
-import { isCommandError } from "../lib/command-errors.ts";
+import { isCommandError } from "../cli/command-errors.ts";
 import { requireGitContext } from "../cli/commit-requirements.ts";
 import { readConfig } from "../lib/config/store.ts";
 import type { GitConfig } from "../lib/config/parse.ts";

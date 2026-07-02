@@ -9,6 +9,7 @@ import {
 	restoreFiles,
 } from "../lib/worktree/checkout-utils.ts";
 import { detachHeadCore, switchBranchCore, requireResolvedIndex } from "../cli/checkout-core.ts";
+import { renderRestoreOutcome } from "../cli/restore.ts";
 import { renderCancelWarnings, renderCheckoutSummary } from "../format/checkout.ts";
 import { getCwdPrefix } from "../lib/command-utils.ts";
 import { findEntry, readIndex, writeIndex } from "../lib/index.ts";
@@ -30,7 +31,7 @@ import { applyWorktreeOps, checkoutTrees } from "../lib/worktree/unpack-trees.ts
 import { checkoutEntry } from "../lib/worktree/worktree.ts";
 import { branchCheckedOutAt } from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
-import { fatal, err, isCommandError } from "../lib/command-errors.ts";
+import { fatal, err, isCommandError } from "../cli/command-errors.ts";
 import { requireGitContext, requireCommit } from "../cli/commit-requirements.ts";
 import { isValidBranchName } from "../lib/refs/name.ts";
 import { readConfig, writeConfig } from "../lib/config/store.ts";
@@ -92,10 +93,14 @@ export function registerCheckoutCommand(parent: Command, ext?: GitExtensions) {
 				}
 
 				if (args.ours || args.theirs) {
-					return restoreConflicted(gitCtx, passthroughPaths, cwdPrefix, args.theirs ? 3 : 2);
+					return renderRestoreOutcome(
+						await restoreConflicted(gitCtx, passthroughPaths, cwdPrefix, args.theirs ? 3 : 2),
+					);
 				}
 
-				return restoreFiles(gitCtx, passthroughPaths, cwdPrefix, sourceTree);
+				return renderRestoreOutcome(
+					await restoreFiles(gitCtx, passthroughPaths, cwdPrefix, sourceTree),
+				);
 			}
 
 			// ── Orphan branch (--orphan) ───────────────────────────────

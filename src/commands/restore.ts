@@ -1,5 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { restoreConflicted, restoreFiles } from "../lib/worktree/checkout-utils.ts";
+import { renderRestoreOutcome } from "../cli/restore.ts";
 import { getCwdPrefix } from "../lib/command-utils.ts";
 import { addEntry, defaultStat, readIndex, removeEntry, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
@@ -9,7 +10,7 @@ import { flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { checkoutEntry } from "../lib/worktree/worktree.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
-import { fatal, err, isCommandError } from "../lib/command-errors.ts";
+import { fatal, err, isCommandError } from "../cli/command-errors.ts";
 import { requireGitContext, requireCommit } from "../cli/commit-requirements.ts";
 
 export function registerRestoreCommand(parent: Command, ext?: GitExtensions) {
@@ -51,9 +52,11 @@ export function registerRestoreCommand(parent: Command, ext?: GitExtensions) {
 				if (doStaged) {
 					return fatal("cannot use --ours/--theirs with --staged");
 				}
-				return restoreConflicted(gitCtx, paths, cwdPrefix, args.theirs ? 3 : 2, {
-					deleteOnMissing: true,
-				});
+				return renderRestoreOutcome(
+					await restoreConflicted(gitCtx, paths, cwdPrefix, args.theirs ? 3 : 2, {
+						deleteOnMissing: true,
+					}),
+				);
 			}
 
 			// ── Resolve source tree ───────────────────────────────
@@ -90,7 +93,7 @@ export function registerRestoreCommand(parent: Command, ext?: GitExtensions) {
 			if (sourceTree) {
 				return restoreWorktreeFromTree(gitCtx, paths, cwdPrefix, sourceTree);
 			}
-			return restoreFiles(gitCtx, paths, cwdPrefix);
+			return renderRestoreOutcome(await restoreFiles(gitCtx, paths, cwdPrefix));
 		},
 	});
 }

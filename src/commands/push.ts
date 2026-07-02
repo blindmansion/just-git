@@ -15,7 +15,7 @@ import { resolveRemoteTransport } from "../lib/transport/resolver.ts";
 import type { PushRefUpdate } from "../lib/transport/transport.ts";
 import type { GitContext, GitRepo, ObjectId } from "../lib/types.ts";
 import { a, type Command, f } from "../parse/index.ts";
-import { fatal, err, isCommandError } from "../lib/command-errors.ts";
+import { fatal, err, isCommandError } from "../cli/command-errors.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
 import type { TransferRefLine } from "../lib/ref-format.ts";
 import { formatTransferRefLines } from "../lib/ref-format.ts";

@@ -25,7 +25,7 @@ import {
 	setWorktreeHead,
 } from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
-import { fatal, err, isCommandError } from "../lib/command-errors.ts";
+import { fatal, err, isCommandError } from "../cli/command-errors.ts";
 import { firstLine } from "../lib/text-utils.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
 import { requireGitContext, requireCommit } from "../cli/commit-requirements.ts";

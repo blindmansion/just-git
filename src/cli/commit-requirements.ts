@@ -9,7 +9,7 @@ import type { FileSystem } from "../fs.ts";
 import type { GitExtensions } from "../git.ts";
 import { abbreviateHash } from "../lib/abbrev.ts";
 import { withCapabilities } from "../lib/capabilities.ts";
-import { type CommandResult, err, fatal } from "../lib/command-errors.ts";
+import { type CommandResult, err, fatal } from "./command-errors.ts";
 import { resolveIdentityFrom } from "../lib/identity.ts";
 import { hasConflicts } from "../lib/index.ts";
 import { peelToCommit, readCommit } from "../lib/object-db.ts";

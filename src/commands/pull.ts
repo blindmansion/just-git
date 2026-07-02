@@ -32,7 +32,7 @@ import type { GitContext, ObjectId, Ref } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { performRebase } from "../lib/rebase-engine.ts";
 import { renderRebaseOutcome } from "../cli/rebase.ts";
-import { fatal, isCommandError } from "../lib/command-errors.ts";
+import { fatal, isCommandError } from "../cli/command-errors.ts";
 import { buildAbbrevResolver } from "../lib/abbrev.ts";
 import { formatTransferRefLines, buildRefUpdateLines } from "../lib/ref-format.ts";
 import {

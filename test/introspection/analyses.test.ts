@@ -212,20 +212,21 @@ describe("concern classifier", () => {
 
 describe("signature type references", () => {
 	test("finds functions with a target type in return/param position", async () => {
-		const refs = await functionsReferencingType({ include: "src/lib", root: "src" }, [
+		const refs = await functionsReferencingType({ include: ["src/lib", "src/cli"], root: "src" }, [
 			"CommandResult",
 		]);
 		const by = (id: string) => refs.find((r) => r.id === id);
 
-		// Explicit return of the type.
-		expect(by("lib/command-errors.ts#fatal")?.positions).toEqual(["return"]);
-		expect(by("lib/command-errors.ts#ambiguousArgError")?.positions).toContain("return");
+		// Explicit return of the type. command-errors.ts is the CLI command
+		// contract and now lives in cli/, not lib/ (Track B complete).
+		expect(by("cli/command-errors.ts#fatal")?.positions).toEqual(["return"]);
+		expect(by("cli/command-errors.ts#ambiguousArgError")?.positions).toContain("return");
 		// The rebase engine no longer speaks the CommandResult contract: it
 		// returns a structured RebaseOutcome that cli/rebase.ts renders (Track B2).
 		expect(by("lib/rebase-engine.ts#checkUntrackedConflicts")).toBeUndefined();
 		expect(by("lib/rebase-engine.ts#performRebase")).toBeUndefined();
 		// The type in a parameter is recorded as a param position, not a return.
-		const isCmdErr = by("lib/command-errors.ts#isCommandError");
+		const isCmdErr = by("cli/command-errors.ts#isCommandError");
 		expect(isCmdErr?.positions).toContain("param");
 		expect(isCmdErr?.positions).not.toContain("return");
 

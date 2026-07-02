@@ -15,7 +15,7 @@ import type { RemoteRef } from "../lib/transport/transport.ts";
 import type { ExecResult } from "../hooks.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
-import { fatal, isCommandError } from "../lib/command-errors.ts";
+import { fatal, isCommandError } from "../cli/command-errors.ts";
 import { buildAbbrevResolver } from "../lib/abbrev.ts";
 import type { TransferRefLine } from "../lib/ref-format.ts";
 import { formatTransferRefLines, buildRefUpdateLines } from "../lib/ref-format.ts";

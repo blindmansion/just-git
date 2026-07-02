@@ -27,7 +27,7 @@ import type {
 	TreeDiffEntry,
 } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
-import { fatal, isCommandError } from "../lib/command-errors.ts";
+import { fatal, isCommandError } from "../cli/command-errors.ts";
 import { uniqueAbbrev, buildAbbrevResolver } from "../lib/abbrev.ts";
 import {
 	requireGitContext,

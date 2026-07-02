@@ -1,6 +1,6 @@
 import { renderCommitOneLiner, renderCommitSummary } from "../format/commit-summary.ts";
-import type { CommandResult } from "../lib/command-errors.ts";
-import { err, fatal } from "../lib/command-errors.ts";
+import type { CommandResult } from "./command-errors.ts";
+import { err, fatal } from "./command-errors.ts";
 import type { SequencerDirtyState } from "../lib/command-utils.ts";
 import type {
 	FinalizedRebaseCommit,

@@ -4,7 +4,7 @@
 // surfaces data / typed failures instead (see `lib/command-utils.ts` for the
 // pure data-gathering counterparts like `getSequencerDirtyState`).
 
-import { type CommandResult, err, fatal } from "../lib/command-errors.ts";
+import { type CommandResult, err, fatal } from "./command-errors.ts";
 import type { SequencerDirtyState } from "../lib/command-utils.ts";
 import { readConfigView } from "../lib/config/view.ts";
 import { readIndex, writeIndex } from "../lib/index.ts";

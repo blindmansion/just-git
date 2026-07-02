@@ -17,8 +17,8 @@ import { generateLongFormStatus } from "../cli/status.ts";
 import { diffTrees } from "../lib/tree-ops.ts";
 import type { GitContext, GitRepo, ObjectId, TreeDiffEntry } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
-import type { CommandResult } from "../lib/command-errors.ts";
-import { fatal, err, isCommandError } from "../lib/command-errors.ts";
+import type { CommandResult } from "../cli/command-errors.ts";
+import { fatal, err, isCommandError } from "../cli/command-errors.ts";
 import { requireGitContext } from "../cli/commit-requirements.ts";
 
 // ── Helpers ─────────────────────────────────────────────────────────

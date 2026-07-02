@@ -6,8 +6,8 @@
  */
 import type { GitExtensions } from "../git.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
-import type { CommandResult } from "../lib/command-errors.ts";
-import { err } from "../lib/command-errors.ts";
+import type { CommandResult } from "./command-errors.ts";
+import { err } from "./command-errors.ts";
 import { readConfig } from "../lib/config/store.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 import { readIndex, writeIndex } from "../lib/index.ts";

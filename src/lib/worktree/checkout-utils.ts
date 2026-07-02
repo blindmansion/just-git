@@ -10,7 +10,6 @@ import { isSubmoduleMode } from "../symlink.ts";
 import { flattenTree, flattenTreeToMap } from "../tree-ops.ts";
 import type { GitContext, GitRepo, ObjectId } from "../types.ts";
 import { checkoutEntry } from "./worktree.ts";
-import { fatal, err } from "../command-errors.ts";
 import { firstLine } from "../text-utils.ts";
 import { uniqueAbbrev } from "../abbrev.ts";
 import { resolveRevision } from "../refs/rev-parse.ts";
@@ -89,6 +88,18 @@ export async function clearOperationState(gitCtx: GitContext): Promise<ClearedOp
 }
 
 /**
+ * Structured result of a `restore*` operation. Carries semantic success or the
+ * kind of failure encountered; the CLI mapper (`cli/restore#renderRestoreOutcome`)
+ * turns each variant into git-exact stderr text + exit code.
+ */
+export type RestoreOutcome =
+	| { kind: "ok" }
+	| { kind: "notWorkTree" }
+	| { kind: "unmerged"; path: string }
+	| { kind: "noMatch"; pathspec: string }
+	| { kind: "noVersion"; path: string; side: "our" | "their" };
+
+/**
  * Restore files from the index or a specific tree.
  * Supports glob pathspecs. When `sourceTree` is provided, restores from
  * that tree and updates the index to match.
@@ -98,9 +109,9 @@ export async function restoreFiles(
 	paths: string[],
 	cwdPrefix: string,
 	sourceTree?: ObjectId | null,
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+): Promise<RestoreOutcome> {
 	if (!gitCtx.workTree) {
-		return fatal("this operation must be run in a work tree");
+		return { kind: "notWorkTree" };
 	}
 
 	if (sourceTree) {
@@ -116,9 +127,9 @@ export async function restoreFiles(
 			(e) => e.stage > 0 && matchPathspecs(specs, e.path),
 		);
 		if (hasConflictMatch) {
-			return err(`error: path '${paths[0]}' is unmerged\n`);
+			return { kind: "unmerged", path: paths[0] ?? "" };
 		}
-		return err(`error: pathspec '${paths[0]}' did not match any file(s) known to git\n`);
+		return { kind: "noMatch", pathspec: paths[0] ?? "" };
 	}
 
 	for (const entry of matched) {
@@ -129,7 +140,7 @@ export async function restoreFiles(
 		});
 	}
 
-	return { stdout: "", stderr: "", exitCode: 0 };
+	return { kind: "ok" };
 }
 
 /**
@@ -141,7 +152,7 @@ async function restoreFromTree(
 	paths: string[],
 	cwdPrefix: string,
 	treeHash: ObjectId,
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+): Promise<RestoreOutcome> {
 	const treeMap = await flattenTreeToMap(gitCtx, treeHash);
 
 	let index = await readIndex(gitCtx);
@@ -155,7 +166,7 @@ async function restoreFromTree(
 	}
 
 	if (matchedPaths.length === 0) {
-		return err(`error: pathspec '${paths[0]}' did not match any file(s) known to git\n`);
+		return { kind: "noMatch", pathspec: paths[0] ?? "" };
 	}
 
 	for (const path of matchedPaths) {
@@ -176,7 +187,7 @@ async function restoreFromTree(
 	}
 
 	await writeIndex(gitCtx, index);
-	return { stdout: "", stderr: "", exitCode: 0 };
+	return { kind: "ok" };
 }
 
 /**
@@ -190,9 +201,9 @@ export async function restoreConflicted(
 	cwdPrefix: string,
 	stage: 2 | 3,
 	opts?: { deleteOnMissing?: boolean },
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+): Promise<RestoreOutcome> {
 	if (!gitCtx.workTree) {
-		return fatal("this operation must be run in a work tree");
+		return { kind: "notWorkTree" };
 	}
 
 	const deleteOnMissing = opts?.deleteOnMissing ?? false;
@@ -204,7 +215,7 @@ export async function restoreConflicted(
 		if (matchPathspecs(specs, e.path)) seen.add(e.path);
 	}
 	if (seen.size === 0) {
-		return err(`error: pathspec '${paths[0]}' did not match any file(s) known to git\n`);
+		return { kind: "noMatch", pathspec: paths[0] ?? "" };
 	}
 
 	for (const path of seen) {
@@ -225,13 +236,12 @@ export async function restoreConflicted(
 		} else {
 			const hasConflict = index.entries.some((e) => e.path === path && e.stage > 0);
 			if (hasConflict) {
-				const label = stage === 2 ? "our" : "their";
-				return err(`error: path '${path}' does not have ${label} version\n`);
+				return { kind: "noVersion", path, side: stage === 2 ? "our" : "their" };
 			}
 		}
 	}
 
-	return { stdout: "", stderr: "", exitCode: 0 };
+	return { kind: "ok" };
 }
 
 /** One file's status in the checkout/switch stdout summary. */

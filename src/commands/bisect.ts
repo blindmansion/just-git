@@ -17,8 +17,8 @@ import { readHead, resolveHead, resolveRef, updateRef } from "../lib/refs/refs.t
 import { resolveRevision } from "../lib/refs/rev-parse.ts";
 import type { GitContext } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
-import type { CommandResult } from "../lib/command-errors.ts";
-import { fatal, isCommandError } from "../lib/command-errors.ts";
+import type { CommandResult } from "../cli/command-errors.ts";
+import { fatal, isCommandError } from "../cli/command-errors.ts";
 import { firstLine } from "../lib/text-utils.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
 import { requireGitContext, requireWorkTree, requireRevision } from "../cli/commit-requirements.ts";
