@@ -12,6 +12,7 @@ import {
 	fileConcernProfiles,
 	fileMetrics,
 	findDuplicateTypeShapes,
+	functionsReferencingType,
 	godFiles,
 	impactedTests,
 	moduleCallCohesion,
@@ -204,6 +205,27 @@ describe("concern classifier", () => {
 		// format/log.ts is presentation-dominant.
 		const logFormat = profiles.find((p) => p.relPath === "format/log.ts");
 		expect(logFormat?.dominant).toBe("formatting");
+	});
+});
+
+describe("signature type references", () => {
+	test("finds functions with a target type in return/param position", async () => {
+		const refs = await functionsReferencingType({ include: "src/lib", root: "src" }, [
+			"CommandResult",
+		]);
+		const by = (id: string) => refs.find((r) => r.id === id);
+
+		// Explicit return of the type.
+		expect(by("lib/command-errors.ts#fatal")?.positions).toEqual(["return"]);
+		// Union return `CommandResult | null` still counts.
+		expect(by("lib/commit-requirements.ts#requireWorkTree")?.positions).toContain("return");
+		// The type in a parameter is recorded as a param position, not a return.
+		const isCmdErr = by("lib/command-errors.ts#isCommandError");
+		expect(isCmdErr?.positions).toContain("param");
+		expect(isCmdErr?.positions).not.toContain("return");
+
+		// A function with no CommandResult in its signature is absent.
+		expect(by("lib/abbrev.ts#uniqueAbbrev")).toBeUndefined();
 	});
 });
 

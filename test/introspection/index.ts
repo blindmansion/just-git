@@ -57,6 +57,11 @@ export {
 	valueEdges,
 } from "./query.ts";
 export { formatCounts, formatMatrix } from "./format.ts";
+export {
+	functionsReferencingType,
+	type SignaturePosition,
+	type SignatureRef,
+} from "./signature-refs.ts";
 export { type FileMetrics, fileMetrics, godFiles } from "./metrics.ts";
 export {
 	buildTestTopology,
