@@ -1,8 +1,11 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import {
 	buildImportGraph,
+	dependents,
 	findCycles,
 	findLayerViolations,
+	functionsReferencingType,
+	functionsReturningShape,
 	type ImportGraph,
 	isRuntimeEdge,
 } from "./index.ts";
@@ -23,8 +26,24 @@ import {
  *
  * `lib`/`parse` and `store`/`repo`/`proxy` are peers (no edges between them),
  * so their relative order within the list is arbitrary.
+ *
+ * `format` (pure renderers: `(data struct) → string`) sits above the data core
+ * and below `cli`/`commands`: it may import `lib`/`repo` data types, but no
+ * data-core layer may import it, so any `data → format` runtime edge is a
+ * violation. This is the machine-checkable form of "presentation is owned by the
+ * command tier" (see `local-docs/plans/lib-formatting-data-separation.md`).
  */
-const LAYERS = ["lib", "parse", "store", "repo", "proxy", "server", "cli", "commands"] as const;
+const LAYERS = [
+	"lib",
+	"parse",
+	"store",
+	"repo",
+	"proxy",
+	"server",
+	"format",
+	"cli",
+	"commands",
+] as const;
 
 /**
  * Top-level `src/*.ts` modules are exempt: they are either pure *contracts*
@@ -87,6 +106,43 @@ describe("src layering policy", () => {
 		const present = new Set(cycles.map(cycleKey));
 		const stale = KNOWN_RUNTIME_CYCLES.filter((c) => !present.has(cycleKey(c)));
 		expect(stale).toEqual([]);
+	});
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// The CLI command contract is owned by `cli/`, never `lib/`.
+//
+// `lib` gathers structured data; the command tier renders it and decides the
+// exit code. These guards are the end-state of the formatting/data-separation
+// work (see `local-docs/plans/lib-formatting-data-separation.md`): they fail if
+// the `CommandResult` contract — named *or* by its `{ stdout, stderr, exitCode }`
+// shape — ever leaks back into the data core.
+// ──────────────────────────────────────────────────────────────────────────
+describe("lib is free of the CLI command contract", () => {
+	test("no lib function has CommandResult in its signature", async () => {
+		const refs = await functionsReferencingType({ include: "src/lib" }, ["CommandResult"]);
+		expect(refs.map((r) => r.id)).toEqual([]);
+	});
+
+	test("no lib function returns an inline { stdout, stderr, exitCode } shape", async () => {
+		const refs = await functionsReturningShape({ include: "src/lib" }, [
+			"stdout",
+			"stderr",
+			"exitCode",
+		]);
+		expect(refs.map((r) => r.id)).toEqual([]);
+	});
+
+	test("no lib file imports the command-errors module", async () => {
+		const graph = await buildImportGraph({ include: "src", root: "src" });
+		const commandErrors = [...graph.nodes.values()].find(
+			(n) => n.relPath === "cli/command-errors.ts",
+		);
+		expect(commandErrors).toBeDefined();
+		const libImporters = dependents(graph, commandErrors!.file)
+			.map((f) => graph.nodes.get(f)?.relPath ?? f)
+			.filter((rel) => rel.startsWith("lib/"));
+		expect(libImporters).toEqual([]);
 	});
 });
 

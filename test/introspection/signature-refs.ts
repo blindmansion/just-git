@@ -113,6 +113,70 @@ function typeNamesOf(
 	return out;
 }
 
+/** A named function whose return type contains an object arm of a given shape. */
+export interface ShapeReturnRef {
+	/** Stable id: `${relPath}#${qualifiedName}` (with `@line` on collision). */
+	id: string;
+	name: string;
+	relPath: string;
+	line: number;
+	exported: boolean;
+}
+
+/** Every object arm of a type, unwrapping `Promise<…>` and top-level unions. */
+function returnObjectArms(checker: ts.TypeChecker, type: ts.Type): ts.Type[] {
+	const awaited = checker.getAwaitedType(type) ?? type;
+	const arms = awaited.isUnion() ? awaited.types : [awaited];
+	return arms.filter((t) => (t.flags & ts.TypeFlags.Object) !== 0);
+}
+
+/**
+ * Find every named function under `include` whose *return type* has an object
+ * arm carrying **all** of `requiredProps` — matching by structure, not by name,
+ * so it catches the anonymous `{ stdout, stderr, exitCode }` CLI-result shapes
+ * that {@link functionsReferencingType} misses (those never mention the
+ * `CommandResult` type). Unwraps `Promise<…>` and top-level unions, so a
+ * `Promise<Ok | { stdout; stderr; exitCode }>` return is flagged on its failure
+ * arm.
+ */
+export async function functionsReturningShape(
+	source: ProgramOptions | AnalysisProgram,
+	requiredProps: string[],
+): Promise<ShapeReturnRef[]> {
+	const prog = "program" in source ? source : await createAnalysisProgram(source);
+	const { checker, relOf } = prog;
+	const out: ShapeReturnRef[] = [];
+	const seenIds = new Set<string>();
+
+	for (const sf of prog.sourceFiles) {
+		const rel = relOf(path.resolve(sf.fileName));
+		const visit = (node: ts.Node): void => {
+			const info = fnInfo(node);
+			if (info) {
+				const sig = checker.getSignatureFromDeclaration(info.fn);
+				if (sig) {
+					const arms = returnObjectArms(checker, checker.getReturnTypeOfSignature(sig));
+					const match = arms.some((arm) => {
+						const props = new Set(checker.getPropertiesOfType(arm).map((p) => p.getName()));
+						return requiredProps.every((p) => props.has(p));
+					});
+					if (match) {
+						const line = sf.getLineAndCharacterOfPosition(info.fn.getStart(sf)).line + 1;
+						let id = `${rel}#${info.name}`;
+						if (seenIds.has(id)) id = `${id}@${line}`;
+						seenIds.add(id);
+						out.push({ id, name: info.name, relPath: rel, line, exported: isExported(info.fn) });
+					}
+				}
+			}
+			ts.forEachChild(node, visit);
+		};
+		visit(sf);
+	}
+
+	return out;
+}
+
 /**
  * Find every named function under `include` whose signature (return type or any
  * parameter type) references one of `targetTypes`. Matching is by type *name*

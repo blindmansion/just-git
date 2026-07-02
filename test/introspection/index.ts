@@ -59,6 +59,8 @@ export {
 export { formatCounts, formatMatrix } from "./format.ts";
 export {
 	functionsReferencingType,
+	functionsReturningShape,
+	type ShapeReturnRef,
 	type SignaturePosition,
 	type SignatureRef,
 } from "./signature-refs.ts";
