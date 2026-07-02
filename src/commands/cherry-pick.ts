@@ -2,7 +2,7 @@ import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import { hasStagedChanges } from "../lib/command-utils.ts";
 import { gatherCommitStats } from "../lib/commit-summary.ts";
-import { renderCommitSummary } from "../format/commit-summary.ts";
+import { renderCommitOneLiner, renderCommitSummary } from "../format/commit-summary.ts";
 import { getStage0Entries, readIndex, writeIndex } from "../lib/index.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import {
@@ -27,7 +27,6 @@ import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 import { firstLine, stripCommentLines, ensureTrailingNewline } from "../lib/text-utils.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
-import { formatCommitOneLiner } from "../lib/ref-format.ts";
 import {
 	requireGitContext,
 	requireHead,
@@ -372,7 +371,8 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 				stats,
 			});
 
-			const header = await formatCommitOneLiner(gitCtx, branchName, commitHash, cherryPickMessage);
+			const headerShortHash = await uniqueAbbrev(gitCtx, commitHash);
+			const header = renderCommitOneLiner(branchName, headerShortHash, cherryPickMessage);
 			const mergeMessages = result.messages.length > 0 ? `${result.messages.join("\n")}\n` : "";
 			await ext?.capabilities?.hooks?.postCherryPick?.({
 				repo: gitCtx,
@@ -554,7 +554,8 @@ async function handleContinue(
 		stats,
 	});
 
-	const header = await formatCommitOneLiner(gitCtx, branchName, commitHash, messageText);
+	const shortHash = await uniqueAbbrev(gitCtx, commitHash);
+	const header = renderCommitOneLiner(branchName, shortHash, messageText);
 	return {
 		stdout: `${header}\n${summary}`,
 		stderr: "",

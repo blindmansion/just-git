@@ -1,7 +1,8 @@
 import type { CommandContext, GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
+import { uniqueAbbrev } from "../lib/abbrev.ts";
 import { gatherCommitStats } from "../lib/commit-summary.ts";
-import { renderCommitSummary } from "../format/commit-summary.ts";
+import { renderCommitOneLiner, renderCommitSummary } from "../format/commit-summary.ts";
 import {
 	getStage0Entries,
 	hasConflicts,
@@ -29,7 +30,6 @@ import { diffIndexToWorkTree, stageFile } from "../lib/worktree/worktree.ts";
 import { type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 import { firstLine, stripCommentLines, ensureTrailingNewline } from "../lib/text-utils.ts";
-import { formatCommitOneLiner } from "../lib/ref-format.ts";
 import {
 	requireGitContext,
 	requireWorkTree,
@@ -468,10 +468,10 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 			const stats = isMerge ? null : await gatherCommitStats(gitCtx, parentTree, treeHash);
 			const summary = renderCommitSummary({ author, committer, showDate, isMerge, stats });
 
-			const header = await formatCommitOneLiner(
-				gitCtx,
+			const shortHash = await uniqueAbbrev(gitCtx, commitHash);
+			const header = renderCommitOneLiner(
 				branchName,
-				commitHash,
+				shortHash,
 				messageText,
 				parents.length === 0 && !isAmend,
 			);

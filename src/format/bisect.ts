@@ -1,5 +1,31 @@
 import type { BisectResult, BisectState } from "../lib/bisect.ts";
 
+export interface FirstBadCommitInfo {
+	hash: string;
+	subject: string;
+	authorName: string;
+	authorEmail: string;
+	/** Author timestamp in seconds since the epoch. */
+	authorTimestamp: number;
+}
+
+/**
+ * Render git's "first bad commit found" summary block.
+ * The caller supplies the commit fields; this stays a pure renderer.
+ */
+export function renderFirstBadCommit(info: FirstBadCommitInfo): string {
+	const dateStr = new Date(info.authorTimestamp * 1000).toUTCString().replace("GMT", "+0000");
+	return (
+		`${info.hash} is the first bad commit\n` +
+		`commit ${info.hash}\n` +
+		`Author: ${info.authorName} <${info.authorEmail}>\n` +
+		`Date:   ${dateStr}\n` +
+		`\n` +
+		`    ${info.subject}\n` +
+		`\n`
+	);
+}
+
 export function formatBisectStatus(state: BisectState): string {
 	const hasBad = state.badHash != null;
 	const goodCount = state.goodHashes.length;

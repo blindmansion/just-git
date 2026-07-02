@@ -2,7 +2,11 @@ import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import { walkCommits } from "../lib/commit-walk.ts";
 import { gatherCommitStats } from "../lib/commit-summary.ts";
-import { renderDiffStat, renderFastForward } from "../format/commit-summary.ts";
+import {
+	renderCommitOneLiner,
+	renderDiffStat,
+	renderFastForward,
+} from "../format/commit-summary.ts";
 import { formatDate } from "../lib/date.ts";
 import { getConflictedPaths, getStage0Entries, readIndex } from "../lib/index.ts";
 import {
@@ -30,7 +34,6 @@ import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 import { firstLine, stripCommentLines, ensureTrailingNewline } from "../lib/text-utils.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
-import { formatCommitOneLiner } from "../lib/ref-format.ts";
 import {
 	requireGitContext,
 	requireHead,
@@ -653,7 +656,8 @@ async function handleContinue(
 
 	const diffstat = renderDiffStat(await gatherCommitStats(gitCtx, headCommit.tree, treeHash));
 	const branchName = head?.type === "symbolic" ? branchNameFromRef(head.target) : "detached HEAD";
-	const header = await formatCommitOneLiner(gitCtx, branchName, commitHash, messageText);
+	const shortHash = await uniqueAbbrev(gitCtx, commitHash);
+	const header = renderCommitOneLiner(branchName, shortHash, messageText);
 
 	return {
 		stdout: `${header}\n${diffstat}`,

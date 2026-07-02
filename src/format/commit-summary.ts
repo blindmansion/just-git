@@ -9,9 +9,26 @@
 import type { DiffStats, FileStat, ModeChange } from "../lib/commit-summary.ts";
 import { formatDate } from "../lib/date.ts";
 import { formatRenamePath } from "../lib/diff/rename-detection.ts";
+import { firstLine } from "../lib/text-utils.ts";
 import type { Identity } from "../lib/types.ts";
 
 const STAT_WIDTH = 80;
+
+/**
+ * Render git's one-line commit header: `[<branch>[ (root-commit)] <shortHash>] <subject>`.
+ *
+ * The caller supplies the already-disambiguated short hash (see
+ * `lib/abbrev#uniqueAbbrev`) so this stays a pure, synchronous renderer.
+ */
+export function renderCommitOneLiner(
+	branchName: string,
+	shortHash: string,
+	message: string,
+	rootCommit = false,
+): string {
+	const rootLabel = rootCommit ? " (root-commit)" : "";
+	return `[${branchName}${rootLabel} ${shortHash}] ${firstLine(message)}`;
+}
 
 /**
  * Format the shortstat insertions/deletions parts using git's

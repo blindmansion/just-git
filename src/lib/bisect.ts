@@ -1,5 +1,4 @@
 import { walkCommits } from "./commit-walk.ts";
-import { readCommit } from "./object-db.ts";
 import { deleteStateFile, readStateFile, writeStateFile } from "./operation-state.ts";
 import { join } from "./path.ts";
 import { deleteRef, listRefs, resolveRef } from "./refs/refs.ts";
@@ -252,27 +251,4 @@ function computeRevisionsLeft(nr: number): number {
 function computeSteps(nr: number): number {
 	if (nr <= 1) return 0;
 	return Math.ceil(Math.log2(nr));
-}
-
-// ── Status message formatting ───────────────────────────────────────
-
-/**
- * Format the "first bad commit found" message.
- */
-export async function formatFirstBadCommit(ctx: GitRepo, hash: string): Promise<string> {
-	const commit = await readCommit(ctx, hash);
-	const subject = firstLine(commit.message);
-
-	const authorDate = new Date(commit.author.timestamp * 1000);
-	const dateStr = authorDate.toUTCString().replace("GMT", "+0000");
-
-	let out = `${hash} is the first bad commit\n`;
-	out += `commit ${hash}\n`;
-	out += `Author: ${commit.author.name} <${commit.author.email}>\n`;
-	out += `Date:   ${dateStr}\n`;
-	out += `\n`;
-	out += `    ${subject}\n`;
-	out += `\n`;
-
-	return out;
 }

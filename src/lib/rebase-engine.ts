@@ -65,7 +65,6 @@ import type { CommandResult } from "./command-errors.ts";
 import { fatal, err, isCommandError } from "./command-errors.ts";
 import { firstLine, stripCommentLines, ensureTrailingNewline } from "./text-utils.ts";
 import { uniqueAbbrev } from "./abbrev.ts";
-import { formatCommitOneLiner } from "./ref-format.ts";
 import { writeCommitAndAdvance } from "./commit-write.ts";
 import { branchNameFromRef } from "./refs/name.ts";
 import { getConfigValue } from "./config/store.ts";
@@ -1205,7 +1204,8 @@ export async function handleAbort(
  */
 export interface ContinueOutcome extends CommandResult {
 	finalizedCommit?: {
-		header: string;
+		/** Raw pieces of the one-line header; the command layer renders it. */
+		oneLiner: { branchName: string; shortHash: string; message: string };
 		author: Identity;
 		committer: Identity;
 		showDate: boolean;
@@ -1353,9 +1353,15 @@ export async function handleContinue(
 			const showDate =
 				authorSource.author.timestamp !== committer.timestamp ||
 				authorSource.author.timezone !== committer.timezone;
-			const header = await formatCommitOneLiner(gitCtx, label, commitHash, message);
+			const shortHash = await uniqueAbbrev(gitCtx, commitHash);
 			const stats = await gatherCommitStats(gitCtx, headCommit.tree, indexTree);
-			finalizedCommit = { header, author: authorSource.author, committer, showDate, stats };
+			finalizedCommit = {
+				oneLiner: { branchName: label, shortHash, message },
+				author: authorSource.author,
+				committer,
+				showDate,
+				stats,
+			};
 		}
 
 		const finishingFinalStep = state.todo.length === 0;

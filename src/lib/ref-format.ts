@@ -1,25 +1,5 @@
-// Formatting for user-facing ref/commit output: the columnar fetch/push/pull
-// transfer lines and the one-line commit header.
-
-import { uniqueAbbrev } from "./abbrev.ts";
-import { firstLine } from "./text-utils.ts";
-import type { GitRepo, ObjectId } from "./types.ts";
-
-/**
- * Format the one-line commit header: `[branchName shortHash] firstLine`
- *
- * Uses a disambiguated short hash ({@link uniqueAbbrev}) to match git.
- */
-export async function formatCommitOneLiner(
-	ctx: GitRepo,
-	branchName: string,
-	hash: ObjectId,
-	message: string,
-	rootCommit = false,
-): Promise<string> {
-	const rootLabel = rootCommit ? " (root-commit)" : "";
-	return `[${branchName}${rootLabel} ${await uniqueAbbrev(ctx, hash)}] ${firstLine(message)}`;
-}
+// Formatting for user-facing ref output: the columnar fetch/push/pull
+// transfer lines.
 
 // ── Transfer output formatting (fetch / push / pull) ────────────────
 

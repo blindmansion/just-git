@@ -1,6 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
-import { renderCommitSummary } from "../format/commit-summary.ts";
+import { renderCommitOneLiner, renderCommitSummary } from "../format/commit-summary.ts";
 import { handleAbort, handleContinue, handleSkip, performRebase } from "../lib/rebase-engine.ts";
 import { isRebaseInProgress, rebaseMergeDir } from "../lib/rebase.ts";
 import { readHead } from "../lib/refs/refs.ts";
@@ -39,7 +39,12 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 					(await bindAttributes(gitCtx, "rebase"))?.merge,
 				);
 				if (res.finalizedCommit) {
-					const { header, author, committer, showDate, stats } = res.finalizedCommit;
+					const { oneLiner, author, committer, showDate, stats } = res.finalizedCommit;
+					const header = renderCommitOneLiner(
+						oneLiner.branchName,
+						oneLiner.shortHash,
+						oneLiner.message,
+					);
 					const summary = renderCommitSummary({
 						author,
 						committer,

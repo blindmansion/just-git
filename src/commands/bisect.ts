@@ -4,7 +4,6 @@ import {
 	type BisectState,
 	cleanBisectState,
 	findBisectionCommit,
-	formatFirstBadCommit,
 	isBisectInProgress,
 	readBisectState,
 	readBisectTerms,
@@ -23,7 +22,7 @@ import { fatal, isCommandError } from "../lib/command-errors.ts";
 import { firstLine } from "../lib/text-utils.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
 import { requireGitContext, requireWorkTree, requireRevision } from "../cli/commit-requirements.ts";
-import { formatBisectStatus, formatBisectingLine } from "../format/bisect.ts";
+import { formatBisectStatus, formatBisectingLine, renderFirstBadCommit } from "../format/bisect.ts";
 
 // ── Reserved subcommand names (cannot be used as custom terms) ──────
 
@@ -672,7 +671,14 @@ async function bisectAutoNext(
 	}
 
 	if (result.found) {
-		const foundOutput = await formatFirstBadCommit(gitCtx, result.hash);
+		const commit = await readCommit(gitCtx, result.hash);
+		const foundOutput = renderFirstBadCommit({
+			hash: result.hash,
+			subject: firstLine(commit.message),
+			authorName: commit.author.name,
+			authorEmail: commit.author.email,
+			authorTimestamp: commit.author.timestamp,
+		});
 		await appendBisectLog(gitCtx, `# first bad commit: [${result.hash}] ${result.subject}`);
 		return { stdout: foundOutput, stderr: "", exitCode: 0 };
 	}
