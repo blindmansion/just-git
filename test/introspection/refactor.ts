@@ -905,6 +905,188 @@ async function flushWrites(writes: PendingWrite[]): Promise<void> {
 	}
 }
 
+// ── tool 3: rename a symbol repo-wide ────────────────────────────────────────
+
+/**
+ * Build a `ts.LanguageService` over the same file set + compiler options as
+ * {@link createAnalysisProgram}, reading file contents fresh from disk. This is
+ * what powers checker-accurate, IDE-grade rename (usages + imports + aliases +
+ * shorthand), which the plain program can't express.
+ */
+async function buildLanguageService(
+	scope: string | string[],
+): Promise<{ service: ts.LanguageService; program: ts.Program }> {
+	const analysis = await createAnalysisProgram({ include: scope });
+	const options = analysis.program.getCompilerOptions();
+	const fileNames = analysis.program.getSourceFiles().map((sf) => sf.fileName);
+	const host: ts.LanguageServiceHost = {
+		getScriptFileNames: () => fileNames,
+		getScriptVersion: () => "0",
+		getScriptSnapshot: (f) => {
+			const text = ts.sys.readFile(f);
+			return text === undefined ? undefined : ts.ScriptSnapshot.fromString(text);
+		},
+		getCurrentDirectory: () => REPO_ROOT,
+		getCompilationSettings: () => options,
+		getDefaultLibFileName: (o) => ts.getDefaultLibFilePath(o),
+		fileExists: ts.sys.fileExists,
+		readFile: ts.sys.readFile,
+		readDirectory: ts.sys.readDirectory,
+		directoryExists: ts.sys.directoryExists,
+		getDirectories: ts.sys.getDirectories,
+		realpath: ts.sys.realpath,
+	};
+	const service = ts.createLanguageService(host, ts.createDocumentRegistry());
+	const program = service.getProgram();
+	if (!program) throw new Error("failed to construct language-service program");
+	return { service, program };
+}
+
+/**
+ * Rename a top-level declaration `name` (interface / type / function / const /
+ * class / enum) in `fromRel` to `newName` **everywhere** — declaration site, all
+ * references, and every consumer's import specifier (preserving `as` aliases and
+ * shorthand). Backed by the language service's `findRenameLocations`, so it
+ * renames by symbol identity, never by text: an unrelated same-named symbol in
+ * another scope is left untouched.
+ *
+ * @example
+ * await renameSymbol("FlatEntry", "src/commands/show.ts", "FlatTreeEntry");
+ */
+export async function renameSymbol(
+	name: string,
+	fromRel: string,
+	newName: string,
+	opts: RefactorOptions = {},
+): Promise<RefactorResult> {
+	const scope = opts.scope ?? ["src", "test"];
+	const fromFile = abs(fromRel);
+	const result: RefactorResult = {
+		movedFiles: [],
+		changedFiles: [],
+		notes: [],
+		dryRun: !!opts.dryRun,
+	};
+
+	const { service, program } = await buildLanguageService(scope);
+	const sf = program.getSourceFile(fromFile);
+	if (!sf) throw new Error(`source file not found in scope: ${fromRel}`);
+	const decl = sf.statements.find((s) => declaredNames(s).includes(name));
+	if (!decl) throw new Error(`no top-level declaration named "${name}" in ${fromRel}`);
+	const nameNode = findNameNode(decl, name);
+	if (!nameNode) throw new Error(`could not locate identifier "${name}" in ${fromRel}`);
+
+	const locations =
+		service.findRenameLocations(fromFile, nameNode.getStart(sf), false, false, true) ?? [];
+	if (locations.length === 0) {
+		result.notes.push(`no rename locations found for ${name} in ${fromRel}`);
+		return result;
+	}
+
+	const byFile = new Map<string, TextEdit[]>();
+	for (const loc of locations) {
+		const file = path.resolve(loc.fileName);
+		const edit: TextEdit = {
+			start: loc.textSpan.start,
+			end: loc.textSpan.start + loc.textSpan.length,
+			newText: `${loc.prefixText ?? ""}${newName}${loc.suffixText ?? ""}`,
+		};
+		(byFile.get(file) ?? byFile.set(file, []).get(file)!).push(edit);
+	}
+
+	const writes: PendingWrite[] = [];
+	for (const [file, edits] of byFile) {
+		const original = await fs.readFile(file, "utf8");
+		recordWrite(result, writes, file, applyEdits(original, edits));
+	}
+	result.changedFiles.sort();
+	result.notes.unshift(
+		`renamed ${name} → ${newName}: ${locations.length} location(s) across ${byFile.size} file(s)`,
+	);
+	if (!opts.dryRun) await flushWrites(writes);
+	return result;
+}
+
+// ── tool 4: consolidate a duplicate declaration into a canonical one ──────────
+
+/** Merge `changedFiles`/`notes` from a sub-step into the running result. */
+function mergeResult(into: RefactorResult, from: RefactorResult): void {
+	into.changedFiles.push(...from.changedFiles);
+	into.movedFiles.push(...from.movedFiles);
+	into.notes.push(...from.notes);
+}
+
+/**
+ * Fold a duplicate declaration into a canonical one: rename `fromName`
+ * (in `fromRel`) to `toName` repo-wide, delete the now-redundant declaration in
+ * `fromRel`, and repoint every consumer's import to `toRel` (the canonical
+ * home). Intended for the structurally-identical declarations surfaced by
+ * `findDuplicateTypeShapes` — pick the survivor, then collapse each duplicate
+ * into it.
+ *
+ * The two declarations must already be structurally compatible; this does not
+ * verify that. `dryRun` is not supported here because each step depends on the
+ * previous step's writes.
+ *
+ * @example
+ * await consolidateDeclaration(
+ *   "AdvertisedRef", "src/server/protocol.ts",
+ *   "RefEntry",      "src/lib/types.ts",
+ * );
+ */
+export async function consolidateDeclaration(
+	fromName: string,
+	fromRel: string,
+	toName: string,
+	toRel: string,
+	opts: RefactorOptions = {},
+): Promise<RefactorResult> {
+	if (opts.dryRun) throw new Error("consolidateDeclaration does not support dryRun");
+	const scope = opts.scope ?? ["src", "test"];
+	const fromFile = abs(fromRel);
+	const toFile = abs(toRel);
+	const result: RefactorResult = { movedFiles: [], changedFiles: [], notes: [], dryRun: false };
+
+	// 1. Align names: rename the duplicate to the canonical name everywhere.
+	if (fromName !== toName) {
+		mergeResult(result, await renameSymbol(fromName, fromRel, toName, { scope }));
+	}
+
+	// 2. Delete the (now duplicate-named) declaration from its original file,
+	//    importing the canonical one back if the file still references it.
+	{
+		const { checker, sourceFiles } = await createAnalysisProgram({ include: scope });
+		const dsf = sourceFiles.find((s) => path.resolve(s.fileName) === fromFile);
+		if (!dsf) throw new Error(`source file not found in scope: ${fromRel}`);
+		const text = dsf.getFullText();
+		const matched = dsf.statements.filter((s) => declaredNames(s).includes(toName));
+		if (matched.length === 0) throw new Error(`no declaration "${toName}" to remove in ${fromRel}`);
+		const editor = new ImportEditor(dsf, checker);
+		for (const stmt of matched) {
+			let end = stmt.getEnd();
+			if (text[end] === "\n") end++;
+			editor.edits.push({ start: leadingDocStart(text, stmt, dsf), end, newText: "" });
+		}
+		if (referencesNameOutside(dsf, checker, toName, new Set(matched))) {
+			editor.ensureNamed(relativeSpecifier(fromFile, toFile), toFile, {
+				importedName: toName,
+				localName: toName,
+				typeOnly: true,
+			});
+			result.notes.push(`${fromRel} still uses ${toName}; imported it from ${toRel}`);
+		}
+		if (!opts.dryRun) await fs.writeFile(fromFile, applyEdits(text, editor.edits));
+		result.changedFiles.push(relOf(fromFile));
+	}
+
+	// 3. Repoint every consumer that still imports `toName` from the old module.
+	mergeResult(result, await redirectSymbols(fromRel, { [toName]: toRel }, { scope }));
+
+	result.notes.unshift(`consolidated ${fromName} (${fromRel}) → ${toName} (${toRel})`);
+	result.changedFiles = [...new Set(result.changedFiles)].sort();
+	return result;
+}
+
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
 async function main(argv: string[]): Promise<void> {
@@ -919,9 +1101,24 @@ async function main(argv: string[]): Promise<void> {
 		const [name, from, to] = args;
 		if (!name || !from || !to) throw new Error("usage: move-decl <name> <from> <to> [--dry-run]");
 		printResult(await moveDeclaration(name, from, to, { dryRun }));
+	} else if (cmd === "rename") {
+		const [name, from, newName] = args;
+		if (!name || !from || !newName)
+			throw new Error("usage: rename <name> <from> <newName> [--dry-run]");
+		printResult(await renameSymbol(name, from, newName, { dryRun }));
+	} else if (cmd === "consolidate") {
+		const [fromName, from, toName, to] = args;
+		if (!fromName || !from || !toName || !to)
+			throw new Error("usage: consolidate <fromName> <from> <toName> <to>");
+		printResult(await consolidateDeclaration(fromName, from, toName, to));
 	} else {
 		console.error(
-			"commands:\n  move-file <from> <to>\n  move-decl <name> <from> <to>\n  (append --dry-run)",
+			"commands:\n" +
+				"  move-file <from> <to>\n" +
+				"  move-decl <name> <from> <to>\n" +
+				"  rename <name> <from> <newName>\n" +
+				"  consolidate <fromName> <from> <toName> <to>\n" +
+				"  (append --dry-run; not supported for consolidate)",
 		);
 		process.exit(1);
 	}

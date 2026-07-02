@@ -86,10 +86,12 @@ export {
 	uncalledFunctions,
 } from "./call-graph.ts";
 export {
+	consolidateDeclaration,
 	moveDeclaration,
 	moveModules,
 	type RefactorOptions,
 	type RefactorResult,
 	redirectSymbols,
 	relativeSpecifier,
+	renameSymbol,
 } from "./refactor.ts";
