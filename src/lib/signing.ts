@@ -1,7 +1,7 @@
-import { readConfigView } from "./config.ts";
 import { serializeCommit } from "./objects/commit.ts";
 import { serializeTag } from "./objects/tag.ts";
 import type { Commit, GitRepo, Tag } from "./types.ts";
+import { readConfigView } from "./config/view.ts";
 
 // ── Capability interfaces ───────────────────────────────────────────
 

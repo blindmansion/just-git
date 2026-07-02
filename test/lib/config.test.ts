@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
-	addConfigValueRaw,
-	formatConfigValue,
 	parseConfig,
 	parseConfigMulti,
+	formatConfigValue,
 	serializeConfig,
 	setConfigValueRaw,
 	unsetConfigValueRaw,
-} from "../../src/lib/config.ts";
+	addConfigValueRaw,
+} from "../../src/lib/config/parse.ts";
 
 // ── Basic parsing ───────────────────────────────────────────────────
 

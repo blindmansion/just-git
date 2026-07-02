@@ -1,6 +1,5 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
-import { readConfig } from "../lib/config.ts";
 import {
 	autoFollowReachableTags,
 	collectFetchHaves,
@@ -24,6 +23,7 @@ import type { TransferRefLine } from "../lib/ref-format.ts";
 import { formatTransferRefLines, buildRefUpdateLines } from "../lib/ref-format.ts";
 import { requireGitContext } from "../lib/commit-requirements.ts";
 import { shortenRef } from "../lib/refs/name.ts";
+import { readConfig } from "../lib/config/store.ts";
 
 export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("fetch", {

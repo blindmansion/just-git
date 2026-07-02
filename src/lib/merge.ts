@@ -1,11 +1,11 @@
 import { formatDiffStat } from "./commit-summary.ts";
-import { readConfigView } from "./config.ts";
 import { readIndex, writeIndex } from "./index.ts";
 import { readCommit } from "./object-db.ts";
 import { advanceBranchRef } from "./refs/refs.ts";
 import type { ConfigView, GitContext, GitRepo, IndexEntry, ObjectId } from "./types.ts";
 import { applyWorktreeOps, fastForwardMerge } from "./worktree/unpack-trees.ts";
 import { uniqueAbbrev } from "./abbrev.ts";
+import { readConfigView } from "./config/view.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
 

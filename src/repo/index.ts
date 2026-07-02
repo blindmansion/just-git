@@ -26,16 +26,15 @@ export {
 
 // Config (bounded value-state core: materialize on the shell, transform
 // purely, persist on the shell — keeps config operations GitRepo-shaped)
+export { configDataFromText, type ConfigData } from "../lib/config/parse.ts";
 export {
 	addConfig,
-	configDataFromText,
-	configViewFrom,
 	getConfigAllFrom,
 	getConfigFrom,
 	setConfig,
 	unsetConfig,
-	type ConfigData,
-} from "../lib/config.ts";
+} from "../lib/config/store.ts";
+export { configViewFrom } from "../lib/config/view.ts";
 
 // Identity (GitRepo-shaped core: resolve commit/reflog identity from a
 // materialized ConfigView, no fs — the shell materializes and threads it)

@@ -7,7 +7,6 @@ import {
 } from "../lib/command-utils.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import { formatDiffStat } from "../lib/commit-summary.ts";
-import { getConfigValue, readConfig } from "../lib/config.ts";
 import {
 	autoFollowReachableTags,
 	collectFetchHaves,
@@ -49,6 +48,7 @@ import {
 	writeCommitAndAdvance,
 } from "../lib/commit-requirements.ts";
 import { branchNameFromRef, shortenRef } from "../lib/refs/name.ts";
+import { readConfig, getConfigValue } from "../lib/config/store.ts";
 
 function pullUpToDateMessage(
 	head: Awaited<ReturnType<typeof readHead>>,

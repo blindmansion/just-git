@@ -1,6 +1,5 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
-import { readConfig, writeConfig } from "../lib/config.ts";
 import { buildIndex, defaultStat, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { basename, resolve } from "../lib/path.ts";
@@ -17,6 +16,7 @@ import type { GitContext, GitRepo, ObjectId } from "../lib/types.ts";
 import { checkoutTree } from "../lib/worktree/worktree.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err } from "../lib/command-errors.ts";
+import { readConfig, writeConfig } from "../lib/config/store.ts";
 
 export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("clone", {

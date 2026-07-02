@@ -37,13 +37,13 @@ describe("shared program bootstrap", () => {
 describe("file metrics", () => {
 	test("computes size/shape and finds god-files", async () => {
 		const metrics = await fileMetrics({ include: "src/lib", root: "src/lib" });
-		const cfg = metrics.find((m) => m.relPath === "config.ts");
+		const cfg = metrics.find((m) => m.relPath === "types.ts");
 		expect(cfg).toBeDefined();
 		expect(cfg?.exports ?? 0).toBeGreaterThan(20);
 
-		// config.ts is a known god-file by export count.
+		// types.ts is a known god-file by export count (the shared type bucket).
 		const gods = godFiles(metrics, { exports: 25 });
-		expect(gods.some((m) => m.relPath === "config.ts")).toBe(true);
+		expect(gods.some((m) => m.relPath === "types.ts")).toBe(true);
 	});
 });
 

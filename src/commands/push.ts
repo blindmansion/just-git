@@ -1,6 +1,5 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
-import { getConfigValue, readConfig, writeConfig } from "../lib/config.ts";
 import { isAncestor } from "../lib/merge.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 import {
@@ -22,6 +21,7 @@ import type { TransferRefLine } from "../lib/ref-format.ts";
 import { formatTransferRefLines } from "../lib/ref-format.ts";
 import { requireGitContext } from "../lib/commit-requirements.ts";
 import { shortenRef } from "../lib/refs/name.ts";
+import { readConfig, writeConfig, getConfigValue } from "../lib/config/store.ts";
 
 export function registerPushCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("push", {

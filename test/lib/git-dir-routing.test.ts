@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { MemoryFileSystem } from "../../src";
-import { getConfigValue, setConfigValue } from "../../src/lib/config.ts";
 import { writeObject } from "../../src/lib/object-db.ts";
 import { PackedObjectStore } from "../../src/lib/object-store.ts";
 import { appendReflog } from "../../src/lib/refs/reflog.ts";
 import type { GitContext } from "../../src/lib/types.ts";
 import { FileSystemRefStore } from "../../src/lib/refs/store.ts";
+import { getConfigValue, setConfigValue } from "../../src/lib/config/store.ts";
 
 // A linked worktree splits state across two directories. These tests force
 // them apart so a mis-route is visible — in a plain repo they coincide and a

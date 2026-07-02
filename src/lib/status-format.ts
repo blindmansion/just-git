@@ -1,6 +1,5 @@
 import { isBisectInProgress } from "./bisect.ts";
 import { countAheadBehind } from "./commit-walk.ts";
-import { type GitConfig, readConfig } from "./config.ts";
 import { getStage0Entries, hasConflicts, readIndex } from "./index.ts";
 import { readCommit } from "./object-db.ts";
 import { readDetachPoint, readStateFile } from "./operation-state.ts";
@@ -13,6 +12,8 @@ import type { GitContext, GitRepo, Index, ObjectId, TreeDiffEntry } from "./type
 import { diffIndexToWorkTree } from "./worktree/worktree.ts";
 import { uniqueAbbrev } from "./abbrev.ts";
 import { branchNameFromRef } from "./refs/name.ts";
+import { readConfig } from "./config/store.ts";
+import type { GitConfig } from "./config/parse.ts";
 
 export interface StatusEntry {
 	/** Path used for sorting (new path for renames). */

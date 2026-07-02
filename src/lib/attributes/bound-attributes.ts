@@ -1,8 +1,8 @@
 import type { AttributesProvider } from "./attributes.ts";
-import { buildCapabilityContext } from "../config.ts";
 import { FilterError } from "./filters.ts";
 import type { ContentMergeFn } from "../merge-ort.ts";
 import type { GitContext, GitOperation, GitRepo, ObjectId } from "../types.ts";
+import { buildCapabilityContext } from "../config/view.ts";
 
 const encoder = new TextEncoder();
 

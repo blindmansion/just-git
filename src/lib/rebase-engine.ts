@@ -7,7 +7,6 @@ import {
 } from "./command-utils.ts";
 import { bindAttributes } from "./attributes/bound-attributes.ts";
 import { formatCommitSummary } from "./commit-summary.ts";
-import { getConfigValue } from "./config.ts";
 import {
 	getConflictedPaths,
 	getStage0Entries,
@@ -72,6 +71,7 @@ import { uniqueAbbrev } from "./abbrev.ts";
 import { formatCommitOneLiner } from "./ref-format.ts";
 import { requireCommitter, writeCommitAndAdvance } from "./commit-requirements.ts";
 import { branchNameFromRef } from "./refs/name.ts";
+import { getConfigValue } from "./config/store.ts";
 
 /**
  * Return the display label for the current HEAD — either the branch name

@@ -1,5 +1,4 @@
 import type { CommandContext, GitExtensions } from "../git.ts";
-import { type GitConfig, readConfig, writeConfig } from "../lib/config.ts";
 import { readReflog, writeReflog } from "../lib/refs/reflog.ts";
 import { deleteRef, listRefs, updateRef } from "../lib/refs/refs.ts";
 import { stripAndCacheCredentials } from "../lib/transport/remote.ts";
@@ -9,6 +8,8 @@ import type { CommandResult } from "../lib/command-errors.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 import { requireGitContext } from "../lib/commit-requirements.ts";
 import { checkRefFormat, RefFormatFlag } from "../lib/refs/name.ts";
+import { readConfig, writeConfig } from "../lib/config/store.ts";
+import type { GitConfig } from "../lib/config/parse.ts";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 

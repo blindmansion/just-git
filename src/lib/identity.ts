@@ -1,6 +1,6 @@
 import { clockNow } from "./capabilities.ts";
-import { readConfigView } from "./config.ts";
 import type { ConfigView, GitContext, GitRepo, Identity } from "./types.ts";
+import { readConfigView } from "./config/view.ts";
 
 // ── Env var keys per role ───────────────────────────────────────────
 

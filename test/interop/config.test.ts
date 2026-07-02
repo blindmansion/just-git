@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { join } from "path";
-import { addConfigValueRaw } from "../../src/lib/config.ts";
 import {
 	createSandbox,
 	expectGitCommandError,
@@ -11,6 +10,7 @@ import {
 	removeSandbox,
 	writeToSandbox,
 } from "./util";
+import { addConfigValueRaw } from "../../src/lib/config/parse.ts";
 
 describe("interop: config cross-reading", () => {
 	let sandbox: string;
@@ -484,7 +484,7 @@ describe("interop: format-preserving writes", () => {
 	test("just-git write produces values real git can read", async () => {
 		const configPath = join(sandbox, ".git/config");
 		const existing = readFileSync(configPath, "utf8");
-		const { setConfigValueRaw } = await import("../../src/lib/config.ts");
+		const { setConfigValueRaw } = await import("../../src/lib/config/parse.ts");
 		const updated = setConfigValueRaw(existing, "test", "bslash", "C:\\path\\to");
 		writeFileSync(configPath, updated);
 

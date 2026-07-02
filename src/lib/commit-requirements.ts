@@ -9,7 +9,6 @@ import type { GitExtensions } from "../git.ts";
 import { abbreviateHash } from "./abbrev.ts";
 import { withCapabilities } from "./capabilities.ts";
 import { type CommandResult, err, fatal } from "./command-errors.ts";
-import { configBool, readConfigView } from "./config.ts";
 import { resolveIdentityFrom } from "./identity.ts";
 import { hasConflicts } from "./index.ts";
 import { peelToCommit, readCommit, writeObject } from "./object-db.ts";
@@ -27,6 +26,8 @@ import type {
 	Index,
 	ObjectId,
 } from "./types.ts";
+import { readConfigView } from "./config/view.ts";
+import { configBool } from "./config/parse.ts";
 
 const NOT_A_GIT_REPO = fatal("not a git repository (or any of the parent directories): .git");
 

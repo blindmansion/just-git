@@ -12,7 +12,6 @@ import {
 	requireResolvedIndex,
 	switchBranchCore,
 } from "../lib/worktree/checkout-utils.ts";
-import { readConfig, writeConfig } from "../lib/config.ts";
 import { formatLongTrackingInfo, getTrackingInfo } from "../lib/status-format.ts";
 import { clearIndex, readIndex, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
@@ -35,6 +34,7 @@ import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 import { requireGitContext, requireCommit } from "../lib/commit-requirements.ts";
 import { isValidBranchName } from "../lib/refs/name.ts";
+import { readConfig, writeConfig } from "../lib/config/store.ts";
 
 function fromNameOf(head: Ref | null, hash: ObjectId | null): string {
 	return head?.type === "symbolic"

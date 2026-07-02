@@ -1,17 +1,16 @@
 import type { GitExtensions } from "../git.ts";
-import {
-	type GitConfigMulti,
-	addConfigValue,
-	getConfigValue,
-	getConfigValueAll,
-	parseConfigMulti,
-	setConfigValue,
-	unsetConfigValue,
-} from "../lib/config.ts";
 import { join } from "../lib/path.ts";
 import { a, type Command, f } from "../parse/index.ts";
 import { err, isCommandError } from "../lib/command-errors.ts";
 import { requireGitContext } from "../lib/commit-requirements.ts";
+import {
+	getConfigValue,
+	setConfigValue,
+	getConfigValueAll,
+	addConfigValue,
+	unsetConfigValue,
+} from "../lib/config/store.ts";
+import { type GitConfigMulti, parseConfigMulti } from "../lib/config/parse.ts";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 

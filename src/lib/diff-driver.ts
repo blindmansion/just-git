@@ -1,8 +1,8 @@
 import type { BoundAttributes } from "./attributes/bound-attributes.ts";
 import { resolveAttributes } from "./attributes/bound-attributes.ts";
-import { isGitContext } from "./config.ts";
 import { isBinaryBytes } from "./object-db.ts";
 import type { GitContext, GitRepo } from "./types.ts";
+import { isGitContext } from "./config/parse.ts";
 
 const decoder = new TextDecoder();
 

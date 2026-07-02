@@ -1,5 +1,4 @@
 import { type CommandResult, err, fatal } from "./command-errors.ts";
-import { configBool, readConfigView } from "./config.ts";
 import { readIndex, writeIndex } from "./index.ts";
 import { readCommit } from "./object-db.ts";
 import { relative } from "./path.ts";
@@ -10,6 +9,8 @@ import { flattenTreeToMap } from "./tree-ops.ts";
 import type { ConfigView, GitContext, GitRepo, Index, ObjectId } from "./types.ts";
 import { applyWorktreeOps, mergeAbort } from "./worktree/unpack-trees.ts";
 import { diffIndexToWorkTree } from "./worktree/worktree.ts";
+import { readConfigView } from "./config/view.ts";
+import { configBool } from "./config/parse.ts";
 
 /**
  * Check whether the index has staged changes relative to a HEAD tree.

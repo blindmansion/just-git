@@ -1,6 +1,5 @@
 import type { GitExtensions } from "../../git.ts";
 import { findOrphanedCommits } from "../commit-walk.ts";
-import { getConfigValue, readConfig, writeConfig } from "../config.ts";
 import { addEntry, defaultStat, readIndex, writeIndex } from "../index.ts";
 import { hashObject, readCommit } from "../object-db.ts";
 import { clearAllOperationState, clearDetachPoint, writeDetachPoint } from "../operation-state.ts";
@@ -26,6 +25,7 @@ import { fatal, err, isCommandError } from "../command-errors.ts";
 import { firstLine } from "../text-utils.ts";
 import { uniqueAbbrev } from "../abbrev.ts";
 import { requireCommit } from "../commit-requirements.ts";
+import { readConfig, writeConfig, getConfigValue } from "../config/store.ts";
 
 /**
  * Scan the HEAD reflog for the most recent "checkout: moving from X to Y"

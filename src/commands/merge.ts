@@ -3,7 +3,6 @@ import { isRejection } from "../hooks.ts";
 import { handleOperationAbort, resolveCommandSigner } from "../lib/command-utils.ts";
 import { walkCommits } from "../lib/commit-walk.ts";
 import { formatDiffStat } from "../lib/commit-summary.ts";
-import { getConfigValue } from "../lib/config.ts";
 import { formatDate } from "../lib/date.ts";
 import { getConflictedPaths, getStage0Entries, readIndex } from "../lib/index.ts";
 import {
@@ -42,6 +41,7 @@ import {
 	writeCommitAndAdvance,
 } from "../lib/commit-requirements.ts";
 import { branchNameFromRef } from "../lib/refs/name.ts";
+import { getConfigValue } from "../lib/config/store.ts";
 
 export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("merge", {

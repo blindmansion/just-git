@@ -1,7 +1,8 @@
-import { type ConfigData, parseConfig, readConfigData } from "../config.ts";
 import type { GitContext } from "../types.ts";
 import type { CredentialStore, NetworkPolicy } from "../../hooks.ts";
 import type { HttpAuth } from "./transport.ts";
+import { readConfigData } from "../config/store.ts";
+import { type ConfigData, parseConfig } from "../config/parse.ts";
 
 /** Render an {@link HttpAuth} as the HTTP `Authorization` header(s). */
 export function authHeaders(auth?: HttpAuth): Record<string, string> {

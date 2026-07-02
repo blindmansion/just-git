@@ -6,7 +6,6 @@ import {
 	resolveCommandSigner,
 } from "../lib/command-utils.ts";
 import { formatCommitSummary } from "../lib/commit-summary.ts";
-import { getConfigValue } from "../lib/config.ts";
 import { getStage0Entries, readIndex, writeIndex } from "../lib/index.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import {
@@ -41,6 +40,7 @@ import {
 	writeCommitAndAdvance,
 } from "../lib/commit-requirements.ts";
 import { branchNameFromRef } from "../lib/refs/name.ts";
+import { getConfigValue } from "../lib/config/store.ts";
 
 export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("cherry-pick", {

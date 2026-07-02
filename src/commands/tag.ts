@@ -1,6 +1,5 @@
 import type { GitExtensions } from "../git.ts";
 import { resolveCommandSigner } from "../lib/command-utils.ts";
-import { configBool, getConfigValue } from "../lib/config.ts";
 import { readCommit, readObject, readTag, writeObject } from "../lib/object-db.ts";
 import { serializeTag } from "../lib/objects/tag.ts";
 import { tagSigningPayload } from "../lib/signing.ts";
@@ -17,6 +16,8 @@ import {
 	requireCommitter,
 } from "../lib/commit-requirements.ts";
 import { isValidTagName } from "../lib/refs/name.ts";
+import { getConfigValue } from "../lib/config/store.ts";
+import { configBool } from "../lib/config/parse.ts";
 
 export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("tag", {

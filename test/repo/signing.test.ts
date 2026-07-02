@@ -2,7 +2,6 @@ import { beforeAll, describe, expect, test } from "bun:test";
 import { Bash, InMemoryFs } from "just-bash";
 import * as openpgp from "openpgp";
 import { createGit } from "../../src/index.ts";
-import { configBool } from "../../src/lib/config.ts";
 import { readCommit, readObject, readTag } from "../../src/lib/object-db.ts";
 import { parseCommit, serializeCommit } from "../../src/lib/objects/commit.ts";
 import { parseTag, serializeTag } from "../../src/lib/objects/tag.ts";
@@ -19,6 +18,7 @@ import type { Commit, Tag } from "../../src/lib/types.ts";
 import { createAnnotatedTag, createCommit } from "../../src/repo/writing.ts";
 import { verifyCommit, verifyTag } from "../../src/repo/reading.ts";
 import { TEST_ENV } from "../fixtures.ts";
+import { configBool } from "../../src/lib/config/parse.ts";
 
 const decoder = new TextDecoder();
 

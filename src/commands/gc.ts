@@ -1,5 +1,4 @@
 import type { GitExtensions } from "../git.ts";
-import { type GitConfig, readConfig } from "../lib/config.ts";
 import { collectAllRoots } from "../lib/gc-roots.ts";
 import { clearDetachPoint } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";
@@ -11,6 +10,8 @@ import { type Command, f } from "../parse/index.ts";
 import { formatRepackStderr, repackFromTips } from "../lib/repack.ts";
 import { isCommandError } from "../lib/command-errors.ts";
 import { requireGitContext } from "../lib/commit-requirements.ts";
+import { readConfig } from "../lib/config/store.ts";
+import type { GitConfig } from "../lib/config/parse.ts";
 
 export function registerGcCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("gc", {

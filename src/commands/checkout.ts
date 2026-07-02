@@ -12,7 +12,6 @@ import {
 	switchBranchCore,
 } from "../lib/worktree/checkout-utils.ts";
 import { getCwdPrefix } from "../lib/command-utils.ts";
-import { readConfig, writeConfig } from "../lib/config.ts";
 import { findEntry, readIndex, writeIndex } from "../lib/index.ts";
 import { peelToCommit, readCommit } from "../lib/object-db.ts";
 import { clearDetachPoint } from "../lib/operation-state.ts";
@@ -34,6 +33,7 @@ import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 import { requireGitContext, requireCommit } from "../lib/commit-requirements.ts";
 import { isValidBranchName } from "../lib/refs/name.ts";
+import { readConfig, writeConfig } from "../lib/config/store.ts";
 
 export function registerCheckoutCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("checkout", {

@@ -1,10 +1,10 @@
 import type { FileSystem } from "../fs.ts";
-import { type GitConfig, serializeConfig } from "./config.ts";
 import { PackedObjectStore } from "./object-store.ts";
 import { join, resolve } from "./path.ts";
 import { createSymbolicRef } from "./refs/refs.ts";
 import type { GitContext } from "./types.ts";
 import { FileSystemRefStore } from "./refs/store.ts";
+import { type GitConfig, serializeConfig } from "./config/parse.ts";
 
 // ── Repository discovery ────────────────────────────────────────────
 

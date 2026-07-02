@@ -7,7 +7,6 @@ import {
 	type NetworkPolicy,
 } from "../../hooks.ts";
 import { emptyAttributesProvider } from "../attributes/attributes.ts";
-import { buildCapabilityContext, makeConfigView } from "../config.ts";
 import { findRepo } from "../repo.ts";
 import type {
 	ConfigView,
@@ -32,6 +31,7 @@ import {
 	validateNetworkAccess,
 } from "./remote.ts";
 import { LocalTransport, SmartHttpTransport, type HttpAuth, type Transport } from "./transport.ts";
+import { makeConfigView, buildCapabilityContext } from "../config/view.ts";
 
 /**
  * Decide which wire-protocol version the client should *request* on discovery.
