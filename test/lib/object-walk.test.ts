@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolveHead } from "../../src/lib/refs.ts";
+import { resolveHead } from "../../src/lib/refs/refs.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import {
 	collectEnumeration,

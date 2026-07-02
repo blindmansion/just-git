@@ -14,9 +14,9 @@ import { resolveIdentityFrom } from "./identity.ts";
 import { hasConflicts } from "./index.ts";
 import { peelToCommit, readCommit, writeObject } from "./object-db.ts";
 import { serializeCommit } from "./objects/commit.ts";
-import { advanceBranchRef, resolveHead } from "./refs.ts";
+import { advanceBranchRef, resolveHead } from "./refs/refs.ts";
 import { findRepo } from "./repo.ts";
-import { resolveRevision } from "./rev-parse.ts";
+import { resolveRevision } from "./refs/rev-parse.ts";
 import { type Signer, commitSigningPayload, resolveVerifierOpts } from "./signing.ts";
 import type {
 	Commit,

@@ -3,7 +3,7 @@ import { readCommit as _readCommit } from "../lib/object-db.ts";
 import { serializeCommit } from "../lib/objects/commit.ts";
 import { serializeTag } from "../lib/objects/tag.ts";
 import { parseTree, serializeTree } from "../lib/objects/tree.ts";
-import { resolveRef as _resolveRef } from "../lib/refs.ts";
+import { resolveRef as _resolveRef } from "../lib/refs/refs.ts";
 import { resolveSdkSigning, signCommitPayload, signTagPayload } from "../lib/signing.ts";
 import type { Commit, GitRepo, Identity, ObjectType, Tag, TreeEntry } from "../lib/types.ts";
 

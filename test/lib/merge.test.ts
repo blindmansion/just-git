@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { findAllMergeBases } from "../../src/lib/merge";
 import { mergeOrtNonRecursive } from "../../src/lib/merge-ort";
 import { readCommit } from "../../src/lib/object-db";
-import { resolveRef } from "../../src/lib/refs";
+import { resolveRef } from "../../src/lib/refs/refs.ts";
 import { findRepo } from "../../src/lib/repo";
 import type { GitContext, ObjectId } from "../../src/lib/types";
 import { EMPTY_REPO, envAt } from "../fixtures";

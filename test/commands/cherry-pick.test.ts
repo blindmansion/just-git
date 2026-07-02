@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readCommit } from "../../src/lib/object-db";
-import { resolveHead, resolveRef } from "../../src/lib/refs";
+import { resolveHead, resolveRef } from "../../src/lib/refs/refs.ts";
 import { findRepo } from "../../src/lib/repo";
 import { EMPTY_REPO, TEST_ENV_NAMED as TEST_ENV, envAt } from "../fixtures";
 import { createTestBash, pathExists, readFile } from "../util";

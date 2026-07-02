@@ -12,7 +12,7 @@ import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
 import { everyPath, gitAttributes } from "../../src/lib/attributes/attribute-resolver.ts";
 import type { MergeDriver } from "../../src/lib/merge-ort.ts";
-import { resolveHead } from "../../src/lib/refs.ts";
+import { resolveHead } from "../../src/lib/refs/refs.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import { TEST_ENV, textMergeDriver } from "../fixtures.ts";
 

@@ -4,10 +4,10 @@ import {
 	peelToCommit,
 	readCommit,
 	readObject,
-} from "./object-db.ts";
+} from "../object-db.ts";
 import { readReflog } from "./reflog.ts";
 import { resolveRef } from "./refs.ts";
-import type { GitContext, GitRepo, ObjectId } from "./types.ts";
+import type { GitContext, GitRepo, ObjectId } from "../types.ts";
 
 // ── Suffix types ─────────────────────────────────────────────────
 

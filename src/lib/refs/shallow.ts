@@ -1,6 +1,6 @@
-import { objectExists, readCommit } from "./object-db.ts";
-import { join } from "./path.ts";
-import type { GitContext, GitRepo, ObjectId } from "./types.ts";
+import { objectExists, readCommit } from "../object-db.ts";
+import { join } from "../path.ts";
+import type { GitContext, GitRepo, ObjectId } from "../types.ts";
 
 /** Depth value that represents "full history" (used by --unshallow). */
 export const INFINITE_DEPTH = 0x7fffffff;

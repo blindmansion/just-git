@@ -43,7 +43,7 @@ import {
 	logRefEffects,
 	type ReflogEffect,
 	type ReflogIdentity,
-} from "./reflog.ts";
+} from "./refs/reflog.ts";
 import {
 	advanceBranchRef,
 	createSymbolicRef,
@@ -52,7 +52,7 @@ import {
 	resolveHead,
 	resolveRef,
 	updateRef,
-} from "./refs.ts";
+} from "./refs/refs.ts";
 import { buildTreeFromIndex, flattenTree, flattenTreeToMap } from "./tree-ops.ts";
 import type { GitContext, GitRepo, Index, ObjectId } from "./types.ts";
 import {
@@ -71,7 +71,7 @@ import { firstLine, stripCommentLines, ensureTrailingNewline } from "./text-util
 import { uniqueAbbrev } from "./abbrev.ts";
 import { formatCommitOneLiner } from "./ref-format.ts";
 import { requireCommitter, writeCommitAndAdvance } from "./commit-requirements.ts";
-import { branchNameFromRef } from "./ref-name.ts";
+import { branchNameFromRef } from "./refs/name.ts";
 
 /**
  * Return the display label for the current HEAD — either the branch name

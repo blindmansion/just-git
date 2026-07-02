@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { collectRebaseSymmetricPlan } from "../../src/lib/rebase";
 import { findRepo } from "../../src/lib/repo";
-import { resolveRevision } from "../../src/lib/rev-parse";
+import { resolveRevision } from "../../src/lib/refs/rev-parse.ts";
 import { RealGitHarness } from "../oracle/real-harness";
 import { createTestBash } from "../util";
 

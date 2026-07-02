@@ -16,9 +16,15 @@ import { readConfig, writeConfig } from "../lib/config.ts";
 import { findEntry, readIndex, writeIndex } from "../lib/index.ts";
 import { peelToCommit, readCommit } from "../lib/object-db.ts";
 import { clearDetachPoint } from "../lib/operation-state.ts";
-import { logRef, ZERO_HASH } from "../lib/reflog.ts";
-import { createSymbolicRef, readHead, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
-import { resolveRevision } from "../lib/rev-parse.ts";
+import { logRef, ZERO_HASH } from "../lib/refs/reflog.ts";
+import {
+	createSymbolicRef,
+	readHead,
+	resolveHead,
+	resolveRef,
+	updateRef,
+} from "../lib/refs/refs.ts";
+import { resolveRevision } from "../lib/refs/rev-parse.ts";
 import { formatLongTrackingInfo, getTrackingInfo } from "../lib/status-format.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { applyWorktreeOps, checkoutTrees } from "../lib/worktree/unpack-trees.ts";
@@ -27,7 +33,7 @@ import { branchCheckedOutAt } from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 import { requireGitContext, requireCommit } from "../lib/commit-requirements.ts";
-import { isValidBranchName } from "../lib/ref-name.ts";
+import { isValidBranchName } from "../lib/refs/name.ts";
 
 export function registerCheckoutCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("checkout", {

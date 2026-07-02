@@ -57,11 +57,11 @@ export {
 	type ReflogEffect,
 	type ReflogEntry,
 	type ReflogIdentity,
-} from "../lib/reflog.ts";
+} from "../lib/refs/reflog.ts";
 
 // Ref mutation that emits reflog effects (GitRepo-shaped: ref write rides on
 // refStore, reflog comes back as effects for the shell to apply)
-export { deleteRefEffects } from "../lib/refs.ts";
+export { deleteRefEffects } from "../lib/refs/refs.ts";
 
 // Signing & verification (the byte-for-byte sign/verify contract)
 export {

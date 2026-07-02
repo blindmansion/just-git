@@ -20,7 +20,7 @@ import {
 	enumerateObjectsWithContent,
 	collectEnumeration,
 } from "../../src/lib/transport/object-walk.ts";
-import { listRefs, resolveRef } from "../../src/lib/refs.ts";
+import { listRefs, resolveRef } from "../../src/lib/refs/refs.ts";
 import { PackedObjectStore } from "../../src/lib/object-store.ts";
 
 const TEST_ENV: Record<string, string> = {

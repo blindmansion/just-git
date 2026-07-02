@@ -1,5 +1,5 @@
 import { peelToCommit, readCommit } from "./object-db.ts";
-import { listRefs } from "./refs.ts";
+import { listRefs } from "./refs/refs.ts";
 import type { Commit, GitRepo, ObjectId } from "./types.ts";
 import { firstLine } from "./text-utils.ts";
 

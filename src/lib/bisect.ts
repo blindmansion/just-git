@@ -2,7 +2,7 @@ import { walkCommits } from "./commit-walk.ts";
 import { readCommit } from "./object-db.ts";
 import { deleteStateFile, readStateFile, writeStateFile } from "./operation-state.ts";
 import { join } from "./path.ts";
-import { deleteRef, listRefs, resolveRef } from "./refs.ts";
+import { deleteRef, listRefs, resolveRef } from "./refs/refs.ts";
 import type { GitContext, GitRepo } from "./types.ts";
 import { firstLine } from "./text-utils.ts";
 

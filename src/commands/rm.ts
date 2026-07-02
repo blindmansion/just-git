@@ -4,7 +4,7 @@ import { readIndex, removeEntry, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { join, relative, resolve } from "../lib/path.ts";
 import { containsWildcard, matchPathspecs, parsePathspec } from "../lib/attributes/pathspec.ts";
-import { resolveHead } from "../lib/refs.ts";
+import { resolveHead } from "../lib/refs/refs.ts";
 import { hashWorktreeEntry, lstatSafe } from "../lib/symlink.ts";
 import { flattenTree } from "../lib/tree-ops.ts";
 import type { GitContext, Index, ObjectId } from "../lib/types.ts";

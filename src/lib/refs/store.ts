@@ -1,6 +1,6 @@
-import type { FileSystem } from "../fs.ts";
-import { ensureParentDir, join } from "./path.ts";
-import { isPerWorktreeRef } from "./ref-classify.ts";
+import type { FileSystem } from "../../fs.ts";
+import { ensureParentDir, join } from "../path.ts";
+import { isPerWorktreeRef } from "./classify.ts";
 import {
 	type DirectRef,
 	normalizeRef,
@@ -9,7 +9,7 @@ import {
 	type RefEntry,
 	type RefStore,
 	type SymbolicRef,
-} from "./types.ts";
+} from "../types.ts";
 
 const SYMBOLIC_PREFIX = "ref: ";
 

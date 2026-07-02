@@ -17,7 +17,7 @@ import {
 } from "../lib/log-format.ts";
 import { readBlobBytes, readCommit, readObject, readTag } from "../lib/object-db.ts";
 import { detectRenames, formatRenamePath, type RenamePair } from "../lib/rename-detection.ts";
-import { parseRevPath } from "../lib/rev-parse.ts";
+import { parseRevPath } from "../lib/refs/rev-parse.ts";
 import { parseTree } from "../lib/objects/tree.ts";
 import { join } from "../lib/path.ts";
 import { diffTrees, flattenTreeToMap } from "../lib/tree-ops.ts";

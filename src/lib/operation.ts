@@ -1,7 +1,7 @@
 import { type BisectState, isBisectInProgress, readBisectState } from "./bisect.ts";
 import { readStateFile } from "./operation-state.ts";
 import { readRebaseState, type RebaseState } from "./rebase.ts";
-import { resolveRef } from "./refs.ts";
+import { resolveRef } from "./refs/refs.ts";
 import type { GitContext, ObjectId } from "./types.ts";
 
 // ── OperationState: the bounded value-state for in-progress operations ─

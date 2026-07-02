@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { InMemoryFs } from "just-bash";
-import { FileSystemRefStore } from "../../src/lib/ref-store.ts";
+import { FileSystemRefStore } from "../../src/lib/refs/store.ts";
 
 describe("FileSystemRefStore.compareAndSwapRef", () => {
 	const HASH_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

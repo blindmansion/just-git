@@ -5,8 +5,8 @@ import { ingestPackData, objectExists, peelToCommit, readObject } from "../objec
 import { findBestDeltas } from "../pack/delta.ts";
 import type { DeltaPackInput } from "../pack/packfile.ts";
 import { writePackDeltified } from "../pack/packfile.ts";
-import { listRefs, readHead, resolveRef } from "../refs.ts";
-import { computeShallowBoundary, type ShallowUpdate } from "../shallow.ts";
+import { listRefs, readHead, resolveRef } from "../refs/refs.ts";
+import { computeShallowBoundary, type ShallowUpdate } from "../refs/shallow.ts";
 import type { DiscoveryCache, DiscoveryEntry, GitRepo, ObjectId } from "../types.ts";
 import { collectEnumeration, enumerateObjectsWithContent } from "./object-walk.ts";
 import {

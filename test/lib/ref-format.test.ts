@@ -6,7 +6,7 @@ import {
 	RefFormatFlag,
 	isValidBranchName,
 	isValidTagName,
-} from "../../src/lib/ref-name.ts";
+} from "../../src/lib/refs/name.ts";
 
 describe("checkRefFormat", () => {
 	describe("rejects invalid full refnames", () => {

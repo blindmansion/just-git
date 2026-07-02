@@ -45,7 +45,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { collectRebaseSymmetricPlan, readRebaseState } from "../../src/lib/rebase.ts";
 import { findRepo } from "../../src/lib/repo.ts";
-import { resolveRevision } from "../../src/lib/rev-parse.ts";
+import { resolveRevision } from "../../src/lib/refs/rev-parse.ts";
 import { replayToVirtual } from "./impl-harness.ts";
 import { replayTo } from "./runner.ts";
 import { initDb } from "./schema.ts";

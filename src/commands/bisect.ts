@@ -15,8 +15,8 @@ import { detachHeadCore, switchBranchCore } from "../lib/worktree/checkout-utils
 import { readCommit } from "../lib/object-db.ts";
 import { readStateFile, writeStateFile } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";
-import { readHead, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
-import { resolveRevision } from "../lib/rev-parse.ts";
+import { readHead, resolveHead, resolveRef, updateRef } from "../lib/refs/refs.ts";
+import { resolveRevision } from "../lib/refs/rev-parse.ts";
 import type { GitContext } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import type { CommandResult } from "../lib/command-errors.ts";

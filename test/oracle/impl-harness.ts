@@ -10,8 +10,8 @@ import { createGit } from "../../src/git";
 import { createGitCommand } from "../../src/commands/git";
 import { createServer, MemoryStorage, type GitServer } from "../../src/server/index";
 import { readIndex } from "../../src/lib/index";
-import { readReflog } from "../../src/lib/reflog";
-import { listRefs, readHead, resolveRef } from "../../src/lib/refs";
+import { readReflog } from "../../src/lib/refs/reflog.ts";
+import { listRefs, readHead, resolveRef } from "../../src/lib/refs/refs.ts";
 import { findRepo } from "../../src/lib/repo";
 import type { GitContext } from "../../src/lib/types";
 import { listWorktrees } from "../../src/lib/worktree-admin";
@@ -583,7 +583,7 @@ async function executeCommand(
 // ── Replay engine ────────────────────────────────────────────────
 
 import type { Divergence } from "./compare";
-import { FileSystemRefStore } from "../../src/lib/ref-store.ts";
+import { FileSystemRefStore } from "../../src/lib/refs/store.ts";
 
 interface StepDivergence {
 	seq: number;

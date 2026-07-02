@@ -1,10 +1,10 @@
-import { readObject } from "./object-db.ts";
-import { parseTag } from "./objects/tag.ts";
-import { join } from "./path.ts";
-import { isPerWorktreeRef } from "./ref-classify.ts";
-import { FileSystemRefStore, MAX_SYMREF_DEPTH } from "./ref-store.ts";
+import { readObject } from "../object-db.ts";
+import { parseTag } from "../objects/tag.ts";
+import { join } from "../path.ts";
+import { isPerWorktreeRef } from "./classify.ts";
+import { FileSystemRefStore, MAX_SYMREF_DEPTH } from "./store.ts";
 import { applyReflogEffects, type ReflogEffect, reflogDelete } from "./reflog.ts";
-import type { GitContext, GitRepo, ObjectId, Ref, RefEntry } from "./types.ts";
+import type { GitContext, GitRepo, ObjectId, Ref, RefEntry } from "../types.ts";
 
 // ── Read ────────────────────────────────────────────────────────────
 

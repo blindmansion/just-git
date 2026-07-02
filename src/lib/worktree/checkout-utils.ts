@@ -6,7 +6,7 @@ import { hashObject, readCommit } from "../object-db.ts";
 import { clearAllOperationState, clearDetachPoint, writeDetachPoint } from "../operation-state.ts";
 import { join } from "../path.ts";
 import { matchPathspecs, parsePathspec } from "../attributes/pathspec.ts";
-import { logRef, readReflog, ZERO_HASH } from "../reflog.ts";
+import { logRef, readReflog, ZERO_HASH } from "../refs/reflog.ts";
 import {
 	createSymbolicRef,
 	listRefs,
@@ -14,7 +14,7 @@ import {
 	resolveHead,
 	resolveRef,
 	updateRef,
-} from "../refs.ts";
+} from "../refs/refs.ts";
 import { formatLongTrackingInfo, getTrackingInfo } from "../status-format.ts";
 import { isSubmoduleMode } from "../symlink.ts";
 import { flattenTree, flattenTreeToMap } from "../tree-ops.ts";

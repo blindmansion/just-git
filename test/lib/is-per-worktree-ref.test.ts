@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isPerWorktreeRef } from "../../src/lib/ref-classify.ts";
+import { isPerWorktreeRef } from "../../src/lib/refs/classify.ts";
 
 describe("isPerWorktreeRef", () => {
 	const cases: Array<[string, boolean]> = [

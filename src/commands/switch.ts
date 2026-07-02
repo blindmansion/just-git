@@ -18,7 +18,7 @@ import { clearIndex, readIndex, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { clearDetachPoint, readStateFile } from "../lib/operation-state.ts";
 import { isRebaseInProgress } from "../lib/rebase.ts";
-import { logRef, ZERO_HASH } from "../lib/reflog.ts";
+import { logRef, ZERO_HASH } from "../lib/refs/reflog.ts";
 import {
 	createSymbolicRef,
 	deleteRef,
@@ -26,7 +26,7 @@ import {
 	resolveHead,
 	resolveRef,
 	updateRef,
-} from "../lib/refs.ts";
+} from "../lib/refs/refs.ts";
 import { buildTreeFromIndex } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId, Ref } from "../lib/types.ts";
 import { applyWorktreeOps, checkoutTrees } from "../lib/worktree/unpack-trees.ts";
@@ -34,7 +34,7 @@ import { branchCheckedOutAt } from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 import { requireGitContext, requireCommit } from "../lib/commit-requirements.ts";
-import { isValidBranchName } from "../lib/ref-name.ts";
+import { isValidBranchName } from "../lib/refs/name.ts";
 
 function fromNameOf(head: Ref | null, hash: ObjectId | null): string {
 	return head?.type === "symbolic"

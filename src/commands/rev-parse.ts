@@ -1,8 +1,8 @@
 import type { GitExtensions } from "../git.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { relative } from "../lib/path.ts";
-import { readHead, resolveRef } from "../lib/refs.ts";
-import { parseRevPath, resolveRevision } from "../lib/rev-parse.ts";
+import { readHead, resolveRef } from "../lib/refs/refs.ts";
+import { parseRevPath, resolveRevision } from "../lib/refs/rev-parse.ts";
 import { flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext } from "../lib/types.ts";
 import { a, type Command, f } from "../parse/index.ts";

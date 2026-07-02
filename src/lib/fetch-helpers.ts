@@ -1,7 +1,7 @@
 import { objectExists } from "./object-db.ts";
-import { appendReflog, ZERO_HASH } from "./reflog.ts";
-import { listRefs, resolveRef, updateRef } from "./refs.ts";
-import { INFINITE_DEPTH, isShallowRepo, readShallowCommits } from "./shallow.ts";
+import { appendReflog, ZERO_HASH } from "./refs/reflog.ts";
+import { listRefs, resolveRef, updateRef } from "./refs/refs.ts";
+import { INFINITE_DEPTH, isShallowRepo, readShallowCommits } from "./refs/shallow.ts";
 import { resolveRemoteTransport } from "./transport/resolver.ts";
 import type { RemoteRef, ShallowFetchOptions, Transport } from "./transport/transport.ts";
 import type { GitContext, GitOperation, GitRepo, ObjectId } from "./types.ts";
@@ -9,7 +9,7 @@ import type { CredentialStore } from "../hooks.ts";
 import type { CommandResult } from "./command-errors.ts";
 import { fatal } from "./command-errors.ts";
 import type { TransferRefLine } from "./ref-format.ts";
-import { shortenRef } from "./ref-name.ts";
+import { shortenRef } from "./refs/name.ts";
 
 interface NormalizedFetchArgs {
 	depth?: number;

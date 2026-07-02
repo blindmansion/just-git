@@ -10,11 +10,11 @@ import { isRejection } from "../hooks.ts";
 import { withCapabilities } from "../lib/capabilities.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 import { isAncestor } from "../lib/merge.ts";
-import { listRefs, resolveRef } from "../lib/refs.ts";
+import { listRefs, resolveRef } from "../lib/refs/refs.ts";
 import { createTransportForUrl } from "../lib/transport/resolver.ts";
 import { mapRefspec, parseRefspec } from "../lib/transport/refspec.ts";
 import type { RemoteRef, ShallowFetchOptions } from "../lib/transport/transport.ts";
-import type { ShallowUpdate } from "../lib/shallow.ts";
+import type { ShallowUpdate } from "../lib/refs/shallow.ts";
 import type { GitRepo, ObjectId, ObjectStore, RefStore, RepoCapabilities } from "../lib/types.ts";
 
 const DEFAULT_REMOTE = "origin";

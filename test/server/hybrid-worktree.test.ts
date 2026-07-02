@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { Bash, InMemoryFs } from "just-bash";
 import { createGit } from "../../src/index.ts";
 import { findRepo } from "../../src/lib/repo.ts";
-import { resolveRef } from "../../src/lib/refs.ts";
+import { resolveRef } from "../../src/lib/refs/refs.ts";
 import { readCommit } from "../../src/lib/object-db.ts";
 import { flattenTree } from "../../src/lib/tree-ops.ts";
 import { BunSqliteStorage } from "../../src/store/bun-sqlite-storage.ts";

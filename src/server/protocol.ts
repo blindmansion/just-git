@@ -14,7 +14,7 @@ import {
 	parsePktLineStream,
 	pktLineText,
 } from "../lib/transport/pkt-line.ts";
-import type { ShallowUpdate } from "../lib/shallow.ts";
+import type { ShallowUpdate } from "../lib/refs/shallow.ts";
 
 const SIDEBAND_MAX_PAYLOAD = 65520 - 4 - 1; // pkt-line max (65520) minus 4-byte header minus 1-byte band = 65515
 

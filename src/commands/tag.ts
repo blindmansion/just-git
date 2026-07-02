@@ -4,7 +4,7 @@ import { configBool, getConfigValue } from "../lib/config.ts";
 import { readCommit, readObject, readTag, writeObject } from "../lib/object-db.ts";
 import { serializeTag } from "../lib/objects/tag.ts";
 import { tagSigningPayload } from "../lib/signing.ts";
-import { deleteRef, listRefs, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
+import { deleteRef, listRefs, resolveHead, resolveRef, updateRef } from "../lib/refs/refs.ts";
 import type { GitRepo, ObjectId } from "../lib/types.ts";
 import { WM_MATCH, wildmatch } from "../lib/attributes/wildmatch.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
@@ -16,7 +16,7 @@ import {
 	requireRevision,
 	requireCommitter,
 } from "../lib/commit-requirements.ts";
-import { isValidTagName } from "../lib/ref-name.ts";
+import { isValidTagName } from "../lib/refs/name.ts";
 
 export function registerTagCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("tag", {

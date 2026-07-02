@@ -1,9 +1,9 @@
-import type { FileSystem } from "../fs.ts";
-import { ZERO_HASH } from "./hex.ts";
-import { getReflogIdentity } from "./identity.ts";
-import { join, ensureParentDir } from "./path.ts";
-import { isPerWorktreeRef } from "./ref-classify.ts";
-import type { GitContext, ObjectId } from "./types.ts";
+import type { FileSystem } from "../../fs.ts";
+import { ZERO_HASH } from "../hex.ts";
+import { getReflogIdentity } from "../identity.ts";
+import { join, ensureParentDir } from "../path.ts";
+import { isPerWorktreeRef } from "./classify.ts";
+import type { GitContext, ObjectId } from "../types.ts";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -282,4 +282,4 @@ export async function logRef(
 	);
 }
 
-export { ZERO_HASH } from "./hex.ts";
+export { ZERO_HASH } from "../hex.ts";

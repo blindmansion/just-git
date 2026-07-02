@@ -6,8 +6,8 @@ import {
 	readTag as _readTag,
 } from "../lib/object-db.ts";
 import { parseTree } from "../lib/objects/tree.ts";
-import { resolveRef as _resolveRef, listRefs } from "../lib/refs.ts";
-import { resolveRevisionRepo } from "../lib/rev-parse.ts";
+import { resolveRef as _resolveRef, listRefs } from "../lib/refs/refs.ts";
+import { resolveRevisionRepo } from "../lib/refs/rev-parse.ts";
 import {
 	type VerificationResult,
 	VerificationError,
@@ -20,7 +20,7 @@ import { flattenTree as _flattenTree } from "../lib/tree-ops.ts";
 import { compilePattern, grepContent, type GrepMatch } from "../lib/grep.ts";
 import type { Commit, GitRepo, RefEntry, TreeEntry } from "../lib/types.ts";
 import { createTreeAccessor } from "./tree-accessor.ts";
-import { branchNameFromRef, tagNameFromRef } from "../lib/ref-name.ts";
+import { branchNameFromRef, tagNameFromRef } from "../lib/refs/name.ts";
 
 // ── Ref resolution ──────────────────────────────────────────────────
 

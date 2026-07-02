@@ -21,8 +21,8 @@ import {
 } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";
 import { isRebaseInProgress } from "../lib/rebase.ts";
-import { logRef } from "../lib/reflog.ts";
-import { readHead, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
+import { logRef } from "../lib/refs/reflog.ts";
+import { readHead, resolveHead, resolveRef, updateRef } from "../lib/refs/refs.ts";
 import { generateLongFormStatus } from "../lib/status-format.ts";
 import { buildTreeFromIndex } from "../lib/tree-ops.ts";
 import { diffIndexToWorkTree, stageFile } from "../lib/worktree/worktree.ts";
@@ -36,7 +36,7 @@ import {
 	requireCommitter,
 	requireAuthor,
 } from "../lib/commit-requirements.ts";
-import { branchNameFromRef } from "../lib/ref-name.ts";
+import { branchNameFromRef } from "../lib/refs/name.ts";
 
 function stdinToText(stdin: CommandContext["stdin"]): string {
 	const raw = stdin as string;

@@ -1,5 +1,5 @@
 import { join } from "./path.ts";
-import { deleteRef } from "./refs.ts";
+import { deleteRef } from "./refs/refs.ts";
 import type { GitContext } from "./types.ts";
 
 // ── Low-level state file helpers ─────────────────────────────────────

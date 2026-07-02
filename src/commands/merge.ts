@@ -22,9 +22,9 @@ import {
 	readStateFile,
 	writeStateFile,
 } from "../lib/operation-state.ts";
-import { logRef } from "../lib/reflog.ts";
-import { readHead, resolveRef, updateRef } from "../lib/refs.ts";
-import { resolveRevision } from "../lib/rev-parse.ts";
+import { logRef } from "../lib/refs/reflog.ts";
+import { readHead, resolveRef, updateRef } from "../lib/refs/refs.ts";
+import { resolveRevision } from "../lib/refs/rev-parse.ts";
 import { buildTreeFromIndex } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
@@ -41,7 +41,7 @@ import {
 	requireVerifiedCommit,
 	writeCommitAndAdvance,
 } from "../lib/commit-requirements.ts";
-import { branchNameFromRef } from "../lib/ref-name.ts";
+import { branchNameFromRef } from "../lib/refs/name.ts";
 
 export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("merge", {

@@ -4,10 +4,10 @@ import { expireReflogs } from "../../src/commands/gc.ts";
 import { collectAllRoots } from "../../src/lib/gc-roots.ts";
 import { writeObject } from "../../src/lib/object-db.ts";
 import { PackedObjectStore } from "../../src/lib/object-store.ts";
-import { appendReflog, readReflogAt } from "../../src/lib/reflog.ts";
+import { appendReflog, readReflogAt } from "../../src/lib/refs/reflog.ts";
 import type { GitContext } from "../../src/lib/types.ts";
 import { enumerateWorktrees } from "../../src/lib/worktree-admin.ts";
-import { FileSystemRefStore } from "../../src/lib/ref-store.ts";
+import { FileSystemRefStore } from "../../src/lib/refs/store.ts";
 
 const COMMON = "/repo/.git";
 

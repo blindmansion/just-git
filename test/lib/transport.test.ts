@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { objectExists, readObject } from "../../src/lib/object-db.ts";
-import { resolveHead, resolveRef } from "../../src/lib/refs.ts";
+import { resolveHead, resolveRef } from "../../src/lib/refs/refs.ts";
 import { findRepo } from "../../src/lib/repo.ts";
 import { LocalTransport } from "../../src/lib/transport/transport.ts";
 import { TEST_ENV as ENV } from "../fixtures";

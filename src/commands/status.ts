@@ -1,7 +1,7 @@
 import type { GitExtensions } from "../git.ts";
 import { readConfig } from "../lib/config.ts";
 import { readIndex } from "../lib/index.ts";
-import { readHead, resolveHead } from "../lib/refs.ts";
+import { readHead, resolveHead } from "../lib/refs/refs.ts";
 import {
 	collapseUntrackedDirs,
 	formatBranchTrackingInfo,
@@ -17,7 +17,7 @@ import { type Command, f } from "../parse/index.ts";
 import { comparePaths } from "../lib/path.ts";
 import { isCommandError } from "../lib/command-errors.ts";
 import { requireGitContext } from "../lib/commit-requirements.ts";
-import { branchNameFromRef } from "../lib/ref-name.ts";
+import { branchNameFromRef } from "../lib/refs/name.ts";
 
 export function registerStatusCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("status", {
