@@ -1,69 +1,16 @@
 import { objectExists } from "./object-db.ts";
 import { appendReflog, type ReflogIdentity } from "./refs/reflog.ts";
 import { listRefs, resolveRef, updateRef } from "./refs/refs.ts";
-import { INFINITE_DEPTH, isShallowRepo, readShallowCommits } from "./refs/shallow.ts";
-import { resolveRemoteTransport } from "./transport/resolver.ts";
+import { readShallowCommits } from "./refs/shallow.ts";
 import type { RemoteRef, ShallowFetchOptions, Transport } from "./transport/transport.ts";
-import type { GitContext, GitOperation, GitRepo, ObjectId } from "./types.ts";
-import type { CredentialStore } from "../hooks.ts";
-import type { CommandResult } from "./command-errors.ts";
-import { fatal } from "./command-errors.ts";
+import type { GitContext, GitRepo, ObjectId } from "./types.ts";
 import type { TransferRefLine } from "./ref-format.ts";
 import { shortenRef } from "./refs/name.ts";
 import { ZERO_HASH } from "./hex.ts";
 
-interface NormalizedFetchArgs {
-	depth?: number;
-}
-
 interface PreparedShallowFetch {
 	existingShallows?: Set<ObjectId>;
 	shallowOpts?: ShallowFetchOptions;
-}
-
-type ResolvedRemoteTransport = NonNullable<Awaited<ReturnType<typeof resolveRemoteTransport>>>;
-
-export async function normalizeFetchDepth(
-	gitCtx: GitContext,
-	args: { depth?: number; unshallow?: boolean },
-): Promise<NormalizedFetchArgs | CommandResult> {
-	if (args.depth !== undefined && args.unshallow) {
-		return fatal("--depth and --unshallow cannot be used together");
-	}
-	if (args.unshallow && !(await isShallowRepo(gitCtx))) {
-		return fatal("--unshallow on a complete repository does not make sense");
-	}
-
-	return {
-		depth: args.unshallow ? INFINITE_DEPTH : args.depth,
-	};
-}
-
-export async function resolveRemoteTransportOrError(
-	gitCtx: GitContext,
-	remoteName: string,
-	operation: GitOperation,
-	env: Map<string, string>,
-	buildError: (message: string) => CommandResult = fatal,
-	credentialStore?: CredentialStore,
-): Promise<ResolvedRemoteTransport | CommandResult> {
-	try {
-		const resolved = await resolveRemoteTransport(
-			gitCtx,
-			remoteName,
-			operation,
-			env,
-			credentialStore,
-		);
-		if (!resolved) {
-			return buildError(`'${remoteName}' does not appear to be a git repository`);
-		}
-		return resolved;
-	} catch (e) {
-		const msg = e instanceof Error ? e.message : "";
-		if (msg.startsWith("network")) return buildError(msg);
-		throw e;
-	}
 }
 
 export async function collectFetchHaves(gitCtx: GitRepo): Promise<ObjectId[]> {

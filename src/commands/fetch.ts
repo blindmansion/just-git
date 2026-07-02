@@ -3,9 +3,7 @@ import { isRejection } from "../hooks.ts";
 import {
 	autoFollowReachableTags,
 	collectFetchHaves,
-	normalizeFetchDepth,
 	prepareShallowFetch,
-	resolveRemoteTransportOrError,
 } from "../lib/fetch-helpers.ts";
 import { getReflogIdentity } from "../lib/identity.ts";
 import { join } from "../lib/path.ts";
@@ -25,6 +23,7 @@ import { requireGitContext } from "../cli/commit-requirements.ts";
 import { shortenRef } from "../lib/refs/name.ts";
 import { readConfig } from "../lib/config/store.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
+import { normalizeFetchDepth, resolveRemoteTransportOrError } from "../cli/fetch-helpers.ts";
 
 export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("fetch", {

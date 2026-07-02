@@ -1,7 +1,8 @@
 import { serializeCommit } from "./objects/commit.ts";
 import { serializeTag } from "./objects/tag.ts";
-import type { Commit, GitRepo, Tag } from "./types.ts";
+import type { Commit, ConfigView, GitRepo, Tag } from "./types.ts";
 import { readConfigView } from "./config/view.ts";
+import { configBool } from "./config/parse.ts";
 
 // ── Capability interfaces ───────────────────────────────────────────
 
@@ -220,6 +221,43 @@ export function resolveSdkSigning(repo: GitRepo, options: { sign?: boolean }): S
 	const signer = getRepoSigner(repo);
 	if (!signer) throw new SigningError();
 	return signer;
+}
+
+/**
+ * Resolve the command-layer signing decision from config + capabilities. The
+ * config-driven counterpart to {@link resolveSdkSigning}: layers a CLI flag over
+ * `<configKey>` (default `commit.gpgsign`) over `false`, and — when signing —
+ * binds the key selection git would use (`opts.keyId` or `user.signingkey`, plus
+ * `gpg.format`) onto the returned signer's `opts` so a multi-key / multi-format
+ * backend can act on it. This is policy resolution only; the secret never leaves
+ * the backend.
+ *
+ * Returns `undefined` when signing is off; throws {@link SigningError} when
+ * signing is required but no signer is configured (mirroring git's
+ * `error: gpg failed to sign the data`). The command tier catches that and maps
+ * it to a `CommandResult` — keeping the CLI contract out of the data core.
+ *
+ * Pure (no fs): reads from a materialized {@link ConfigView}.
+ */
+export function resolveConfiguredSigner(
+	repo: GitRepo,
+	config: ConfigView,
+	cliSign: boolean | undefined,
+	configKey = "commit.gpgsign",
+	opts?: { keyId?: string },
+): Signer | undefined {
+	const shouldSign = cliSign ?? configBool(config.get(configKey)) ?? false;
+	if (!shouldSign) return undefined;
+	const signer = getRepoSigner(repo);
+	if (!signer) throw new SigningError();
+
+	const keyId = opts?.keyId ?? config.get("user.signingkey");
+	const format = asSignatureFormat(config.get("gpg.format"));
+	if (keyId === undefined && format === undefined) return signer;
+
+	// Bind the resolved selection as defaults so every call site forwards it
+	// without threading extra arguments through each one.
+	return (payload, callOpts) => signer(payload, { keyId, format, ...callOpts });
 }
 
 /** Sign a commit payload and return the gpgsig block, or `undefined` to skip. */

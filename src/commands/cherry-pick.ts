@@ -1,10 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
-import {
-	handleOperationAbort,
-	hasStagedChanges,
-	resolveCommandSigner,
-} from "../lib/command-utils.ts";
+import { hasStagedChanges } from "../lib/command-utils.ts";
 import { gatherCommitStats } from "../lib/commit-summary.ts";
 import { renderCommitSummary } from "../format/commit-summary.ts";
 import { getStage0Entries, readIndex, writeIndex } from "../lib/index.ts";
@@ -42,6 +38,7 @@ import {
 import { writeCommitAndAdvance } from "../lib/commit-write.ts";
 import { branchNameFromRef } from "../lib/refs/name.ts";
 import { getConfigValue } from "../lib/config/store.ts";
+import { handleOperationAbort, resolveCommandSigner } from "../cli/command-utils.ts";
 
 export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("cherry-pick", {

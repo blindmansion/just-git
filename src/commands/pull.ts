@@ -1,19 +1,13 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
-import {
-	getSequencerDirtyState,
-	resolveCommandSigner,
-	sequencerDirtyWorktreeError,
-} from "../lib/command-utils.ts";
+import { getSequencerDirtyState } from "../lib/command-utils.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import { gatherCommitStats } from "../lib/commit-summary.ts";
 import { renderDiffStat, renderFastForward } from "../format/commit-summary.ts";
 import {
 	autoFollowReachableTags,
 	collectFetchHaves,
-	normalizeFetchDepth,
 	prepareShallowFetch,
-	resolveRemoteTransportOrError,
 } from "../lib/fetch-helpers.ts";
 import { getReflogIdentity } from "../lib/identity.ts";
 import { getConflictedPaths, hasConflicts, readIndex } from "../lib/index.ts";
@@ -50,6 +44,8 @@ import {
 import { writeCommitAndAdvance } from "../lib/commit-write.ts";
 import { branchNameFromRef, shortenRef } from "../lib/refs/name.ts";
 import { readConfig, getConfigValue } from "../lib/config/store.ts";
+import { sequencerDirtyWorktreeError, resolveCommandSigner } from "../cli/command-utils.ts";
+import { normalizeFetchDepth, resolveRemoteTransportOrError } from "../cli/fetch-helpers.ts";
 
 function pullUpToDateMessage(
 	head: Awaited<ReturnType<typeof readHead>>,

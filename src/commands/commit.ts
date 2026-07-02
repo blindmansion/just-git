@@ -1,6 +1,5 @@
 import type { CommandContext, GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
-import { resolveCommandSigner } from "../lib/command-utils.ts";
 import { gatherCommitStats } from "../lib/commit-summary.ts";
 import { renderCommitSummary } from "../format/commit-summary.ts";
 import {
@@ -38,6 +37,7 @@ import {
 	requireAuthor,
 } from "../cli/commit-requirements.ts";
 import { branchNameFromRef } from "../lib/refs/name.ts";
+import { resolveCommandSigner } from "../cli/command-utils.ts";
 
 function stdinToText(stdin: CommandContext["stdin"]): string {
 	const raw = stdin as string;

@@ -1,10 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
-import {
-	getSequencerDirtyState,
-	resolveCommandSigner,
-	sequencerDirtyWorktreeError,
-} from "./command-utils.ts";
+import { getSequencerDirtyState, type SequencerDirtyState } from "./command-utils.ts";
 import { bindAttributes } from "./attributes/bound-attributes.ts";
 import { type DiffStats, gatherCommitStats } from "./commit-summary.ts";
 import {
@@ -17,7 +13,7 @@ import {
 import { findAllMergeBases, isAncestor } from "./merge.ts";
 import { type ContentMergeFn, mergeOrtNonRecursive } from "./merge-ort.ts";
 import { readCommit } from "./object-db.ts";
-import type { Signer } from "./signing.ts";
+import { type Signer, resolveConfiguredSigner, SigningError } from "./signing.ts";
 import {
 	clearAllOperationState,
 	clearDetachPoint,
@@ -88,6 +84,45 @@ async function resolveCommitterOrError(
 	} catch (e) {
 		return fatal((e as Error).message);
 	}
+}
+
+/**
+ * Resolve the signer for a rebase-created commit, mapping the "signing required
+ * but unavailable" policy failure to a {@link CommandResult}. Lib-local for the
+ * same reason as {@link resolveCommitterOrError}: the rebase engine still speaks
+ * the command contract but must not import the `cli` guard family.
+ */
+async function resolveSignerOrError(gitCtx: GitRepo): Promise<Signer | CommandResult | undefined> {
+	try {
+		return resolveConfiguredSigner(
+			gitCtx,
+			await readConfigView(gitCtx),
+			undefined,
+			"commit.gpgsign",
+		);
+	} catch (e) {
+		if (e instanceof SigningError) return err("error: gpg failed to sign the data\n", 128);
+		throw e;
+	}
+}
+
+/**
+ * Render the sequencer "dirty worktree" refusal — rebase can't run over local
+ * changes. Mirrors `cli/command-utils#sequencerDirtyWorktreeError`, kept
+ * file-local so the engine stays off the `cli` tier.
+ */
+function rebaseDirtyWorktreeError(state: SequencerDirtyState): CommandResult {
+	const lines: string[] = [];
+	if (state.hasUnstaged) lines.push("error: cannot rebase: You have unstaged changes.");
+	if (state.hasStaged) {
+		lines.push(
+			state.hasUnstaged
+				? "error: additionally, your index contains uncommitted changes."
+				: "error: cannot rebase: Your index contains uncommitted changes.",
+		);
+	}
+	lines.push("error: Please commit or stash them.");
+	return err(`${lines.join("\n")}\n`, 1);
 }
 
 /**
@@ -461,7 +496,7 @@ export async function performRebase(
 
 	const dirtyState = await getSequencerDirtyState(gitCtx, origHead, currentIndex);
 	if (dirtyState) {
-		return sequencerDirtyWorktreeError("rebase", dirtyState);
+		return rebaseDirtyWorktreeError(dirtyState);
 	}
 
 	// pre-rebase hook
@@ -694,7 +729,7 @@ export async function performRebase(
 	await updateRef(gitCtx, "ORIG_HEAD", origHead);
 
 	// ── Run the pick loop ────────────────────────────────────
-	const signer = await resolveCommandSigner(gitCtx, undefined, "commit.gpgsign");
+	const signer = await resolveSignerOrError(gitCtx);
 	if (isCommandError(signer)) return signer;
 	const pickResult = await runPickLoop(
 		gitCtx,
@@ -1283,7 +1318,7 @@ export async function handleContinue(
 				parents.push(mergeHeadHash);
 			}
 
-			const continueSigner = await resolveCommandSigner(gitCtx, undefined, "commit.gpgsign");
+			const continueSigner = await resolveSignerOrError(gitCtx);
 			if (isCommandError(continueSigner)) return continueSigner;
 
 			const commitHash = await writeCommitAndAdvance(
