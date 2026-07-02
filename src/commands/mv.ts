@@ -5,7 +5,7 @@ import type { IndexEntry } from "../lib/types.ts";
 import { cleanEmptyDirs } from "../lib/worktree/worktree.ts";
 import { a, type Command, f } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
-import { requireGitContext, requireWorkTree } from "../lib/commit-requirements.ts";
+import { requireGitContext, requireWorkTree } from "../cli/commit-requirements.ts";
 
 export function registerMvCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("mv", {

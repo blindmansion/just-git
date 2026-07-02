@@ -26,7 +26,7 @@ import { a, type Command, f } from "../parse/index.ts";
 import { fatal, isCommandError, ambiguousArgError } from "../lib/command-errors.ts";
 import { firstLine } from "../lib/text-utils.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
-import { requireGitContext, requireWorkTree } from "../lib/commit-requirements.ts";
+import { requireGitContext, requireWorkTree } from "../cli/commit-requirements.ts";
 
 export function registerResetCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("reset", {

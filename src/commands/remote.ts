@@ -6,7 +6,7 @@ import type { GitContext } from "../lib/types.ts";
 import { a, type Command, f } from "../parse/index.ts";
 import type { CommandResult } from "../lib/command-errors.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
-import { requireGitContext } from "../lib/commit-requirements.ts";
+import { requireGitContext } from "../cli/commit-requirements.ts";
 import { checkRefFormat, RefFormatFlag } from "../lib/refs/name.ts";
 import { readConfig, writeConfig } from "../lib/config/store.ts";
 import type { GitConfig } from "../lib/config/parse.ts";

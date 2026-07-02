@@ -22,7 +22,7 @@ import type { CommandResult } from "../lib/command-errors.ts";
 import { fatal, isCommandError } from "../lib/command-errors.ts";
 import { firstLine } from "../lib/text-utils.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
-import { requireGitContext, requireWorkTree, requireRevision } from "../lib/commit-requirements.ts";
+import { requireGitContext, requireWorkTree, requireRevision } from "../cli/commit-requirements.ts";
 import { formatBisectStatus, formatBisectingLine } from "../format/bisect.ts";
 
 // ── Reserved subcommand names (cannot be used as custom terms) ──────

@@ -36,7 +36,7 @@ import {
 	requireWorkTree,
 	requireCommitter,
 	requireAuthor,
-} from "../lib/commit-requirements.ts";
+} from "../cli/commit-requirements.ts";
 import { branchNameFromRef } from "../lib/refs/name.ts";
 
 function stdinToText(stdin: CommandContext["stdin"]): string {

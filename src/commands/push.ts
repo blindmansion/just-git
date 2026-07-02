@@ -19,7 +19,7 @@ import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
 import type { TransferRefLine } from "../lib/ref-format.ts";
 import { formatTransferRefLines } from "../lib/ref-format.ts";
-import { requireGitContext } from "../lib/commit-requirements.ts";
+import { requireGitContext } from "../cli/commit-requirements.ts";
 import { shortenRef } from "../lib/refs/name.ts";
 import { readConfig, writeConfig, getConfigValue } from "../lib/config/store.ts";
 

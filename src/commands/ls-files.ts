@@ -7,7 +7,7 @@ import type { GitContext, Index, IndexEntry } from "../lib/types.ts";
 import { walkWorkTree } from "../lib/worktree/worktree.ts";
 import { a, type Command, f } from "../parse/index.ts";
 import { isCommandError } from "../lib/command-errors.ts";
-import { requireGitContext, requireWorkTree } from "../lib/commit-requirements.ts";
+import { requireGitContext, requireWorkTree } from "../cli/commit-requirements.ts";
 
 export function registerLsFilesCommand(parent: Command, ext?: GitExtensions): void {
 	parent.command("ls-files", {

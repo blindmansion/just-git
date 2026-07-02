@@ -14,7 +14,7 @@ import {
 	requireGitContext,
 	requireRevision,
 	requireCommitter,
-} from "../lib/commit-requirements.ts";
+} from "../cli/commit-requirements.ts";
 import { isValidTagName } from "../lib/refs/name.ts";
 import { getConfigValue } from "../lib/config/store.ts";
 import { configBool } from "../lib/config/parse.ts";

@@ -1,22 +1,22 @@
-// Command precondition guards and the shared commit-write chokepoint. Each
-// `require*` helper resolves a piece of context (repo, work tree, HEAD,
-// revision, identity, signature) and returns either the value or a
-// `CommandResult` error for the caller to short-circuit on (detect with
-// `isCommandError`).
+// Command precondition guards: the `require*` / `resolve*Identity` /
+// `requireVerified*` family. Each helper resolves a piece of context (repo,
+// work tree, HEAD, revision, identity, signature) and returns either the value
+// or a `CommandResult` error for the caller to short-circuit on (detect with
+// `isCommandError`). This is command-layer glue — it speaks the CLI contract —
+// so it lives above `lib`, which only surfaces data / typed failures.
 
 import type { FileSystem } from "../fs.ts";
 import type { GitExtensions } from "../git.ts";
-import { abbreviateHash } from "./abbrev.ts";
-import { withCapabilities } from "./capabilities.ts";
-import { type CommandResult, err, fatal } from "./command-errors.ts";
-import { resolveIdentityFrom } from "./identity.ts";
-import { hasConflicts } from "./index.ts";
-import { peelToCommit, readCommit, writeObject } from "./object-db.ts";
-import { serializeCommit } from "./objects/commit.ts";
-import { advanceBranchRef, resolveHead } from "./refs/refs.ts";
-import { findRepo } from "./repo.ts";
-import { resolveRevision } from "./refs/rev-parse.ts";
-import { type Signer, commitSigningPayload, resolveVerifierOpts } from "./signing.ts";
+import { abbreviateHash } from "../lib/abbrev.ts";
+import { withCapabilities } from "../lib/capabilities.ts";
+import { type CommandResult, err, fatal } from "../lib/command-errors.ts";
+import { resolveIdentityFrom } from "../lib/identity.ts";
+import { hasConflicts } from "../lib/index.ts";
+import { peelToCommit, readCommit } from "../lib/object-db.ts";
+import { resolveHead } from "../lib/refs/refs.ts";
+import { findRepo } from "../lib/repo.ts";
+import { resolveRevision } from "../lib/refs/rev-parse.ts";
+import { commitSigningPayload, resolveVerifierOpts } from "../lib/signing.ts";
 import type {
 	Commit,
 	ConfigView,
@@ -25,9 +25,9 @@ import type {
 	Identity,
 	Index,
 	ObjectId,
-} from "./types.ts";
-import { readConfigView } from "./config/view.ts";
-import { configBool } from "./config/parse.ts";
+} from "../lib/types.ts";
+import { readConfigView } from "../lib/config/view.ts";
+import { configBool } from "../lib/config/parse.ts";
 
 const NOT_A_GIT_REPO = fatal("not a git repository (or any of the parent directories): .git");
 
@@ -269,37 +269,4 @@ export async function requireVerifiedCommit(
 		cliVerify,
 		configKey,
 	);
-}
-
-/**
- * Serialize a commit, write it to the object store, and advance the branch ref.
- * Returns the new commit hash.
- *
- * Shared chokepoint behind merge / rebase / cherry-pick / revert / pull. When
- * `sign` is provided, the commit is signed (the `gpgsig` header is filled from
- * {@link commitSigningPayload}); resolve it once per command via
- * {@link resolveCommandSigner}.
- */
-export async function writeCommitAndAdvance(
-	ctx: GitRepo,
-	tree: ObjectId,
-	parents: ObjectId[],
-	author: Identity,
-	committer: Identity,
-	message: string,
-	sign?: Signer,
-): Promise<ObjectId> {
-	const commit: Commit = {
-		type: "commit",
-		tree,
-		parents,
-		author,
-		committer,
-		message,
-	};
-	if (sign) commit.gpgsig = await sign(commitSigningPayload(commit));
-	const content = serializeCommit(commit);
-	const hash = await writeObject(ctx, "commit", content);
-	await advanceBranchRef(ctx, hash);
-	return hash;
 }

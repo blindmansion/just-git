@@ -21,7 +21,7 @@ import { fatal, isCommandError } from "../lib/command-errors.ts";
 import { buildAbbrevResolver } from "../lib/abbrev.ts";
 import type { TransferRefLine } from "../lib/ref-format.ts";
 import { formatTransferRefLines, buildRefUpdateLines } from "../lib/ref-format.ts";
-import { requireGitContext } from "../lib/commit-requirements.ts";
+import { requireGitContext } from "../cli/commit-requirements.ts";
 import { shortenRef } from "../lib/refs/name.ts";
 import { readConfig } from "../lib/config/store.ts";
 import { ZERO_HASH } from "../lib/hex.ts";

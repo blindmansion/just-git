@@ -28,7 +28,7 @@ import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
 import { firstLine } from "../lib/text-utils.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
-import { requireGitContext, requireCommit } from "../lib/commit-requirements.ts";
+import { requireGitContext, requireCommit } from "../cli/commit-requirements.ts";
 import { FileSystemRefStore } from "../lib/refs/store.ts";
 import { isValidBranchName, branchNameFromRef } from "../lib/refs/name.ts";
 import { readConfig, writeConfig, getConfigValue } from "../lib/config/store.ts";

@@ -9,7 +9,7 @@ import { flattenTree, type FlatTreeEntry } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, isCommandError } from "../lib/command-errors.ts";
-import { requireGitContext, requireRevision } from "../lib/commit-requirements.ts";
+import { requireGitContext, requireRevision } from "../cli/commit-requirements.ts";
 
 // ── File enumeration ────────────────────────────────────────────────
 

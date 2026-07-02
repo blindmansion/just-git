@@ -35,7 +35,8 @@ import {
 	writeRebaseConflictMeta,
 	writeRebaseState,
 } from "./rebase.ts";
-import { getReflogIdentity } from "./identity.ts";
+import { getReflogIdentity, resolveIdentityFrom } from "./identity.ts";
+import { readConfigView } from "./config/view.ts";
 import {
 	applyReflogEffects,
 	logRef,
@@ -69,9 +70,25 @@ import { fatal, err, isCommandError } from "./command-errors.ts";
 import { firstLine, stripCommentLines, ensureTrailingNewline } from "./text-utils.ts";
 import { uniqueAbbrev } from "./abbrev.ts";
 import { formatCommitOneLiner } from "./ref-format.ts";
-import { requireCommitter, writeCommitAndAdvance } from "./commit-requirements.ts";
+import { writeCommitAndAdvance } from "./commit-write.ts";
 import { branchNameFromRef } from "./refs/name.ts";
 import { getConfigValue } from "./config/store.ts";
+
+/**
+ * Resolve the committer identity, returning a {@link CommandResult} error when
+ * no identity is configured. Lib-local so the rebase engine (which still speaks
+ * the command contract) doesn't depend on the `cli` guard family.
+ */
+async function resolveCommitterOrError(
+	gitCtx: GitRepo,
+	env: Map<string, string>,
+): Promise<Identity | CommandResult> {
+	try {
+		return resolveIdentityFrom(gitCtx, await readConfigView(gitCtx), env, "committer");
+	} catch (e) {
+		return fatal((e as Error).message);
+	}
+}
 
 /**
  * Return the display label for the current HEAD — either the branch name
@@ -978,7 +995,7 @@ async function pickOneCommit(
 		};
 	}
 
-	const committerResult = await requireCommitter(gitCtx, env);
+	const committerResult = await resolveCommitterOrError(gitCtx, env);
 	if (isCommandError(committerResult)) {
 		return { conflict: true, stdout: "", stderr: committerResult.stderr };
 	}
@@ -1252,7 +1269,7 @@ export async function handleContinue(
 				messageText = originalCommit.message;
 			}
 
-			const committer = await requireCommitter(gitCtx, env);
+			const committer = await resolveCommitterOrError(gitCtx, env);
 			if (isCommandError(committer)) return committer;
 
 			const message = ensureTrailingNewline(messageText);

@@ -10,7 +10,7 @@ import { flattenTree } from "../lib/tree-ops.ts";
 import type { GitContext, Index, ObjectId } from "../lib/types.ts";
 import { a, type Command, f } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
-import { requireGitContext, requireWorkTree } from "../lib/commit-requirements.ts";
+import { requireGitContext, requireWorkTree } from "../cli/commit-requirements.ts";
 
 export function registerRmCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("rm", {

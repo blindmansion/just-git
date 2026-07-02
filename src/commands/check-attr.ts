@@ -5,7 +5,7 @@ import { getCwdPrefix } from "../lib/command-utils.ts";
 import { join, relative } from "../lib/path.ts";
 import { a, type Command, f } from "../parse/index.ts";
 import { isCommandError } from "../lib/command-errors.ts";
-import { requireGitContext } from "../lib/commit-requirements.ts";
+import { requireGitContext } from "../cli/commit-requirements.ts";
 
 /** Decode a possibly-byte-encoded stdin payload into text. */
 function stdinToText(stdin: CommandContext["stdin"]): string {

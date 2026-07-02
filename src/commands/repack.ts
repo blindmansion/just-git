@@ -3,7 +3,7 @@ import { collectAllRoots } from "../lib/gc-roots.ts";
 import { repackFromTips } from "../lib/repack.ts";
 import { type Command, f } from "../parse/index.ts";
 import { isCommandError } from "../lib/command-errors.ts";
-import { requireGitContext } from "../lib/commit-requirements.ts";
+import { requireGitContext } from "../cli/commit-requirements.ts";
 import { formatRepackStderr } from "../format/repack.ts";
 
 export function registerRepackCommand(parent: Command, ext?: GitExtensions) {

@@ -8,7 +8,7 @@ import type { GitContext } from "../lib/types.ts";
 import { a, type Command, f } from "../parse/index.ts";
 import { fatal, isCommandError, ambiguousArgError } from "../lib/command-errors.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
-import { requireGitContext } from "../lib/commit-requirements.ts";
+import { requireGitContext } from "../cli/commit-requirements.ts";
 
 export function registerRevParseCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("rev-parse", {

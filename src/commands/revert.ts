@@ -40,8 +40,8 @@ import {
 	requireCommit,
 	requireCommitter,
 	requireAuthor,
-	writeCommitAndAdvance,
-} from "../lib/commit-requirements.ts";
+} from "../cli/commit-requirements.ts";
+import { writeCommitAndAdvance } from "../lib/commit-write.ts";
 import { branchNameFromRef } from "../lib/refs/name.ts";
 import { getConfigValue } from "../lib/config/store.ts";
 

@@ -13,7 +13,7 @@ import { matchPathspecs, parsePathspec } from "../lib/attributes/pathspec.ts";
 import type { GitContext } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, isCommandError } from "../lib/command-errors.ts";
-import { requireGitContext, requireWorkTree } from "../lib/commit-requirements.ts";
+import { requireGitContext, requireWorkTree } from "../cli/commit-requirements.ts";
 import { getConfigValue } from "../lib/config/store.ts";
 
 export function registerCleanCommand(parent: Command, ext?: GitExtensions) {

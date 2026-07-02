@@ -15,7 +15,7 @@ import { a, type Command, f, o } from "../parse/index.ts";
 import { isCommandError, ambiguousArgError } from "../lib/command-errors.ts";
 import { firstLine } from "../lib/text-utils.ts";
 import { buildAbbrevResolver } from "../lib/abbrev.ts";
-import { requireGitContext, requireHead } from "../lib/commit-requirements.ts";
+import { requireGitContext, requireHead } from "../cli/commit-requirements.ts";
 
 export function registerShortlogCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("shortlog", {

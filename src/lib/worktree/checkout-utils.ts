@@ -1,6 +1,6 @@
 import { findOrphanedCommits } from "../commit-walk.ts";
 import { addEntry, defaultStat, readIndex, writeIndex } from "../index.ts";
-import { hashObject, readCommit } from "../object-db.ts";
+import { hashObject, peelToCommit, readCommit } from "../object-db.ts";
 import { clearAllOperationState } from "../operation-state.ts";
 import { join } from "../path.ts";
 import { matchPathspecs, parsePathspec } from "../attributes/pathspec.ts";
@@ -11,10 +11,10 @@ import { flattenTree, flattenTreeToMap } from "../tree-ops.ts";
 import type { GitContext, GitRepo, ObjectId } from "../types.ts";
 import { checkoutEntry } from "./worktree.ts";
 import type { CommandResult } from "../command-errors.ts";
-import { fatal, err, isCommandError } from "../command-errors.ts";
+import { fatal, err } from "../command-errors.ts";
 import { firstLine } from "../text-utils.ts";
 import { uniqueAbbrev } from "../abbrev.ts";
-import { requireCommit } from "../commit-requirements.ts";
+import { resolveRevision } from "../refs/rev-parse.ts";
 import { readConfig, writeConfig, getConfigValue } from "../config/store.ts";
 
 /**
@@ -44,13 +44,14 @@ export async function findPreviousCheckoutTarget(
 			return { kind: "branch", name: target, refName, hash };
 		}
 
-		const commitLike = await requireCommit(
-			gitCtx,
-			target,
-			`a branch is expected, got commit '${target}'`,
-		);
-		if (!isCommandError(commitLike)) {
-			return { kind: "commit", target };
+		const resolved = await resolveRevision(gitCtx, target);
+		if (resolved) {
+			try {
+				await peelToCommit(gitCtx, resolved);
+				return { kind: "commit", target };
+			} catch {
+				// Not a commit-ish; fall through to "no previous target".
+			}
 		}
 
 		return null;

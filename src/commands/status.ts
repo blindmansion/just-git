@@ -14,7 +14,7 @@ import { diffIndexToWorkTree } from "../lib/worktree/worktree.ts";
 import { type Command, f } from "../parse/index.ts";
 import { comparePaths } from "../lib/path.ts";
 import { isCommandError } from "../lib/command-errors.ts";
-import { requireGitContext } from "../lib/commit-requirements.ts";
+import { requireGitContext } from "../cli/commit-requirements.ts";
 import { branchNameFromRef } from "../lib/refs/name.ts";
 import { readConfig } from "../lib/config/store.ts";
 import { formatBranchTrackingInfo } from "../format/status.ts";

@@ -5,7 +5,7 @@ import type { GitContext } from "../lib/types.ts";
 import { a, type Command, o } from "../parse/index.ts";
 import { isCommandError } from "../lib/command-errors.ts";
 import { uniqueAbbrev } from "../lib/abbrev.ts";
-import { requireGitContext } from "../lib/commit-requirements.ts";
+import { requireGitContext } from "../cli/commit-requirements.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
 
 async function formatReflogEntryLine(

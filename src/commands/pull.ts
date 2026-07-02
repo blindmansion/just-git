@@ -46,8 +46,8 @@ import {
 	requireCommitter,
 	requireAuthor,
 	requireVerifiedCommit,
-	writeCommitAndAdvance,
-} from "../lib/commit-requirements.ts";
+} from "../cli/commit-requirements.ts";
+import { writeCommitAndAdvance } from "../lib/commit-write.ts";
 import { branchNameFromRef, shortenRef } from "../lib/refs/name.ts";
 import { readConfig, getConfigValue } from "../lib/config/store.ts";
 

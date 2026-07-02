@@ -34,7 +34,7 @@ import {
 	requireHead,
 	requireRevision,
 	requireCommit,
-} from "../lib/commit-requirements.ts";
+} from "../cli/commit-requirements.ts";
 
 const decoder = new TextDecoder();
 

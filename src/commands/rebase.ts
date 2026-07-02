@@ -7,7 +7,7 @@ import { readHead } from "../lib/refs/refs.ts";
 import type { ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, isCommandError } from "../lib/command-errors.ts";
-import { requireGitContext, requireHead, requireCommit } from "../lib/commit-requirements.ts";
+import { requireGitContext, requireHead, requireCommit } from "../cli/commit-requirements.ts";
 
 export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("rebase", {

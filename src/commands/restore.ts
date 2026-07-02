@@ -10,7 +10,7 @@ import type { GitContext, ObjectId } from "../lib/types.ts";
 import { checkoutEntry } from "../lib/worktree/worktree.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
-import { requireGitContext, requireCommit } from "../lib/commit-requirements.ts";
+import { requireGitContext, requireCommit } from "../cli/commit-requirements.ts";
 
 export function registerRestoreCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("restore", {

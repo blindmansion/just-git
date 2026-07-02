@@ -26,7 +26,7 @@ import { a, type Command, f, o } from "../parse/index.ts";
 import type { CommandResult } from "../lib/command-errors.ts";
 import { fatal, isCommandError } from "../lib/command-errors.ts";
 import { abbreviateHash } from "../lib/abbrev.ts";
-import { requireGitContext, requireWorkTree, requireCommit } from "../lib/commit-requirements.ts";
+import { requireGitContext, requireWorkTree, requireCommit } from "../cli/commit-requirements.ts";
 
 const decoder = new TextDecoder();
 

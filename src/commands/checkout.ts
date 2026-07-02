@@ -31,7 +31,7 @@ import { checkoutEntry } from "../lib/worktree/worktree.ts";
 import { branchCheckedOutAt } from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 import { fatal, err, isCommandError } from "../lib/command-errors.ts";
-import { requireGitContext, requireCommit } from "../lib/commit-requirements.ts";
+import { requireGitContext, requireCommit } from "../cli/commit-requirements.ts";
 import { isValidBranchName } from "../lib/refs/name.ts";
 import { readConfig, writeConfig } from "../lib/config/store.ts";
 import { ZERO_HASH } from "../lib/hex.ts";
