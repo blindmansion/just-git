@@ -89,12 +89,22 @@ export async function clearRevertState(
  * `merge --squash`). Real git's `rebase` finish leaves SQUASH_MSG in place —
  * only paths that go through reset_head()/remove_branch_state() (reset,
  * checkout, `rebase --abort`) remove it.
+ *
+ * `keepRevertHead` preserves a lingering REVERT_HEAD. Real git's rebase
+ * *finish* (including via `--continue`) never touches a foreign REVERT_HEAD
+ * left by a revert paused before the rebase began — only the reset-based
+ * paths (`--abort`, `--skip`, reset, checkout) clear it.
  */
 export async function clearAllOperationState(
 	gitCtx: GitContext,
-	{ keepSquashMsg = false }: { keepSquashMsg?: boolean } = {},
+	{
+		keepSquashMsg = false,
+		keepRevertHead = false,
+	}: { keepSquashMsg?: boolean; keepRevertHead?: boolean } = {},
 ): Promise<void> {
-	for (const ref of ["CHERRY_PICK_HEAD", "REVERT_HEAD", "MERGE_HEAD", "ORIG_HEAD"]) {
+	const refs = ["CHERRY_PICK_HEAD", "MERGE_HEAD", "ORIG_HEAD"];
+	if (!keepRevertHead) refs.push("REVERT_HEAD");
+	for (const ref of refs) {
 		await deleteRef(gitCtx, ref);
 	}
 	await deleteStateFile(gitCtx, "MERGE_MSG");

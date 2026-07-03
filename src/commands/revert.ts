@@ -213,6 +213,12 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 						await setPendingRevertState(gitCtx, resolvedHash, revertMessage);
 						return { stdout: "", stderr: "", exitCode: 0 };
 					}
+					// Real git's sequencer writes MERGE_MSG for the revert before it
+					// discovers the result is empty and bails out. If another pick or
+					// revert is already paused (CHERRY_PICK_HEAD/REVERT_HEAD present), a
+					// later `--continue` consumes this MERGE_MSG — so it must hold the
+					// revert's message, not whatever the earlier operation left behind.
+					await writeStateFile(gitCtx, "MERGE_MSG", revertMessage);
 					const mergeOutput = result.messages.length > 0 ? `${result.messages.join("\n")}\n` : "";
 					const statusOutput = await generateLongFormStatus(gitCtx, {
 						fromCommit: true,

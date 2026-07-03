@@ -666,8 +666,13 @@ export async function performRebase(
 	const detachRejected = await fastForwardTo(gitCtx, checkoutTarget, currentIndex, "detached HEAD");
 	if (detachRejected) return { kind: "checkoutBlocked", rejected: detachRejected, skipped };
 
+	// Match git's rebase startup: it clears CHERRY_PICK_HEAD (the sequencer
+	// reuses that pseudo-ref for its own picks) but deliberately leaves a
+	// lingering REVERT_HEAD untouched. A revert paused before the rebase began
+	// stays resumable with `git revert --continue` even while the rebase owns
+	// the worktree (REVERT_HEAD is a top-level pseudo-ref, invisible to the
+	// rebase's own state, so it survives until the revert is continued/aborted).
 	await deleteRef(gitCtx, "CHERRY_PICK_HEAD");
-	await deleteRef(gitCtx, "REVERT_HEAD");
 	await deleteStateFile(gitCtx, "MERGE_MSG");
 	await deleteStateFile(gitCtx, "MERGE_MODE");
 
@@ -1095,8 +1100,11 @@ async function finishRebase(gitCtx: GitContext, env: Map<string, string>): Promi
 	// Clean up all state (including any cherry-pick/merge started mid-rebase).
 	// Preserve a pre-existing SQUASH_MSG: real git's rebase finish leaves it in
 	// place, so a later commit/cherry-pick/revert --continue still consumes it.
+	// Likewise leave a lingering REVERT_HEAD alone — a revert paused before the
+	// rebase began stays resumable with `git revert --continue`; git only clears
+	// it on the reset-based `--abort`/`--skip` paths, not on finish.
 	await deleteRef(gitCtx, "REBASE_HEAD");
-	await clearAllOperationState(gitCtx, { keepSquashMsg: true });
+	await clearAllOperationState(gitCtx, { keepSquashMsg: true, keepRevertHead: true });
 	await cleanupRebaseState(gitCtx);
 
 	return { kind: "finished", headName: state.headName };
@@ -1306,12 +1314,14 @@ export async function handleContinue(
 
 		const finishingFinalStep = state.todo.length === 0;
 
-		// Clean up step state (including any cherry-pick/revert started mid-rebase)
+		// Clean up step state. A `--continue` commits the resolved pick without
+		// resetting, so (unlike `--skip`/`--abort`) it leaves a lingering
+		// REVERT_HEAD in place — real git keeps that revert resumable across the
+		// rest of the rebase and after it finishes.
 		if (!finishingFinalStep) {
 			await deleteRef(gitCtx, "REBASE_HEAD");
 		}
 		await deleteRef(gitCtx, "CHERRY_PICK_HEAD");
-		await deleteRef(gitCtx, "REVERT_HEAD");
 		await deleteStateFile(gitCtx, "MERGE_MSG");
 		await deleteStateFile(gitCtx, "rebase-merge/message");
 	}
