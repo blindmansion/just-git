@@ -27,4 +27,8 @@ To understand repo structure, use the introspection toolkit — see [test/intros
 
 Default to `bun test` for validation. just-git is also validated against real git with an oracle testing framework, but only run the oracle suite when explicitly instructed — it is slow. See **[docs/TESTING.md](docs/TESTING.md)** for methodology and how to run it (and [test/oracle/README.md](test/oracle/README.md) for details).
 
-`bun sandbox "git init"` runs commands interactively against a real filesystem.
+## Sandbox
+
+`bun sandbox "git init"` runs the implementation interactively against a real filesystem, so you can inspect the results.
+
+The agent shell aborts at the first non-zero exit, even across `;` (`set +e` doesn't help). When a step is expected to fail, wrap the sequence in a single `bash -c '...'`.
