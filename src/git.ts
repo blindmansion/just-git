@@ -1,5 +1,5 @@
 import { KNOWN_UNIMPLEMENTED_COMMANDS, createGitCommand } from "./commands/git.ts";
-import type { FileSystem } from "./fs.ts";
+import type { FileSystem } from "./fs/index.ts";
 import { type GitHooks, type RepoHooks, isRejection } from "./hooks.ts";
 import type { AttributeResolver } from "./lib/attributes/attribute-resolver.ts";
 import { withCapabilities } from "./lib/capabilities.ts";

@@ -1,4 +1,4 @@
-import type { FileSystem } from "../../fs.ts";
+import type { FileSystem } from "../../fs/index.ts";
 import { ZERO_HASH } from "../hex.ts";
 import { getReflogIdentity } from "../identity.ts";
 import { join, ensureParentDir } from "../path.ts";

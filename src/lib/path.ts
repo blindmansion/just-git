@@ -1,4 +1,4 @@
-import type { FileSystem } from "../fs.ts";
+import type { FileSystem } from "../fs/index.ts";
 
 // ============================================================================
 // Core utilities

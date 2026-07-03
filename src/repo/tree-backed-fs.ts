@@ -9,10 +9,10 @@
  * the entire tree would be wasteful.
  */
 
-import type { FileStat, FileSystem } from "./fs.ts";
-import { parseTree } from "./lib/objects/tree.ts";
-import type { ObjectStore, ObjectId, TreeEntry } from "./lib/types.ts";
-import { FileMode as FM } from "./lib/types.ts";
+import type { FileStat, FileSystem } from "../fs/index.ts";
+import { parseTree } from "../lib/objects/tree.ts";
+import type { ObjectStore, ObjectId, TreeEntry } from "../lib/types.ts";
+import { FileMode as FM } from "../lib/types.ts";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();

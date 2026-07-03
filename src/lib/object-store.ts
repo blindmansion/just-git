@@ -1,4 +1,4 @@
-import type { FileSystem } from "../fs.ts";
+import type { FileSystem } from "../fs/index.ts";
 import { bytesToHex } from "./hex.ts";
 import { ObjectCache } from "./object-cache.ts";
 import { buildPackIndex, PackIndex } from "./pack/pack-index.ts";

@@ -1,4 +1,4 @@
-import type { FileSystem } from "../../fs.ts";
+import type { FileSystem } from "../../fs/index.ts";
 import { emptyAttributesProvider } from "../attributes/attributes.ts";
 import { findRepo } from "../repo.ts";
 import type {

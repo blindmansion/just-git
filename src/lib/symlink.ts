@@ -1,4 +1,4 @@
-import type { FileSystem, FileStat } from "../fs.ts";
+import type { FileSystem, FileStat } from "../fs/index.ts";
 import { hashObject } from "./object-db.ts";
 
 const encoder = new TextEncoder();

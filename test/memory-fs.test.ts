@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MemoryFileSystem } from "../src/memory-fs";
+import { MemoryFileSystem } from "../src/fs/memory-fs.ts";
 
 describe("MemoryFileSystem", () => {
 	// ── Constructor ──────────────────────────────────────────────────

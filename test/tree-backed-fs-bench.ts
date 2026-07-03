@@ -11,11 +11,11 @@
  *   bun test/tree-backed-fs-bench.ts --ops 5000
  */
 
-import { MemoryFileSystem } from "../src/memory-fs";
+import { MemoryFileSystem } from "../src/fs/memory-fs.ts";
 import { MemoryStorage } from "../src/store/memory-storage";
 import { createRepoStore } from "../src/store/repo-store";
 import { writeBlob, writeTree } from "../src/repo/writing.ts";
-import { TreeBackedFs } from "../src/tree-backed-fs";
+import { TreeBackedFs } from "../src/repo/tree-backed-fs.ts";
 import type { TreeEntryInput } from "../src/repo/writing.ts";
 import type { GitRepo } from "../src/lib/types";
 

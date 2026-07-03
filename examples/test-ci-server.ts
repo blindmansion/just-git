@@ -5,7 +5,7 @@
  * server hooks spin up ephemeral worktrees to inspect code before accepting.
  */
 
-import { MemoryFileSystem } from "../src/memory-fs.ts";
+import { MemoryFileSystem } from "../src/fs/memory-fs.ts";
 import { createGit } from "../src/git.ts";
 import { MemoryStorage } from "../src/store/memory-storage.ts";
 import { createServer } from "../src/server/handler.ts";

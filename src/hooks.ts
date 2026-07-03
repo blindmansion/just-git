@@ -8,7 +8,7 @@
 // homes: identity (`lib/identity.ts`), config (`lib/config/store.ts`), and the
 // network/credential contracts (`lib/transport/transport.ts`).
 
-import type { FileSystem } from "./fs.ts";
+import type { FileSystem } from "./fs/index.ts";
 import type { CommandResult } from "./commands/kit/command-result.ts";
 import type { Rejection, RepoHooks } from "./lib/hooks.ts";
 

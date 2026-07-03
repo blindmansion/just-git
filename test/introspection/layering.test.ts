@@ -54,10 +54,10 @@ const LAYERS = [
 ] as const;
 
 /**
- * Top-level `src/*.ts` modules are exempt: they are either pure *contracts*
- * (`fs.ts`, `hooks.ts` — interface/type definitions everything depends inward
- * on) or *composition roots* (`index.ts`, `git.ts`, `transport.ts`,
- * `tree-backed-fs.ts`) whose job is to wire the layers together for the public
+ * Top-level `src/*.ts` modules and the `fs/` contract dir are exempt: they are
+ * either pure *contracts* (`fs/`, `hooks.ts` — interface/type definitions
+ * everything depends inward on) or *composition roots* (`index.ts`, `git.ts`,
+ * `transport.ts`) whose job is to wire the layers together for the public
  * entrypoints. They are excluded from `LAYERS`, so edges touching them are
  * ignored by `findLayerViolations`.
  */

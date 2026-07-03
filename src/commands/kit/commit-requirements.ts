@@ -5,7 +5,7 @@
 // `isCommandError`). This is command-layer glue — it speaks the CLI contract —
 // so it lives above `lib`, which only surfaces data / typed failures.
 
-import type { FileSystem } from "../../fs.ts";
+import type { FileSystem } from "../../fs/index.ts";
 import type { GitExtensions } from "../../git.ts";
 import { abbreviateHash } from "../../lib/abbrev.ts";
 import { withCapabilities } from "../../lib/capabilities.ts";

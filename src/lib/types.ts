@@ -1,4 +1,4 @@
-import type { FileSystem } from "../fs.ts";
+import type { FileSystem } from "../fs/index.ts";
 import type { RepoHooks } from "./hooks.ts";
 import type { AttributeResolver } from "./attributes/attribute-resolver.ts";
 import type { AttributesProvider } from "./attributes/attributes.ts";

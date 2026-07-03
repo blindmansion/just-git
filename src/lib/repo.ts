@@ -1,4 +1,4 @@
-import type { FileSystem } from "../fs.ts";
+import type { FileSystem } from "../fs/index.ts";
 import { PackedObjectStore } from "./object-store.ts";
 import { join, resolve } from "./path.ts";
 import { createSymbolicRef } from "./refs/refs.ts";

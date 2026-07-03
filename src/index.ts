@@ -1,4 +1,4 @@
-export type { FileStat, FileSystem } from "./fs.ts";
+export type { FileStat, FileSystem } from "./fs/index.ts";
 export type { ExecContext, GitCommandName, GitOptions } from "./git.ts";
 export { createGit, Git } from "./git.ts";
 export type { CommandResult } from "./commands/kit/command-result.ts";
@@ -40,7 +40,7 @@ export type {
 export { composeGitHooks, isRejection } from "./hooks.ts";
 export type { ConfigOverrides } from "./lib/config/store.ts";
 export type { IdentityOverride } from "./lib/identity.ts";
-export { MemoryFileSystem } from "./memory-fs.ts";
+export { MemoryFileSystem } from "./fs/memory-fs.ts";
 export type {
 	CapabilityContext,
 	Commit,

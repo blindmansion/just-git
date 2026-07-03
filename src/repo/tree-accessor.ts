@@ -1,7 +1,7 @@
 import { flattenTree } from "../lib/tree-ops.ts";
-import type { FileSystem } from "../fs.ts";
+import type { FileSystem } from "../fs/index.ts";
 import type { GitRepo } from "../lib/types.ts";
-import { TreeBackedFs } from "../tree-backed-fs.ts";
+import { TreeBackedFs } from "./tree-backed-fs.ts";
 import { createTreeSmudge, materializeEntries, type MaterializeTarget } from "./materialize.ts";
 
 /**

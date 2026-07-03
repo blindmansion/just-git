@@ -1,4 +1,4 @@
-import type { FileSystem } from "../fs.ts";
+import type { FileSystem } from "../fs/index.ts";
 import { findBestDeltas } from "./pack/delta.ts";
 import { buildPackIndexFromMeta, PackIndex } from "./pack/pack-index.ts";
 import { type DeltaPackInput, writePackDeltified } from "./pack/packfile.ts";

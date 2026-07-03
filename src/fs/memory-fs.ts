@@ -1,4 +1,4 @@
-import type { FileStat, FileSystem } from "./fs.ts";
+import type { FileStat, FileSystem } from "./index.ts";
 
 type Entry =
 	| { type: "file"; content: Uint8Array; mode: number; mtime: Date }

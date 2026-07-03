@@ -1,4 +1,4 @@
-import type { FileSystem } from "../../fs.ts";
+import type { FileSystem } from "../../fs/index.ts";
 import { ensureParentDir, join } from "../path.ts";
 import { isPerWorktreeRef } from "./classify.ts";
 import {

@@ -1,4 +1,4 @@
-import type { FileSystem } from "../fs.ts";
+import type { FileSystem } from "../fs/index.ts";
 import type { CommandContext, GitExtensions } from "../git.ts";
 import { guessRemoteBranch, setupTracking } from "../lib/worktree/checkout-utils.ts";
 import { hasStagedChanges } from "../lib/command-utils.ts";

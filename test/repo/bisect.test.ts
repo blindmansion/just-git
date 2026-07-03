@@ -4,7 +4,7 @@ import { MemoryStorage } from "../../src/store/memory-storage.ts";
 import { createRepoStore } from "../../src/store/repo-store.ts";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { bisect, type BisectStepInfo } from "../../src/repo/operations.ts";
-import { MemoryFileSystem } from "../../src/memory-fs.ts";
+import { MemoryFileSystem } from "../../src/fs/memory-fs.ts";
 
 const ID: Identity = {
 	name: "Test",
