@@ -295,6 +295,28 @@ describe("git pull", () => {
 			expect(log.stdout).not.toContain("Merge");
 		});
 
+		test("merge.ff=only does not block pull.rebase=true", async () => {
+			// merge.ff is not consulted by `git pull` for the rebase-vs-merge
+			// decision — it only affects the underlying merge. With pull.rebase
+			// set, the pull must rebase even on diverged branches instead of
+			// falling through to the merge path and rejecting.
+			const bash = await setupClonePair();
+
+			await bash.exec(
+				"cd /remote && echo 'remote' > remote.txt && git add . && git commit -m remote",
+			);
+			await bash.exec("cd /local && echo 'local' > local.txt && git add . && git commit -m local");
+
+			await bash.exec("git config pull.rebase true", { cwd: "/local" });
+			await bash.exec("git config merge.ff only", { cwd: "/local" });
+			const result = await bash.exec("git pull", { cwd: "/local" });
+
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("Successfully rebased");
+			const log = await bash.exec("git log --oneline", { cwd: "/local" });
+			expect(log.stdout).not.toContain("Merge");
+		});
+
 		test("--no-rebase overrides pull.rebase=true", async () => {
 			const bash = await setupClonePair();
 

@@ -821,7 +821,15 @@ async function resolvePullMode(
 		}
 	}
 
-	// FF mode: CLI flags override pull.ff config
+	// FF mode: CLI flags override pull.ff config.
+	//
+	// `git pull` only reads `pull.ff` for its own fast-forward decision
+	// (see config_get_ff() in builtin/pull.c). `merge.ff` is *not* consulted
+	// at the pull level — it only affects the underlying merge machinery when
+	// a merge actually runs. In particular, when we rebase, `merge.ff` is
+	// irrelevant: git either fast-forwards internally (forcing --ff-only) or
+	// runs the rebase, never honoring merge.ff. So only fold in `merge.ff`
+	// when we are not rebasing.
 	if (!args.noFf && !args.ffOnly) {
 		const pullFFConfig = await getConfigValue(gitCtx, "pull.ff");
 		if (pullFFConfig === "false") {
@@ -831,7 +839,7 @@ async function resolvePullMode(
 			ffOnly = true;
 			ffOnlySource = "pull";
 			hasReconciliationStrategy = true;
-		} else {
+		} else if (!useRebase) {
 			const mergeFFConfig = await getConfigValue(gitCtx, "merge.ff");
 			if (mergeFFConfig === "false") {
 				noFf = true;
