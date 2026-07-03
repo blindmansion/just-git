@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type { ConfigOverrides, GitHooks, PreCommitEvent } from "../../src/hooks.ts";
+import type { GitHooks, PreCommitEvent } from "../../src/hooks.ts";
 import { mergeCapabilities, withCapabilities } from "../../src/lib/capabilities.ts";
 import type { GitRepo, ObjectStore, RefStore } from "../../src/lib/types.ts";
 import { overlayRepo, readonlyRepo } from "../../src/repo/safety.ts";
+import type { ConfigOverrides } from "../../src/lib/config/store.ts";
 
 // Minimal stub stores — the wrapper tests below only need them to exist; no
 // store method is actually invoked while checking capability preservation.

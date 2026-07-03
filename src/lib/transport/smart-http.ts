@@ -12,8 +12,12 @@ import {
 	parsePktLinesFromStream,
 	pktLineText,
 } from "./pkt-line.ts";
-import type { FetchFunction, ProgressCallback } from "../../hooks.ts";
-import type { RemoteRef, ShallowFetchOptions } from "./transport.ts";
+import type {
+	RemoteRef,
+	ShallowFetchOptions,
+	FetchFunction,
+	ProgressCallback,
+} from "./transport.ts";
 import { ZERO_HASH } from "../hex.ts";
 
 // ── Ref discovery ────────────────────────────────────────────────────

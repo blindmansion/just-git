@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { createMemoryCredentialStore } from "../../src/hooks.ts";
 import { parseRemoteUrl, stripAndCacheCredentials } from "../../src/lib/transport/remote.ts";
 import type { HttpAuth } from "../../src/lib/transport/transport.ts";
+import { createMemoryCredentialStore } from "../../src/lib/transport/transport.ts";
 
 describe("parseRemoteUrl", () => {
 	test("passes through plain HTTPS URL unchanged", () => {

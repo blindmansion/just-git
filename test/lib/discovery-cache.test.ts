@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { FetchFunction } from "../../src/hooks.ts";
 import { createMemoryDiscoveryCache } from "../../src/lib/transport/discovery-cache.ts";
-import { SmartHttpTransport } from "../../src/lib/transport/transport.ts";
+import { SmartHttpTransport, type FetchFunction } from "../../src/lib/transport/transport.ts";
 import type { DiscoveryEntry, GitRepo } from "../../src/lib/types.ts";
 import {
 	buildV2CapabilityAdvertisement,

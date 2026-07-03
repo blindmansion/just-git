@@ -3,8 +3,8 @@
 // requests, enabling browser-based clients to clone/fetch/push against
 // hosts like GitHub that lack CORS support.
 
-import type { FetchFunction, NetworkPolicy } from "../hooks.ts";
 import type { NodeHttpRequest, NodeHttpResponse } from "../node-http.ts";
+import type { FetchFunction, NetworkPolicy } from "../lib/transport/transport.ts";
 
 export type { NodeHttpRequest, NodeHttpResponse } from "../node-http.ts";
 

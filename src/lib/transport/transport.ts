@@ -1,4 +1,3 @@
-import type { FetchFunction, ProgressCallback } from "../../hooks.ts";
 import { ZERO_HASH } from "../hex.ts";
 import { isAncestor } from "../merge.ts";
 import { ingestPackData, objectExists, peelToCommit, readObject } from "../object-db.ts";
@@ -31,6 +30,76 @@ import {
 export type HttpAuth =
 	| { type: "basic"; username: string; password: string }
 	| { type: "bearer"; token: string };
+
+/**
+ * Callback that provides HTTP authentication for remote operations.
+ * Called with the remote URL; return credentials or null for anonymous access.
+ */
+export type CredentialProvider = (url: string) => HttpAuth | null | Promise<HttpAuth | null>;
+
+/**
+ * Pluggable store for credentials *discovered at runtime* — specifically the
+ * secrets that `git remote add` / `git clone` strip out of a URL before the
+ * sanitized URL is written to `.git/config`. The producing command calls
+ * {@link CredentialStore.remember}; a later `fetch` / `push` on the same
+ * {@link GitOptions.credentialStore | instance} calls {@link CredentialStore.get}.
+ *
+ * Keys are URL origins (e.g. `https://github.com`). Supply a custom
+ * implementation on {@link GitOptions.credentialStore} to back this with, say,
+ * an OS keychain or encrypted-at-rest storage; the default is in-memory and
+ * instance-scoped ({@link createMemoryCredentialStore}).
+ *
+ * Note: the explicit {@link CredentialProvider} capability always takes
+ * precedence over the store and never touches the CLI URL path at all, so it
+ * remains the safest place to supply credentials.
+ */
+export interface CredentialStore {
+	/** Look up remembered auth for a URL origin. */
+	get(origin: string): HttpAuth | undefined | Promise<HttpAuth | undefined>;
+	/** Remember auth for a URL origin (stripped from a remote URL). */
+	remember(origin: string, auth: HttpAuth): void | Promise<void>;
+}
+
+/** Default in-memory, instance-scoped {@link CredentialStore} backed by a `Map`. */
+export function createMemoryCredentialStore(): CredentialStore {
+	const map = new Map<string, HttpAuth>();
+	return {
+		get: (origin) => map.get(origin),
+		remember: (origin, auth) => {
+			map.set(origin, auth);
+		},
+	};
+}
+
+// ── Network policy & progress ────────────────────────────────────────
+
+/**
+ * Called with server progress messages (sideband band-2) during
+ * network operations (fetch, clone, push). Messages are raw text
+ * from the remote — format varies by server.
+ */
+export type ProgressCallback = (message: string) => void;
+
+/** Custom fetch function signature for HTTP transport. */
+export type FetchFunction = (
+	input: string | URL | Request,
+	init?: RequestInit,
+) => Promise<Response>;
+
+/**
+ * Controls which remote URLs the git instance may access over HTTP.
+ * Set to `false` on {@link GitOptions.network} to block all HTTP access.
+ */
+export interface NetworkPolicy {
+	/**
+	 * Allowed URL patterns. Can be:
+	 * - A hostname: "github.com" (matches any URL whose host equals this)
+	 * - A URL prefix: "https://github.com/myorg/" (matches URLs starting with this)
+	 */
+	allowed?: string[];
+	/** Custom fetch function for HTTP transport. Falls back to globalThis.fetch. */
+	fetch?: FetchFunction;
+}
 
 // ── Transport interface ──────────────────────────────────────────────
 

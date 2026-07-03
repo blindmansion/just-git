@@ -15,6 +15,20 @@ const ROLE_ENV = {
 
 export type IdentityRole = keyof typeof ROLE_ENV;
 
+/**
+ * Override the author/committer identity for commits.
+ *
+ * When `locked` is true, this identity always wins — even if the agent
+ * sets `GIT_AUTHOR_NAME` or runs `git config user.name`. When unlocked
+ * (default), acts as a fallback when env vars and git config are absent.
+ */
+export interface IdentityOverride {
+	name: string;
+	email: string;
+	/** When true, this identity cannot be overridden by env vars or git config. */
+	locked?: boolean;
+}
+
 // ── Pure core (GitRepo + materialized ConfigView in, Identity out) ───
 
 /**

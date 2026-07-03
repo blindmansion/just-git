@@ -10,7 +10,6 @@
 // the `object-format` guard distinguishes hashes, and it fails cleanly on
 // anything but sha1 rather than mis-slicing wider OIDs.
 
-import type { FetchFunction, ProgressCallback } from "../../hooks.ts";
 import {
 	concatPktLines,
 	delimPkt,
@@ -25,7 +24,12 @@ import {
 	type V2WantedRef,
 } from "./pkt-line.ts";
 import { type DiscoverResult, parseRefAdvertisement } from "./smart-http.ts";
-import type { RemoteRef, ShallowFetchOptions } from "./transport.ts";
+import type {
+	RemoteRef,
+	ShallowFetchOptions,
+	FetchFunction,
+	ProgressCallback,
+} from "./transport.ts";
 
 const decoder = new TextDecoder();
 

@@ -1,6 +1,5 @@
 import type { GitContext } from "../types.ts";
-import type { CredentialStore, NetworkPolicy } from "../../hooks.ts";
-import type { HttpAuth } from "./transport.ts";
+import type { HttpAuth, NetworkPolicy, CredentialStore } from "./transport.ts";
 import { readConfigData } from "../config/store.ts";
 import { type ConfigData, parseConfig } from "../config/parse.ts";
 

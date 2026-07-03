@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import type { FetchFunction } from "../../src/hooks.ts";
 import { emptyAttributesProvider } from "../../src/lib/attributes/attributes.ts";
 import type { CapabilityContext } from "../../src/lib/types.ts";
 import { allowlist, httpTransport, pipe, withAuth, withRetry } from "../../src/transport.ts";
+import type { FetchFunction } from "../../src/lib/transport/transport.ts";
 
 function ok(): Response {
 	return new Response("ok", { status: 200 });

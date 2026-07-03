@@ -1,6 +1,6 @@
-import type { ConfigOverrides } from "../hooks.ts";
 import { composeGitHooks } from "./hooks.ts";
 import type { GitRepo, RepoCapabilities } from "./types.ts";
+import type { ConfigOverrides } from "./config/store.ts";
 
 /**
  * Deep-merge two config-override bags. `locked` and `defaults` are merged

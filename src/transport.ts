@@ -3,10 +3,14 @@
 // The core never sees policy/auth/retry directly: it only calls the resolver
 // these utilities produce and uses the `TransportTarget` it returns.
 
-import type { CredentialProvider, FetchFunction, NetworkPolicy } from "./hooks.ts";
 import type { GitRepo, TransportResolver } from "./lib/types.ts";
 import { authHeaders, isHttpUrl, validateNetworkAccess } from "./lib/transport/remote.ts";
-import type { HttpAuth } from "./lib/transport/transport.ts";
+import type {
+	HttpAuth,
+	FetchFunction,
+	NetworkPolicy,
+	CredentialProvider,
+} from "./lib/transport/transport.ts";
 
 export {
 	createMemoryDiscoveryCache,

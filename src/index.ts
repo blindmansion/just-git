@@ -6,15 +6,9 @@ export type {
 	AfterCommandEvent,
 	BeforeCommandEvent,
 	CommitMsgEvent,
-	ConfigOverrides,
-	CredentialProvider,
-	CredentialStore,
 	GitHooks,
-	IdentityOverride,
 	MergeMsgEvent,
-	NetworkPolicy,
 	ObjectWriteEvent,
-	ProgressCallback,
 	PostApplyEvent,
 	PostCheckoutEvent,
 	PostCherryPickEvent,
@@ -43,7 +37,9 @@ export type {
 	Rejection,
 	RepoHooks,
 } from "./hooks.ts";
-export { composeGitHooks, createMemoryCredentialStore, isRejection } from "./hooks.ts";
+export { composeGitHooks, isRejection } from "./hooks.ts";
+export type { ConfigOverrides } from "./lib/config/store.ts";
+export type { IdentityOverride } from "./lib/identity.ts";
 export { MemoryFileSystem } from "./memory-fs.ts";
 export type {
 	CapabilityContext,
@@ -106,5 +102,12 @@ export type {
 	VerifierOptions,
 	VerificationResult,
 } from "./lib/signing.ts";
-export type { HttpAuth } from "./lib/transport/transport.ts";
+export type {
+	CredentialProvider,
+	CredentialStore,
+	HttpAuth,
+	NetworkPolicy,
+	ProgressCallback,
+} from "./lib/transport/transport.ts";
+export { createMemoryCredentialStore } from "./lib/transport/transport.ts";
 export { findRepo } from "./lib/repo.ts";

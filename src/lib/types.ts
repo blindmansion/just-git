@@ -1,15 +1,12 @@
 import type { FileSystem } from "../fs.ts";
-import type {
-	ConfigOverrides,
-	FetchFunction,
-	IdentityOverride,
-	ProgressCallback,
-} from "../hooks.ts";
 import type { RepoHooks } from "./hooks.ts";
 import type { AttributeResolver } from "./attributes/attribute-resolver.ts";
 import type { AttributesProvider } from "./attributes/attributes.ts";
 import type { PackObject } from "./pack/packfile.ts";
 import type { SigningCapability } from "./signing.ts";
+import type { ConfigOverrides } from "./config/store.ts";
+import type { IdentityOverride } from "./identity.ts";
+import type { FetchFunction, ProgressCallback } from "./transport/transport.ts";
 
 // ── Object identifiers ──────────────────────────────────────────────
 

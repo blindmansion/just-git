@@ -1,17 +1,6 @@
 import { KNOWN_UNIMPLEMENTED_COMMANDS, createGitCommand } from "./commands/git.ts";
 import type { FileSystem } from "./fs.ts";
-import {
-	type ConfigOverrides,
-	type CredentialProvider,
-	type CredentialStore,
-	createMemoryCredentialStore,
-	type GitHooks,
-	type IdentityOverride,
-	type NetworkPolicy,
-	type ProgressCallback,
-	type RepoHooks,
-	isRejection,
-} from "./hooks.ts";
+import { type GitHooks, type RepoHooks, isRejection } from "./hooks.ts";
 import type { AttributeResolver } from "./lib/attributes/attribute-resolver.ts";
 import { withCapabilities } from "./lib/capabilities.ts";
 import { findRepo as findRepoOnFs } from "./lib/repo.ts";
@@ -25,6 +14,15 @@ import type {
 	RepoCapabilities,
 } from "./lib/types.ts";
 import type { CommandResult } from "./commands/kit/command-result.ts";
+import type { ConfigOverrides } from "./lib/config/store.ts";
+import type { IdentityOverride } from "./lib/identity.ts";
+import {
+	type NetworkPolicy,
+	type ProgressCallback,
+	type CredentialProvider,
+	type CredentialStore,
+	createMemoryCredentialStore,
+} from "./lib/transport/transport.ts";
 
 export const VERSION = "1.8.0";
 

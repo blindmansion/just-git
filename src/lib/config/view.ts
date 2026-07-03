@@ -3,7 +3,6 @@
 // {@link CapabilityContext} snapshot handed to host capability code. Sits above
 // both the pure {@link parse} leaf and the {@link store} filesystem layer.
 
-import type { ConfigOverrides } from "../../hooks.ts";
 import { createAttributesProvider, emptyAttributesProvider } from "../attributes/attributes.ts";
 import type { CapabilityContext, ConfigView, GitContext, GitOperation, GitRepo } from "../types.ts";
 import {
@@ -13,7 +12,7 @@ import {
 	parseConfigMulti,
 	tryParseDottedKey,
 } from "./parse.ts";
-import { readConfigMulti } from "./store.ts";
+import { readConfigMulti, type ConfigOverrides } from "./store.ts";
 
 /**
  * Build a synchronous {@link ConfigView} over an in-memory config snapshot,

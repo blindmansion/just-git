@@ -1,11 +1,4 @@
 import type { FileSystem } from "../../fs.ts";
-import {
-	type CredentialProvider,
-	type CredentialStore,
-	createMemoryCredentialStore,
-	type FetchFunction,
-	type NetworkPolicy,
-} from "../../hooks.ts";
 import { emptyAttributesProvider } from "../attributes/attributes.ts";
 import { findRepo } from "../repo.ts";
 import type {
@@ -30,7 +23,17 @@ import {
 	stripAndCacheCredentials,
 	validateNetworkAccess,
 } from "./remote.ts";
-import { LocalTransport, SmartHttpTransport, type HttpAuth, type Transport } from "./transport.ts";
+import {
+	LocalTransport,
+	SmartHttpTransport,
+	type HttpAuth,
+	type Transport,
+	type FetchFunction,
+	type NetworkPolicy,
+	type CredentialProvider,
+	type CredentialStore,
+	createMemoryCredentialStore,
+} from "./transport.ts";
 import { makeConfigView, buildCapabilityContext } from "../config/view.ts";
 
 /**

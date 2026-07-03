@@ -194,7 +194,7 @@ export type { MaterializeTarget } from "./materialize.ts";
 export { overlayRepo, readonlyRepo } from "./safety.ts";
 
 // Re-exported lib types used in helper signatures
-export type { ConfigOverrides } from "../hooks.ts";
+export type { ConfigOverrides } from "../lib/config/store.ts";
 export type {
 	Commit,
 	ConfigView,
