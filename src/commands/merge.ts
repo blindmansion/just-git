@@ -585,13 +585,21 @@ async function handleContinue(
 	const headCommit = await readCommit(gitCtx, headHash);
 
 	let messageText = await readStateFile(gitCtx, "MERGE_MSG");
-	if (messageText) {
-		messageText = stripCommentLines(messageText);
-	} else {
-		const head = await readHead(gitCtx);
-		const currentBranch = head?.type === "symbolic" ? branchNameFromRef(head.target) : "HEAD";
+	if (!messageText) {
+		const headForMsg = await readHead(gitCtx);
+		const currentBranch =
+			headForMsg?.type === "symbolic" ? branchNameFromRef(headForMsg.target) : "HEAD";
 		messageText = await buildMergeMessage(gitCtx, "unknown", currentBranch);
 	}
+
+	// Real git's prepare_to_commit() prepends a lingering SQUASH_MSG (left by an
+	// earlier `merge --squash`) ahead of MERGE_MSG before --cleanup strips
+	// comment lines. clearMergeState() below removes SQUASH_MSG afterwards.
+	const squashMsg = await readStateFile(gitCtx, "SQUASH_MSG");
+	if (squashMsg) {
+		messageText = squashMsg + messageText;
+	}
+	messageText = stripCommentLines(messageText);
 
 	const stage0Entries = getStage0Entries(index);
 	const treeHash = await buildTreeFromIndex(gitCtx, stage0Entries);

@@ -343,8 +343,10 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 				cpSigner,
 			);
 
-			await clearCherryPickState(gitCtx);
-			await clearRevertState(gitCtx);
+			// A clean cherry-pick builds the commit directly and never consumes
+			// SQUASH_MSG, so preserve any left by an earlier `merge --squash`.
+			await clearCherryPickState(gitCtx, { keepSquashMsg: true });
+			await clearRevertState(gitCtx, { keepSquashMsg: true });
 
 			const head2 = await readHead(gitCtx);
 			const cpSubject = cherryPickMessage.split("\n")[0] ?? "";

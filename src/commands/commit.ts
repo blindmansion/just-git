@@ -211,17 +211,17 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 				!messageText &&
 				(mergeHeadHash || cherryPickHeadHash || revertHeadHash || rebaseHeadHash)
 			) {
-				// Real git's prepare_to_commit() reads SQUASH_MSG first; if
-				// present, it takes priority over MERGE_MSG (they're mutually
-				// exclusive in git's message source chain).
+				// Match real git's prepare_to_commit() (builtin/commit.c): when
+				// MERGE_MSG exists, a lingering SQUASH_MSG (from an earlier
+				// `merge --squash`) is prepended ahead of it — they are NOT
+				// mutually exclusive. Only when MERGE_MSG is absent is SQUASH_MSG
+				// used on its own.
 				const squashMsg = await readStateFile(gitCtx, "SQUASH_MSG");
-				if (squashMsg) {
+				const mergeMsg = await readStateFile(gitCtx, "MERGE_MSG");
+				if (mergeMsg !== null) {
+					messageText = stripCommentLines((squashMsg ?? "") + mergeMsg);
+				} else if (squashMsg !== null) {
 					messageText = stripCommentLines(squashMsg);
-				} else {
-					const raw = await readStateFile(gitCtx, "MERGE_MSG");
-					if (raw !== null) {
-						messageText = stripCommentLines(raw);
-					}
 				}
 			}
 			if (!messageText) {

@@ -1092,9 +1092,11 @@ async function finishRebase(gitCtx: GitContext, env: Map<string, string>): Promi
 		);
 	}
 
-	// Clean up all state (including any cherry-pick/merge started mid-rebase)
+	// Clean up all state (including any cherry-pick/merge started mid-rebase).
+	// Preserve a pre-existing SQUASH_MSG: real git's rebase finish leaves it in
+	// place, so a later commit/cherry-pick/revert --continue still consumes it.
 	await deleteRef(gitCtx, "REBASE_HEAD");
-	await clearAllOperationState(gitCtx);
+	await clearAllOperationState(gitCtx, { keepSquashMsg: true });
 	await cleanupRebaseState(gitCtx);
 
 	return { kind: "finished", headName: state.headName };

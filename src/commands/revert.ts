@@ -294,6 +294,9 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 				commitMessage,
 				displayMessage: revertMessage,
 				reflogMessage: `revert: ${firstLine(revertMessage)}`,
+				// A clean revert builds the commit directly and never consumes
+				// SQUASH_MSG left by an earlier `merge --squash`.
+				keepSquashMsg: true,
 			});
 			const mergeMessages = result.messages.length > 0 ? `${result.messages.join("\n")}\n` : "";
 			await ext?.capabilities?.hooks?.postRevert?.({
@@ -533,6 +536,7 @@ async function finalizeRevertCommit(options: {
 	displayMessage: string;
 	reflogMessage: string;
 	signer?: Signer;
+	keepSquashMsg?: boolean;
 }): Promise<{ commitHash: ObjectId; stdout: string }> {
 	const {
 		gitCtx,
@@ -546,6 +550,7 @@ async function finalizeRevertCommit(options: {
 		displayMessage,
 		reflogMessage,
 		signer,
+		keepSquashMsg = false,
 	} = options;
 
 	const commitHash = await writeCommitAndAdvance(
@@ -558,8 +563,8 @@ async function finalizeRevertCommit(options: {
 		signer,
 	);
 
-	await clearRevertState(gitCtx);
-	await clearCherryPickState(gitCtx);
+	await clearRevertState(gitCtx, { keepSquashMsg });
+	await clearCherryPickState(gitCtx, { keepSquashMsg });
 
 	const updatedHead = await readHead(gitCtx);
 	const refName = updatedHead?.type === "symbolic" ? updatedHead.target : "HEAD";

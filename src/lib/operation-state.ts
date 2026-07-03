@@ -48,35 +48,58 @@ export async function clearMergeState(gitCtx: GitContext): Promise<void> {
 
 /**
  * Clear cherry-pick operation state (CHERRY_PICK_HEAD, ORIG_HEAD, MERGE_MSG, SQUASH_MSG).
+ *
+ * `keepSquashMsg` preserves a pre-existing SQUASH_MSG (left by an earlier
+ * `merge --squash`). A clean (non-conflict) cherry-pick builds its commit
+ * directly without going through `git commit`, so it never consumes SQUASH_MSG
+ * — only `cherry-pick --continue` (which runs `git commit`) does.
  */
-export async function clearCherryPickState(gitCtx: GitContext): Promise<void> {
+export async function clearCherryPickState(
+	gitCtx: GitContext,
+	{ keepSquashMsg = false }: { keepSquashMsg?: boolean } = {},
+): Promise<void> {
 	await deleteRef(gitCtx, "CHERRY_PICK_HEAD");
 	await deleteRef(gitCtx, "ORIG_HEAD");
 	await deleteStateFile(gitCtx, "MERGE_MSG");
-	await deleteStateFile(gitCtx, "SQUASH_MSG");
+	if (!keepSquashMsg) await deleteStateFile(gitCtx, "SQUASH_MSG");
 }
 
 /**
  * Clear revert operation state (REVERT_HEAD, ORIG_HEAD, MERGE_MSG, SQUASH_MSG).
+ *
+ * `keepSquashMsg` preserves a pre-existing SQUASH_MSG — see
+ * {@link clearCherryPickState}. A clean revert never consumes it; only
+ * `revert --continue` does.
  */
-export async function clearRevertState(gitCtx: GitContext): Promise<void> {
+export async function clearRevertState(
+	gitCtx: GitContext,
+	{ keepSquashMsg = false }: { keepSquashMsg?: boolean } = {},
+): Promise<void> {
 	await deleteRef(gitCtx, "REVERT_HEAD");
 	await deleteRef(gitCtx, "ORIG_HEAD");
 	await deleteStateFile(gitCtx, "MERGE_MSG");
-	await deleteStateFile(gitCtx, "SQUASH_MSG");
+	if (!keepSquashMsg) await deleteStateFile(gitCtx, "SQUASH_MSG");
 }
 
 /**
  * Clear all operation state refs and files.
  * Used by reset and checkout to clean up any in-progress operation.
+ *
+ * `keepSquashMsg` preserves a pre-existing SQUASH_MSG (left by an earlier
+ * `merge --squash`). Real git's `rebase` finish leaves SQUASH_MSG in place —
+ * only paths that go through reset_head()/remove_branch_state() (reset,
+ * checkout, `rebase --abort`) remove it.
  */
-export async function clearAllOperationState(gitCtx: GitContext): Promise<void> {
+export async function clearAllOperationState(
+	gitCtx: GitContext,
+	{ keepSquashMsg = false }: { keepSquashMsg?: boolean } = {},
+): Promise<void> {
 	for (const ref of ["CHERRY_PICK_HEAD", "REVERT_HEAD", "MERGE_HEAD", "ORIG_HEAD"]) {
 		await deleteRef(gitCtx, ref);
 	}
 	await deleteStateFile(gitCtx, "MERGE_MSG");
 	await deleteStateFile(gitCtx, "MERGE_MODE");
-	await deleteStateFile(gitCtx, "SQUASH_MSG");
+	if (!keepSquashMsg) await deleteStateFile(gitCtx, "SQUASH_MSG");
 }
 
 // ── Detach point tracking ────────────────────────────────────────────
