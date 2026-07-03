@@ -73,6 +73,8 @@ export function renderModeLine(mc: ModeChange): string {
 			return ` delete mode ${mc.mode} ${mc.path}`;
 		case "rename":
 			return ` rename ${formatRenamePath(mc.oldPath, mc.newPath)} (${mc.similarity}%)`;
+		case "modechange":
+			return ` mode change ${mc.oldMode} => ${mc.newMode} ${mc.path}`;
 	}
 }
 

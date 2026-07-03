@@ -34,11 +34,12 @@ export interface FileStat {
 	rename?: { oldPath: string; newPath: string };
 }
 
-/** A create/delete/rename mode change, sorted by path. Rendered by the format layer. */
+/** A create/delete/rename/mode-change summary line, sorted by path. Rendered by the format layer. */
 export type ModeChange =
 	| { kind: "create"; mode: string; path: string }
 	| { kind: "delete"; mode: string; path: string }
-	| { kind: "rename"; oldPath: string; newPath: string; similarity: number };
+	| { kind: "rename"; oldPath: string; newPath: string; similarity: number }
+	| { kind: "modechange"; oldMode: string; newMode: string; path: string };
 
 /** The gathered data for a commit summary / diffstat, ready for rendering. */
 export interface DiffStats {
@@ -88,6 +89,7 @@ export async function computeDiffStats(
 	const fileStats: FileStat[] = [];
 	const createModes: { path: string; mode: string }[] = [];
 	const deleteModes: { path: string; mode: string }[] = [];
+	const modeChangeList: { path: string; oldMode: string; newMode: string }[] = [];
 	const empty = new Uint8Array(0);
 
 	for (const diff of diffs) {
@@ -169,8 +171,11 @@ export async function computeDiffStats(
 				});
 			}
 			if (diff.oldMode && diff.newMode && diff.oldMode !== diff.newMode) {
-				deleteModes.push({ path: diff.path, mode: diff.oldMode });
-				createModes.push({ path: diff.path, mode: diff.newMode });
+				modeChangeList.push({
+					path: diff.path,
+					oldMode: diff.oldMode,
+					newMode: diff.newMode,
+				});
 			}
 		}
 	}
@@ -211,6 +216,9 @@ export async function computeDiffStats(
 	}
 	for (const { path, mode } of deleteModes) {
 		sortable.push({ sortKey: path, change: { kind: "delete", mode, path } });
+	}
+	for (const { path, oldMode, newMode } of modeChangeList) {
+		sortable.push({ sortKey: path, change: { kind: "modechange", oldMode, newMode, path } });
 	}
 	for (const rename of renames) {
 		sortable.push({

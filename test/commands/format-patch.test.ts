@@ -253,6 +253,97 @@ ${SIG}\n`,
 		});
 	});
 
+	describe("mode changes", () => {
+		/** Commit s.sh, then chmod +x and commit the pure mode change. */
+		async function setupModeChange(): Promise<Bash> {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/s.sh", "echo hi\n");
+			await bash.exec("git add s.sh");
+			await bash.exec('git commit -m "Add s.sh"');
+			await bash.exec("chmod +x s.sh");
+			await bash.exec("git add s.sh");
+			await bash.exec('git commit -m "Make s.sh executable"');
+			return bash;
+		}
+
+		test("a pure mode change emits old/new mode header and diffstat line", async () => {
+			const bash = await setupModeChange();
+			const result = await bash.exec("git format-patch -1 --stdout");
+			expect(result.exitCode).toBe(0);
+			// diffstat summary uses git's "mode change" form, not create/delete.
+			expect(result.stdout).toContain(" mode change 100644 => 100755 s.sh\n");
+			expect(result.stdout).not.toContain("create mode 100755 s.sh");
+			expect(result.stdout).not.toContain("delete mode 100644 s.sh");
+			// The diff body is the appliable mode-only header (no hunks).
+			expect(result.stdout).toContain(
+				"diff --git a/s.sh b/s.sh\nold mode 100644\nnew mode 100755\n",
+			);
+		});
+	});
+
+	describe("binary files", () => {
+		/** A repo whose single commit adds a 17-byte binary blob (hashes to 83952c4…). */
+		async function setupBinary(): Promise<Bash> {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			// UTF-8 of this string is the 17 bytes 01 02 03 00 c3 bf c3 be … 00 01.
+			await bash.fs.writeFile(
+				"/repo/blob.bin",
+				"\u0001\u0002\u0003\u0000\u00FF\u00FEPNGDATA\u0000\u0001",
+			);
+			await bash.exec("git add blob.bin");
+			await bash.exec('git commit -m "Add binary blob"');
+			return bash;
+		}
+
+		test("format-patch emits an appliable GIT binary patch with a full index", async () => {
+			const bash = await setupBinary();
+			const result = await bash.exec("git format-patch -1 --stdout");
+			expect(result.exitCode).toBe(0);
+			// Binary diffstat is unchanged (Bin sizes).
+			expect(result.stdout).toContain(" blob.bin | Bin 0 -> 17 bytes\n");
+			// Full 40-char index (git uses --full-index for binary), not abbreviated.
+			expect(result.stdout).toContain(
+				"index 0000000000000000000000000000000000000000..83952c4dabc0e8ee6b20f815ff922298af209113\n",
+			);
+			// The literal payload is byte-identical to git's (verified vs git 2.53.0).
+			expect(result.stdout).toContain(
+				"GIT binary patch\nliteral 17\nYcmZQ%VrDqJ|M0#5KX(_$5Jv_^053TO3IG5A\n\nliteral 0\nHcmV?d00001\n",
+			);
+			// Never the lossy, unappliable summary line.
+			expect(result.stdout).not.toContain("Binary files");
+		});
+	});
+
+	describe("numbering width", () => {
+		/** A linear history of n commits (c1 … cn), each adding one line to f.txt. */
+		async function setupNCommits(n: number): Promise<Bash> {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			for (let i = 1; i <= n; i++) {
+				await bash.fs.writeFile("/repo/f.txt", `${"x\n".repeat(i)}`);
+				await bash.exec("git add f.txt");
+				await bash.exec(`git commit -m "Commit ${i}"`);
+			}
+			return bash;
+		}
+
+		test("zero-pads the sequence number to the total width for a 10+ series", async () => {
+			const bash = await setupNCommits(10);
+			const result = await bash.exec("git format-patch -10 --stdout");
+			const subjects = result.stdout.match(/^Subject:.*/gm);
+			expect(subjects?.[0]).toBe("Subject: [PATCH 01/10] Commit 1");
+			expect(subjects?.[9]).toBe("Subject: [PATCH 10/10] Commit 10");
+		});
+
+		test("cover letter is patch 00, zero-padded to the total width", async () => {
+			const bash = await setupNCommits(10);
+			const result = await bash.exec("git format-patch -10 --cover-letter --stdout");
+			expect(result.stdout).toContain("Subject: [PATCH 00/10] *** SUBJECT HERE ***");
+		});
+	});
+
 	describe("MIME encoding", () => {
 		test("RFC 2047 encodes non-ASCII subject and author and adds MIME headers", async () => {
 			const env = {

@@ -1174,6 +1174,15 @@ interface FormatOptions {
 	 * textconv driver whose output is always text).
 	 */
 	forceTextual?: boolean;
+	/**
+	 * Pre-rendered `GIT binary patch` body (see `lib/diff/binary-patch.ts`). When
+	 * a file renders as binary and this is set, the diff emits the appliable
+	 * literal payload with a full-length index line — matching `git format-patch`
+	 * / `git diff --binary` — instead of the lossy `Binary files … differ` line.
+	 * Callers that want the summary form (plain `git diff` / `show`) leave it
+	 * unset. Deflate is async, so the caller renders the body up front.
+	 */
+	binaryPatch?: string;
 }
 
 /** Built-in funcname scan: a line starting with a letter, `$`, or `_`. */
@@ -1194,6 +1203,13 @@ function formatHashForIndexLine(hash?: string): string {
 	if (!hash) return "0000000";
 	if (hash.length < 40) return hash;
 	return abbreviateHash(hash);
+}
+
+const ZERO_OID = "0".repeat(40);
+
+/** Full 40-char index hash (git uses the full index for binary `--binary` patches). */
+function fullHashForIndexLine(hash?: string): string {
+	return hash ?? ZERO_OID;
 }
 
 function pushDiffGitHeader(
@@ -1232,14 +1248,23 @@ function formatBinaryDiff(opts: FormatOptions, oldIsBinary: boolean, newIsBinary
 	pushDiffGitHeader(out, opts, newPath, isNew, isDeleted, isRename);
 
 	if (oldContent !== newContent) {
+		// `--binary` form: full-length index + the appliable deflate payload.
+		const emitLiteral = opts.binaryPatch !== undefined;
 		if (oldHash || newHash) {
-			const oAbbrev = formatHashForIndexLine(oldHash);
-			const nAbbrev = formatHashForIndexLine(newHash);
+			const fmt = emitLiteral ? fullHashForIndexLine : formatHashForIndexLine;
+			const oAbbrev = fmt(oldHash);
+			const nAbbrev = fmt(newHash);
 			if (isNew || isDeleted || isRename) {
 				out.push(`index ${oAbbrev}..${nAbbrev}`);
 			} else {
 				out.push(`index ${oAbbrev}..${nAbbrev} ${oldMode || "100644"}`);
 			}
+		}
+
+		if (emitLiteral) {
+			// binaryPatch already ends with the trailing blank line git writes
+			// after the reverse block, so append it straight after the index line.
+			return `${out.join("\n")}\n${opts.binaryPatch}`;
 		}
 
 		if (oldIsBinary && newIsBinary) {
@@ -1308,7 +1333,10 @@ export function formatUnifiedDiff(opts: FormatOptions): string {
 	}
 	const hunks = buildHunks(edits, opts.contextLines);
 
-	if (hunks.length === 0 && !isRename) return "";
+	// A pure mode change (same content, mode differs) still produces a patch:
+	// the `diff --git` header plus `old mode`/`new mode` lines and no hunks.
+	const isModeChange = !!(oldMode && newMode && oldMode !== newMode);
+	if (hunks.length === 0 && !isRename && !isModeChange) return "";
 
 	const isNew = opts.isNew ?? oldContent === "";
 	const isDeleted = opts.isDeleted ?? newContent === "";
@@ -1316,7 +1344,8 @@ export function formatUnifiedDiff(opts: FormatOptions): string {
 	const out: string[] = [];
 	pushDiffGitHeader(out, opts, newPath, isNew, isDeleted, isRename);
 
-	// For exact renames with no content change, stop here
+	// Exact rename or pure mode change with no content change: stop after the
+	// header (which already carries the rename / old-mode / new-mode lines).
 	if (hunks.length === 0) {
 		return `${out.join("\n")}\n`;
 	}

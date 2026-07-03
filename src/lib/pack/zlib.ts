@@ -16,7 +16,7 @@ interface InflateResult {
 }
 
 interface ZlibProvider {
-	deflateSync(data: Uint8Array): Uint8Array | Promise<Uint8Array>;
+	deflateSync(data: Uint8Array, level?: number): Uint8Array | Promise<Uint8Array>;
 	inflateSync(data: Uint8Array): Uint8Array | Promise<Uint8Array>;
 	// `maxOutputBytes`, when set, bounds the decompressed output so a single
 	// stream cannot inflate beyond the size its object header declares.
@@ -77,7 +77,8 @@ async function detect(): Promise<ZlibProvider> {
 			// { info: true } not supported on this runtime (e.g. Deno)
 		}
 		return {
-			deflateSync: (data) => new Uint8Array(zlib.deflateSync(data)),
+			deflateSync: (data, level) =>
+				new Uint8Array(zlib.deflateSync(data, level != null ? { level } : undefined)),
 			inflateSync: (data) => new Uint8Array(zlib.inflateSync(data)),
 			inflateWithConsumed: iwc ?? pureInflateWithConsumed,
 		};
@@ -90,6 +91,9 @@ async function detect(): Promise<ZlibProvider> {
 	// inflateWithConsumed is always available via fflate.
 	let deflateFn: ZlibProvider["deflateSync"];
 	if (typeof globalThis.CompressionStream === "function") {
+		// CompressionStream has no level knob; it always uses zlib's default.
+		// Output stays a valid zlib stream (git inflates it regardless of the
+		// compression level), just not byte-identical to a level-1 stream.
 		deflateFn = async (data) => {
 			const cs = new CompressionStream("deflate");
 			const writer = cs.writable.getWriter();
@@ -104,7 +108,7 @@ async function detect(): Promise<ZlibProvider> {
 			return new Uint8Array(await output);
 		};
 	} else {
-		deflateFn = pureDeflate;
+		deflateFn = (data, level) => pureDeflate(data, level);
 	}
 
 	return {
@@ -122,8 +126,14 @@ function provider(): Promise<ZlibProvider> {
 
 // ── Public API ──────────────────────────────────────────────────────
 
-export async function deflate(data: Uint8Array): Promise<Uint8Array> {
-	return await (await provider()).deflateSync(data);
+/**
+ * Deflate `data` into a zlib stream. `level` (0–9) selects the zlib
+ * compression level; omit it for the platform default. Honored on the
+ * node:zlib and pure-JS paths; the `CompressionStream` fallback ignores it
+ * (always default level) but still produces a valid, inflatable stream.
+ */
+export async function deflate(data: Uint8Array, level?: number): Promise<Uint8Array> {
+	return await (await provider()).deflateSync(data, level);
 }
 
 export async function inflate(data: Uint8Array): Promise<Uint8Array> {

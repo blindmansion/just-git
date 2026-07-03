@@ -16,11 +16,16 @@ import { computeDiffStats } from "../commit-summary.ts";
 import { type CommitEntry, walkCommits } from "../commit-walk.ts";
 import { formatRFC2822 } from "../date.ts";
 import { formatUnifiedDiff } from "../diff/algorithm.ts";
-import { boundDiffAttributes, resolveDiffPresentation } from "../diff/driver.ts";
+import { formatBinaryPatch } from "../diff/binary-patch.ts";
+import {
+	boundDiffAttributes,
+	type DiffPresentation,
+	resolveDiffPresentation,
+} from "../diff/driver.ts";
 import { detectRenames, type RenamePair } from "../diff/rename-detection.ts";
 import { renderDiffStat } from "../diff/stat-format.ts";
 import { findAllMergeBases } from "../merge.ts";
-import { peelToCommit, readBlobBytes, readCommit } from "../object-db.ts";
+import { isBinaryBytes, peelToCommit, readBlobBytes, readCommit } from "../object-db.ts";
 import { parseRangeSyntax } from "../refs/range-syntax.ts";
 import { resolveHead } from "../refs/refs.ts";
 import { resolveRevision } from "../refs/rev-parse.ts";
@@ -267,7 +272,10 @@ function buildCoverLetter(
 	out += `From ${tip.hash} ${MBOX_SENTINEL_DATE}\n`;
 	out += `From: ${committer.name} <${committer.email}>\n`;
 	out += `Date: ${formatRFC2822(committer.timestamp, committer.timezone)}\n`;
-	out += `Subject: [${prefix} 0/${total}] *** SUBJECT HERE ***\n`;
+	// Cover letter is patch 0, zero-padded to the total width like the rest
+	// of the series (`[PATCH 00/10]`).
+	const coverNumber = "0".padStart(String(total).length, "0");
+	out += `Subject: [${prefix} ${coverNumber}/${total}] *** SUBJECT HERE ***\n`;
 	out += "\n";
 	out += "*** BLURB HERE ***\n";
 	out += "\n";
@@ -363,6 +371,7 @@ async function formatPatchDiff(
 				renameTo: r.newPath,
 				similarity: r.similarity,
 				...pres,
+				...(await binaryPatchOption(pres, oldBytes, newBytes)),
 			});
 		} else {
 			const d = item.entry;
@@ -385,8 +394,31 @@ async function formatPatchDiff(
 				isNew: d.status === "added",
 				isDeleted: d.status === "deleted",
 				...pres,
+				...(await binaryPatchOption(pres, oldBytes, newBytes)),
 			});
 		}
 	}
 	return output;
+}
+
+/**
+ * Compute the `binaryPatch` option for a file: `git format-patch` implies
+ * `--binary`, so a binary blob is emitted as an appliable `GIT binary patch`
+ * literal rather than `Binary files … differ`. Binariness honors the diff
+ * driver's force flags (from {@link resolveDiffPresentation}) before falling
+ * back to git's content sniff on the raw bytes. Returns an empty object for
+ * textual files (nothing to spread).
+ */
+async function binaryPatchOption(
+	pres: DiffPresentation,
+	oldBytes: Uint8Array,
+	newBytes: Uint8Array,
+): Promise<{ binaryPatch?: string }> {
+	const binary = pres.forceBinary
+		? true
+		: pres.forceTextual
+			? false
+			: isBinaryBytes(oldBytes) || isBinaryBytes(newBytes);
+	if (!binary) return {};
+	return { binaryPatch: await formatBinaryPatch(oldBytes, newBytes) };
 }

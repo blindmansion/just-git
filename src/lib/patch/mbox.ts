@@ -113,7 +113,10 @@ export interface FormatPatchMessageInput {
 export function formatPatchMessage(input: FormatPatchMessageInput): string {
 	const { sha, author, prefix, number, total, subject, body, diffStat, diff, signature } = input;
 
-	const numberSuffix = number !== null ? ` ${number}/${total}` : "";
+	// git zero-pads the sequence number to the width of the total, e.g.
+	// `[PATCH 01/10]` … `[PATCH 10/10]` (see `fmt_patch_suffix` / `nr` width).
+	const numberSuffix =
+		number !== null ? ` ${String(number).padStart(String(total).length, "0")}/${total}` : "";
 	const bracket = `[${prefix}${numberSuffix}]`;
 	const subjectValue = headerNeedsEncoding(subject) ? encodeHeaderWord(subject) : subject;
 
