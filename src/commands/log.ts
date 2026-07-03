@@ -1,6 +1,5 @@
 import type { GitExtensions } from "../git.ts";
 import { computeDiffStats } from "../lib/commit-summary.ts";
-import { formatShortstatParts, renderStatLines } from "./kit/format/commit-summary.ts";
 import { type CommitEntry, CommitHeap, walkCommits } from "../lib/commit-walk.ts";
 import { parseDate } from "../lib/date.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff/algorithm.ts";
@@ -33,6 +32,7 @@ import { fatal, isCommandError, ambiguousArgError } from "./kit/command-result.t
 import { buildAbbrevResolver } from "../lib/abbrev.ts";
 import { requireGitContext, requireHead } from "./kit/commit-requirements.ts";
 import { branchNameFromRef } from "../lib/refs/name.ts";
+import { renderStatLines, formatShortstatParts } from "../lib/diff/stat-format.ts";
 
 const decoder = new TextDecoder();
 

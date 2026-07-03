@@ -2,11 +2,7 @@ import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import { walkCommits } from "../lib/commit-walk.ts";
 import { gatherCommitStats } from "../lib/commit-summary.ts";
-import {
-	renderCommitOneLiner,
-	renderDiffStat,
-	renderFastForward,
-} from "./kit/format/commit-summary.ts";
+import { renderCommitOneLiner, renderFastForward } from "./kit/format/commit-summary.ts";
 import { renderUnpackErrors } from "./kit/format/unpack-trees.ts";
 import { formatDate } from "../lib/date.ts";
 import { getConflictedPaths, getStage0Entries, readIndex } from "../lib/index.ts";
@@ -48,6 +44,7 @@ import { writeCommitAndAdvance } from "../lib/commit-write.ts";
 import { branchNameFromRef } from "../lib/refs/name.ts";
 import { getConfigValue } from "../lib/config/store.ts";
 import { handleOperationAbort, resolveCommandSigner } from "./kit/command-utils.ts";
+import { renderDiffStat } from "../lib/diff/stat-format.ts";
 
 export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("merge", {

@@ -77,6 +77,7 @@ export type GitCommandName =
 	| "checkout"
 	| "describe"
 	| "diff"
+	| "format-patch"
 	| "reset"
 	| "merge"
 	| "cherry-pick"

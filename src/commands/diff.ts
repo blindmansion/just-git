@@ -3,7 +3,6 @@ import { formatCombinedDiffEntry } from "./kit/format/combined-diff.ts";
 import { getCwdPrefix } from "../lib/command-utils.ts";
 import { resolveAttributes } from "../lib/attributes/bound-attributes.ts";
 import type { FileStat } from "../lib/commit-summary.ts";
-import { formatShortstatParts, renderStatLines } from "./kit/format/commit-summary.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff/algorithm.ts";
 import {
 	boundDiffAttributes,
@@ -27,6 +26,7 @@ import type { CommandResult } from "./kit/command-result.ts";
 import { fatal, isCommandError } from "./kit/command-result.ts";
 import { abbreviateHash } from "../lib/abbrev.ts";
 import { requireGitContext, requireWorkTree, requireCommit } from "./kit/commit-requirements.ts";
+import { renderStatLines, formatShortstatParts } from "../lib/diff/stat-format.ts";
 
 const decoder = new TextDecoder();
 

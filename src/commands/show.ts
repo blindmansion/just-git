@@ -1,7 +1,6 @@
 import type { GitExtensions } from "../git.ts";
 import { formatCombinedDiffEntry } from "./kit/format/combined-diff.ts";
 import { computeDiffStats } from "../lib/commit-summary.ts";
-import { formatShortstatParts, renderStatLines } from "./kit/format/commit-summary.ts";
 import { formatDate } from "../lib/date.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff/algorithm.ts";
 import {
@@ -40,6 +39,7 @@ import {
 	requireRevision,
 	requireCommit,
 } from "./kit/commit-requirements.ts";
+import { renderStatLines, formatShortstatParts } from "../lib/diff/stat-format.ts";
 
 const decoder = new TextDecoder();
 

@@ -15,6 +15,20 @@ export function formatDate(timestamp: number, timezone: string): string {
 	return `${day} ${month} ${dayOfMonth} ${hours}:${minutes}:${seconds} ${year} ${timezone}`;
 }
 
+/** Format a timestamp + tz as an RFC-2822 date: `Thu, 7 Apr 2005 15:13:13 -0700`. */
+export function formatRFC2822(timestamp: number, timezone: string): string {
+	const offsetMinutes = parseTzOffset(timezone);
+	const d = new Date((timestamp + offsetMinutes * 60) * 1000);
+	const dayName = DAYS[d.getUTCDay()];
+	const month = MONTHS[d.getUTCMonth()];
+	const dayOfMonth = d.getUTCDate();
+	const h = String(d.getUTCHours()).padStart(2, "0");
+	const mi = String(d.getUTCMinutes()).padStart(2, "0");
+	const s = String(d.getUTCSeconds()).padStart(2, "0");
+	const y = d.getUTCFullYear();
+	return `${dayName}, ${dayOfMonth} ${month} ${y} ${h}:${mi}:${s} ${timezone}`;
+}
+
 /**
  * Parse a date string into a Unix timestamp (seconds).
  * Supports numeric timestamps, ISO 8601, and common date formats

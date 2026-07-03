@@ -92,10 +92,10 @@ describe("unknown command with --help", () => {
 // ── unimplemented git commands ──────────────────────────────────────
 
 describe("unimplemented commands", () => {
-	test("git format-patch reports not implemented", async () => {
-		const r = await git.exec("format-patch", { fs, cwd: "/" });
+	test("git submodule reports not implemented", async () => {
+		const r = await git.exec("send-email", { fs, cwd: "/" });
 		expect(r.exitCode).toBe(1);
-		expect(r.stderr).toContain("'format-patch' is not implemented");
+		expect(r.stderr).toContain("'send-email' is not implemented");
 		expect(r.stderr).toContain("git help");
 	});
 
@@ -106,7 +106,7 @@ describe("unimplemented commands", () => {
 	});
 
 	test("unimplemented error differs from truly unknown command", async () => {
-		const unimpl = await git.exec("format-patch", { fs, cwd: "/" });
+		const unimpl = await git.exec("send-email", { fs, cwd: "/" });
 		const unknown = await git.exec("frobnicate", { fs, cwd: "/" });
 
 		expect(unimpl.stderr).toContain("is not implemented");

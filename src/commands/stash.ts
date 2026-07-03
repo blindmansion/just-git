@@ -1,6 +1,5 @@
 import type { GitExtensions } from "../git.ts";
 import { gatherCommitStats } from "../lib/commit-summary.ts";
-import { renderDiffStat } from "./kit/format/commit-summary.ts";
 import { formatUnifiedDiff } from "../lib/diff/algorithm.ts";
 import { getConflictedPaths, readIndex } from "../lib/index.ts";
 import { readBlobContent, readCommit } from "../lib/object-db.ts";
@@ -21,6 +20,7 @@ import type { CommandResult } from "./kit/command-result.ts";
 import { fatal, err, isCommandError } from "./kit/command-result.ts";
 import { renderStashApplyError, renderStashDropError } from "./kit/stash.ts";
 import { requireGitContext } from "./kit/commit-requirements.ts";
+import { renderDiffStat } from "../lib/diff/stat-format.ts";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 

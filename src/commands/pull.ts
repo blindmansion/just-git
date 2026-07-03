@@ -3,7 +3,7 @@ import { isRejection } from "../hooks.ts";
 import { getSequencerDirtyState } from "../lib/command-utils.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import { gatherCommitStats } from "../lib/commit-summary.ts";
-import { renderDiffStat, renderFastForward } from "./kit/format/commit-summary.ts";
+import { renderFastForward } from "./kit/format/commit-summary.ts";
 import { renderUnpackErrors } from "./kit/format/unpack-trees.ts";
 import {
 	autoFollowReachableTags,
@@ -49,6 +49,7 @@ import { branchNameFromRef, shortenRef } from "../lib/refs/name.ts";
 import { readConfig, getConfigValue } from "../lib/config/store.ts";
 import { sequencerDirtyWorktreeError, resolveCommandSigner } from "./kit/command-utils.ts";
 import { normalizeFetchDepth, resolveRemoteTransportOrError } from "./kit/fetch-helpers.ts";
+import { renderDiffStat } from "../lib/diff/stat-format.ts";
 
 function pullUpToDateMessage(
 	head: Awaited<ReturnType<typeof readHead>>,

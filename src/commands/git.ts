@@ -15,6 +15,7 @@ import { registerCommitCommand } from "./commit.ts";
 import { registerConfigCommand } from "./config.ts";
 import { registerDiffCommand } from "./diff.ts";
 import { registerFetchCommand } from "./fetch.ts";
+import { registerFormatPatchCommand } from "./format-patch.ts";
 import { registerGcCommand } from "./gc.ts";
 import { registerGrepCommand } from "./grep.ts";
 import { registerInitCommand } from "./init.ts";
@@ -71,7 +72,6 @@ export const KNOWN_UNIMPLEMENTED_COMMANDS = new Set([
 	"fast-import",
 	"filter-branch",
 	"for-each-ref",
-	"format-patch",
 	"fsck",
 	"hash-object",
 	"instaweb",
@@ -123,6 +123,7 @@ const COMMAND_REGISTRY: Record<GitCommandName, (git: Command, ext?: GitExtension
 	clone: (g, e) => registerCloneCommand(g, e),
 	describe: (g, e) => registerDescribeCommand(g, e),
 	fetch: (g, e) => registerFetchCommand(g, e),
+	"format-patch": (g, e) => registerFormatPatchCommand(g, e),
 	pull: (g, e) => registerPullCommand(g, e),
 	push: (g, e) => registerPushCommand(g, e),
 	add: (g, e) => registerAddCommand(g, e),

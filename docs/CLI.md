@@ -11,46 +11,47 @@ Usage:
   git <command>
 
 Commands:
-  init         Initialize a new repository
-  clone        Clone a repository into a new directory
-  describe     Give an object a human readable name based on an available ref
-  fetch        Download objects and refs from another repository
-  pull         Fetch from and integrate with another repository
-  push         Update remote refs along with associated objects
-  add          Add file contents to the index
-  blame        Show what revision and author last modified each line of a file
-  check-attr   Display gitattributes information for paths
-  commit       Record changes to the repository
-  status       Show the working tree status
-  log          Show commit logs
-  branch       List, create, or delete branches
-  tag          Create, list, or delete tags
-  checkout     Switch branches or restore working tree files
-  diff         Show changes between commits, commit and working tree, etc.
-  reset        Reset current HEAD to the specified state
-  merge        Join two or more development histories together
-  cherry-pick  Apply the changes introduced by some existing commits
-  revert       Revert some existing commits
-  rebase       Reapply commits on top of another base tip
-  mv           Move or rename a file, directory, or symlink
-  rm           Remove files from the working tree and from the index
-  remote       Manage set of tracked repositories
-  config       Get and set repository options
-  shortlog     Summarize git log output
-  show         Show various types of objects
-  stash        Stash the changes in a dirty working directory away
-  rev-parse    Pick out and massage parameters
-  ls-files     Show information about files in the index and the working tree
-  clean        Remove untracked files from the working tree
-  switch       Switch branches
-  restore      Restore working tree files
-  reflog       Manage reflog information
-  repack       Pack unpacked objects in a repository
-  gc           Cleanup unnecessary files and optimize the local repository
-  bisect       Use binary search to find the commit that introduced a bug
-  grep         Print lines matching a pattern
-  worktree     Manage multiple working trees
-  help         Display help information
+  init          Initialize a new repository
+  clone         Clone a repository into a new directory
+  describe      Give an object a human readable name based on an available ref
+  fetch         Download objects and refs from another repository
+  format-patch  Prepare patches for e-mail submission
+  pull          Fetch from and integrate with another repository
+  push          Update remote refs along with associated objects
+  add           Add file contents to the index
+  blame         Show what revision and author last modified each line of a file
+  check-attr    Display gitattributes information for paths
+  commit        Record changes to the repository
+  status        Show the working tree status
+  log           Show commit logs
+  branch        List, create, or delete branches
+  tag           Create, list, or delete tags
+  checkout      Switch branches or restore working tree files
+  diff          Show changes between commits, commit and working tree, etc.
+  reset         Reset current HEAD to the specified state
+  merge         Join two or more development histories together
+  cherry-pick   Apply the changes introduced by some existing commits
+  revert        Revert some existing commits
+  rebase        Reapply commits on top of another base tip
+  mv            Move or rename a file, directory, or symlink
+  rm            Remove files from the working tree and from the index
+  remote        Manage set of tracked repositories
+  config        Get and set repository options
+  shortlog      Summarize git log output
+  show          Show various types of objects
+  stash         Stash the changes in a dirty working directory away
+  rev-parse     Pick out and massage parameters
+  ls-files      Show information about files in the index and the working tree
+  clean         Remove untracked files from the working tree
+  switch        Switch branches
+  restore       Restore working tree files
+  reflog        Manage reflog information
+  repack        Pack unpacked objects in a repository
+  gc            Cleanup unnecessary files and optimize the local repository
+  bisect        Use binary search to find the commit that introduced a bug
+  grep          Print lines matching a pattern
+  worktree      Manage multiple working trees
+  help          Display help information
 ```
 
 ## git add
@@ -505,6 +506,33 @@ Options:
   --tags            Also fetch tags
   --depth <number>  Limit fetching to the specified number of commits
   --unshallow       Convert a shallow repository to a complete one
+```
+
+## git format-patch
+
+```
+git format-patch - Prepare patches for e-mail submission
+
+Usage:
+  git format-patch [options] [revisions...]
+
+Arguments:
+  revisions...
+
+Options:
+  --stdout                     Print all commits to stdout in mbox format
+  -o, --output <string>        Write patch files to the given directory
+  --numbered-files             Use only the commit number as the file name
+  -n, --numbered               Force sequence numbers in the subject prefix
+  -N, --no-numbered            Suppress sequence numbers in the subject prefix
+  -s, --signoff                Add a Signed-off-by trailer to the commit message
+  --subject-prefix <string>    Use the given prefix instead of [PATCH]
+  -v, --reroll-count <number>  Mark the series as the Nth reroll ([PATCH vN])
+  --rfc                        Use [RFC PATCH] instead of [PATCH]
+  --cover-letter               Generate a cover letter for the series
+  --signature <string>         Add a signature (defaults to the git version)
+  --count <number>             Limit the number of patches (from -<n>)
+  --root                       Treat the revision as the series root (no lower bound)
 ```
 
 ## git gc
