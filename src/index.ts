@@ -1,6 +1,7 @@
 export type { FileStat, FileSystem } from "./fs.ts";
 export type { ExecContext, GitCommandName, GitOptions } from "./git.ts";
 export { createGit, Git } from "./git.ts";
+export type { CommandResult } from "./commands/kit/command-result.ts";
 export type {
 	AfterCommandEvent,
 	BeforeCommandEvent,
@@ -8,7 +9,6 @@ export type {
 	ConfigOverrides,
 	CredentialProvider,
 	CredentialStore,
-	ExecResult,
 	GitHooks,
 	IdentityOverride,
 	MergeMsgEvent,
@@ -41,6 +41,7 @@ export type {
 	RefDeleteEvent,
 	RefUpdateEvent,
 	Rejection,
+	RepoHooks,
 } from "./hooks.ts";
 export { composeGitHooks, createMemoryCredentialStore, isRejection } from "./hooks.ts";
 export { MemoryFileSystem } from "./memory-fs.ts";

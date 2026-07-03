@@ -5,11 +5,11 @@ import {
 	type CredentialProvider,
 	type CredentialStore,
 	createMemoryCredentialStore,
-	type ExecResult,
 	type GitHooks,
 	type IdentityOverride,
 	type NetworkPolicy,
 	type ProgressCallback,
+	type RepoHooks,
 	isRejection,
 } from "./hooks.ts";
 import type { AttributeResolver } from "./lib/attributes/attribute-resolver.ts";
@@ -24,6 +24,7 @@ import type {
 	RemoteResolver,
 	RepoCapabilities,
 } from "./lib/types.ts";
+import type { CommandResult } from "./commands/kit/command-result.ts";
 
 export const VERSION = "1.8.0";
 
@@ -56,7 +57,7 @@ export interface CommandContext {
 	cwd: string;
 	env: Map<string, string>;
 	stdin: CommandStdin;
-	exec?: (command: string, options: CommandExecOptions) => Promise<ExecResult>;
+	exec?: (command: string, options: CommandExecOptions) => Promise<CommandResult>;
 	signal?: AbortSignal;
 }
 
@@ -317,7 +318,7 @@ export class Git {
 	private blocked: Set<string> | null;
 	private hooks: GitHooks | undefined;
 	private ext: GitExtensions;
-	private inner: { execute: (args: string[], ctx: CommandContext) => Promise<ExecResult> };
+	private inner: { execute: (args: string[], ctx: CommandContext) => Promise<CommandResult> };
 	private locks = new WeakMap<object, Promise<unknown>>();
 
 	private async withLock<T>(key: object, fn: () => Promise<T>): Promise<T> {
@@ -349,7 +350,10 @@ export class Git {
 		const credentialStore = options?.credentialStore ?? createMemoryCredentialStore();
 
 		const capabilities: RepoCapabilities = {
-			hooks: options?.hooks,
+			// Command middleware (beforeCommand/afterCommand) is a CLI-client
+			// concern kept on `this.hooks`; only the semantic subset attaches to
+			// the repo handle, so a bare `GitRepo` never carries CLI/fs context.
+			hooks: toRepoHooks(options?.hooks),
 			signing: options?.signing,
 			attributes: options?.attributes,
 			identity: options?.identity,
@@ -455,7 +459,7 @@ export class Git {
 	 * await git.exec('commit -m "initial commit"');
 	 * ```
 	 */
-	exec = async (command: string, ctx?: ExecContext): Promise<ExecResult> => {
+	exec = async (command: string, ctx?: ExecContext): Promise<CommandResult> => {
 		const fs = ctx?.fs ?? this.defaultFs;
 		if (!fs) {
 			throw new Error("No filesystem: pass `fs` in exec() options or in createGit()");
@@ -471,7 +475,7 @@ export class Git {
 		return this.execute(args, { fs, cwd, env, stdin: ctx?.stdin ?? "" });
 	};
 
-	execute = (args: string[], ctx: CommandContext): Promise<ExecResult> => {
+	execute = (args: string[], ctx: CommandContext): Promise<CommandResult> => {
 		return this.withLock(ctx.fs, async () => {
 			const command = args[0] ?? "";
 
@@ -587,6 +591,19 @@ export function tokenizeCommand(input: string): string[] {
 	}
 
 	return tokens;
+}
+
+/**
+ * Project the public {@link GitHooks} bag down to the semantic {@link RepoHooks}
+ * that attach to a repo handle, dropping the CLI-only command middleware
+ * (`beforeCommand`/`afterCommand`). Returns `undefined` when there are no
+ * semantic hooks so a bare handle stays inert.
+ */
+function toRepoHooks(hooks: GitHooks | undefined): RepoHooks | undefined {
+	if (!hooks) return undefined;
+	const { beforeCommand: _beforeCommand, afterCommand: _afterCommand, ...repoHooks } = hooks;
+	for (const _ in repoHooks) return repoHooks;
+	return undefined;
 }
 
 /** Create a new {@link Git} command handler with the given options. */

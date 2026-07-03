@@ -2,10 +2,10 @@ import type { FileSystem } from "../fs.ts";
 import type {
 	ConfigOverrides,
 	FetchFunction,
-	GitHooks,
 	IdentityOverride,
 	ProgressCallback,
 } from "../hooks.ts";
+import type { RepoHooks } from "./hooks.ts";
 import type { AttributeResolver } from "./attributes/attribute-resolver.ts";
 import type { AttributesProvider } from "./attributes/attributes.ts";
 import type { PackObject } from "./pack/packfile.ts";
@@ -310,7 +310,7 @@ export interface DiscoveryCache {
  */
 export interface RepoCapabilities {
 	/** Operation hooks and low-level events. */
-	hooks?: GitHooks;
+	hooks?: RepoHooks;
 	/** Commit/tag signing (write) + verification (read). */
 	signing?: SigningCapability;
 	/**

@@ -1,5 +1,5 @@
 import type { GitExtensions } from "../git.ts";
-import { isRejection } from "../hooks.ts";
+import { isRejection } from "./hooks.ts";
 import { getSequencerDirtyState, type SequencerDirtyState } from "./command-utils.ts";
 import { bindAttributes } from "./attributes/bound-attributes.ts";
 import { type DiffStats, gatherCommitStats } from "./commit-summary.ts";

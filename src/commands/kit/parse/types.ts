@@ -3,9 +3,9 @@
 // ============================================================================
 
 import type { CommandContext } from "../../../git.ts";
-import type { ExecResult } from "../../../hooks.ts";
+import type { CommandResult } from "../command-result.ts";
 
-export type { CommandContext, ExecResult };
+export type { CommandContext, CommandResult };
 
 export type TypeMap = {
 	string: string;
@@ -73,7 +73,7 @@ export type Handler<TArgs extends object = Record<string, unknown>> = (
 	args: TArgs,
 	ctx: CommandContext,
 	meta: HandlerMeta,
-) => ExecResult | Promise<ExecResult>;
+) => CommandResult | Promise<CommandResult>;
 
 // ============================================================================
 // Parse error types

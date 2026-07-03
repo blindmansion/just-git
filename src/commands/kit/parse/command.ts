@@ -4,7 +4,7 @@ import type { OptionBuilder } from "./builders/option.ts";
 import { findSuggestions, formatErrors } from "./errors.ts";
 import { generateHelp } from "./help.ts";
 import { camelToKebab, parseArgs } from "./parser.ts";
-import type { ArgsSchema, CommandContext, ExecResult, Handler, OptionsSchema } from "./types.ts";
+import type { ArgsSchema, CommandContext, CommandResult, Handler, OptionsSchema } from "./types.ts";
 
 // ============================================================================
 // Type utilities
@@ -208,7 +208,7 @@ export class Command<THandlerArgs extends object = {}, TInvokeArgs extends objec
 	 */
 	toCommand(): {
 		name: string;
-		execute: (args: string[], ctx: CommandContext) => Promise<ExecResult>;
+		execute: (args: string[], ctx: CommandContext) => Promise<CommandResult>;
 	} {
 		return { name: this.name, execute: this.execute.bind(this) };
 	}
@@ -293,7 +293,7 @@ export class Command<THandlerArgs extends object = {}, TInvokeArgs extends objec
 	 * const result = await serve.invoke({ port: 8080, entry: "app.ts" }, ctx);
 	 * ```
 	 */
-	async invoke(args: TInvokeArgs, ctx: CommandContext): Promise<ExecResult> {
+	async invoke(args: TInvokeArgs, ctx: CommandContext): Promise<CommandResult> {
 		if (!this.handler) {
 			return {
 				stdout: "",
@@ -361,7 +361,7 @@ export class Command<THandlerArgs extends object = {}, TInvokeArgs extends objec
 	 * and passes the rest deeper. When no subcommand matches, the current
 	 * node either parses and runs its handler, or returns help/error.
 	 */
-	async execute(tokens: readonly string[], ctx: CommandContext): Promise<ExecResult> {
+	async execute(tokens: readonly string[], ctx: CommandContext): Promise<CommandResult> {
 		const env = ctx?.env ? Object.fromEntries(ctx.env) : {};
 		const firstToken = tokens[0];
 

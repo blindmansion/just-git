@@ -1,4 +1,5 @@
-import { type ConfigOverrides, composeGitHooks } from "../hooks.ts";
+import type { ConfigOverrides } from "../hooks.ts";
+import { composeGitHooks } from "./hooks.ts";
 import type { GitRepo, RepoCapabilities } from "./types.ts";
 
 /**

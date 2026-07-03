@@ -12,10 +12,9 @@ import { deleteRef, ensureRemoteHead, listRefs, resolveRef, updateRef } from "..
 import { applyShallowUpdates } from "../lib/refs/shallow.ts";
 import { mapRefspec, parseRefspec, type Refspec } from "../lib/transport/refspec.ts";
 import type { RemoteRef } from "../lib/transport/transport.ts";
-import type { ExecResult } from "../hooks.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { a, type Command, f, o } from "./kit/parse/index.ts";
-import { fatal, isCommandError } from "./kit/command-result.ts";
+import { fatal, isCommandError, type CommandResult } from "./kit/command-result.ts";
 import { buildAbbrevResolver } from "../lib/abbrev.ts";
 import type { TransferRefLine } from "../lib/ref-format.ts";
 import { formatTransferRefLines, buildRefUpdateLines } from "../lib/ref-format.ts";
@@ -170,7 +169,7 @@ function validateExplicitFetchSpecs(
 	rawRefspecs: string[] | undefined,
 	fetchSpecs: Refspec[],
 	matchedSpecs: boolean[],
-): ExecResult | null {
+): CommandResult | null {
 	if (!rawRefspecs || rawRefspecs.length === 0) return null;
 
 	for (const [specIndex, spec] of fetchSpecs.entries()) {
@@ -264,7 +263,7 @@ async function fetchOneRemote(
 	env: Map<string, string>,
 	ext?: GitExtensions,
 	depth?: number,
-): Promise<ExecResult> {
+): Promise<CommandResult> {
 	const resolved = await resolveRemoteTransportOrError(
 		gitCtx,
 		remoteName,
