@@ -19,6 +19,7 @@ Commands:
   pull          Fetch from and integrate with another repository
   push          Update remote refs along with associated objects
   add           Add file contents to the index
+  apply         Apply a patch to files and/or to the index
   blame         Show what revision and author last modified each line of a file
   check-attr    Display gitattributes information for paths
   commit        Record changes to the repository
@@ -70,6 +71,35 @@ Options:
   -f, --force    Allow adding otherwise ignored files
   -u, --update   Update tracked files
   -n, --dry-run  Don't actually add the file(s)
+```
+
+## git apply
+
+```
+git apply - Apply a patch to files and/or to the index
+
+Usage:
+  git apply [options] [patches...]
+
+Arguments:
+  patches...
+
+Options:
+  --stat                 Instead of applying, output a diffstat for the input
+  --numstat              Like --stat but in a machine-friendly format
+  --summary              Output a condensed summary of extended header info
+  --check                Check if the patch applies without applying it
+  --index                Apply the patch to both the index and the working tree
+  --cached               Apply the patch to the index without touching the working tree
+  -R, --reverse          Apply the patch in reverse
+  --reject               Leave rejected hunks in .rej files instead of failing
+  --unidiff-zero         Do not trust the line counts in @@ headers with -U0 patches
+  --recount              Recount hunk line counts from the body
+  --strip <number>       Strip <n> leading path components (-p<n>) (default: 1)
+  --whitespace <string>  Action for whitespace errors (nowarn|warn|fix|error|error-all)
+  --directory <string>   Prepend <root> to all filenames
+  --include <string>     Apply changes matching the given path pattern (repeatable)
+  --exclude <string>     Ignore changes matching the given path pattern (repeatable)
 ```
 
 ## git bisect
