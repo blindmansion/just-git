@@ -1,4 +1,4 @@
-import { pickAnyBranch, pickFile } from "../pickers";
+import { pickAnyBranch, pickCommitHash, pickFile } from "../pickers";
 import type { Action } from "../types";
 
 const addDryRun: Action = {
@@ -491,6 +491,68 @@ const logDiff: Action = {
 	},
 };
 
+// ── format-patch (read-only patch generation) ────────────────────────
+//
+// format-patch is a pure producer: `--stdout` emits the whole mbox to stdout,
+// which the oracle compares byte-for-byte. This works without normalization
+// because the oracle pins deterministic author/committer dates and generates
+// against git 2.53.x — the same version just-git's signature footer stamps
+// (GIT_EMULATED_VERSION). We deliberately avoid `--cover-letter`: its own
+// `Date:` header is the wall-clock committer time, which isn't pinned on a
+// read-only step and would diverge between generation and replay.
+
+const formatPatchStdout: Action = {
+	name: "formatPatchStdout",
+	category: "diagnostic",
+	canRun: (state) => state.hasCommits,
+	precondition: () => true,
+	weight: () => 1,
+	async execute(harness, rng, state) {
+		// Bound the series either by count (`-N`) or by a `<base>..HEAD` range.
+		// The base is always a real ref/commit: git's diff-family range parser
+		// reports a bad revision differently than just-git's (a pre-existing gap
+		// shared with `git diff`), so we don't fuzz it here.
+		let range: string;
+		if (rng.bool(0.5)) {
+			range = `-${rng.int(1, 4)}`;
+		} else {
+			const base =
+				rng.bool(0.5) && state.branches.length > 0
+					? pickAnyBranch(rng, state)
+					: await pickCommitHash(harness, rng, { n: 8 });
+			range = base ? `${base}..HEAD` : `-${rng.int(1, 3)}`;
+		}
+
+		// Deterministic flags only (each is either fixed text or driven off the
+		// commit objects / pinned identity, never wall-clock).
+		const extras: string[] = [];
+		if (rng.bool(0.3)) extras.push(rng.pick(["-n", "-N"]));
+		if (rng.bool(0.2)) extras.push(`-v${rng.int(2, 4)}`);
+		if (rng.bool(0.2)) extras.push("--signoff");
+		if (rng.bool(0.15)) extras.push(rng.pick(["--rfc", "--subject-prefix=PATCH-X"]));
+
+		const cmd = `format-patch --stdout ${[...extras, range].join(" ")}`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
+const formatPatchRoot: Action = {
+	name: "formatPatchRoot",
+	category: "diagnostic",
+	canRun: (state) => state.hasCommits,
+	precondition: () => true,
+	weight: () => 1,
+	async execute(harness, rng) {
+		// `--root -N` lets the earliest selected commit be diffed against the
+		// empty tree, exercising the root-commit (new-file) patch path.
+		const n = rng.int(1, 6);
+		const cmd = `format-patch --stdout --root -${n}`;
+		const result = await harness.git(cmd);
+		return { description: `git ${cmd}`, result };
+	},
+};
+
 export const DIAGNOSTIC_ACTIONS: readonly Action[] = [
 	addDryRun,
 	logVariant,
@@ -524,4 +586,6 @@ export const DIAGNOSTIC_ACTIONS: readonly Action[] = [
 	reflogShow,
 	reflogShowBranch,
 	reflogExists,
+	formatPatchStdout,
+	formatPatchRoot,
 ];

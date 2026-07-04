@@ -620,6 +620,8 @@ const CORE_ACTIONS = includeNames(
 	"listTags",
 	"reflogShow",
 	"lsFiles",
+	"formatPatchStdout",
+	"formatPatchRoot",
 );
 
 export const PRESETS: Record<string, Preset> = {

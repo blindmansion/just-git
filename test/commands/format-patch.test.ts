@@ -253,6 +253,42 @@ ${SIG}\n`,
 		});
 	});
 
+	describe("empty commits", () => {
+		/** A root commit plus an empty (--allow-empty) commit on top. */
+		async function setupEmptyCommit(): Promise<Bash> {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/f.txt", "a\n");
+			await bash.exec("git add f.txt");
+			await bash.exec('git commit -m "Root"');
+			await bash.exec('git commit --allow-empty -m "Empty commit"');
+			return bash;
+		}
+
+		test("an empty commit goes straight to the signature (no --- or diffstat)", async () => {
+			const bash = await setupEmptyCommit();
+			const result = await bash.exec("git format-patch -1 --stdout");
+			expect(result.exitCode).toBe(0);
+			// git omits the `---` separator and diffstat entirely for an empty
+			// commit, jumping from the subject's blank line to the `-- ` footer.
+			expect(result.stdout).toContain("Subject: [PATCH] Empty commit\n\n-- \n");
+			expect(result.stdout).not.toContain("---");
+			expect(result.stdout.endsWith(`${SIG}\n`)).toBe(true);
+		});
+
+		test("an empty commit with a body keeps the body then the signature", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/f.txt", "a\n");
+			await bash.exec("git add f.txt");
+			await bash.exec('git commit -m "Root"');
+			await bash.exec('git commit --allow-empty -m "Empty subject" -m "A body line."');
+			const result = await bash.exec("git format-patch -1 --stdout");
+			expect(result.stdout).toContain("Subject: [PATCH] Empty subject\n\nA body line.\n-- \n");
+			expect(result.stdout).not.toContain("---");
+		});
+	});
+
 	describe("mode changes", () => {
 		/** Commit s.sh, then chmod +x and commit the pure mode change. */
 		async function setupModeChange(): Promise<Bash> {

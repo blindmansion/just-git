@@ -139,10 +139,15 @@ export function formatPatchMessage(input: FormatPatchMessageInput): string {
 	if (body !== "") {
 		out += `${body}\n`;
 	}
-	out += "---\n";
-	out += diffStat;
-	out += "\n";
-	out += diff;
+	// An empty commit (no diffstat and no diff) has no patch section at all:
+	// git goes straight from the message to the `-- ` signature, omitting the
+	// `---` separator. Only emit the section when there's something to show.
+	if (diffStat !== "" || diff !== "") {
+		out += "---\n";
+		out += diffStat;
+		out += "\n";
+		out += diff;
+	}
 	out += "-- \n";
 	out += `${signature}\n`;
 	return out;
