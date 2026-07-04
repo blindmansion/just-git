@@ -622,6 +622,9 @@ const CORE_ACTIONS = includeNames(
 	"lsFiles",
 	"formatPatchStdout",
 	"formatPatchRoot",
+	// apply (diff|apply round-trip + stale-forward failure path)
+	"applyReverse",
+	"applyForwardStale",
 );
 
 export const PRESETS: Record<string, Preset> = {

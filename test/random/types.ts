@@ -21,7 +21,8 @@ export type ActionCategory =
 	| "conflict-resolution"
 	| "diagnostic"
 	| "maintenance"
-	| "worktree";
+	| "worktree"
+	| "apply";
 
 // ── Fuzz config ──────────────────────────────────────────────────────
 
