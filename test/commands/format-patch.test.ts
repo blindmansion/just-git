@@ -184,6 +184,46 @@ ${SIG}\n`,
 				"This is the body.\n\nSigned-off-by: Test <test@test.com>\n---\n",
 			);
 		});
+
+		/** One commit whose message body is exactly `bodyParagraph`. */
+		async function commitWithBody(bodyParagraph: string): Promise<Bash> {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/f", "x\n");
+			await bash.exec("git add f");
+			await bash.exec(`git commit -m "subj" -m ${JSON.stringify(bodyParagraph)}`);
+			return bash;
+		}
+
+		test("joins a cherry-picked trailer line directly (no blank line)", async () => {
+			const bash = await commitWithBody(
+				"(cherry picked from commit 0123456789012345678901234567890123456789)",
+			);
+			const result = await bash.exec("git format-patch -1 --signoff --stdout");
+			expect(result.stdout).toContain(
+				"(cherry picked from commit 0123456789012345678901234567890123456789)\nSigned-off-by: Test <test@test.com>\n---\n",
+			);
+		});
+
+		test("joins an existing key: value trailer block directly (no blank line)", async () => {
+			const bash = await commitWithBody("Acked-by: Foo <foo@example.com>");
+			const result = await bash.exec("git format-patch -1 --signoff --stdout");
+			expect(result.stdout).toContain(
+				"Acked-by: Foo <foo@example.com>\nSigned-off-by: Test <test@test.com>\n---\n",
+			);
+		});
+
+		test("keeps a blank line when the last paragraph is not a trailer block", async () => {
+			// A "This reverts commit …" line is not a git-recognized trailer, so
+			// git inserts a blank line before the sign-off.
+			const bash = await commitWithBody(
+				"This reverts commit 0123456789012345678901234567890123456789.",
+			);
+			const result = await bash.exec("git format-patch -1 --signoff --stdout");
+			expect(result.stdout).toContain(
+				"This reverts commit 0123456789012345678901234567890123456789.\n\nSigned-off-by: Test <test@test.com>\n---\n",
+			);
+		});
 	});
 
 	describe("file output", () => {

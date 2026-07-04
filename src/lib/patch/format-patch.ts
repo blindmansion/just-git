@@ -144,7 +144,7 @@ export async function formatPatchSeries(
 	for (let idx = 0; idx < commits.length; idx++) {
 		const { hash, commit } = commits[idx] as CommitEntry;
 		const { subject, body } = splitMessage(commit.message);
-		const finalBody = signoffLine ? appendSignoff(body, signoffLine) : body;
+		const finalBody = signoffLine ? appendSignoff(subject, body, signoffLine) : body;
 		const { diff, diffStat } = await commitPatchBody(repo, commit, bound);
 
 		patches.push({

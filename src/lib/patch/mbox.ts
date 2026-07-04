@@ -153,17 +153,131 @@ export function formatPatchMessage(input: FormatPatchMessageInput): string {
 	return out;
 }
 
+/** git's default `comment_line_char`. */
+const COMMENT_CHAR = "#";
+
 /**
- * Append a `Signed-off-by` trailer to a body the way `git format-patch
- * --signoff` does: it becomes the whole body when empty, joins an existing
- * trailer block directly, and is otherwise separated by a blank line.
+ * git's `git_generated_prefixes` (trailer.c): line prefixes always recognized as
+ * trailers even without a `key: value` separator.
  */
-export function appendSignoff(body: string, signoffLine: string): string {
+const GIT_GENERATED_PREFIXES = ["Signed-off-by: ", "(cherry picked from commit "];
+
+/** A line that is empty or only whitespace (git's `is_blank_line`). */
+function isBlankLine(line: string): boolean {
+	return line.trim() === "";
+}
+
+/**
+ * Port of git's `find_separator(line, ":")`: the offset of the `:` that closes a
+ * trailer token, or -1. The token may only contain alnum / `-`, with whitespace
+ * tolerated between the token and the separator.
+ */
+function findSeparator(line: string): number {
+	let whitespaceFound = false;
+	for (let i = 0; i < line.length; i++) {
+		const c = line[i] as string;
+		if (c === ":") return i;
+		if (!whitespaceFound && (/[A-Za-z0-9]/.test(c) || c === "-")) continue;
+		if (i !== 0 && (c === " " || c === "\t")) {
+			whitespaceFound = true;
+			continue;
+		}
+		break;
+	}
+	return -1;
+}
+
+/**
+ * Port of git's `find_trailer_block_start` (trailer.c): does `message` end in a
+ * recognized trailer block?
+ *
+ * `message` must include the subject as its first paragraph — git excludes the
+ * first paragraph as the title, so the body's own first paragraph stays
+ * trailer-eligible. A block is recognized when, reading up from the end to the
+ * nearest blank line, the lines are either all trailers, or contain a
+ * git-generated trailer and are at least 25% trailers.
+ */
+function endsWithTrailerBlock(message: string): boolean {
+	const lines = message.split("\n");
+
+	// The first paragraph is the title and cannot be trailers.
+	let endOfTitle = -1;
+	for (let i = 0; i < lines.length; i++) {
+		const s = lines[i] as string;
+		if (s.startsWith(COMMENT_CHAR)) continue;
+		if (isBlankLine(s)) {
+			endOfTitle = i;
+			break;
+		}
+	}
+	if (endOfTitle === -1) return false; // no blank line: the whole buffer is title
+
+	let onlySpaces = true;
+	let recognizedPrefix = false;
+	let trailerLines = 0;
+	let nonTrailerLines = 0;
+	let possibleContinuationLines = 0;
+
+	for (let l = lines.length - 1; l >= endOfTitle; l--) {
+		const bol = lines[l] as string;
+
+		if (bol.startsWith(COMMENT_CHAR)) {
+			nonTrailerLines += possibleContinuationLines;
+			possibleContinuationLines = 0;
+			continue;
+		}
+		if (isBlankLine(bol)) {
+			if (onlySpaces) continue;
+			nonTrailerLines += possibleContinuationLines;
+			if (recognizedPrefix && trailerLines * 3 >= nonTrailerLines) return true;
+			if (trailerLines > 0 && nonTrailerLines === 0) return true;
+			return false;
+		}
+		onlySpaces = false;
+
+		let matchedPrefix = false;
+		for (const p of GIT_GENERATED_PREFIXES) {
+			if (bol.startsWith(p)) {
+				trailerLines++;
+				possibleContinuationLines = 0;
+				recognizedPrefix = true;
+				matchedPrefix = true;
+				break;
+			}
+		}
+		if (matchedPrefix) continue;
+
+		const firstIsSpace = bol[0] === " " || bol[0] === "\t";
+		if (findSeparator(bol) >= 1 && !firstIsSpace) {
+			// A `key: value` line. git only sets `recognized_prefix` here when
+			// the token matches a configured trailer; format-patch runs with no
+			// such config, so we never do.
+			trailerLines++;
+			possibleContinuationLines = 0;
+		} else if (firstIsSpace) {
+			possibleContinuationLines++;
+		} else {
+			nonTrailerLines++;
+			nonTrailerLines += possibleContinuationLines;
+			possibleContinuationLines = 0;
+		}
+	}
+
+	return false;
+}
+
+/**
+ * Append a `Signed-off-by` trailer the way `git format-patch --signoff` does
+ * (git's `append_signoff`): the signoff becomes the whole body when empty; it
+ * joins an existing trailer block directly; otherwise it is separated from the
+ * body by a blank line. The blank-line decision mirrors git's trailer-block
+ * detection, so it is driven by the full message (`subject` + `body`), since git
+ * excludes the subject as the title before scanning for trailers.
+ */
+export function appendSignoff(subject: string, body: string, signoffLine: string): string {
 	if (body === "") return signoffLine;
-	const lines = body.split("\n");
-	const lastLine = lines[lines.length - 1] ?? "";
-	const isTrailerBlock = /^[A-Za-z][A-Za-z-]*: /.test(lastLine);
-	return isTrailerBlock ? `${body}\n${signoffLine}` : `${body}\n\n${signoffLine}`;
+	const hasTrailerBlock = endsWithTrailerBlock(`${subject}\n\n${body}`);
+	return hasTrailerBlock ? `${body}\n${signoffLine}` : `${body}\n\n${signoffLine}`;
 }
 
 /**
