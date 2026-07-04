@@ -120,6 +120,21 @@ function renderApplyStderr(
 ): string {
 	const lines: string[] = [];
 
+	// `-3` / `--3way` per-file notices (git's try_threeway / apply_data). The
+	// blob-missing error + "Falling back…" precede any hard `patch failed` error.
+	for (const f of result.files) {
+		const tw = f.threeway;
+		if (!tw) continue;
+		if (tw.kind === "clean") {
+			lines.push(`Applied patch to '${f.path}' cleanly.`);
+		} else if (tw.kind === "conflict") {
+			lines.push(`Applied patch to '${f.path}' with conflicts.`);
+		} else if (tw.kind === "fallback") {
+			if (tw.note) lines.push(`error: ${tw.note}`);
+			lines.push("Falling back to direct application...");
+		}
+	}
+
 	// error: lines from the engine (hunk mismatch / binary / preconditions).
 	for (const e of result.errors) lines.push(`error: ${e}`);
 
@@ -195,6 +210,7 @@ export function registerApplyCommand(parent: Command, ext?: GitExtensions): void
 			index: f().describe("Apply the patch to both the index and the working tree"),
 			cached: f().describe("Apply the patch to the index without touching the working tree"),
 			reverse: f().alias("R").describe("Apply the patch in reverse"),
+			"3way": f().alias("3").describe("Fall back on 3-way merge if the patch does not apply"),
 			reject: f().describe("Leave rejected hunks in .rej files instead of failing"),
 			unidiffZero: f().describe("Do not trust the line counts in @@ headers with -U0 patches"),
 			recount: f().describe("Recount hunk line counts from the body"),
@@ -274,7 +290,17 @@ export function registerApplyCommand(parent: Command, ext?: GitExtensions): void
 			}
 
 			// ── Apply (or --check) ───────────────────────────────────
-			const target: ApplyTarget = args.cached ? "cached" : args.index ? "index" : "worktree";
+			// `--3way` implies index checking/updating (git's check_apply_state):
+			// it reads the preimage from the index and writes both, and cannot be
+			// combined with `--reject`.
+			if (args["3way"] && args.reject) {
+				return fatal("options '--reject' and '--3way' cannot be used together");
+			}
+			const target: ApplyTarget = args.cached
+				? "cached"
+				: args.index || args["3way"]
+					? "index"
+					: "worktree";
 			const whitespace = parseWhitespace(args.whitespace as string | undefined);
 			const result = await applyPatches(gitCtx, patches, {
 				reverse: args.reverse as boolean,
@@ -282,6 +308,7 @@ export function registerApplyCommand(parent: Command, ext?: GitExtensions): void
 				whitespace,
 				unidiffZero: args.unidiffZero as boolean,
 				reject: args.reject as boolean,
+				threeway: args["3way"] as boolean,
 				check: args.check as boolean,
 			});
 

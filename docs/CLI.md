@@ -92,6 +92,7 @@ Options:
   --index                Apply the patch to both the index and the working tree
   --cached               Apply the patch to the index without touching the working tree
   -R, --reverse          Apply the patch in reverse
+  -3, --3way             Fall back on 3-way merge if the patch does not apply
   --reject               Leave rejected hunks in .rej files instead of failing
   --unidiff-zero         Do not trust the line counts in @@ headers with -U0 patches
   --recount              Recount hunk line counts from the body

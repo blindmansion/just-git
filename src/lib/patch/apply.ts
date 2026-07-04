@@ -17,8 +17,15 @@
 import { isInsideWorkTree, verifyPath } from "../attributes/path-safety.ts";
 import { splitLinesWithNL } from "../diff/algorithm.ts";
 import { type BinaryHunk, inflateBinaryHunk } from "../diff/binary-patch.ts";
+import { merge, splitLinesWithSentinel, stripSentinel } from "../diff/diff3.ts";
 import { addEntry, defaultStat, findEntry, readIndex, removeEntry, writeIndex } from "../index.ts";
-import { hashObject, objectExists, readBlobBytes, writeObject } from "../object-db.ts";
+import {
+	findObjectsByPrefix,
+	hashObject,
+	objectExists,
+	readBlobBytes,
+	writeObject,
+} from "../object-db.ts";
 import { applyDelta } from "../pack/packfile.ts";
 import { join } from "../path.ts";
 import type { GitContext, Index, IndexEntry } from "../types.ts";
@@ -370,9 +377,17 @@ export interface ApplyEngineOptions {
 	whitespace: WhitespaceAction;
 	unidiffZero: boolean;
 	reject: boolean;
+	/** `-3` / `--3way`: reconstruct the base from index OIDs and 3-way merge. */
+	threeway: boolean;
 	/** `--check` / info-only: run preconditions and build results, never write. */
 	check: boolean;
 }
+
+/** How a file went through the `-3` path (git's try_threeway outcome). */
+export type ThreewayOutcome =
+	| { kind: "clean" }
+	| { kind: "conflict" }
+	| { kind: "fallback"; note?: string };
 
 /** Per-file outcome of an {@link applyPatches} run. */
 export interface FileApplyResult {
@@ -382,6 +397,8 @@ export interface FileApplyResult {
 	whitespace: WhitespaceWarning[];
 	/** Ordered per-fragment outcomes (for `--reject` hunk-number notices). */
 	fragmentResults: FragmentResult[];
+	/** git's `-3` disposition, when `--3way` was in effect for this file. */
+	threeway?: ThreewayOutcome;
 	error?: string;
 }
 
@@ -391,6 +408,13 @@ export interface ApplyResult {
 	files: FileApplyResult[];
 	/** git-style `error: …` lines to emit on stderr. */
 	errors: string[];
+}
+
+/** A conflicted `-3` stage entry to record in the index (git's stages 1/2/3). */
+interface ConflictStage {
+	stage: 1 | 2 | 3;
+	oid: string;
+	content: Uint8Array;
 }
 
 /** An intended filesystem/index mutation, computed before any write happens. */
@@ -407,6 +431,10 @@ interface FilePlan {
 	whitespace: WhitespaceWarning[];
 	/** Ordered per-fragment outcomes (empty for binary / pure-metadata patches). */
 	fragmentResults: FragmentResult[];
+	/** `-3` disposition (git's try_threeway); absent when `--3way` was off. */
+	threeway?: ThreewayOutcome;
+	/** Stages 1/2/3 to record on a conflicted `-3` merge (git's threeway_stage). */
+	conflictStages?: ConflictStage[];
 }
 
 async function readWorktree(ctx: GitContext, path: string): Promise<string | null> {
@@ -448,13 +476,22 @@ function resolveMode(patch: ParsedPatch, index: Index, target: ApplyTarget): num
 	return 0o100644;
 }
 
+/** A planning failure git renders as `error: <error>` (+ `does not apply`). */
+interface PlanError {
+	error: string;
+	path: string;
+	doesNotApply?: boolean;
+	/** `-3` fell back to direct application before this hard failure. */
+	threewayFallback?: { note?: string };
+}
+
 /** Build the write plan for one patch (no I/O beyond reading the preimage). */
 async function planPatch(
 	ctx: GitContext,
 	index: Index,
 	patch: ParsedPatch,
 	opts: ApplyEngineOptions,
-): Promise<FilePlan | { error: string; path: string; doesNotApply?: boolean }> {
+): Promise<FilePlan | PlanError> {
 	const path = (patch.kind === "delete" ? patch.oldName : patch.newName) ?? patch.oldName ?? "";
 
 	if (patch.isBinary) {
@@ -463,6 +500,15 @@ async function planPatch(
 
 	const pre = await loadPreimage(ctx, index, patch, opts.target);
 	if ("error" in pre) return { error: pre.error, path };
+
+	// `-3` / `--3way`: git tries the 3-way merge first and only falls back to
+	// direct application when the base blob is unavailable (git's apply_data).
+	let threewayFallback: { note?: string } | undefined;
+	if (opts.threeway) {
+		const tw = await planThreeway(ctx, index, patch, opts, pre.content);
+		if (!("fallback" in tw)) return tw;
+		threewayFallback = { note: tw.note };
+	}
 
 	const applied = applyTextPatch(pre.content, patch, {
 		reverse: false, // reverse already folded in by applyPatches
@@ -475,7 +521,12 @@ async function planPatch(
 	// surfaced separately (git keeps applying and reports them at the end).
 	if (applied.failedAtLine !== undefined && !opts.reject) {
 		const line = applied.failedAtLine;
-		return { error: `patch failed: ${path}:${line}`, path, doesNotApply: true };
+		return {
+			error: `patch failed: ${path}:${line}`,
+			path,
+			doesNotApply: true,
+			threewayFallback,
+		};
 	}
 
 	const mode = resolveMode(patch, index, opts.target);
@@ -489,7 +540,126 @@ async function planPatch(
 		rejected: applied.rejected,
 		whitespace: applied.whitespace,
 		fragmentResults: applied.fragments,
+		threeway: threewayFallback ? { kind: "fallback", note: threewayFallback.note } : undefined,
 	};
+}
+
+// ── 3-way merge (git's try_threeway / three_way_merge) ───────────────
+
+/** git's blob-missing message when `-3` cannot reconstruct the base. */
+const THREEWAY_NO_BLOB = "repository lacks the necessary blob to perform 3-way merge.";
+
+/**
+ * In-core 3-way merge mirroring git's `three_way_merge` conflict rendering:
+ * `ll_merge` with `ours`/`theirs` labels, reusing the shared diff3 renderer and
+ * its trailing-newline handling (see `renderConflictMarkers`).
+ */
+function threeWayMergeText(
+	oursText: string,
+	baseText: string,
+	theirsText: string,
+): { conflict: boolean; text: string } {
+	const merged = merge(
+		splitLinesWithSentinel(oursText),
+		splitLinesWithSentinel(baseText),
+		splitLinesWithSentinel(theirsText),
+		{ a: "ours", b: "theirs" },
+	);
+	const lastRaw = merged.result[merged.result.length - 1] ?? "";
+	const noTrailingNl = lastRaw.endsWith("\u0000");
+	const lines = merged.result.map(stripSentinel);
+	const last = lines[lines.length - 1] ?? "";
+	const endsWithMarker = last.startsWith(">>>>>>>");
+	const needsNl = endsWithMarker || !noTrailingNl;
+	return { conflict: merged.conflict, text: needsNl ? `${lines.join("\n")}\n` : lines.join("\n") };
+}
+
+/** Resolve the patch's `index <old>..` prefix to a present base blob OID. */
+async function resolveBaseBlob(
+	ctx: GitContext,
+	prefix: string | undefined,
+): Promise<string | null> {
+	if (!prefix || prefix.length < 4 || /^0+$/.test(prefix)) return null;
+	const matches = await findObjectsByPrefix(ctx, prefix);
+	if (matches.length !== 1) return null;
+	const oid = matches[0] as string;
+	return (await objectExists(ctx, oid)) ? oid : null;
+}
+
+/**
+ * git's `try_threeway`: reconstruct the base the patch was prepared against
+ * (from the `index <old>..` OID), apply the patch to it to get "theirs", read
+ * the current file as "ours", and 3-way merge with the base. Returns a
+ * {@link FilePlan} on success (clean or conflicted) or a `fallback` signal so
+ * the caller can fall back to direct application (git's apply_data).
+ */
+async function planThreeway(
+	ctx: GitContext,
+	index: Index,
+	patch: ParsedPatch,
+	opts: ApplyEngineOptions,
+	oursText: string,
+): Promise<FilePlan | { fallback: true; note?: string }> {
+	// git skips 3-way for deletions, no-fragment renames, and (for now) pure
+	// creations — the add/add `direct_to_threeway` path is deferred.
+	if (patch.kind === "delete" || patch.kind === "new") return { fallback: true };
+	if (patch.fragments.length === 0) return { fallback: true };
+
+	const baseOid = await resolveBaseBlob(ctx, patch.oldOidPrefix);
+	if (!baseOid) return { fallback: true, note: THREEWAY_NO_BLOB };
+	const baseBytes = await readBlobBytes(ctx, baseOid);
+	const baseText = decoder.decode(baseBytes);
+
+	// "theirs" — the patch applied to its own recorded preimage.
+	const theirs = applyTextPatch(baseText, patch, {
+		reverse: false,
+		unidiffZero: opts.unidiffZero,
+		whitespace: opts.whitespace,
+		reject: false,
+	});
+	if (!theirs.ok || theirs.result === undefined) return { fallback: true };
+	const theirsText = theirs.result;
+
+	const oursBytes = encoder.encode(oursText);
+	const theirsBytes = encoder.encode(theirsText);
+	const oursOid = await hashObject("blob", oursBytes);
+	const theirsOid = await hashObject("blob", theirsBytes);
+
+	// three_way_merge's trivial resolves keep clean applies byte-identical to git.
+	let mergedText: string;
+	let conflict: boolean;
+	if (oursOid === baseOid) {
+		mergedText = theirsText;
+		conflict = false;
+	} else if (theirsOid === baseOid || theirsOid === oursOid) {
+		mergedText = oursText;
+		conflict = false;
+	} else {
+		const m = threeWayMergeText(oursText, baseText, theirsText);
+		mergedText = m.text;
+		conflict = m.conflict;
+	}
+
+	const mode = resolveMode(patch, index, opts.target);
+	const plan: FilePlan = {
+		patch,
+		newPath: patch.newName ?? patch.oldName ?? "",
+		oldPath: patch.kind === "rename" || patch.kind === "modify" ? patch.oldName : null,
+		content: encoder.encode(mergedText),
+		mode,
+		rejected: [],
+		whitespace: theirs.whitespace,
+		fragmentResults: theirs.fragments,
+		threeway: { kind: conflict ? "conflict" : "clean" },
+	};
+	if (conflict) {
+		plan.conflictStages = [
+			{ stage: 1, oid: baseOid, content: baseBytes },
+			{ stage: 2, oid: oursOid, content: oursBytes },
+			{ stage: 3, oid: theirsOid, content: theirsBytes },
+		];
+	}
+	return plan;
 }
 
 // ── Binary patches (git's apply_binary / apply_binary_fragment) ──────
@@ -708,15 +878,32 @@ async function commitPlan(
 	if (plan.newPath && plan.content !== undefined) {
 		if (touchesWorktree) await writeWorktreeFile(ctx, plan.newPath, plan.content);
 		if (touchesIndex) {
-			const hash = await writeObject(ctx, "blob", plan.content);
-			const entry: IndexEntry = {
-				path: plan.newPath,
-				mode: plan.mode,
-				hash,
-				stage: 0,
-				stat: { ...defaultStat(), size: plan.content.byteLength },
-			};
-			next = addEntry(next, entry);
+			// A conflicted `-3` merge records stages 1/2/3 instead of a resolved
+			// stage-0 entry (git's add_conflicted_stages_file).
+			if (plan.conflictStages) {
+				next = removeEntry(next, plan.newPath);
+				for (const s of plan.conflictStages) {
+					const hash = await writeObject(ctx, "blob", s.content);
+					const entry: IndexEntry = {
+						path: plan.newPath,
+						mode: plan.mode,
+						hash,
+						stage: s.stage,
+						stat: { ...defaultStat(), size: s.content.byteLength },
+					};
+					next = addEntry(next, entry);
+				}
+			} else {
+				const hash = await writeObject(ctx, "blob", plan.content);
+				const entry: IndexEntry = {
+					path: plan.newPath,
+					mode: plan.mode,
+					hash,
+					stage: 0,
+					stat: { ...defaultStat(), size: plan.content.byteLength },
+				};
+				next = addEntry(next, entry);
+			}
 		}
 	}
 	return next;
@@ -745,11 +932,15 @@ export async function applyPatches(
 	const errors: string[] = [];
 	const plans: FilePlan[] = [];
 	let ok = true;
+	// A hard failure (hunk mismatch / precondition) blocks all writes unless
+	// `--reject`; `-3` conflicts and rejects still write their results (exit 1).
+	let hardError = false;
 
 	for (const patch of effective) {
 		const planned = await planPatch(ctx, index, patch, opts);
 		if ("error" in planned) {
 			ok = false;
+			hardError = true;
 			errors.push(planned.error);
 			if (planned.doesNotApply) errors.push(`${planned.path}: patch does not apply`);
 			files.push({
@@ -758,27 +949,35 @@ export async function applyPatches(
 				rejected: [],
 				whitespace: [],
 				fragmentResults: [],
+				threeway: planned.threewayFallback
+					? { kind: "fallback", note: planned.threewayFallback.note }
+					: undefined,
 				error: planned.error,
 			});
 			continue;
 		}
 		plans.push(planned);
+		const conflicted = planned.threeway?.kind === "conflict";
 		files.push({
 			path: planned.newPath ?? planned.oldPath ?? "",
-			status: planned.rejected.length > 0 ? "failed" : "applied",
+			status: planned.rejected.length > 0 || conflicted ? "failed" : "applied",
 			rejected: planned.rejected,
 			whitespace: planned.whitespace,
 			fragmentResults: planned.fragmentResults,
+			threeway: planned.threeway,
 		});
-		if (planned.rejected.length > 0) ok = false;
+		if (planned.rejected.length > 0 || conflicted) ok = false;
 	}
 
 	// `--whitespace=error[-all]` refuses to write when any added line trips the
 	// whitespace rule (git's `die_on_ws_error` → `state->apply = 0`).
 	const wsErrorMode = opts.whitespace === "error" || opts.whitespace === "error-all";
-	if (wsErrorMode && files.some((f) => f.whitespace.length > 0)) ok = false;
+	if (wsErrorMode && files.some((f) => f.whitespace.length > 0)) {
+		ok = false;
+		hardError = true;
+	}
 
-	if (!ok && !opts.reject) {
+	if (hardError && !opts.reject) {
 		return { ok: false, files, errors };
 	}
 	if (opts.check) {
