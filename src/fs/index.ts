@@ -94,4 +94,12 @@ export interface FileSystem {
 	 * @throws Error if `src` doesn't exist.
 	 */
 	mv?(src: string, dest: string): Promise<void>;
+	/**
+	 * Change a path's permission bits.
+	 *
+	 * Optional: backends that cannot represent Unix permissions (or don't need
+	 * to) may omit it, in which case callers should treat the executable bit as
+	 * best-effort. Used by `git apply` to honor 100755 vs 100644 on disk.
+	 */
+	chmod?(path: string, mode: number): Promise<void>;
 }

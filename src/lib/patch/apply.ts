@@ -811,6 +811,7 @@ async function writeWorktreeFile(
 	ctx: GitContext,
 	path: string,
 	content: Uint8Array,
+	mode: number,
 ): Promise<void> {
 	if (!ctx.workTree) throw new Error("cannot write to worktree in a bare repository");
 	if (!verifyPath(path)) throw new Error(`refusing to write unsafe path '${path}'`);
@@ -821,6 +822,12 @@ async function writeWorktreeFile(
 	const slash = full.lastIndexOf("/");
 	if (slash > 0) await ctx.fs.mkdir(full.slice(0, slash), { recursive: true });
 	await ctx.fs.writeFile(full, content);
+	// Reflect the git mode's executable bit on disk (git's `create_file` honors
+	// 100755 vs 100644). Only regular-file blobs come through here; symlinks
+	// ride the content path per the plan's deferral.
+	if (ctx.fs.chmod) {
+		await ctx.fs.chmod(full, mode & 0o111 ? 0o755 : 0o644);
+	}
 }
 
 async function removeWorktreeFile(ctx: GitContext, path: string): Promise<void> {
@@ -876,7 +883,7 @@ async function commitPlan(
 	}
 
 	if (plan.newPath && plan.content !== undefined) {
-		if (touchesWorktree) await writeWorktreeFile(ctx, plan.newPath, plan.content);
+		if (touchesWorktree) await writeWorktreeFile(ctx, plan.newPath, plan.content, plan.mode);
 		if (touchesIndex) {
 			// A conflicted `-3` merge records stages 1/2/3 instead of a resolved
 			// stage-0 entry (git's add_conflicted_stages_file).
