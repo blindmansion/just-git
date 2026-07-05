@@ -79,6 +79,72 @@ function headerNeedsEncoding(text: string): boolean {
 	return !isAscii(text);
 }
 
+/** Decode the `q` (quoted-printable) segment of an RFC-2047 encoded-word. */
+function decodeQSegment(text: string): Uint8Array {
+	const out: number[] = [];
+	for (let i = 0; i < text.length; i++) {
+		const c = text[i] as string;
+		if (c === "_") {
+			// RFC-2047 "Q": underscore always means a space (0x20).
+			out.push(0x20);
+		} else if (c === "=" && i + 2 < text.length) {
+			const byte = Number.parseInt(text.slice(i + 1, i + 3), 16);
+			if (Number.isNaN(byte)) {
+				out.push(c.charCodeAt(0));
+			} else {
+				out.push(byte);
+				i += 2;
+			}
+		} else {
+			out.push(c.charCodeAt(0));
+		}
+	}
+	return Uint8Array.from(out);
+}
+
+/** Decode the `b` (base64) segment of an RFC-2047 encoded-word. */
+function decodeBSegment(text: string): Uint8Array {
+	try {
+		const binary = atob(text.replace(/\s+/g, ""));
+		const out = new Uint8Array(binary.length);
+		for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+		return out;
+	} catch {
+		return new Uint8Array(0);
+	}
+}
+
+/** Decode raw bytes with the named charset, falling back to UTF-8 on unknown. */
+function decodeCharset(charset: string, bytes: Uint8Array): string {
+	try {
+		const label = charset.toLowerCase() as ConstructorParameters<typeof TextDecoder>[0];
+		return new TextDecoder(label).decode(bytes);
+	} catch {
+		return utf8Decoder.decode(bytes);
+	}
+}
+
+const utf8Decoder = new TextDecoder();
+
+/**
+ * Decode a single RFC-2047 encoded-word (`=?charset?enc?text?=`) back to plain
+ * text — the inverse of {@link encodeHeaderWord}. Handles both the `q`
+ * (quoted-printable) and `b` (base64) encodings and any charset `TextDecoder`
+ * knows (UTF-8, latin1, …), falling back to UTF-8 for unknown labels. Returns
+ * null when the input is not a well-formed encoded-word, so the caller can keep
+ * the original text verbatim. (git mailinfo's `decode_header` /
+ * `decode_q_segment` / `decode_b_segment`.)
+ */
+export function decodeHeaderWord(word: string): string | null {
+	const m = /^=\?([^?]+)\?([bBqQ])\?([^?]*)\?=$/.exec(word);
+	if (!m) return null;
+	const charset = m[1] as string;
+	const encoding = (m[2] as string).toLowerCase();
+	const encoded = m[3] as string;
+	const bytes = encoding === "b" ? decodeBSegment(encoded) : decodeQSegment(encoded);
+	return decodeCharset(charset, bytes);
+}
+
 export interface FormatPatchMessageInput {
 	/** Full commit sha for the magic `From ` separator line. */
 	sha: string;
