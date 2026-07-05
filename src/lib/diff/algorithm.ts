@@ -1392,14 +1392,18 @@ export function formatUnifiedDiff(opts: FormatOptions): string {
 
 		// Funcname context: scan backward from hunk start for a line matching the
 		// funcname pattern (a `diff=<driver>`'s `funcname`, else git's default).
-		// Git uses XDL_MAX_FUNCNAME (80), showing up to 79 chars.
+		// Git (xdiff `def_ff`) copies the record — the line *including* its
+		// trailing newline — into an 80-byte buffer (XDL_MAX_FUNCNAME), then trims
+		// trailing whitespace. So a line of ≥80 content chars yields 80 chars,
+		// while a 79-char line yields 79 (its newline lands at byte 80, then trims).
 		const funcnameRegex = opts.funcnameRegex ?? DEFAULT_FUNCNAME_REGEX;
 		let funcCtx = "";
 		const scanFrom = hunk.oldCount === 0 ? hunk.oldStart - 1 : hunk.oldStart - 2;
 		for (let i = scanFrom; i >= 0; i--) {
 			const line = oldLines[i];
 			if (line && funcnameRegex.test(line)) {
-				funcCtx = ` ${line.trimEnd().slice(0, 79)}`;
+				const record = `${line}\n`.slice(0, 80).replace(/[ \t\n\v\f\r]+$/, "");
+				funcCtx = ` ${record}`;
 				break;
 			}
 		}

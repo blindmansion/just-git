@@ -920,6 +920,32 @@ describe("git diff", () => {
 			expect(result.stdout).toContain("@@ -2,0 +3 @@ line2");
 		});
 
+		test("funcname context is truncated to 80 bytes (XDL_MAX_FUNCNAME)", async () => {
+			// Git copies the funcname line (incl. its newline) into an 80-byte
+			// buffer, then trims trailing whitespace: a ≥80-char line yields 80
+			// chars, a 79-char line yields 79 (its newline lands at byte 80).
+			const bash = createTestBash({ env: TEST_ENV });
+			await bash.exec("git init");
+			// Funcname line of 85 chars, then non-funcname (digit-led) lines so the
+			// long line is the nearest match scanning back from the hunk.
+			const funcLine = "a".repeat(85);
+			const tail = Array.from({ length: 20 }, (_, i) => `9num${i + 1}`).join("\n");
+			await bash.writeFile("/repo/file.txt", `${funcLine}\n${tail}\n`);
+			await bash.exec("git add . && git commit -m 'initial'");
+			await bash.writeFile(
+				"/repo/file.txt",
+				`${funcLine}\n${tail.replace("9num15", "9CHANGED")}\n`,
+			);
+			await bash.exec("git add . && git commit -m 'change'");
+
+			const result = await bash.exec("git diff HEAD~1 HEAD");
+			expect(result.exitCode).toBe(0);
+			const header = result.stdout.split("\n").find((l) => l.startsWith("@@"));
+			expect(header).toBeDefined();
+			const ctx = header?.replace(/^@@ .*? @@ /, "");
+			expect(ctx).toBe("a".repeat(80));
+		});
+
 		test("-U with negative value produces valid output", async () => {
 			const bash = await setupMultiLineDiff();
 			const result = await bash.exec("git diff -U0 HEAD~1 HEAD");
