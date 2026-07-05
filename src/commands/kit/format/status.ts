@@ -136,10 +136,19 @@ export function renderLongStatus(data: LongStatusData): string {
 	// In-progress operation indicators
 	// Real git prints a blank line between tracking info and operation-state
 	// sections (e.g. during cherry-pick/rebase) in long status output.
-	if (hasIntermediateState && (rebase || cherryPickShort || revertShort || hasMergeHead)) {
+	if (
+		hasIntermediateState &&
+		(data.amInProgress || rebase || cherryPickShort || revertShort || hasMergeHead)
+	) {
 		lines.push("");
 	}
-	if (rebase && hasMergeHead) {
+	if (data.amInProgress) {
+		lines.push("You are in the middle of an am session.");
+		lines.push('  (fix conflicts and then run "git am --continue")');
+		lines.push('  (use "git am --skip" to skip this patch)');
+		lines.push('  (use "git am --abort" to restore the original branch)');
+		hasIntermediateState = true;
+	} else if (rebase && hasMergeHead) {
 		pushRebaseTodoLines(lines, rebase);
 		lines.push("");
 		if (unmerged.length > 0) {

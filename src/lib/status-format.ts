@@ -1,3 +1,4 @@
+import { isAmInProgress } from "./am.ts";
 import { isBisectInProgress } from "./bisect.ts";
 import { countAheadBehind } from "./commit-walk.ts";
 import { getStage0Entries, hasConflicts, readIndex } from "./index.ts";
@@ -66,6 +67,8 @@ export interface LongStatusData {
 	collapsedUntracked: string[];
 	/** Rebase progress, or null when no rebase is in progress. */
 	rebase: RebaseStatusView | null;
+	/** Whether a `git am` session is in progress (owns `rebase-apply/`). */
+	amInProgress: boolean;
 	/** Abbreviated CHERRY_PICK_HEAD, or null when not cherry-picking. */
 	cherryPickShort: string | null;
 	/** Abbreviated REVERT_HEAD, or null when not reverting. */
@@ -160,6 +163,7 @@ export async function gatherLongStatus(
 	const revertHeadRef = await resolveRef(gitCtx, "REVERT_HEAD");
 	const mergeHeadRef = await resolveRef(gitCtx, "MERGE_HEAD");
 
+	const amInProgress = await isAmInProgress(gitCtx);
 	const rebaseInProgress = await isRebaseInProgress(gitCtx);
 	const rebaseRaw = rebaseInProgress ? await readRebaseState(gitCtx) : null;
 
@@ -210,6 +214,7 @@ export async function gatherLongStatus(
 		unmerged,
 		collapsedUntracked,
 		rebase,
+		amInProgress,
 		cherryPickShort: cherryPickHeadRef ? await uniqueAbbrev(gitCtx, cherryPickHeadRef) : null,
 		revertShort: revertHeadRef ? await uniqueAbbrev(gitCtx, revertHeadRef) : null,
 		hasMergeHead: !!mergeHeadRef,

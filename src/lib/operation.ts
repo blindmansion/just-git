@@ -1,3 +1,4 @@
+import { type AmState, isAmInProgress, readAmState } from "./am.ts";
 import { type BisectState, isBisectInProgress, readBisectState } from "./bisect.ts";
 import { readStateFile } from "./operation-state.ts";
 import { readRebaseState, type RebaseState } from "./rebase.ts";
@@ -17,10 +18,11 @@ import type { GitContext, ObjectId } from "./types.ts";
  * genuinely composite (a conflicted rebase also leaves a `MERGE_HEAD`,
  * `git status` reports both) — those few consumers keep reading the
  * granular state directly. Precedence here matches that umbrella view:
- * rebase > cherry-pick > revert > merge > bisect.
+ * am > rebase > cherry-pick > revert > merge > bisect.
  */
 export type OperationState =
 	| { kind: "none" }
+	| { kind: "am"; am: AmState }
 	| { kind: "merge"; heads: ObjectId[]; message: string | null }
 	| { kind: "cherry-pick"; head: ObjectId; message: string | null }
 	| { kind: "revert"; head: ObjectId; message: string | null }
@@ -34,10 +36,16 @@ export type OperationState =
  * `{ kind: "none" }` when no operation is in progress. This is the
  * imperative-shell read boundary.
  *
- * Precedence follows real git's umbrella view: a rebase wins even when it
- * has paused on a conflicted pick (which also leaves a `MERGE_HEAD`).
+ * Precedence follows real git's umbrella view: an `am` session (which owns
+ * `rebase-apply/`) wins over everything, then a rebase wins even when it has
+ * paused on a conflicted pick (which also leaves a `MERGE_HEAD`).
  */
 export async function readOperationState(ctx: GitContext): Promise<OperationState> {
+	if (await isAmInProgress(ctx)) {
+		const am = await readAmState(ctx);
+		if (am) return { kind: "am", am };
+	}
+
 	const rebase = await readRebaseState(ctx);
 	if (rebase) return { kind: "rebase", rebase };
 

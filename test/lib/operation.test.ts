@@ -132,6 +132,38 @@ describe("readOperationState", () => {
 		}
 	});
 
+	test("detects an in-progress am session", async () => {
+		const { fs, run, state } = setup();
+		await run("init");
+		await fs.writeFile("/repo/f.txt", "line1\nline2\nline3\n");
+		await run("add .");
+		await run('commit -m "base"');
+		await run("branch feature");
+
+		await run("checkout feature");
+		await fs.writeFile("/repo/f.txt", "line1\nFEATURE\nline3\n");
+		await run("add .");
+		await run('commit -m "feature change"');
+
+		const patch = await run("format-patch -1 --stdout");
+		await fs.writeFile("/repo/feat.patch", patch.stdout);
+
+		await run("checkout main");
+		await fs.writeFile("/repo/f.txt", "line1\nMAIN\nline3\n");
+		await run("add .");
+		await run('commit -m "main change"');
+
+		// Conflicting apply leaves an in-progress am session behind.
+		await run("am feat.patch");
+
+		const s = await state();
+		expect(s.kind).toBe("am");
+		if (s.kind === "am") {
+			expect(s.am.next).toBe(1);
+			expect(s.am.last).toBe(1);
+		}
+	});
+
 	test("detects an in-progress bisect", async () => {
 		const { fs, run, state } = setup();
 		await run("init");
