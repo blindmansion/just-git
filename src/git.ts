@@ -67,6 +67,7 @@ export type GitCommandName =
 	| "pull"
 	| "push"
 	| "add"
+	| "am"
 	| "apply"
 	| "blame"
 	| "check-attr"

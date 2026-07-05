@@ -19,6 +19,7 @@ Commands:
   pull          Fetch from and integrate with another repository
   push          Update remote refs along with associated objects
   add           Add file contents to the index
+  am            Apply a series of patches from a mailbox
   apply         Apply a patch to files and/or to the index
   blame         Show what revision and author last modified each line of a file
   check-attr    Display gitattributes information for paths
@@ -71,6 +72,27 @@ Options:
   -f, --force    Allow adding otherwise ignored files
   -u, --update   Update tracked files
   -n, --dry-run  Don't actually add the file(s)
+```
+
+## git am
+
+```
+git am - Apply a series of patches from a mailbox
+
+Usage:
+  git am [options] [mbox...]
+
+Arguments:
+  mbox...
+
+Options:
+  -3, --3way                       Use a 3-way merge if the patch does not apply cleanly
+  -s, --signoff                    Add a Signed-off-by trailer to the commit message
+  -q, --quiet                      Suppress the 'Applying:' progress output
+  -k, --keep                       Pass the subject through verbatim (keep [PATCH])
+  --scissors                       Cut everything above a scissors line before the body
+  --keep-cr                        Keep a trailing CR on body/patch lines
+  --committer-date-is-author-date  Use the author date as the committer date
 ```
 
 ## git apply

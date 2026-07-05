@@ -2,6 +2,7 @@ import type { GitCommandName, GitExtensions } from "../git.ts";
 import { type Command, a, command } from "./kit/parse/index.ts";
 import { generateHelp } from "./kit/parse/help.ts";
 import { registerAddCommand } from "./add.ts";
+import { registerAmCommand } from "./am.ts";
 import { registerApplyCommand } from "./apply.ts";
 import { registerBisectCommand } from "./bisect.ts";
 import { registerBlameCommand } from "./blame.ts";
@@ -49,7 +50,6 @@ import { registerWorktreeCommand } from "./worktree.ts";
  * "not implemented" from "not a git command".
  */
 export const KNOWN_UNIMPLEMENTED_COMMANDS = new Set([
-	"am",
 	"annotate",
 	"archive",
 	"bugreport",
@@ -127,6 +127,7 @@ const COMMAND_REGISTRY: Record<GitCommandName, (git: Command, ext?: GitExtension
 	pull: (g, e) => registerPullCommand(g, e),
 	push: (g, e) => registerPushCommand(g, e),
 	add: (g, e) => registerAddCommand(g, e),
+	am: (g, e) => registerAmCommand(g, e),
 	apply: (g, e) => registerApplyCommand(g, e),
 	blame: (g, e) => registerBlameCommand(g, e),
 	"check-attr": (g, e) => registerCheckAttrCommand(g, e),
