@@ -93,6 +93,11 @@ Options:
   --scissors                       Cut everything above a scissors line before the body
   --keep-cr                        Keep a trailing CR on body/patch lines
   --committer-date-is-author-date  Use the author date as the committer date
+  -c, --continue                   Continue after resolving a failed patch
+  --skip                           Skip the current patch
+  --abort                          Restore the original branch and abort the patching
+  --quit                           Abort the patching but keep HEAD where it is
+  --show-current-patch <string>    Show the patch being applied (raw|diff); defaults to raw
 ```
 
 ## git apply

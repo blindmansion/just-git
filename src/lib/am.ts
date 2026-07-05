@@ -121,6 +121,52 @@ export async function readPatchMessage(ctx: GitContext, n: number): Promise<stri
 	return ctx.fs.readFile(amPath(ctx, patchFileName(n)));
 }
 
+/** The metadata a paused patch left behind, replayed by `--continue`. */
+export interface AmStopMeta {
+	/** The commit message (`final-commit`). */
+	message: string;
+	/** The author identity recovered from `author-script`. */
+	author: Identity;
+}
+
+/**
+ * Parse an `author-script` (git's `read_author_script`): three single-quoted
+ * `GIT_AUTHOR_*` assignments, with the date as `@<epoch> <tz>`.
+ */
+function parseAuthorScript(script: string): Identity | null {
+	const get = (key: string): string | null => {
+		const m = new RegExp(`^${key}='(.*)'$`, "m").exec(script);
+		return m ? (m[1] as string) : null;
+	};
+	const name = get("GIT_AUTHOR_NAME");
+	const email = get("GIT_AUTHOR_EMAIL");
+	if (name === null || email === null) return null;
+	const date = get("GIT_AUTHOR_DATE");
+	let timestamp = 0;
+	let timezone = "+0000";
+	const dm = date ? /^@(-?\d+)\s+([+-]\d{4})$/.exec(date.trim()) : null;
+	if (dm) {
+		timestamp = Number.parseInt(dm[1] as string, 10);
+		timezone = dm[2] as string;
+	}
+	return { name, email, timestamp, timezone };
+}
+
+/**
+ * Read the paused patch's metadata (`final-commit` + `author-script`) that a
+ * stop left behind, for `--continue` to replay. Returns null when the
+ * `author-script` is absent (nothing to resume).
+ */
+export async function readAmStopMeta(ctx: GitContext): Promise<AmStopMeta | null> {
+	const scriptPath = amPath(ctx, "author-script");
+	if (!(await ctx.fs.exists(scriptPath))) return null;
+	const author = parseAuthorScript(await ctx.fs.readFile(scriptPath));
+	if (!author) return null;
+	const fcPath = amPath(ctx, "final-commit");
+	const message = (await ctx.fs.exists(fcPath)) ? await ctx.fs.readFile(fcPath) : "";
+	return { message, author };
+}
+
 /** Advance the `next` counter on disk (called after each committed patch). */
 export async function setAmNext(ctx: GitContext, next: number): Promise<void> {
 	await ctx.fs.writeFile(amPath(ctx, "next"), `${next}\n`);
