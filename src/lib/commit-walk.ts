@@ -47,6 +47,22 @@ export class CommitHeap {
 		return top.entry;
 	}
 
+	/** Highest-priority entry without removing it (git's list head). */
+	peek(): CommitEntry | undefined {
+		return this.heap[0]?.entry;
+	}
+
+	/**
+	 * Does the queue still contain a commit not in `uninteresting`?
+	 * Mirrors git's `everybody_uninteresting` (returns the negation).
+	 */
+	hasInteresting(uninteresting: Set<ObjectId>): boolean {
+		for (const node of this.heap) {
+			if (!uninteresting.has(node.entry.hash)) return true;
+		}
+		return false;
+	}
+
 	/** Is a higher-priority than b? (newer timestamp, or FIFO for ties) */
 	private higher(a: HeapNode, b: HeapNode): boolean {
 		const ta = a.entry.commit.committer.timestamp;
@@ -106,8 +122,17 @@ export async function* walkCommits(
 		return;
 	}
 
-	const excluded = await buildExcludeSet(ctx, opts?.exclude);
-	const visited = new Set<ObjectId>(excluded);
+	// A `<exclude>..<start>` range: git computes reachability with a
+	// date-ordered, SLOP-limited "uninteresting" painting (limit_list), which
+	// deliberately leaks ancestors of the excluded side into the range when
+	// commit dates are non-monotonic (clock skew). Route through the faithful
+	// port so we match rev-list / format-patch / squash-message / bisect.
+	if (opts?.exclude && opts.exclude.length > 0) {
+		yield* walkCommitsLimited(ctx, startHash, opts.exclude, opts);
+		return;
+	}
+
+	const visited = new Set<ObjectId>();
 	const queue = new CommitHeap();
 	const shallow = opts?.shallowBoundary;
 	const limit = opts?.limit;
@@ -142,6 +167,160 @@ export async function* walkCommits(
 			}
 		}
 	}
+}
+
+// How many extra uninteresting commits git pops before giving up (revision.c).
+const SLOP = 5;
+
+/**
+ * Range walk (`<exclude>..<start>`) faithful to git's `limit_list`
+ * (revision.c). A single commit-date priority queue holds both the
+ * interesting starts and the uninteresting excludes; "uninteresting" is
+ * painted lazily as commits are popped, and the walk stops early once the
+ * queue holds nothing interesting for SLOP extra pops.
+ *
+ * Because painting is date-ordered and only follows *parsed* parents (git
+ * doesn't parse ahead in `mark_parents_uninteresting`), an ancestor of the
+ * excluded side that is also reachable from the start via a low-dated path
+ * can be emitted before the uninteresting front reaches it — matching git's
+ * documented clock-skew behavior. A topologically-exact exclude set would
+ * (incorrectly, vs git) drop such commits.
+ */
+async function* walkCommitsLimited(
+	ctx: GitRepo,
+	startHash: ObjectId | ObjectId[],
+	exclude: ObjectId[],
+	opts: { firstParent?: boolean; shallowBoundary?: Set<ObjectId>; limit?: number },
+): AsyncGenerator<CommitEntry> {
+	const shallow = opts.shallowBoundary;
+	const firstParent = opts.firstParent ?? false;
+	const limit = opts.limit;
+
+	const seen = new Set<ObjectId>();
+	const uninteresting = new Set<ObjectId>();
+	const commits = new Map<ObjectId, Commit>(); // "parsed" cache
+	const queue = new CommitHeap();
+
+	// Load + cache a commit (git's parse). Shallow boundary commits are
+	// grafted to have no parents so both the walk and the uninteresting
+	// painting terminate there.
+	const parse = async (h: ObjectId): Promise<Commit> => {
+		let c = commits.get(h);
+		if (c === undefined) {
+			c = await readCommit(ctx, h);
+			commits.set(h, c);
+		}
+		return c;
+	};
+	// Parents visible to the uninteresting painting: empty unless already
+	// parsed (git reads commit->parents, which is NULL for unparsed commits),
+	// and empty at a shallow boundary.
+	const knownParents = (h: ObjectId): readonly ObjectId[] => {
+		if (shallow?.has(h)) return [];
+		return commits.get(h)?.parents ?? [];
+	};
+
+	// git's mark_parents_uninteresting: mark `h`'s parents uninteresting and
+	// recurse into any that are already parsed.
+	const markParentsUninteresting = (h: ObjectId): void => {
+		const pending: ObjectId[] = [];
+		const push = (c: ObjectId): void => {
+			if (uninteresting.has(c)) return;
+			uninteresting.add(c);
+			for (const p of knownParents(c)) pending.push(p);
+		};
+		for (const p of knownParents(h)) push(p);
+		while (pending.length > 0) push(pending.pop()!);
+	};
+
+	// git's process_parents: enqueue parents, propagating UNINTERESTING.
+	const processParents = async (h: ObjectId): Promise<void> => {
+		const commit = commits.get(h)!;
+		let parents = commit.parents;
+		if (shallow?.has(h)) parents = [];
+		else if (firstParent) parents = parents.slice(0, 1);
+
+		const isUninteresting = uninteresting.has(h);
+		for (const p of parents) {
+			try {
+				await parse(p);
+			} catch {
+				continue; // missing parent object (shallow / corrupt): skip
+			}
+			if (isUninteresting) {
+				uninteresting.add(p);
+				if (knownParents(p).length > 0) markParentsUninteresting(p);
+			}
+			if (!seen.has(p)) {
+				seen.add(p);
+				queue.push({ hash: p, commit: commits.get(p)! });
+			}
+		}
+	};
+
+	// Seeds, in git's pending order for `A..B`: excludes first, then starts
+	// (so equal-dated ties pop excludes first).
+	for (const h of exclude) {
+		if (seen.has(h)) continue;
+		seen.add(h);
+		uninteresting.add(h);
+		queue.push({ hash: h, commit: await parse(h) });
+	}
+	const starts = Array.isArray(startHash) ? startHash : [startHash];
+	for (const h of starts) {
+		if (seen.has(h)) continue;
+		seen.add(h);
+		queue.push({ hash: h, commit: await parse(h) });
+	}
+
+	// Phase 1: git's limit_list. Collect commits popped while interesting into
+	// `newlist` (date-desc pop order); keep painting until the queue holds
+	// nothing interesting for SLOP extra pops. A commit added here can still be
+	// painted UNINTERESTING afterwards by a later low-dated ancestor.
+	const newlist: CommitEntry[] = [];
+	let slop = SLOP;
+	let date = Number.POSITIVE_INFINITY;
+
+	while (queue.size > 0) {
+		const entry = queue.pop()!;
+		await processParents(entry.hash);
+
+		if (uninteresting.has(entry.hash)) {
+			markParentsUninteresting(entry.hash);
+			slop = stillInteresting(queue, uninteresting, date, slop);
+			if (slop > 0) continue;
+			break;
+		}
+
+		date = entry.commit.committer.timestamp;
+		newlist.push(entry);
+	}
+
+	// Phase 2: git's get_revision output filter — drop commits whose *final*
+	// flag became UNINTERESTING, then apply the count limit.
+	let count = 0;
+	for (const entry of newlist) {
+		if (uninteresting.has(entry.hash)) continue;
+		yield entry;
+		if (limit !== undefined && ++count >= limit) return;
+	}
+}
+
+/** git's still_interesting: how much longer to keep popping (SLOP counter). */
+function stillInteresting(
+	queue: CommitHeap,
+	uninteresting: Set<ObjectId>,
+	date: number,
+	slop: number,
+): number {
+	if (queue.size === 0) return 0;
+	const top = queue.peek()!;
+	// Destination emitted a commit older than the queue head? Not done.
+	if (date <= top.commit.committer.timestamp) return SLOP;
+	// Queue still holds an interesting commit? Not done.
+	if (queue.hasInteresting(uninteresting)) return SLOP;
+	// Closing in.
+	return slop - 1;
 }
 
 /**
