@@ -12,6 +12,41 @@ export function ensureTrailingNewline(msg: string): string {
 }
 
 /**
+ * git's `strbuf_stripspace` *without* comment removal (the `skip_comments=0`
+ * call `mailinfo` makes on a parsed commit message): trim trailing whitespace
+ * from each line, drop leading and trailing blank lines, and collapse
+ * consecutive blank lines into one. Two deliberate departures from a literal
+ * port, both driven by `git am`'s needs:
+ * - `#` lines are preserved (unlike {@link stripCommentLines}) — `am` must
+ *   reproduce commit messages verbatim, and a body can legitimately start `#`.
+ * - only spaces and tabs are trimmed *per interior line*, not `\r`: an interior
+ *   CR is governed by `--keep-cr` upstream (the default already chomps it), so
+ *   trimming it here would defeat that flag. The message's overall trailing
+ *   whitespace (including a final `\r`) is still stripped.
+ * No trailing newline is added.
+ */
+export function stripSpace(text: string): string {
+	const lines = text.split("\n").map((line) => line.replace(/[ \t]+$/, ""));
+
+	while (lines.length > 0 && lines[0] === "") lines.shift();
+	while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+
+	const result: string[] = [];
+	let prevBlank = false;
+	for (const line of lines) {
+		if (line === "") {
+			if (!prevBlank) result.push(line);
+			prevBlank = true;
+		} else {
+			result.push(line);
+			prevBlank = false;
+		}
+	}
+
+	return result.join("\n").replace(/\s+$/, "");
+}
+
+/**
  * Clean up a commit message matching git's `strbuf_stripspace` with
  * comment stripping (the default `--cleanup=strip` mode):
  * - Remove lines starting with `#`

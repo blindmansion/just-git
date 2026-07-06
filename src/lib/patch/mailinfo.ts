@@ -16,6 +16,7 @@
  * behavior only.
  */
 import { parseRFC2822 } from "../date.ts";
+import { stripSpace } from "../text-utils.ts";
 import type { Identity } from "../types.ts";
 import { decodeHeaderWord } from "./mbox.ts";
 
@@ -286,7 +287,12 @@ export function parseMail(raw: string, opts: MailInfoOptions = {}): ParsedMail {
 		}
 	}
 
-	const body = bodyLines.slice(0, boundary).join("\n").replace(/^\n+/, "").replace(/\s+$/, "");
+	// git's `mailinfo` runs `strbuf_stripspace` (no comment removal) over the
+	// extracted message: per-line trailing-whitespace trim + blank-line
+	// collapse. This matters for an empty patch, where the mail signature
+	// (`-- \n<version>`) lands in the body and its trailing space must be
+	// stripped so the recorded commit message matches real git byte-for-byte.
+	const body = stripSpace(bodyLines.slice(0, boundary).join("\n"));
 	const patchText = diffStart === -1 ? "" : bodyLines.slice(diffStart).join("\n");
 
 	const parsedDate = dateStr ? parseRFC2822(dateStr) : null;

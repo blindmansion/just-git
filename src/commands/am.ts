@@ -334,11 +334,21 @@ async function runAmLoop(gitCtx: GitContext, env: Map<string, string>): Promise<
 		});
 		const patchName = patchFileName(state.next);
 
+		// Resolve the committer up front so the stored message (with signoff)
+		// is available on every stop path — including the empty-patch pause.
+		const committer = await requireCommitter(gitCtx, env);
+		if (isCommandError(committer)) return committer;
+		const signoffLine = state.sign ? `Signed-off-by: ${committer.name} <${committer.email}>` : null;
+		const message = buildMessage(mail.subject, mail.body, signoffLine);
+
 		// An empty patch pauses the session *before* the "Applying:" line
 		// (git's parse_mail): print "Patch is empty." and stop with the
-		// empty-patch resolve hints, leaving the state dir in place so the
-		// session is resumable (`--continue`/`--allow-empty`/`--skip`/`--abort`).
+		// empty-patch resolve hints. Persist the stop meta (`final-commit` +
+		// `author-script`) like any other stop so the session is resumable —
+		// `--continue` records the (resolved) commit under the stored author/
+		// message, and `--skip`/`--abort` unwind it.
 		if (mail.patchText.trim() === "") {
+			await writeAmStopMeta(gitCtx, message, mail.author);
 			return {
 				stdout: `${out.join("")}Patch is empty.\n`,
 				stderr: EMPTY_RESOLVE_HINT,
@@ -347,13 +357,6 @@ async function runAmLoop(gitCtx: GitContext, env: Map<string, string>): Promise<
 		}
 
 		if (!state.quiet) out.push(`Applying: ${mail.subject}\n`);
-
-		// Resolve the committer up front so the stored message (with signoff)
-		// is available on every stop path.
-		const committer = await requireCommitter(gitCtx, env);
-		if (isCommandError(committer)) return committer;
-		const signoffLine = state.sign ? `Signed-off-by: ${committer.name} <${committer.email}>` : null;
-		const message = buildMessage(mail.subject, mail.body, signoffLine);
 
 		let patches;
 		try {
