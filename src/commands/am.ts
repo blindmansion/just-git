@@ -2,6 +2,7 @@ import type { CommandContext, GitExtensions } from "../git.ts";
 import {
 	type AmState,
 	clearAmState,
+	clearDirtyIndex,
 	hasDirtyIndex,
 	isAmInProgress,
 	patchFileName,
@@ -10,7 +11,7 @@ import {
 	readAmState,
 	readAmStopMeta,
 	readPatchMessage,
-	setAbortSafety,
+	refreshAbortSafety,
 	setAmNext,
 	writeAmState,
 	writeAmStopMeta,
@@ -33,11 +34,25 @@ import { parseMail, splitMailbox } from "../lib/patch/mailinfo.ts";
 import { ApplyParseError, type ParsedPatch, parsePatch } from "../lib/patch/parse-patch.ts";
 import { resolve } from "../lib/path.ts";
 import { logRef } from "../lib/refs/reflog.ts";
-import { advanceBranchRef, readHead, resolveHead } from "../lib/refs/refs.ts";
+import {
+	advanceBranchRef,
+	deleteRef,
+	readHead,
+	resolveHead,
+	resolveRef,
+	updateRef,
+} from "../lib/refs/refs.ts";
 import { firstLine } from "../lib/text-utils.ts";
 import { buildTreeFromIndex, flattenTreeToMap } from "../lib/tree-ops.ts";
-import type { GitContext, Identity, Index } from "../lib/types.ts";
-import { applyWorktreeOps, fastForwardMerge } from "../lib/worktree/unpack-trees.ts";
+import type { GitContext, Identity, Index, ObjectId } from "../lib/types.ts";
+import {
+	applyWorktreeOps,
+	onewayMerge,
+	type RejectedPath,
+	twowayMerge,
+	UnpackError,
+	unpackTrees,
+} from "../lib/worktree/unpack-trees.ts";
 import { fallBackThreeway } from "../repo/patching.ts";
 import { type CommandResult, err, fatal, isCommandError } from "./kit/command-result.ts";
 import { resolveCommandSigner } from "./kit/command-utils.ts";
@@ -220,7 +235,7 @@ export function registerAmCommand(parent: Command, ext?: GitExtensions): void {
 				return err("Patch format detection failed.\n", 128);
 			}
 
-			const origHead = (await resolveHead(gitCtx)) ?? "";
+			const origHead = await resolveHead(gitCtx);
 			const state: AmState = {
 				next: 1,
 				last: messages.length,
@@ -231,9 +246,16 @@ export function registerAmCommand(parent: Command, ext?: GitExtensions): void {
 				quiet: !!args.quiet,
 				keepCr: !!args.keepCr,
 				committerDateIsAuthorDate: !!args.committerDateIsAuthorDate,
-				origHead,
 			};
 			await writeAmState(gitCtx, state, messages);
+
+			// git's `am_setup` records the pre-`am` HEAD in the `ORIG_HEAD` ref
+			// (not a state-dir file) and seeds `abort-safety` with it. `--abort`
+			// later reads `ORIG_HEAD`, so an intervening command that rewrites
+			// `ORIG_HEAD` steers the abort target exactly as it does in git.
+			if (origHead) await updateRef(gitCtx, "ORIG_HEAD", origHead);
+			else await deleteRef(gitCtx, "ORIG_HEAD");
+			await refreshAbortSafety(gitCtx, origHead);
 
 			// git's `am_run` refuses to apply onto a dirty index (index ≠ HEAD)
 			// *after* `am_setup` has created the state dir — so the aborted
@@ -291,9 +313,10 @@ async function writeAmCommit(
 		`am: ${firstLine(message)}`,
 		head?.type === "symbolic",
 	);
-	// Track the commit `am` just made so `--abort`'s abort-safety guard can tell
-	// whether HEAD later moved out from under the paused session.
-	await setAbortSafety(gitCtx, commitHash);
+	// git's `am_next` refreshes abort-safety to the current HEAD after each
+	// committed patch, so `--abort`'s guard can tell whether HEAD later moved
+	// out from under the paused session.
+	await refreshAbortSafety(gitCtx, commitHash);
 	return null;
 }
 
@@ -437,6 +460,11 @@ async function attemptThreeway(
 async function runAmLoop(gitCtx: GitContext, env: Map<string, string>): Promise<CommandResult> {
 	const out: string[] = [];
 
+	// git's `am_run` unlinks any `dirtyindex` marker before (re-)entering the
+	// apply loop, so a session that recovered from a dirty-index death no longer
+	// reports itself dirty to a later `--abort`.
+	await clearDirtyIndex(gitCtx);
+
 	for (;;) {
 		const state = await readAmState(gitCtx);
 		if (!state) break;
@@ -538,6 +566,103 @@ async function runAmLoop(gitCtx: GitContext, env: Map<string, string>): Promise<
 	return { stdout: out.join(""), stderr: "", exitCode: 0 };
 }
 
+/**
+ * git's `clean_index(head, remote)` (`builtin/am.c`), used by `--skip`
+ * (`head == remote == HEAD`) and `--abort` (`head = HEAD`, `remote = ORIG_HEAD`):
+ *
+ *   1. Collapse conflicts back to `head` — resolve every unmerged path to its
+ *      `head` blob in the index and worktree, leaving non-conflict index/
+ *      worktree entries untouched (git's `read_index_unmerged` +
+ *      `fast_forward_to(head, head, reset)`). This discards the failed patch's
+ *      conflict artifacts.
+ *   2. Two-way merge the resulting index tree → `remote`, preserving local
+ *      worktree changes and *failing* (like git's `fast_forward_to(index,
+ *      remote, 0)`) when a path that must change is not up to date.
+ *   3. One-way merge `remote` into the index so it matches the `remote` tree
+ *      exactly (git's `merge_tree(remote)`) — index only, no worktree update.
+ *
+ * Returns `{ ok: true }` on success, or the first rejected path so the caller
+ * can render git's `failed to clean index` die.
+ */
+async function cleanIndex(
+	gitCtx: GitContext,
+	headTree: ObjectId,
+	remoteTree: ObjectId,
+): Promise<{ ok: true } | { ok: false; rejected: RejectedPath }> {
+	// Step 1: resolve conflicts to head; leave everything else as-is.
+	const index0 = await readIndex(gitCtx);
+	const conflicted = new Set(index0.entries.filter((e) => e.stage > 0).map((e) => e.path));
+	if (conflicted.size > 0) {
+		const headMap = await flattenTreeToMap(gitCtx, headTree);
+		const entries = getStage0Entries(index0);
+		const worktreeOps = [];
+		for (const path of conflicted) {
+			const head = headMap.get(path);
+			if (head) {
+				const mode = parseInt(head.mode, 8);
+				entries.push({ path, mode, hash: head.hash, stage: 0, stat: defaultStat() });
+				worktreeOps.push({ path, type: "checkout" as const, hash: head.hash, mode });
+			} else {
+				worktreeOps.push({ path, type: "delete" as const });
+			}
+		}
+		await writeIndex(gitCtx, { version: 2, entries });
+		await applyWorktreeOps(gitCtx, worktreeOps);
+	}
+
+	// Step 2: two-way merge index tree → remote (preserves local changes; can fail).
+	const index1 = await readIndex(gitCtx);
+	const indexTree = await buildTreeFromIndex(gitCtx, getStage0Entries(index1));
+	const ff = await unpackTrees(
+		gitCtx,
+		[
+			{ label: "HEAD", treeHash: indexTree },
+			{ label: "remote", treeHash: remoteTree },
+		],
+		index1,
+		{ mergeFn: twowayMerge, updateWorktree: true, reset: false, stopAtFirstError: true },
+	);
+	if (!ff.success) return { ok: false, rejected: ff.errors[0] as RejectedPath };
+	await writeIndex(gitCtx, { version: 2, entries: ff.newEntries });
+	await applyWorktreeOps(gitCtx, ff.worktreeOps);
+
+	// Step 3: one-way merge remote into the index (index := remote tree exactly).
+	const index2 = await readIndex(gitCtx);
+	const oneway = await unpackTrees(gitCtx, [{ label: "remote", treeHash: remoteTree }], index2, {
+		mergeFn: onewayMerge,
+		updateWorktree: false,
+		reset: true,
+	});
+	await writeIndex(gitCtx, { version: 2, entries: oneway.newEntries });
+	return { ok: true };
+}
+
+/**
+ * git's `clean_index` unpack-trees failure: the plumbing (non-porcelain) error
+ * message for the first rejected path, followed by `fatal: failed to clean
+ * index`. Real git's `fast_forward_to` runs unpack-trees with `show_all_errors`
+ * off, so only the first offending path is reported.
+ */
+function renderCleanIndexFailure(rejected: RejectedPath): string {
+	const { path, error } = rejected;
+	let msg: string;
+	switch (error) {
+		case UnpackError.WOULD_OVERWRITE:
+			msg = `error: Entry '${path}' would be overwritten by merge. Cannot merge.\n`;
+			break;
+		case UnpackError.WOULD_LOSE_UNTRACKED_OVERWRITTEN:
+			msg = `error: Untracked working tree file '${path}' would be overwritten by merge.\n`;
+			break;
+		case UnpackError.WOULD_LOSE_UNTRACKED_REMOVED:
+			msg = `error: Untracked working tree file '${path}' would be removed by merge.\n`;
+			break;
+		default:
+			msg = `error: Entry '${path}' not uptodate. Cannot merge.\n`;
+			break;
+	}
+	return `${msg}fatal: failed to clean index\n`;
+}
+
 // ── Resume verbs ────────────────────────────────────────────────────
 
 /**
@@ -610,52 +735,28 @@ async function handleContinue(
 }
 
 /**
- * `--skip`: reset the index + worktree back to HEAD (discarding the paused
- * patch's partial work), advance past it, and resume the loop.
+ * `--skip` (git's `am_skip`): `clean_index(HEAD, HEAD)` to discard the paused
+ * patch's partial work (resolving conflicts back to HEAD while preserving
+ * unrelated local changes), refresh the `am_next` bookkeeping (abort-safety +
+ * counter), then resume the loop.
  */
 async function handleSkip(gitCtx: GitContext, env: Map<string, string>): Promise<CommandResult> {
 	const state = await readAmState(gitCtx);
 	if (!state) return notResuming();
 
 	const headHash = await resolveHead(gitCtx);
-	if (headHash) {
-		const headTree = (await readCommit(gitCtx, headHash)).tree;
-		const index = await readIndex(gitCtx);
-		// git's `am --skip` runs `clean_index` — a two-way merge from the
-		// current index tree back to HEAD, NOT a hard reset: the half-applied
-		// patch's staged changes are dropped, but unrelated local worktree
-		// modifications are preserved (twoway_merge leaves untouched any path
-		// whose index and HEAD entries already agree).
-		//
-		// Unmerged paths (stages 1/2/3 left by a `-3` conflict) carry no stage-0
-		// entry, so they must be reset to HEAD like git's `read_index_unmerged`
-		// + fast-forward. Seed the "current" tree with the HEAD blob for each
-		// conflicted path so the twoway conflict branch resolves it to HEAD
-		// (`old === nu` → TAKE remote) instead of rejecting; add/add conflicts
-		// absent from HEAD fall through to a deletion.
-		const headMap = await flattenTreeToMap(gitCtx, headTree);
-		const currentEntries = getStage0Entries(index);
-		const conflicted = new Set(index.entries.filter((e) => e.stage > 0).map((e) => e.path));
-		for (const path of conflicted) {
-			const head = headMap.get(path);
-			if (head) {
-				currentEntries.push({
-					path,
-					mode: parseInt(head.mode, 8),
-					hash: head.hash,
-					stage: 0,
-					stat: defaultStat(),
-				});
-			}
-		}
-		const indexTree = await buildTreeFromIndex(gitCtx, currentEntries);
-		const reset = await fastForwardMerge(gitCtx, indexTree, headTree, index);
-		if (reset.success) {
-			await writeIndex(gitCtx, { version: 2, entries: reset.newEntries });
-			await applyWorktreeOps(gitCtx, reset.worktreeOps);
-		}
+	const headTree = headHash
+		? (await readCommit(gitCtx, headHash)).tree
+		: await buildTreeFromIndex(gitCtx, []);
+	const cleaned = await cleanIndex(gitCtx, headTree, headTree);
+	if (!cleaned.ok) {
+		return { stdout: "", stderr: renderCleanIndexFailure(cleaned.rejected), exitCode: 128 };
 	}
 
+	// git's `am_next`: refresh abort-safety to the current HEAD and advance the
+	// counter. Then `am_run` unlinks any stale `dirtyindex` before re-entering
+	// the apply loop.
+	await refreshAbortSafety(gitCtx, await resolveHead(gitCtx));
 	await setAmNext(gitCtx, state.next + 1);
 	return runAmLoop(gitCtx, env);
 }
@@ -684,11 +785,11 @@ async function handleAbort(gitCtx: GitContext, env: Map<string, string>): Promis
 		return { stdout: "", stderr: "", exitCode: 0 };
 	}
 
+	// git's `safe_to_abort`: an empty `abort-safety` and an unborn HEAD both map
+	// to the null oid, so `(HEAD ?? "") === abort-safety` is git's `oideq` check.
 	const currentHead = await resolveHead(gitCtx);
 	const safety = await readAbortSafety(gitCtx);
-	const movedHead = !currentHead || (safety !== "" && currentHead !== safety);
-
-	if (movedHead) {
+	if ((currentHead ?? "") !== safety) {
 		await clearAmState(gitCtx);
 		return {
 			stdout: "",
@@ -699,36 +800,42 @@ async function handleAbort(gitCtx: GitContext, env: Map<string, string>): Promis
 		};
 	}
 
-	if (state.origHead) {
-		const headBeforeAbort = await resolveHead(gitCtx);
-		const index = await readIndex(gitCtx);
-		// git's `am --abort` unwinds via `checkout_fast_forward` (a two-way
-		// merge from the current HEAD to orig-head), NOT a hard reset: any
-		// uncommitted worktree changes present before the `am` are preserved.
-		// When no patches applied (HEAD == orig-head) this is a no-op on the
-		// worktree, leaving local modifications intact — matching real git.
-		const currentTree = headBeforeAbort
-			? (await readCommit(gitCtx, headBeforeAbort)).tree
-			: await buildTreeFromIndex(gitCtx, []);
-		const origTree = (await readCommit(gitCtx, state.origHead)).tree;
-		const reset = await fastForwardMerge(gitCtx, currentTree, origTree, index);
-		if (reset.success) {
-			await writeIndex(gitCtx, { version: 2, entries: reset.newEntries });
-			await applyWorktreeOps(gitCtx, reset.worktreeOps);
-		}
-		await advanceBranchRef(gitCtx, state.origHead);
+	// git's `am_abort`: `clean_index(curr_head, orig_head)` then move HEAD to
+	// `orig_head`. `orig_head` comes from the `ORIG_HEAD` ref (git reads it live,
+	// so an intervening rewrite redirects the abort target).
+	const origHead = await resolveRef(gitCtx, "ORIG_HEAD");
+	const currTree = currentHead
+		? (await readCommit(gitCtx, currentHead)).tree
+		: await buildTreeFromIndex(gitCtx, []);
+	const origTree = origHead
+		? (await readCommit(gitCtx, origHead)).tree
+		: await buildTreeFromIndex(gitCtx, []);
+
+	const cleaned = await cleanIndex(gitCtx, currTree, origTree);
+	if (!cleaned.ok) {
+		// git dies here without destroying the state dir — the session stays
+		// resumable/abortable and HEAD is left where it was.
+		return { stdout: "", stderr: renderCleanIndexFailure(cleaned.rejected), exitCode: 128 };
+	}
+
+	if (origHead) {
+		await advanceBranchRef(gitCtx, origHead);
 		const head = await readHead(gitCtx);
-		if (head?.type === "symbolic") {
-			await logRef(
-				gitCtx,
-				env,
-				"HEAD",
-				headBeforeAbort,
-				state.origHead,
-				`reset: moving to ${state.origHead}`,
-				true,
-			);
-		}
+		const refName = head?.type === "symbolic" ? head.target : "HEAD";
+		await logRef(
+			gitCtx,
+			env,
+			refName,
+			currentHead,
+			origHead,
+			"am --abort",
+			head?.type === "symbolic",
+		);
+	} else {
+		// No `ORIG_HEAD` (the `am` began on an unborn branch): git deletes the
+		// current branch, returning to the unborn state.
+		const head = await readHead(gitCtx);
+		if (head?.type === "symbolic") await deleteRef(gitCtx, head.target);
 	}
 
 	await clearAmState(gitCtx);

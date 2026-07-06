@@ -8,9 +8,11 @@
  *
  * The directory holds the split mailbox (`0001`, `0002`, …), the `next`/`last`
  * counters, the persisted invocation flags (so `--continue` re-derives the
- * original behavior), the pre-`am` HEAD (`orig-head`, for `--abort`), and — on
- * a stop — the current patch's message (`final-commit`) and author env
- * (`author-script`, for `--continue`). No CLI concepts: pure state I/O.
+ * original behavior), the `abort-safety` guard, and — on a stop — the current
+ * patch's message (`final-commit`) and author env (`author-script`, for
+ * `--continue`). Like real git's `am`, the pre-`am` HEAD lives in the
+ * `ORIG_HEAD` ref (not a state-dir file), so `--abort` reads `ORIG_HEAD`. No
+ * CLI concepts: pure state I/O.
  */
 import { parseMail } from "./patch/mailinfo.ts";
 import { join } from "./path.ts";
@@ -38,8 +40,6 @@ export interface AmState {
 	quiet: boolean;
 	keepCr: boolean;
 	committerDateIsAuthorDate: boolean;
-	/** Pre-`am` HEAD, for `--abort`'s safe restore. */
-	origHead: string;
 }
 
 /** Zero-padded patch file name for message `n` (`1` → `0001`). */
@@ -70,9 +70,6 @@ export async function readAmState(ctx: GitContext): Promise<AmState | null> {
 	if (!(await isAmInProgress(ctx))) return null;
 	const next = Number.parseInt((await ctx.fs.readFile(amPath(ctx, "next"))).trim(), 10);
 	const last = Number.parseInt((await ctx.fs.readFile(amPath(ctx, "last"))).trim(), 10);
-	const origHead = (await ctx.fs.exists(amPath(ctx, "orig-head")))
-		? (await ctx.fs.readFile(amPath(ctx, "orig-head"))).trim()
-		: "";
 	return {
 		next,
 		last,
@@ -83,14 +80,15 @@ export async function readAmState(ctx: GitContext): Promise<AmState | null> {
 		quiet: await readBoolFile(ctx, "quiet"),
 		keepCr: await readBoolFile(ctx, "keepcr"),
 		committerDateIsAuthorDate: await readBoolFile(ctx, "committer-date-is-author-date"),
-		origHead,
 	};
 }
 
 /**
  * Create the state directory and write the full initial `am` state: the split
- * mailbox as `0001`..`N`, the counters, the persisted flags, `orig-head`, and
- * the `applying` marker.
+ * mailbox as `0001`..`N`, the counters, the persisted flags, and the `applying`
+ * marker. The `abort-safety` guard and the `ORIG_HEAD` ref are written by the
+ * command driver (git's `am_setup`), matching git's state-dir layout (no
+ * `orig-head` file).
  */
 export async function writeAmState(
 	ctx: GitContext,
@@ -113,8 +111,6 @@ export async function writeAmState(
 	await writeBoolFile(ctx, "quiet", state.quiet);
 	await writeBoolFile(ctx, "keepcr", state.keepCr);
 	await writeBoolFile(ctx, "committer-date-is-author-date", state.committerDateIsAuthorDate);
-	await ctx.fs.writeFile(amPath(ctx, "orig-head"), `${state.origHead}\n`);
-	await ctx.fs.writeFile(amPath(ctx, "abort-safety"), `${state.origHead}\n`);
 	await ctx.fs.writeFile(amPath(ctx, "applying"), "");
 }
 
@@ -192,17 +188,18 @@ export async function setAmNext(ctx: GitContext, next: number): Promise<void> {
 }
 
 /**
- * Record git's `abort-safety` — the commit HEAD points at while `am` is (or was
- * last) in control. Written at setup and refreshed after each committed patch.
- * `--abort` refuses to rewind when HEAD has since moved away from this value
- * (git's "You seem to have moved HEAD" guard), so hand-made commits on top of a
- * paused session are not silently discarded.
+ * Refresh git's `abort-safety` — the commit HEAD points at while `am` is (or
+ * was last) in control. Written at setup (`am_setup`) and after every
+ * `am_next` (each committed patch, and `--skip`), always to the *current* HEAD
+ * (or `""` when unborn). `--abort` refuses to rewind when HEAD has since moved
+ * away from this value (git's "You seem to have moved HEAD" guard), so
+ * hand-made commits on top of a paused session are not silently discarded.
  */
-export async function setAbortSafety(ctx: GitContext, hash: string): Promise<void> {
-	await ctx.fs.writeFile(amPath(ctx, "abort-safety"), `${hash}\n`);
+export async function refreshAbortSafety(ctx: GitContext, head: string | null): Promise<void> {
+	await ctx.fs.writeFile(amPath(ctx, "abort-safety"), head ? `${head}\n` : "\n");
 }
 
-/** Read the recorded `abort-safety` HEAD, or `""` when absent. */
+/** Read the recorded `abort-safety` HEAD, or `""` when absent/unborn. */
 export async function readAbortSafety(ctx: GitContext): Promise<string> {
 	const p = amPath(ctx, "abort-safety");
 	if (!(await ctx.fs.exists(p))) return "";
@@ -222,6 +219,17 @@ export async function setDirtyIndex(ctx: GitContext): Promise<void> {
 /** Whether the `dirtyindex` marker is present (git's `safe_to_abort` gate). */
 export async function hasDirtyIndex(ctx: GitContext): Promise<boolean> {
 	return ctx.fs.exists(amPath(ctx, "dirtyindex"));
+}
+
+/**
+ * Remove the `dirtyindex` marker — git's `am_run` unlinks it at the top of
+ * every run (fresh start, `--continue`, `--skip`), so a session that recovers
+ * from a dirty-index death (the index having since been cleaned) no longer
+ * reports itself as dirty to a later `--abort`.
+ */
+export async function clearDirtyIndex(ctx: GitContext): Promise<void> {
+	const p = amPath(ctx, "dirtyindex");
+	if (await ctx.fs.exists(p)) await ctx.fs.rm(p);
 }
 
 /**
