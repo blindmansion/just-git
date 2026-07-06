@@ -114,6 +114,7 @@ export async function writeAmState(
 	await writeBoolFile(ctx, "keepcr", state.keepCr);
 	await writeBoolFile(ctx, "committer-date-is-author-date", state.committerDateIsAuthorDate);
 	await ctx.fs.writeFile(amPath(ctx, "orig-head"), `${state.origHead}\n`);
+	await ctx.fs.writeFile(amPath(ctx, "abort-safety"), `${state.origHead}\n`);
 	await ctx.fs.writeFile(amPath(ctx, "applying"), "");
 }
 
@@ -188,6 +189,39 @@ export async function readAmStopMeta(ctx: GitContext): Promise<AmStopMeta | null
 /** Advance the `next` counter on disk (called after each committed patch). */
 export async function setAmNext(ctx: GitContext, next: number): Promise<void> {
 	await ctx.fs.writeFile(amPath(ctx, "next"), `${next}\n`);
+}
+
+/**
+ * Record git's `abort-safety` — the commit HEAD points at while `am` is (or was
+ * last) in control. Written at setup and refreshed after each committed patch.
+ * `--abort` refuses to rewind when HEAD has since moved away from this value
+ * (git's "You seem to have moved HEAD" guard), so hand-made commits on top of a
+ * paused session are not silently discarded.
+ */
+export async function setAbortSafety(ctx: GitContext, hash: string): Promise<void> {
+	await ctx.fs.writeFile(amPath(ctx, "abort-safety"), `${hash}\n`);
+}
+
+/** Read the recorded `abort-safety` HEAD, or `""` when absent. */
+export async function readAbortSafety(ctx: GitContext): Promise<string> {
+	const p = amPath(ctx, "abort-safety");
+	if (!(await ctx.fs.exists(p))) return "";
+	return (await ctx.fs.readFile(p)).trim();
+}
+
+/**
+ * Record git's `dirtyindex` marker — written by `am_run` when it refuses to
+ * apply onto an index that differs from HEAD. Its mere presence tells `--abort`
+ * to just drop the state dir (no rewind, no "moved HEAD" warning), since the
+ * session never touched HEAD and the dirty index must be preserved.
+ */
+export async function setDirtyIndex(ctx: GitContext): Promise<void> {
+	await ctx.fs.writeFile(amPath(ctx, "dirtyindex"), "t\n");
+}
+
+/** Whether the `dirtyindex` marker is present (git's `safe_to_abort` gate). */
+export async function hasDirtyIndex(ctx: GitContext): Promise<boolean> {
+	return ctx.fs.exists(amPath(ctx, "dirtyindex"));
 }
 
 /**

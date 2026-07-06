@@ -2,22 +2,35 @@ import type { CommandContext, GitExtensions } from "../git.ts";
 import {
 	type AmState,
 	clearAmState,
+	hasDirtyIndex,
 	isAmInProgress,
 	patchFileName,
+	readAbortSafety,
+	setDirtyIndex,
 	readAmState,
 	readAmStopMeta,
 	readPatchMessage,
+	setAbortSafety,
 	setAmNext,
 	writeAmState,
 	writeAmStopMeta,
 } from "../lib/am.ts";
+import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import { writeCommitAndAdvance } from "../lib/commit-write.ts";
-import { getStage0Entries, hasConflicts, readIndex, writeIndex } from "../lib/index.ts";
+import { getConfigValue } from "../lib/config/store.ts";
+import {
+	defaultStat,
+	getStage0Entries,
+	hasConflicts,
+	readIndex,
+	writeIndex,
+} from "../lib/index.ts";
+import { type ApplyMergeFailure, applyMergeResult } from "../lib/merge-ort.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { type ApplyResult, applyPatches } from "../lib/patch/apply.ts";
 import { appendSignoff } from "../lib/patch/mbox.ts";
 import { parseMail, splitMailbox } from "../lib/patch/mailinfo.ts";
-import { ApplyParseError, parsePatch } from "../lib/patch/parse-patch.ts";
+import { ApplyParseError, type ParsedPatch, parsePatch } from "../lib/patch/parse-patch.ts";
 import { resolve } from "../lib/path.ts";
 import { logRef } from "../lib/refs/reflog.ts";
 import { advanceBranchRef, readHead, resolveHead } from "../lib/refs/refs.ts";
@@ -25,6 +38,7 @@ import { firstLine } from "../lib/text-utils.ts";
 import { buildTreeFromIndex, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, Identity, Index } from "../lib/types.ts";
 import { applyWorktreeOps, fastForwardMerge } from "../lib/worktree/unpack-trees.ts";
+import { fallBackThreeway } from "../repo/patching.ts";
 import { type CommandResult, err, fatal, isCommandError } from "./kit/command-result.ts";
 import { resolveCommandSigner } from "./kit/command-utils.ts";
 import { requireCommitter, requireGitContext } from "./kit/commit-requirements.ts";
@@ -225,8 +239,13 @@ export function registerAmCommand(parent: Command, ext?: GitExtensions): void {
 			// *after* `am_setup` has created the state dir — so the aborted
 			// session is left resumable/abortable (operation stays "rebase"),
 			// matching real git rather than bailing before any state is written.
+			// The `dirtyindex` marker it drops here later tells `--abort` to just
+			// clean up (no rewind / warning), since HEAD was never moved.
 			const dirty = await checkDirtyIndex(gitCtx, index);
-			if (dirty) return dirty;
+			if (dirty) {
+				await setDirtyIndex(gitCtx);
+				return dirty;
+			}
 
 			return runAmLoop(gitCtx, ctx.env);
 		},
@@ -272,11 +291,14 @@ async function writeAmCommit(
 		`am: ${firstLine(message)}`,
 		head?.type === "symbolic",
 	);
+	// Track the commit `am` just made so `--abort`'s abort-safety guard can tell
+	// whether HEAD later moved out from under the paused session.
+	await setAbortSafety(gitCtx, commitHash);
 	return null;
 }
 
 /**
- * Build the `CommandResult` for a stop: git emits the progress and
+ * Build the `CommandResult` for a plain-apply stop: git emits the progress and
  * `Patch failed at` on stdout, the `error:` diagnostics + resolve hint on
  * stderr, and exits 128 — leaving the state dir for `--continue`/`--abort`.
  */
@@ -285,29 +307,126 @@ function renderStop(
 	result: ApplyResult,
 	patchName: string,
 	subject: string,
-	threeway: boolean,
 ): CommandResult {
-	const outLines: string[] = [stdoutPrefix];
-	const errLines: string[] = [];
+	const errLines = result.errors.map((e) => `error: ${e}\n`);
+	errLines.push(RESOLVE_HINT);
+	return {
+		stdout: `${stdoutPrefix}Patch failed at ${patchName} ${subject}\n`,
+		stderr: errLines.join(""),
+		exitCode: 128,
+	};
+}
 
-	if (threeway) {
-		outLines.push("Using index info to reconstruct a base tree...\n");
-		outLines.push("Falling back to patching base and 3-way merge...\n");
-		for (const file of result.files) {
-			if (file.threeway?.kind === "conflict") {
-				outLines.push(`Auto-merging ${file.path}\n`);
-				outLines.push(`CONFLICT (content): Merge conflict in ${file.path}\n`);
-			}
-		}
-		errLines.push("error: Failed to merge in the changes.\n");
-	} else {
-		for (const e of result.errors) errLines.push(`error: ${e}\n`);
+/**
+ * git's unpack-trees "would be overwritten by merge" block, as `am` renders it:
+ * the same file lists as `merge`/`cherry-pick` but *without* the ort/sequencer
+ * trailer — `am` appends its own `error: Failed to merge in the changes.`
+ * afterward (see {@link attemptThreeway}).
+ */
+function renderAmMergeGuard(failure: ApplyMergeFailure): string {
+	const blocks: string[] = [];
+	if (failure.localFiles.length > 0) {
+		blocks.push(
+			"error: Your local changes to the following files would be overwritten by merge:\n" +
+				`${failure.localFiles.map((p) => `\t${p}`).join("\n")}\n` +
+				"Please commit your changes or stash them before you merge.\n",
+		);
+	}
+	if (failure.kind === "worktree" && failure.untrackedFiles.length > 0) {
+		blocks.push(
+			"error: The following untracked working tree files would be overwritten by merge:\n" +
+				`${failure.untrackedFiles.map((p) => `\t${p}`).join("\n")}\n` +
+				"Please move or remove them before you merge.\n",
+		);
+	}
+	return `${blocks.join("")}Aborting\n`;
+}
+
+/**
+ * git's `fall_back_threeway` for `am -3`: reconstruct a fake-ancestor tree from
+ * the series' recorded base OIDs, apply the series onto it for "theirs", run a
+ * real tree merge against HEAD, and write it out (with the dirty-worktree
+ * overwrite guard). Returns a resumable `stop` (blob missing, patch would not
+ * re-apply, worktree guard, or a merge conflict) or `clean` when the merge
+ * resolved cleanly (the merged result is staged; the caller commits it).
+ *
+ * The `stdout` tail is everything git prints for this patch *before* the
+ * `Patch failed at …` line (which the driver appends on a stop). Under `-q`
+ * git suppresses the whole preamble and the merge messages.
+ */
+async function attemptThreeway(
+	gitCtx: GitContext,
+	patches: ParsedPatch[],
+	subject: string,
+	quiet: boolean,
+): Promise<{ kind: "stop"; stdout: string; stderr: string } | { kind: "clean"; stdout: string }> {
+	const index = await readIndex(gitCtx);
+	const oursTree = await buildTreeFromIndex(gitCtx, getStage0Entries(index));
+	const conflictStyle = ((await getConfigValue(gitCtx, "merge.conflictstyle")) ?? "merge") as
+		| "merge"
+		| "diff3";
+	const labels = { a: "HEAD", b: subject, conflictStyle };
+	const mergeDriver = (await bindAttributes(gitCtx, "am"))?.merge;
+
+	const fb = await fallBackThreeway(gitCtx, patches, oursTree, labels, mergeDriver);
+
+	if (fb.status === "no-base") {
+		// git's build_fake_ancestor bailed before the "Using index info…" line.
+		return {
+			kind: "stop",
+			stdout: "",
+			stderr:
+				`error: sha1 information is lacking or useless (${fb.missingPath}).\n` +
+				`error: could not build fake ancestor\n${RESOLVE_HINT}`,
+		};
+	}
+	if (fb.status === "apply-failed") {
+		return {
+			kind: "stop",
+			stdout: "",
+			stderr:
+				"error: Did you hand edit your patch?\n" +
+				`It does not apply to blobs recorded in its index.\n${RESOLVE_HINT}`,
+		};
 	}
 
-	outLines.push(`Patch failed at ${patchName} ${subject}\n`);
-	errLines.push(RESOLVE_HINT);
+	// The reconstruction preamble git prints before the merge write-out.
+	const preamble = quiet
+		? ""
+		: "Using index info to reconstruct a base tree...\n" +
+			fb.statusLines.map((l) => `${l}\n`).join("") +
+			"Falling back to patching base and 3-way merge...\n";
 
-	return { stdout: outLines.join(""), stderr: errLines.join(""), exitCode: 128 };
+	// Write the merge out: the dirty-worktree overwrite guard lives here. In
+	// `am` the index always matches HEAD (dirty-index guard), so skip the
+	// staged-change check and let only the worktree twoway check run.
+	const applied = await applyMergeResult(gitCtx, fb.merge, oursTree, {
+		labels,
+		skipStagedChangeCheck: true,
+	});
+
+	if (!applied.ok) {
+		// git's merge_recursive refused at unpack-trees before any content merge,
+		// so no "Auto-merging"/CONFLICT lines are emitted.
+		return {
+			kind: "stop",
+			stdout: preamble,
+			stderr: `${renderAmMergeGuard(applied)}error: Failed to merge in the changes.\n${RESOLVE_HINT}`,
+		};
+	}
+
+	const mergeMessages = quiet ? "" : fb.merge.messages.map((m) => `${m}\n`).join("");
+
+	if (fb.merge.conflicts.length > 0) {
+		// Stages 1/2/3 + conflict-marker worktree files are already recorded.
+		return {
+			kind: "stop",
+			stdout: `${preamble}${mergeMessages}`,
+			stderr: `error: Failed to merge in the changes.\n${RESOLVE_HINT}`,
+		};
+	}
+
+	return { kind: "clean", stdout: `${preamble}${mergeMessages}` };
 }
 
 /**
@@ -373,21 +492,36 @@ async function runAmLoop(gitCtx: GitContext, env: Map<string, string>): Promise<
 			throw e;
 		}
 
-		// Apply to the index + worktree.
+		// Plain apply to the index + worktree (git's initial `git apply`). Only
+		// on failure — and only under `-3` — do we fall back to the tree-level
+		// three-way merge (git's fall_back_threeway).
 		const result = await applyPatches(gitCtx, patches, {
 			reverse: false,
 			target: "index",
 			whitespace: "warn",
 			unidiffZero: false,
 			reject: false,
-			threeway: state.threeway,
+			threeway: false,
 			check: false,
 		});
 
 		if (!result.ok) {
-			// Stop, leaving the state dir for a later --continue / --abort.
-			await writeAmStopMeta(gitCtx, message, mail.author);
-			return renderStop(out.join(""), result, patchName, mail.subject, state.threeway);
+			if (!state.threeway) {
+				await writeAmStopMeta(gitCtx, message, mail.author);
+				return renderStop(out.join(""), result, patchName, mail.subject);
+			}
+			const tw = await attemptThreeway(gitCtx, patches, mail.subject, state.quiet);
+			if (tw.kind === "stop") {
+				await writeAmStopMeta(gitCtx, message, mail.author);
+				return {
+					stdout: `${out.join("")}${tw.stdout}Patch failed at ${patchName} ${mail.subject}\n`,
+					stderr: tw.stderr,
+					exitCode: 128,
+				};
+			}
+			// Clean tree merge — the merged result is staged; fall through and
+			// commit it exactly like a plain-apply success.
+			out.push(tw.stdout);
 		}
 
 		// Success: commit the snapshotted index.
@@ -492,7 +626,29 @@ async function handleSkip(gitCtx: GitContext, env: Map<string, string>): Promise
 		// patch's staged changes are dropped, but unrelated local worktree
 		// modifications are preserved (twoway_merge leaves untouched any path
 		// whose index and HEAD entries already agree).
-		const indexTree = await buildTreeFromIndex(gitCtx, getStage0Entries(index));
+		//
+		// Unmerged paths (stages 1/2/3 left by a `-3` conflict) carry no stage-0
+		// entry, so they must be reset to HEAD like git's `read_index_unmerged`
+		// + fast-forward. Seed the "current" tree with the HEAD blob for each
+		// conflicted path so the twoway conflict branch resolves it to HEAD
+		// (`old === nu` → TAKE remote) instead of rejecting; add/add conflicts
+		// absent from HEAD fall through to a deletion.
+		const headMap = await flattenTreeToMap(gitCtx, headTree);
+		const currentEntries = getStage0Entries(index);
+		const conflicted = new Set(index.entries.filter((e) => e.stage > 0).map((e) => e.path));
+		for (const path of conflicted) {
+			const head = headMap.get(path);
+			if (head) {
+				currentEntries.push({
+					path,
+					mode: parseInt(head.mode, 8),
+					hash: head.hash,
+					stage: 0,
+					stat: defaultStat(),
+				});
+			}
+		}
+		const indexTree = await buildTreeFromIndex(gitCtx, currentEntries);
 		const reset = await fastForwardMerge(gitCtx, indexTree, headTree, index);
 		if (reset.success) {
 			await writeIndex(gitCtx, { version: 2, entries: reset.newEntries });
@@ -507,10 +663,41 @@ async function handleSkip(gitCtx: GitContext, env: Map<string, string>): Promise
 /**
  * `--abort`: restore the pre-`am` HEAD (`orig-head`), reset the index +
  * worktree to it, and clear the state dir.
+ *
+ * git's `safe_to_abort` gate (in order):
+ *   1. `dirtyindex` marker present → the session never applied anything onto a
+ *      dirty index; just drop the state dir (no rewind, no warning).
+ *   2. HEAD moved since `am` last acted (`HEAD != abort-safety`) → refuse to
+ *      rewind, warn, and leave HEAD/branch where it is so hand-made work is not
+ *      lost.
+ *   3. otherwise → rewind to `orig-head`.
  */
 async function handleAbort(gitCtx: GitContext, env: Map<string, string>): Promise<CommandResult> {
 	const state = await readAmState(gitCtx);
 	if (!state) return notResuming();
+
+	// git's `safe_to_abort` bails on `dirtyindex` *before* the moved-HEAD check,
+	// silently (the dirty index death never moved HEAD, so there is nothing to
+	// rewind and no reason to warn).
+	if (await hasDirtyIndex(gitCtx)) {
+		await clearAmState(gitCtx);
+		return { stdout: "", stderr: "", exitCode: 0 };
+	}
+
+	const currentHead = await resolveHead(gitCtx);
+	const safety = await readAbortSafety(gitCtx);
+	const movedHead = !currentHead || (safety !== "" && currentHead !== safety);
+
+	if (movedHead) {
+		await clearAmState(gitCtx);
+		return {
+			stdout: "",
+			stderr:
+				"warning: You seem to have moved HEAD since the last 'am' failure.\n" +
+				"Not rewinding to ORIG_HEAD\n",
+			exitCode: 0,
+		};
+	}
 
 	if (state.origHead) {
 		const headBeforeAbort = await resolveHead(gitCtx);

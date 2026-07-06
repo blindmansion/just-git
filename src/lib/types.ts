@@ -430,6 +430,7 @@ export type GitOperation =
 	| "rebase"
 	| "cherry-pick"
 	| "revert"
+	| "am"
 	| "clone"
 	| "fetch"
 	| "push"
