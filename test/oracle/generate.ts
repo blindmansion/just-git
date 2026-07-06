@@ -665,9 +665,17 @@ export const PRESETS: Record<string, Preset> = {
 		actions: boostCategory(ALL_ACTIONS, "merge", 3),
 	},
 
-	/** Heavy on `git am` (format-patch|am compositions + resume verbs). */
+	/** Heavy on `git am` (format-patch|am compositions + resume verbs).
+	 *  Excludes cherryPickNoCommit and revertNoCommit like `kitchen` — their
+	 *  rename-detection tie-breaking poisons traces (an early KNOWN state
+	 *  divergence truncates the replay), which would otherwise cut the boosted
+	 *  `am` steps short. */
 	"am-heavy": {
-		actions: boostCategory(ALL_ACTIONS, "am", 3),
+		actions: boostCategory(
+			excludeNames(ALL_ACTIONS, "cherryPickNoCommit", "revertNoCommit"),
+			"am",
+			3,
+		),
 	},
 
 	/**
