@@ -55,6 +55,8 @@ export interface QueryState {
 	inRevertConflict: boolean;
 	/** Whether a rebase conflict is in progress (rebase-merge/ exists). */
 	inRebaseConflict: boolean;
+	/** Whether an `am` session is stopped/in progress (rebase-apply/applying exists). */
+	inAmConflict: boolean;
 	/** Number of stash entries. */
 	stashCount: number;
 	/** Configured remote names (e.g. ["origin"]). */
@@ -111,6 +113,7 @@ export interface WalkHarness {
 	isInCherryPickConflict(cwd?: string): Promise<boolean>;
 	isInRevertConflict(cwd?: string): Promise<boolean>;
 	isInRebaseConflict(cwd?: string): Promise<boolean>;
+	isInAmConflict(cwd?: string): Promise<boolean>;
 	hasCommits(cwd?: string): Promise<boolean>;
 	getStashCount(): Promise<number>;
 	listRemotes(): Promise<string[]>;
@@ -243,6 +246,9 @@ export class VirtualHarness implements WalkHarness {
 			lower.startsWith("cherry-pick") ||
 			lower.startsWith("revert") ||
 			lower.startsWith("pull") ||
+			// `am` creates commits (committer date pinned like the rest); see the
+			// matching note in oracle/fileops.ts isCommitCommand.
+			lower.startsWith("am") ||
 			lower.includes("rebase --continue")
 		);
 	}
@@ -396,6 +402,12 @@ export class VirtualHarness implements WalkHarness {
 		return this.bash.fs.exists(`${await this.gitDirFor(cwd)}/rebase-merge`);
 	}
 
+	async isInAmConflict(cwd?: string): Promise<boolean> {
+		// `am` and `rebase --apply` share rebase-apply/; the `applying` marker is
+		// what distinguishes a stopped `am` (mirrors src/lib/am.ts isAmInProgress).
+		return this.bash.fs.exists(`${await this.gitDirFor(cwd)}/rebase-apply/applying`);
+	}
+
 	async hasCommits(cwd?: string): Promise<boolean> {
 		const headPath = `${await this.gitDirFor(cwd)}/HEAD`;
 		if (!(await this.bash.fs.exists(headPath))) return false;
@@ -520,6 +532,9 @@ export class WorktreeView implements WalkHarness {
 	}
 	isInRebaseConflict(): Promise<boolean> {
 		return this.inner.isInRebaseConflict(this.cwd);
+	}
+	isInAmConflict(): Promise<boolean> {
+		return this.inner.isInAmConflict(this.cwd);
 	}
 	hasCommits(): Promise<boolean> {
 		return this.inner.hasCommits(this.cwd);

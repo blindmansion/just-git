@@ -335,11 +335,15 @@ export class RealGitHarness implements WalkHarness {
 	}
 
 	async isInRebaseConflict(cwd?: string): Promise<boolean> {
-		const gitDir = await this.gitDirFor(cwd);
-		return (
-			(await fileExists(join(gitDir, "rebase-merge"))) ||
-			(await fileExists(join(gitDir, "rebase-apply")))
-		);
+		// rebase-merge only: `rebase-apply/` means a stopped `am` (the walker's
+		// rebase actions never pass --apply, so rebase always uses rebase-merge).
+		// `am` state is reported separately via isInAmConflict, matching
+		// VirtualHarness and keeping am resume verbs from firing against a rebase.
+		return fileExists(join(await this.gitDirFor(cwd), "rebase-merge"));
+	}
+
+	async isInAmConflict(cwd?: string): Promise<boolean> {
+		return fileExists(join(await this.gitDirFor(cwd), "rebase-apply", "applying"));
 	}
 
 	async hasCommits(cwd?: string): Promise<boolean> {

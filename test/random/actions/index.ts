@@ -1,4 +1,5 @@
 import type { Action } from "../types";
+import { AM_ACTIONS } from "./am";
 import { APPLY_ACTIONS } from "./apply";
 import { BRANCH_ACTIONS } from "./branch";
 import { CHERRY_PICK_ACTIONS } from "./cherry-pick";
@@ -48,4 +49,5 @@ export const ALL_ACTIONS: readonly Action[] = [
 	...MAINTENANCE_ACTIONS,
 	...WORKTREE_ACTIONS,
 	...APPLY_ACTIONS,
+	...AM_ACTIONS,
 ];

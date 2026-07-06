@@ -161,6 +161,12 @@ export function isCommitCommand(command: string): boolean {
 		lower.startsWith("cherry-pick") ||
 		lower.startsWith("revert") ||
 		lower.startsWith("pull") ||
+		// `am` (and its `--continue`/`--skip` resumes) creates commits: author
+		// identity/date come from the patch, but the committer date is wall-clock
+		// unless pinned. `--abort`/`--quit` don't commit, but burning one counter
+		// tick on them is harmless since generation and replay share this
+		// predicate and consume the same value.
+		lower.startsWith("am") ||
 		lower.includes("rebase --continue")
 	);
 }

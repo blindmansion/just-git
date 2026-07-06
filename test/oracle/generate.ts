@@ -252,6 +252,9 @@ class RecordingHarness implements WalkHarness {
 	isInRebaseConflict(cwd?: string) {
 		return this.inner.isInRebaseConflict(cwd);
 	}
+	isInAmConflict(cwd?: string) {
+		return this.inner.isInAmConflict(cwd);
+	}
 	hasCommits(cwd?: string) {
 		return this.inner.hasCommits(cwd);
 	}
@@ -625,6 +628,13 @@ const CORE_ACTIONS = includeNames(
 	// apply (diff|apply round-trip + stale-forward failure path)
 	"applyReverse",
 	"applyForwardStale",
+	// am (format-patch|am suffix rebuild + cross-branch apply + resume verbs)
+	"amRebuildSuffix",
+	"amCrossBranch",
+	"amAbort",
+	"amQuit",
+	"amSkip",
+	"amContinue",
 );
 
 export const PRESETS: Record<string, Preset> = {
@@ -653,6 +663,11 @@ export const PRESETS: Record<string, Preset> = {
 	/** Heavy on merge operations. */
 	"merge-heavy": {
 		actions: boostCategory(ALL_ACTIONS, "merge", 3),
+	},
+
+	/** Heavy on `git am` (format-patch|am compositions + resume verbs). */
+	"am-heavy": {
+		actions: boostCategory(ALL_ACTIONS, "am", 3),
 	},
 
 	/**

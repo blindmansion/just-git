@@ -17,13 +17,14 @@ interface PickerOpts {
 
 // ── State helpers ────────────────────────────────────────────────────
 
-/** Whether any conflict state (merge, cherry-pick, revert, or rebase) is active. */
+/** Whether any conflict state (merge, cherry-pick, revert, rebase, or am) is active. */
 export function inConflict(state: QueryState): boolean {
 	return (
 		state.inMergeConflict ||
 		state.inCherryPickConflict ||
 		state.inRevertConflict ||
-		state.inRebaseConflict
+		state.inRebaseConflict ||
+		state.inAmConflict
 	);
 }
 
