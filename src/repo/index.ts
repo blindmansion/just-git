@@ -186,6 +186,30 @@ export {
 	type RemoteRef,
 } from "./network.ts";
 
+// Patching — tree-level apply with rejects-as-data, plus promoted pure
+// patch primitives (parse / reverse / format-patch)
+export {
+	applyPatch,
+	ApplyParseError,
+	FormatPatchError,
+	formatPatchSeries,
+	parsePatch,
+	reversePatch,
+	type ApplyHunkLine,
+	type ApplyPatchOptions,
+	type ApplyPatchResult,
+	type BlobEffect,
+	type FileReject,
+	type FormatPatchOptions,
+	type FormatPatchResult,
+	type HunkReject,
+	type ParsedPatch,
+	type PatchChangeKind,
+	type PatchFragment,
+	type PatchRecord,
+	type WhitespaceAction,
+} from "./patching.ts";
+
 export { createTreeAccessor, type TreeAccessor } from "./tree-accessor.ts";
 
 export type { MaterializeTarget } from "./materialize.ts";
