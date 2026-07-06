@@ -12,6 +12,7 @@
  * a stop — the current patch's message (`final-commit`) and author env
  * (`author-script`, for `--continue`). No CLI concepts: pure state I/O.
  */
+import { parseMail } from "./patch/mailinfo.ts";
 import { join } from "./path.ts";
 import type { GitContext, Identity } from "./types.ts";
 
@@ -119,6 +120,23 @@ export async function writeAmState(
 /** Read the raw text of the `n`-th split message. */
 export async function readPatchMessage(ctx: GitContext, n: number): Promise<string> {
 	return ctx.fs.readFile(amPath(ctx, patchFileName(n)));
+}
+
+/**
+ * Whether the currently-paused `am` patch is empty (git's `am_empty_patch`,
+ * derived from an empty extracted `patch`). Drives the empty-patch variant of
+ * the `git status` "am session" advice.
+ */
+export async function isAmEmptyPatch(ctx: GitContext): Promise<boolean> {
+	const state = await readAmState(ctx);
+	if (!state || state.next > state.last) return false;
+	const raw = await readPatchMessage(ctx, state.next);
+	const mail = parseMail(raw, {
+		keep: state.keep,
+		scissors: state.scissors,
+		keepCr: state.keepCr,
+	});
+	return mail.patchText.trim() === "";
 }
 
 /** The metadata a paused patch left behind, replayed by `--continue`. */

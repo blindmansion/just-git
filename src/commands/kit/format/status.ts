@@ -144,9 +144,18 @@ export function renderLongStatus(data: LongStatusData): string {
 	}
 	if (data.amInProgress) {
 		lines.push("You are in the middle of an am session.");
-		lines.push('  (fix conflicts and then run "git am --continue")');
-		lines.push('  (use "git am --skip" to skip this patch)');
-		lines.push('  (use "git am --abort" to restore the original branch)');
+		// git's `show_am_in_progress`: an empty patch swaps the "fix conflicts"
+		// advice for the "current patch is empty" note + `--allow-empty` hint.
+		if (data.amEmptyPatch) {
+			lines.push("The current patch is empty.");
+			lines.push('  (use "git am --skip" to skip this patch)');
+			lines.push('  (use "git am --allow-empty" to record this patch as an empty commit)');
+			lines.push('  (use "git am --abort" to restore the original branch)');
+		} else {
+			lines.push('  (fix conflicts and then run "git am --continue")');
+			lines.push('  (use "git am --skip" to skip this patch)');
+			lines.push('  (use "git am --abort" to restore the original branch)');
+		}
 		hasIntermediateState = true;
 	} else if (rebase && hasMergeHead) {
 		pushRebaseTodoLines(lines, rebase);

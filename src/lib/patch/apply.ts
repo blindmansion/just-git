@@ -460,6 +460,12 @@ async function loadPreimage(
 		if (!entry) return { error: `${src}: does not exist in index` };
 		return { content: decoder.decode(await readBlobBytes(ctx, entry.hash)) };
 	}
+	// git apply `--index` (am's mode) checks the index first: a path missing
+	// from the index is rejected as "does not exist in index" before the
+	// worktree is ever read. Only a plain worktree apply reports ENOENT.
+	if (target === "index" && !findEntry(index, src)) {
+		return { error: `${src}: does not exist in index` };
+	}
 	const content = await readWorktree(ctx, src);
 	if (content === null) return { error: `${src}: No such file or directory` };
 	return { content };
@@ -493,6 +499,18 @@ async function planPatch(
 	opts: ApplyEngineOptions,
 ): Promise<FilePlan | PlanError> {
 	const path = (patch.kind === "delete" ? patch.oldName : patch.newName) ?? patch.oldName ?? "";
+
+	// git's `check_to_create` (apply `--index`/`--cached`): a creation patch
+	// whose path already exists in the index is rejected up front, before any
+	// hunk work, with "already exists in index" (and no "patch does not apply"
+	// trailer — it never reaches the hunk-apply stage).
+	if (
+		patch.kind === "new" &&
+		(opts.target === "index" || opts.target === "cached") &&
+		findEntry(index, path)
+	) {
+		return { error: `${path}: already exists in index`, path };
+	}
 
 	if (patch.isBinary) {
 		return planBinaryPatch(ctx, index, patch, opts);

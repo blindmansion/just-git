@@ -231,13 +231,16 @@ export async function detachHeadCore(
 			head?.type === "symbolic"
 				? head.target.replace(/^refs\/heads\//, "")
 				: (currentHash ?? ZERO_HASH);
+		// git records the *spelling* the user gave (e.g. "HEAD~3", a tag, a
+		// branch peeled to a commit) in the reflog, not the resolved OID. Only
+		// fall back to the OID when no spelled target is available (bare detach).
 		await logRef(
 			gitCtx,
 			env,
 			"HEAD",
 			currentHash,
 			targetHash,
-			`checkout: moving from ${fromName} to ${targetHash}`,
+			`checkout: moving from ${fromName} to ${opts?.detachAdviceTarget ?? targetHash}`,
 		);
 	}
 	const opWarning = renderCancelWarnings(await clearOperationState(gitCtx));

@@ -22,16 +22,12 @@ import { resolve } from "../lib/path.ts";
 import { logRef } from "../lib/refs/reflog.ts";
 import { advanceBranchRef, readHead, resolveHead } from "../lib/refs/refs.ts";
 import { firstLine } from "../lib/text-utils.ts";
-import { buildTreeFromIndex } from "../lib/tree-ops.ts";
-import type { GitContext, Identity } from "../lib/types.ts";
-import { applyWorktreeOps, resetHard } from "../lib/worktree/unpack-trees.ts";
+import { buildTreeFromIndex, flattenTreeToMap } from "../lib/tree-ops.ts";
+import type { GitContext, Identity, Index } from "../lib/types.ts";
+import { applyWorktreeOps, fastForwardMerge } from "../lib/worktree/unpack-trees.ts";
 import { type CommandResult, err, fatal, isCommandError } from "./kit/command-result.ts";
 import { resolveCommandSigner } from "./kit/command-utils.ts";
-import {
-	requireCommitter,
-	requireGitContext,
-	requireNoConflicts,
-} from "./kit/commit-requirements.ts";
+import { requireCommitter, requireGitContext } from "./kit/commit-requirements.ts";
 import { a, type Command, f, o } from "./kit/parse/index.ts";
 
 /** Decode a possibly-byte-encoded stdin payload into text (see apply.ts). */
@@ -65,6 +61,18 @@ const DIE_USER_RESOLVE =
 const RESOLVE_HINT =
 	"hint: Use 'git am --show-current-patch=diff' to see the failed patch\n" + DIE_USER_RESOLVE;
 
+/**
+ * The resolve-hint block git prints when it pauses on an empty patch: like
+ * `die_user_resolve` but with the extra `--allow-empty` advice and without the
+ * `--show-current-patch` line (git's parse_mail empty-patch path).
+ */
+const EMPTY_RESOLVE_HINT =
+	'hint: When you have resolved this problem, run "git am --continue".\n' +
+	'hint: If you prefer to skip this patch, run "git am --skip" instead.\n' +
+	'hint: To record the empty patch as an empty commit, run "git am --allow-empty".\n' +
+	'hint: To restore the original branch and stop patching, run "git am --abort".\n' +
+	'hint: Disable this message with "git config set advice.mergeConflict false"\n';
+
 /** git's "Resolve operation not in progress" — a resume verb with no session. */
 function notResuming(): CommandResult {
 	return fatal("Resolve operation not in progress, we are not resuming.");
@@ -74,6 +82,50 @@ function notResuming(): CommandResult {
 function buildMessage(subject: string, body: string, signoffLine: string | null): string {
 	const finalBody = signoffLine ? appendSignoff(subject, body, signoffLine) : body;
 	return finalBody === "" ? `${subject}\n` : `${subject}\n\n${finalBody}\n`;
+}
+
+/**
+ * git's `repo_index_has_changes` guard, run by `am_run` before the first
+ * apply: `git am` refuses to start on an index that differs from HEAD. Returns
+ * the stop result when dirty, or null when the index matches HEAD.
+ *
+ * Mirrors git's diff-cache: each unmerged path emits a `<path>: needs merge`
+ * line on stdout, and every path that differs from HEAD — a staged add/modify/
+ * delete or a conflict — is listed, path-sorted, in the fatal's `(dirty: …)`.
+ */
+async function checkDirtyIndex(gitCtx: GitContext, index: Index): Promise<CommandResult | null> {
+	const headHash = await resolveHead(gitCtx);
+	const headMap = headHash
+		? await flattenTreeToMap(gitCtx, (await readCommit(gitCtx, headHash)).tree)
+		: new Map<string, { hash: string }>();
+
+	const stage0 = new Map<string, string>();
+	const allPaths = new Set<string>();
+	const unmerged = new Set<string>();
+	for (const e of index.entries) {
+		allPaths.add(e.path);
+		if (e.stage === 0) stage0.set(e.path, e.hash);
+		else unmerged.add(e.path);
+	}
+
+	const dirty = new Set<string>(unmerged);
+	for (const [path, hash] of stage0) {
+		const head = headMap.get(path);
+		if (!head || head.hash !== hash) dirty.add(path);
+	}
+	for (const path of headMap.keys()) {
+		if (!allPaths.has(path)) dirty.add(path);
+	}
+
+	if (dirty.size === 0) return null;
+
+	const needsMerge = [...unmerged].sort();
+	const dirtyList = [...dirty].sort();
+	return {
+		stdout: needsMerge.map((p) => `${p}: needs merge\n`).join(""),
+		stderr: `fatal: Dirty index: cannot apply patches (dirty: ${dirtyList.join(" ")})\n`,
+		exitCode: 128,
+	};
 }
 
 export function registerAmCommand(parent: Command, ext?: GitExtensions): void {
@@ -146,10 +198,7 @@ export function registerAmCommand(parent: Command, ext?: GitExtensions): void {
 				return fatal("No input file given and no patches in stdin");
 			}
 
-			// Refuse if the index has unmerged entries (mirror cherry-pick's guard).
 			const index = await readIndex(gitCtx);
-			const conflictErr = requireNoConflicts(index, "am");
-			if (conflictErr) return conflictErr;
 
 			// Split the mailbox, write the state dir, run the loop.
 			const messages = splitMailbox(text);
@@ -171,6 +220,13 @@ export function registerAmCommand(parent: Command, ext?: GitExtensions): void {
 				origHead,
 			};
 			await writeAmState(gitCtx, state, messages);
+
+			// git's `am_run` refuses to apply onto a dirty index (index ≠ HEAD)
+			// *after* `am_setup` has created the state dir — so the aborted
+			// session is left resumable/abortable (operation stays "rebase"),
+			// matching real git rather than bailing before any state is written.
+			const dirty = await checkDirtyIndex(gitCtx, index);
+			if (dirty) return dirty;
 
 			return runAmLoop(gitCtx, ctx.env);
 		},
@@ -278,6 +334,18 @@ async function runAmLoop(gitCtx: GitContext, env: Map<string, string>): Promise<
 		});
 		const patchName = patchFileName(state.next);
 
+		// An empty patch pauses the session *before* the "Applying:" line
+		// (git's parse_mail): print "Patch is empty." and stop with the
+		// empty-patch resolve hints, leaving the state dir in place so the
+		// session is resumable (`--continue`/`--allow-empty`/`--skip`/`--abort`).
+		if (mail.patchText.trim() === "") {
+			return {
+				stdout: `${out.join("")}Patch is empty.\n`,
+				stderr: EMPTY_RESOLVE_HINT,
+				exitCode: 128,
+			};
+		}
+
 		if (!state.quiet) out.push(`Applying: ${mail.subject}\n`);
 
 		// Resolve the committer up front so the stored message (with signoff)
@@ -287,11 +355,6 @@ async function runAmLoop(gitCtx: GitContext, env: Map<string, string>): Promise<
 		const signoffLine = state.sign ? `Signed-off-by: ${committer.name} <${committer.email}>` : null;
 		const message = buildMessage(mail.subject, mail.body, signoffLine);
 
-		// An empty or unparseable patch is git's "Patch is empty" case.
-		if (mail.patchText.trim() === "") {
-			await clearAmState(gitCtx);
-			return { stdout: out.join(""), stderr: "Patch is empty.\n", exitCode: 128 };
-		}
 		let patches;
 		try {
 			patches = parsePatch(mail.patchText);
@@ -353,7 +416,10 @@ async function handleContinue(
 	if (!state) return notResuming();
 	const meta = await readAmStopMeta(gitCtx);
 	if (!meta) {
-		return fatal("cannot resume: .git/rebase-apply/author-script does not exist.");
+		// git's `am_load` reads `final-commit` before the author script, so a
+		// resume with no stop metadata (e.g. after a dirty-index death) reports
+		// the missing `final-commit` first.
+		return fatal("cannot resume: .git/rebase-apply/final-commit does not exist.");
 	}
 
 	const out: string[] = [];
@@ -418,7 +484,13 @@ async function handleSkip(gitCtx: GitContext, env: Map<string, string>): Promise
 	if (headHash) {
 		const headTree = (await readCommit(gitCtx, headHash)).tree;
 		const index = await readIndex(gitCtx);
-		const reset = await resetHard(gitCtx, headTree, index);
+		// git's `am --skip` runs `clean_index` — a two-way merge from the
+		// current index tree back to HEAD, NOT a hard reset: the half-applied
+		// patch's staged changes are dropped, but unrelated local worktree
+		// modifications are preserved (twoway_merge leaves untouched any path
+		// whose index and HEAD entries already agree).
+		const indexTree = await buildTreeFromIndex(gitCtx, getStage0Entries(index));
+		const reset = await fastForwardMerge(gitCtx, indexTree, headTree, index);
 		if (reset.success) {
 			await writeIndex(gitCtx, { version: 2, entries: reset.newEntries });
 			await applyWorktreeOps(gitCtx, reset.worktreeOps);
@@ -439,9 +511,17 @@ async function handleAbort(gitCtx: GitContext, env: Map<string, string>): Promis
 
 	if (state.origHead) {
 		const headBeforeAbort = await resolveHead(gitCtx);
-		const origCommit = await readCommit(gitCtx, state.origHead);
 		const index = await readIndex(gitCtx);
-		const reset = await resetHard(gitCtx, origCommit.tree, index);
+		// git's `am --abort` unwinds via `checkout_fast_forward` (a two-way
+		// merge from the current HEAD to orig-head), NOT a hard reset: any
+		// uncommitted worktree changes present before the `am` are preserved.
+		// When no patches applied (HEAD == orig-head) this is a no-op on the
+		// worktree, leaving local modifications intact — matching real git.
+		const currentTree = headBeforeAbort
+			? (await readCommit(gitCtx, headBeforeAbort)).tree
+			: await buildTreeFromIndex(gitCtx, []);
+		const origTree = (await readCommit(gitCtx, state.origHead)).tree;
+		const reset = await fastForwardMerge(gitCtx, currentTree, origTree, index);
 		if (reset.success) {
 			await writeIndex(gitCtx, { version: 2, entries: reset.newEntries });
 			await applyWorktreeOps(gitCtx, reset.worktreeOps);
