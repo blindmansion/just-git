@@ -275,6 +275,21 @@ export function registerAmCommand(parent: Command, ext?: GitExtensions): void {
 }
 
 /**
+ * git's `repo_index_has_changes(HEAD)` (negated): true when the current index's
+ * stage-0 tree is identical to HEAD's tree, i.e. the staged state introduces no
+ * net change. Used to detect the `-3` "Patch already applied" case.
+ */
+async function indexMatchesHead(gitCtx: GitContext): Promise<boolean> {
+	const headHash = await resolveHead(gitCtx);
+	const index = await readIndex(gitCtx);
+	const indexTree = await buildTreeFromIndex(gitCtx, getStage0Entries(index));
+	const headTree = headHash
+		? (await readCommit(gitCtx, headHash)).tree
+		: await buildTreeFromIndex(gitCtx, []);
+	return indexTree === headTree;
+}
+
+/**
  * Snapshot the current index into a tree and write the commit, advancing HEAD
  * and logging the reflog. Shared by the driver loop and `--continue`.
  */
@@ -550,6 +565,18 @@ async function runAmLoop(gitCtx: GitContext, env: Map<string, string>): Promise<
 			// Clean tree merge — the merged result is staged; fall through and
 			// commit it exactly like a plain-apply success.
 			out.push(tw.stdout);
+
+			// git's post-`fall_back_threeway` check: applying the patch to an
+			// earlier tree and merging back may reproduce HEAD's tree exactly.
+			// When the index no longer differs from HEAD, git prints "No changes
+			// -- Patch already applied." (suppressed under `-q`) and skips the
+			// commit, advancing to the next patch via `am_next`.
+			if (await indexMatchesHead(gitCtx)) {
+				if (!state.quiet) out.push("No changes -- Patch already applied.\n");
+				await refreshAbortSafety(gitCtx, await resolveHead(gitCtx));
+				await setAmNext(gitCtx, state.next + 1);
+				continue;
+			}
 		}
 
 		// Success: commit the snapshotted index.

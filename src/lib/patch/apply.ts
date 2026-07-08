@@ -28,6 +28,7 @@ import {
 } from "../object-db.ts";
 import { applyDelta } from "../pack/packfile.ts";
 import { join } from "../path.ts";
+import { lstatSafe } from "../symlink.ts";
 import type { GitContext, Index, IndexEntry } from "../types.ts";
 import type { ApplyHunkLine, ParsedPatch, PatchFragment } from "./parse-patch.ts";
 
@@ -525,25 +526,74 @@ interface PlanError {
 	restore?: Restore;
 }
 
+/**
+ * git's `has_symlink_leading_path`: true when any leading directory component
+ * of `path` is itself a symlink in the worktree. git lets a creation through in
+ * that case (the symlink, not a real dir, "owns" the location).
+ */
+async function hasSymlinkLeadingPath(ctx: GitContext, path: string): Promise<boolean> {
+	if (!ctx.workTree) return false;
+	const parts = path.split("/");
+	let prefix = "";
+	for (let i = 0; i < parts.length - 1; i++) {
+		prefix = prefix ? `${prefix}/${parts[i]}` : (parts[i] as string);
+		try {
+			const st = await lstatSafe(ctx.fs, join(ctx.workTree, prefix));
+			if (st.isSymbolicLink) return true;
+		} catch {
+			return false;
+		}
+	}
+	return false;
+}
+
+/**
+ * git's `check_to_create` worktree half: a creation / rename-dest / copy-dest
+ * whose path already exists on disk is refused (git's `EXISTS_IN_WORKTREE`).
+ * git tolerates an existing *directory* at the path and a symlinked leading
+ * path; a missing file (or one behind such a symlink) leaves the slot free.
+ */
+async function worktreePathTaken(ctx: GitContext, path: string): Promise<boolean> {
+	if (!ctx.workTree) return false;
+	let st: Awaited<ReturnType<typeof lstatSafe>>;
+	try {
+		st = await lstatSafe(ctx.fs, join(ctx.workTree, path));
+	} catch {
+		return false;
+	}
+	if (st.isDirectory) return false;
+	if (await hasSymlinkLeadingPath(ctx, path)) return false;
+	return true;
+}
+
 /** Build the write plan for one patch (no I/O beyond reading the preimage). */
 async function planPatch(
 	ctx: GitContext,
 	index: Index,
 	patch: ParsedPatch,
 	opts: ApplyEngineOptions,
+	toBeDeleted: ReadonlySet<string>,
 ): Promise<FilePlan | PlanError> {
 	const path = (patch.kind === "delete" ? patch.oldName : patch.newName) ?? patch.oldName ?? "";
 
-	// git's `check_to_create` (apply `--index`/`--cached`): a creation patch
-	// whose path already exists in the index is rejected up front, before any
-	// hunk work, with "already exists in index" (and no "patch does not apply"
-	// trailer — it never reaches the hunk-apply stage).
-	if (
-		patch.kind === "new" &&
-		(opts.target === "index" || opts.target === "cached") &&
-		findEntry(index, path)
-	) {
-		return { error: `${path}: already exists in index`, path };
+	// git's `check_to_create` for a creation patch (git's `ok_if_exists` — the
+	// fn_table `PATH_TO_BE_DELETED` marker — suppresses it when an earlier patch
+	// in the same series deleted/renamed that path away).
+	if (patch.kind === "new" && !toBeDeleted.has(path)) {
+		// Index half (apply `--index`/`--cached`): a creation whose path already
+		// exists in the index is rejected up front, before any hunk work, with
+		// "already exists in index" (and no "patch does not apply" trailer — it
+		// never reaches the hunk-apply stage).
+		if ((opts.target === "index" || opts.target === "cached") && findEntry(index, path)) {
+			return { error: `${path}: already exists in index`, path };
+		}
+		// Worktree half: a creation whose path already exists on disk is rejected
+		// with "already exists in working directory". `--cached` touches only the
+		// index, so it skips this check; under `-3` git defers the collision to
+		// the 3-way path (`direct_to_threeway`) rather than failing.
+		if (opts.target !== "cached" && !opts.threeway && (await worktreePathTaken(ctx, path))) {
+			return { error: `${path}: already exists in working directory`, path };
+		}
 	}
 
 	if (patch.isBinary) {
@@ -999,9 +1049,16 @@ export async function applyPatches(
 	// A hard failure (hunk mismatch / precondition) blocks all writes unless
 	// `--reject`; `-3` conflicts and rejects still write their results (exit 1).
 	let hardError = false;
+	// git's `fn_table` `PATH_TO_BE_DELETED`: paths an earlier patch in the
+	// series deletes or renames away, so a later add of the same path is
+	// allowed to overwrite (`ok_if_exists`).
+	const toBeDeleted = new Set<string>();
 
 	for (const patch of effective) {
-		const planned = await planPatch(ctx, index, patch, opts);
+		const planned = await planPatch(ctx, index, patch, opts, toBeDeleted);
+		if ((patch.kind === "delete" || patch.kind === "rename") && patch.oldName) {
+			toBeDeleted.add(patch.oldName);
+		}
 		if ("error" in planned) {
 			ok = false;
 			hardError = true;
