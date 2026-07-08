@@ -847,17 +847,25 @@ async function handleAbort(gitCtx: GitContext, env: Map<string, string>): Promis
 
 	if (origHead) {
 		await advanceBranchRef(gitCtx, origHead);
+		// git's `am_abort` rewinds via `update_ref("am --abort", HEAD, orig_head,
+		// curr_head, …)`. When HEAD is symbolic, git splits this into a normal
+		// update of the branch plus a `REF_LOG_ONLY` deref update of HEAD:
+		//   • the branch reflog entry is written only when the value actually
+		//     changes (`REF_NEEDS_COMMIT`) — a session that committed no patch
+		//     leaves `curr_head == orig_head`, so no branch entry is logged;
+		//   • the HEAD reflog entry is `REF_LOG_ONLY`, so it is always written,
+		//     even for a no-op rewind.
+		// A detached HEAD is a plain direct update: logged only when it moves.
 		const head = await readHead(gitCtx);
-		const refName = head?.type === "symbolic" ? head.target : "HEAD";
-		await logRef(
-			gitCtx,
-			env,
-			refName,
-			currentHead,
-			origHead,
-			"am --abort",
-			head?.type === "symbolic",
-		);
+		const moved = currentHead !== origHead;
+		if (head?.type === "symbolic") {
+			if (moved) {
+				await logRef(gitCtx, env, head.target, currentHead, origHead, "am --abort", false);
+			}
+			await logRef(gitCtx, env, "HEAD", currentHead, origHead, "am --abort", false);
+		} else if (moved) {
+			await logRef(gitCtx, env, "HEAD", currentHead, origHead, "am --abort", false);
+		}
 	} else {
 		// No `ORIG_HEAD` (the `am` began on an unborn branch): git deletes the
 		// current branch, returning to the unborn state.
