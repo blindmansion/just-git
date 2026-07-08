@@ -85,6 +85,14 @@ export async function clearRevertState(
  * Clear all operation state refs and files.
  * Used by reset and checkout to clean up any in-progress operation.
  *
+ * Mirrors git's `remove_branch_state()`: it drops the operation `*_HEAD`
+ * refs (CHERRY_PICK_HEAD, MERGE_HEAD, REVERT_HEAD) and the merge message
+ * files, but it deliberately leaves `ORIG_HEAD` intact. `ORIG_HEAD` is a
+ * pseudo-ref owned by its own writers (reset/merge/rebase/pull/am set it,
+ * `remove_branch_state` never clears it) — clearing it here would break the
+ * `am --abort` restore target when a sibling command runs between the stop
+ * and the abort.
+ *
  * `keepSquashMsg` preserves a pre-existing SQUASH_MSG (left by an earlier
  * `merge --squash`). Real git's `rebase` finish leaves SQUASH_MSG in place —
  * only paths that go through reset_head()/remove_branch_state() (reset,
@@ -102,7 +110,7 @@ export async function clearAllOperationState(
 		keepRevertHead = false,
 	}: { keepSquashMsg?: boolean; keepRevertHead?: boolean } = {},
 ): Promise<void> {
-	const refs = ["CHERRY_PICK_HEAD", "MERGE_HEAD", "ORIG_HEAD"];
+	const refs = ["CHERRY_PICK_HEAD", "MERGE_HEAD"];
 	if (!keepRevertHead) refs.push("REVERT_HEAD");
 	for (const ref of refs) {
 		await deleteRef(gitCtx, ref);

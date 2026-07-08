@@ -320,12 +320,17 @@ describe("git rebase", () => {
 
 		test("rebase cleans up state after success", async () => {
 			const bash = await setupDivergent();
-			await bash.exec("git rebase main");
 
 			const gitCtx = await findRepo(bash.fs, "/repo");
+			const preRebaseHead = await resolveHead(gitCtx!);
+			await bash.exec("git rebase main");
+
 			expect(await isRebaseInProgress(gitCtx!)).toBe(false);
 			expect(await resolveRef(gitCtx!, "REBASE_HEAD")).toBeNull();
-			expect(await resolveRef(gitCtx!, "ORIG_HEAD")).toBeNull();
+			// git leaves ORIG_HEAD pointing at the pre-rebase HEAD: it is a
+			// pseudo-ref owned by its own writers, and remove_branch_state()
+			// (our clearAllOperationState) does not clear it.
+			expect(await resolveRef(gitCtx!, "ORIG_HEAD")).toBe(preRebaseHead);
 		});
 	});
 

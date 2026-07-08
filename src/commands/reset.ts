@@ -16,7 +16,7 @@ import { clearAllOperationState } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";
 import { containsWildcard, matchPathspecs, parsePathspec } from "../lib/attributes/pathspec.ts";
 import { logRef } from "../lib/refs/reflog.ts";
-import { readHead, resolveHead, resolveRef, updateRef } from "../lib/refs/refs.ts";
+import { deleteRef, readHead, resolveHead, resolveRef, updateRef } from "../lib/refs/refs.ts";
 import { resolveRevision } from "../lib/refs/rev-parse.ts";
 import { flattenTree, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
@@ -286,6 +286,14 @@ async function resetToCommit(
 	// ── Move HEAD ───────────────────────────────────────────────────
 	const headHash = await resolveHead(gitCtx);
 	const head = await readHead(gitCtx);
+
+	// Save the pre-reset HEAD in ORIG_HEAD (git's reset_refs). git *sets*
+	// ORIG_HEAD here and its later remove_branch_state() leaves it intact, so
+	// an `am` paused before this reset still finds a valid `--abort` target.
+	// When HEAD is unborn, git deletes any stale ORIG_HEAD.
+	if (headHash) await updateRef(gitCtx, "ORIG_HEAD", headHash);
+	else await deleteRef(gitCtx, "ORIG_HEAD");
+
 	if (head?.type === "symbolic") {
 		// Move the branch that HEAD points to
 		await updateRef(gitCtx, head.target, targetHash);
