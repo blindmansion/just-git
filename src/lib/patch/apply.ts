@@ -435,6 +435,8 @@ interface FilePlan {
 	threeway?: ThreewayOutcome;
 	/** Stages 1/2/3 to record on a conflicted `-3` merge (git's threeway_stage). */
 	conflictStages?: ConflictStage[];
+	/** A missing worktree file restored from the index (git's checkout_target). */
+	restore?: Restore;
 }
 
 async function readWorktree(ctx: GitContext, path: string): Promise<string | null> {
@@ -444,13 +446,24 @@ async function readWorktree(ctx: GitContext, path: string): Promise<string | nul
 	return decoder.decode(await ctx.fs.readFileBuffer(full));
 }
 
+/**
+ * git's `checkout_target` side effect: a missing worktree file that exists in
+ * the index is materialized from the index during the check phase, so it
+ * persists on disk even when the overall apply later fails and stops.
+ */
+interface Restore {
+	path: string;
+	content: Uint8Array;
+	mode: number;
+}
+
 /** Resolve the preimage a patch applies to, per the target matrix. */
 async function loadPreimage(
 	ctx: GitContext,
 	index: Index,
 	patch: ParsedPatch,
 	target: ApplyTarget,
-): Promise<{ content: string } | { error: string }> {
+): Promise<{ content: string; restore?: Restore } | { error: string }> {
 	if (patch.kind === "new") return { content: "" };
 	const src = patch.oldName;
 	if (!src) return { error: "missing source path" };
@@ -460,12 +473,31 @@ async function loadPreimage(
 		if (!entry) return { error: `${src}: does not exist in index` };
 		return { content: decoder.decode(await readBlobBytes(ctx, entry.hash)) };
 	}
-	// git apply `--index` (am's mode) checks the index first: a path missing
-	// from the index is rejected as "does not exist in index" before the
-	// worktree is ever read. Only a plain worktree apply reports ENOENT.
-	if (target === "index" && !findEntry(index, src)) {
-		return { error: `${src}: does not exist in index` };
+
+	if (target === "index") {
+		// git's `check_preimage` with `check_index` (am's `git apply --index`):
+		// the index is the source of truth. A path missing from the index is
+		// rejected up front; a present path whose worktree copy is missing is
+		// checked out from the index (`checkout_target`) and the patch applies
+		// to *that*; a worktree copy that disagrees with the index is rejected
+		// as "does not match index" before the hunks are ever tried.
+		const entry = findEntry(index, src);
+		if (!entry) return { error: `${src}: does not exist in index` };
+		const bytes = await readWorktreeBytes(ctx, src);
+		if (bytes === null) {
+			const indexBytes = await readBlobBytes(ctx, entry.hash);
+			return {
+				content: decoder.decode(indexBytes),
+				restore: { path: src, content: indexBytes, mode: entry.mode },
+			};
+		}
+		if ((await hashObject("blob", bytes)) !== entry.hash) {
+			return { error: `${src}: does not match index` };
+		}
+		return { content: decoder.decode(bytes) };
 	}
+
+	// Plain worktree apply (`check_index` off): only the worktree matters.
 	const content = await readWorktree(ctx, src);
 	if (content === null) return { error: `${src}: No such file or directory` };
 	return { content };
@@ -489,6 +521,8 @@ interface PlanError {
 	doesNotApply?: boolean;
 	/** `-3` fell back to direct application before this hard failure. */
 	threewayFallback?: { note?: string };
+	/** A missing worktree file restored from the index (git's checkout_target). */
+	restore?: Restore;
 }
 
 /** Build the write plan for one patch (no I/O beyond reading the preimage). */
@@ -544,6 +578,7 @@ async function planPatch(
 			path,
 			doesNotApply: true,
 			threewayFallback,
+			restore: pre.restore,
 		};
 	}
 
@@ -559,6 +594,7 @@ async function planPatch(
 		whitespace: applied.whitespace,
 		fragmentResults: applied.fragments,
 		threeway: threewayFallback ? { kind: "fallback", note: threewayFallback.note } : undefined,
+		restore: pre.restore,
 	};
 }
 
@@ -956,6 +992,9 @@ export async function applyPatches(
 	const files: FileApplyResult[] = [];
 	const errors: string[] = [];
 	const plans: FilePlan[] = [];
+	// git's `checkout_target`: files restored from the index during checking,
+	// written before pass 2 so they survive a hard failure (e.g. am stopping).
+	const restorations: Restore[] = [];
 	let ok = true;
 	// A hard failure (hunk mismatch / precondition) blocks all writes unless
 	// `--reject`; `-3` conflicts and rejects still write their results (exit 1).
@@ -966,6 +1005,7 @@ export async function applyPatches(
 		if ("error" in planned) {
 			ok = false;
 			hardError = true;
+			if (planned.restore) restorations.push(planned.restore);
 			errors.push(planned.error);
 			if (planned.doesNotApply) errors.push(`${planned.path}: patch does not apply`);
 			files.push({
@@ -981,6 +1021,7 @@ export async function applyPatches(
 			});
 			continue;
 		}
+		if (planned.restore) restorations.push(planned.restore);
 		plans.push(planned);
 		const conflicted = planned.threeway?.kind === "conflict";
 		files.push({
@@ -1000,6 +1041,15 @@ export async function applyPatches(
 	if (wsErrorMode && files.some((f) => f.whitespace.length > 0)) {
 		ok = false;
 		hardError = true;
+	}
+
+	// git checks out missing-but-tracked files during the check phase (before
+	// any hunk is applied), so they land on disk even when the apply then fails
+	// and stops. `--check` inspects without touching the worktree.
+	if (!opts.check) {
+		for (const r of restorations) {
+			await writeWorktreeFile(ctx, r.path, r.content, r.mode);
+		}
 	}
 
 	if (hardError && !opts.reject) {

@@ -214,6 +214,52 @@ index 0000000..180cf83
 			const status = await bash.exec("git status --porcelain");
 			expect(status.stdout).toBe("M  file.txt\n");
 		});
+
+		test("--index rejects a worktree that disagrees with the index", async () => {
+			const bash = await repoWith({ "file.txt": THREE_LINES });
+			// Diverge the worktree from the (committed) index without staging.
+			await bash.fs.writeFile("/repo/file.txt", "line1\nlocal-edit\nline3\n");
+			const result = await apply(bash, MODIFY_PATCH, "--index");
+			// git's check_preimage fails before the hunks are ever tried.
+			expect(result.exitCode).toBe(1);
+			expect(result.stderr).toContain("error: file.txt: does not match index");
+			expect(result.stderr).not.toContain("patch failed");
+		});
+
+		test("--index checks out a missing worktree file from the index", async () => {
+			const bash = await repoWith({ "file.txt": THREE_LINES });
+			// Delete the worktree copy but leave the index entry intact.
+			await bash.fs.rm("/repo/file.txt", { force: true });
+			const result = await apply(bash, MODIFY_PATCH, "--index");
+			// checkout_target restores the index content, then the patch applies.
+			expect(result.exitCode).toBe(0);
+			expect(await readFile(bash.fs, "/repo/file.txt")).toBe(MODIFIED);
+		});
+
+		test("--index restores a checked-out file even when the apply fails", async () => {
+			const bash = await repoWith({
+				"file.txt": THREE_LINES,
+				"other.txt": "keep\n",
+			});
+			// file.txt is missing from the worktree (but tracked); other.txt is
+			// present but mismatched, which makes the batch fail.
+			await bash.fs.rm("/repo/file.txt", { force: true });
+			await bash.fs.writeFile("/repo/other.txt", "unexpected\n");
+			const TWO_FILE = `${MODIFY_PATCH}diff --git a/other.txt b/other.txt
+index 1111111..2222222 100644
+--- a/other.txt
++++ b/other.txt
+@@ -1 +1 @@
+-keep
++kept
+`;
+			const result = await apply(bash, TWO_FILE, "--index");
+			expect(result.exitCode).toBe(1);
+			// The whole apply is rejected (all-or-nothing) …
+			expect(result.stderr).toContain("error: other.txt: does not match index");
+			// … but git's checkout_target side effect still restored file.txt.
+			expect(await readFile(bash.fs, "/repo/file.txt")).toBe(THREE_LINES);
+		});
 	});
 
 	describe("--reject", () => {
