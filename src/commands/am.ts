@@ -397,6 +397,7 @@ async function attemptThreeway(
 	patches: ParsedPatch[],
 	subject: string,
 	quiet: boolean,
+	restored: string[],
 ): Promise<{ kind: "stop"; stdout: string; stderr: string } | { kind: "clean"; stdout: string }> {
 	const index = await readIndex(gitCtx);
 	const oursTree = await buildTreeFromIndex(gitCtx, getStage0Entries(index));
@@ -441,6 +442,10 @@ async function attemptThreeway(
 	const applied = await applyMergeResult(gitCtx, fb.merge, oursTree, {
 		labels,
 		skipStagedChangeCheck: true,
+		// The plain-apply pass checked out these missing-but-tracked preimage
+		// files to the worktree; git still reports them as "would be overwritten
+		// by merge" because they were not up-to-date when the merge began.
+		forceDirtyPaths: restored.length > 0 ? new Set(restored) : undefined,
 	});
 
 	if (!applied.ok) {
@@ -553,7 +558,7 @@ async function runAmLoop(gitCtx: GitContext, env: Map<string, string>): Promise<
 				await writeAmStopMeta(gitCtx, message, mail.author);
 				return renderStop(out.join(""), result, patchName, mail.subject);
 			}
-			const tw = await attemptThreeway(gitCtx, patches, mail.subject, state.quiet);
+			const tw = await attemptThreeway(gitCtx, patches, mail.subject, state.quiet, result.restored);
 			if (tw.kind === "stop") {
 				await writeAmStopMeta(gitCtx, message, mail.author);
 				return {

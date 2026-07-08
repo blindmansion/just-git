@@ -2032,6 +2032,13 @@ interface ApplyMergeOptions {
 	 * restore such additions.
 	 */
 	atomicCheckout?: boolean;
+	/**
+	 * Paths the worktree-safety check must treat as locally not-up-to-date when
+	 * the merge rewrites them, regardless of their current on-disk state. Used
+	 * by `git am -3` to report preimage files it transiently restored to the
+	 * worktree as "would be overwritten by merge" (see `commands/am`).
+	 */
+	forceDirtyPaths?: Set<string>;
 }
 
 interface ApplyMergeSuccess {
@@ -2153,6 +2160,7 @@ export async function applyMergeResult(
 				updateWorktree: true,
 				reset: false,
 				allowStagedChanges: !!options.preflightOnewayCheck,
+				forceDirtyPaths: options.forceDirtyPaths,
 			},
 		);
 

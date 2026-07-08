@@ -409,6 +409,13 @@ export interface ApplyResult {
 	files: FileApplyResult[];
 	/** git-style `error: …` lines to emit on stderr. */
 	errors: string[];
+	/**
+	 * Missing-but-tracked preimage files this apply checked out to the worktree
+	 * (git's `checkout_target`). They are written even when the apply then hard-
+	 * fails, so callers that fall back to another strategy (e.g. `am -3`) can
+	 * tell they were not up-to-date beforehand. Empty under `--check`.
+	 */
+	restored: string[];
 }
 
 /** A conflicted `-3` stage entry to record in the index (git's stages 1/2/3). */
@@ -1103,17 +1110,19 @@ export async function applyPatches(
 	// git checks out missing-but-tracked files during the check phase (before
 	// any hunk is applied), so they land on disk even when the apply then fails
 	// and stops. `--check` inspects without touching the worktree.
+	const restored: string[] = [];
 	if (!opts.check) {
 		for (const r of restorations) {
 			await writeWorktreeFile(ctx, r.path, r.content, r.mode);
+			restored.push(r.path);
 		}
 	}
 
 	if (hardError && !opts.reject) {
-		return { ok: false, files, errors };
+		return { ok: false, files, errors, restored };
 	}
 	if (opts.check) {
-		return { ok, files, errors };
+		return { ok, files, errors, restored };
 	}
 
 	// ── Pass 2: commit ───────────────────────────────────────────────
@@ -1129,5 +1138,5 @@ export async function applyPatches(
 		await writeIndex(ctx, index);
 	}
 
-	return { ok, files, errors };
+	return { ok, files, errors, restored };
 }

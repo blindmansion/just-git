@@ -201,6 +201,17 @@ export interface UnpackOptions {
 	 * Safety is ensured by a separate oneway preflight check.
 	 */
 	allowStagedChanges?: boolean;
+
+	/**
+	 * Paths that must be treated as locally not-up-to-date (NOT_UPTODATE_FILE)
+	 * whenever the merge rewrites them, regardless of their current on-disk
+	 * state. `git am -3`'s plain-apply pass checks out missing-but-tracked
+	 * preimage files to the worktree before falling back to the three-way
+	 * merge; git's merge still reports those as "would be overwritten by merge"
+	 * because they were not up-to-date when the merge began. Passing the
+	 * restored paths here reproduces that (see `commands/am#attemptThreeway`).
+	 */
+	forceDirtyPaths?: Set<string>;
 }
 
 /** Signature for merge decision functions (one-way and two-way). */
@@ -667,7 +678,9 @@ async function checkDecisionPreconditions(
 		for (const req of decision.requirements) {
 			if (opts.allowStagedChanges && req === PreconditionRequirement.INDEX_MUST_MATCH_HEAD)
 				continue;
-			const error = await checkSingleRequirement(req, state, resultHash);
+			const error = await checkSingleRequirement(req, state, resultHash, {
+				forceDirtyPaths: opts.forceDirtyPaths,
+			});
 			if (error) {
 				rejected.push({ path, error });
 				break; // One error per path
@@ -692,7 +705,7 @@ export async function checkSingleRequirement(
 	req: PreconditionRequirement,
 	state: PathState,
 	resultHash: ObjectId | null,
-	options?: { allowContentEscapeHatch?: boolean },
+	options?: { allowContentEscapeHatch?: boolean; forceDirtyPaths?: Set<string> },
 ): Promise<UnpackError | null> {
 	switch (req) {
 		case PreconditionRequirement.INDEX_MUST_NOT_EXIST:
@@ -720,6 +733,13 @@ export async function checkSingleRequirement(
 			return null;
 
 		case PreconditionRequirement.WORKTREE_MUST_BE_UPTODATE: {
+			// A path the caller marked force-dirty was not up-to-date when the
+			// merge began (see `forceDirtyPaths`); the merge rewrites it (this
+			// requirement only fires on a change), so report it as would-be-
+			// overwritten even if it has since been restored to disk.
+			if (options?.forceDirtyPaths?.has(state.path)) {
+				return UnpackError.NOT_UPTODATE_FILE;
+			}
 			// Working tree must match index (file is not dirty).
 			// If file doesn't exist on disk, it's considered up-to-date.
 			// Real git's verify_uptodate: lstat ENOENT → return 0.
