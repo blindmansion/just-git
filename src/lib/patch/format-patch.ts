@@ -106,6 +106,15 @@ export interface FormatPatchOptions {
 /** Thrown for user-facing selection failures (bad revision, empty selection). */
 export class FormatPatchError extends Error {}
 
+/** Git's rev-parse diagnostic for an argument that is neither a revision nor a path. */
+function ambiguousArg(arg: string): string {
+	return (
+		`ambiguous argument '${arg}': unknown revision or path not in the working tree.\n` +
+		"Use '--' to separate paths from revisions, like this:\n" +
+		"'git <command> [<revision>...] -- [<file>...]'"
+	);
+}
+
 /**
  * Resolve, walk, and render a format-patch series. Throws {@link FormatPatchError}
  * for bad revisions, a missing HEAD, or an unspecified selection; returns an
@@ -215,8 +224,10 @@ async function resolveSelection(
 	if (range) {
 		const left = await resolveTip(repo, range.left);
 		const right = await resolveTip(repo, range.right);
-		if (!left) throw new FormatPatchError(`bad revision '${range.left}'`);
-		if (!right) throw new FormatPatchError(`bad revision '${range.right}'`);
+		// Git parses `A..B` as a single revision argument; when either endpoint
+		// fails to resolve it reports the whole token as an ambiguous
+		// revision-or-path, not just the failing side.
+		if (!left || !right) throw new FormatPatchError(ambiguousArg(revisions[0] as string));
 		if (range.type === "two-dot") {
 			return { startHashes: [right], excludeHashes: [left] };
 		}
