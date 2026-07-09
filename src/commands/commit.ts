@@ -429,13 +429,16 @@ export function registerCommitCommand(parent: Command, ext?: GitExtensions) {
 				await clearRevertState(gitCtx);
 			}
 
-			// During manual commits inside rebase, keep REBASE_HEAD for
-			// `git rebase --continue`, but clear MERGE_MSG like real git.
-			if (rebaseHeadHash) {
-				await deleteStateFile(gitCtx, "MERGE_MSG");
-			}
-
-			// Clean up SQUASH_MSG after commit (consumed by message resolution above)
+			// Real git's `cmd_commit` unconditionally unlinks the merge-message,
+			// merge-mode, and SQUASH_MSG files after every commit — even when no
+			// *_HEAD pseudo-ref is present. This covers a manual commit made while
+			// an `am`/`rebase` session is in progress (REBASE_HEAD set, or the
+			// `rebase-apply` dir present without REBASE_HEAD) and a commit landing
+			// on top of a stale MERGE_MSG left by an earlier aborted merge/revert.
+			// REBASE_HEAD and the rebase/`am` state dirs are deliberately left in
+			// place so `git rebase --continue` / `git am --continue` still resume.
+			await deleteStateFile(gitCtx, "MERGE_MSG");
+			await deleteStateFile(gitCtx, "MERGE_MODE");
 			await deleteStateFile(gitCtx, "SQUASH_MSG");
 
 			// post-commit hook
