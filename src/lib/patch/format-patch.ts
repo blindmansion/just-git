@@ -25,7 +25,13 @@ import {
 import { detectRenames, type RenamePair } from "../diff/rename-detection.ts";
 import { renderDiffStat } from "../diff/stat-format.ts";
 import { findAllMergeBases } from "../merge.ts";
-import { isBinaryBytes, peelToCommit, readBlobBytes, readCommit } from "../object-db.ts";
+import {
+	isBinaryBytes,
+	peelToCommit,
+	readBlobBytes,
+	readCommit,
+	readObject,
+} from "../object-db.ts";
 import { parseRangeSyntax } from "../refs/range-syntax.ts";
 import { resolveHead } from "../refs/refs.ts";
 import { resolveRevision } from "../refs/rev-parse.ts";
@@ -35,8 +41,10 @@ import type { Commit, GitContext, GitRepo, Identity, ObjectId, TreeDiffEntry } f
 import { GIT_EMULATED_VERSION } from "../version.ts";
 import {
 	appendSignoff,
+	encodeHeaderWord,
 	FORMAT_PATCH_STAT_WIDTH,
 	formatPatchMessage,
+	headerNeedsEncoding,
 	MBOX_SENTINEL_DATE,
 	sanitizeSubjectForFilename,
 	splitMessage,
@@ -167,9 +175,18 @@ export async function formatPatchSeries(
 	let cover: PatchRecord | null = null;
 	if (coverLetter && opts.committer) {
 		const tip = commits[commits.length - 1] as CommitEntry;
+		const need8bitCte = await seriesNeeds8bitCte(repo, commits);
 		cover = {
 			filename: coverFileName(opts.numberedFiles ?? false, opts.rerollCount),
-			content: buildCoverLetter(commits, tip, opts.committer, prefix, total, signature),
+			content: buildCoverLetter(
+				commits,
+				tip,
+				opts.committer,
+				prefix,
+				total,
+				signature,
+				need8bitCte,
+			),
 		};
 	}
 
@@ -254,9 +271,30 @@ function patchFileName(
 }
 
 /**
+ * git's `has_non_ascii` scan in `make_cover_letter`: the cover letter carries
+ * the MIME `Content-Type`/`Content-Transfer-Encoding: 8bit` block when *any*
+ * commit in the series has a non-ASCII byte anywhere in its raw object buffer
+ * (author/committer lines, message body, extra headers) — not merely in the
+ * shortlog-rendered subject. RFC-2047 encoding of the `From:` line is a
+ * separate mechanism and does not itself add the MIME block.
+ */
+async function seriesNeeds8bitCte(repo: GitContext, commits: CommitEntry[]): Promise<boolean> {
+	for (const { hash } of commits) {
+		const raw = await readObject(repo, hash);
+		for (const byte of raw.content) {
+			if (byte >= 0x80) return true;
+		}
+	}
+	return false;
+}
+
+/**
  * Build the `[PATCH 0/N]` cover letter: placeholder subject/blurb, a shortlog
  * of the series grouped by author, and the `-- \n<signature>` footer. Matches
  * git's cover-letter body (no diffstat in current git).
+ *
+ * `need8bitCte` (from {@link seriesNeeds8bitCte}) gates the MIME header block
+ * git emits when the series carries non-ASCII content.
  */
 function buildCoverLetter(
 	commits: CommitEntry[],
@@ -265,17 +303,26 @@ function buildCoverLetter(
 	prefix: string,
 	total: number,
 	signature: string,
+	need8bitCte: boolean,
 ): string {
 	const shortlog = buildShortlog(commits);
+	const fromName = headerNeedsEncoding(committer.name)
+		? encodeHeaderWord(committer.name)
+		: committer.name;
 
 	let out = "";
 	out += `From ${tip.hash} ${MBOX_SENTINEL_DATE}\n`;
-	out += `From: ${committer.name} <${committer.email}>\n`;
+	out += `From: ${fromName} <${committer.email}>\n`;
 	out += `Date: ${formatRFC2822(committer.timestamp, committer.timezone)}\n`;
 	// Cover letter is patch 0, zero-padded to the total width like the rest
 	// of the series (`[PATCH 00/10]`).
 	const coverNumber = "0".padStart(String(total).length, "0");
 	out += `Subject: [${prefix} ${coverNumber}/${total}] *** SUBJECT HERE ***\n`;
+	if (need8bitCte) {
+		out += "MIME-Version: 1.0\n";
+		out += "Content-Type: text/plain; charset=UTF-8\n";
+		out += "Content-Transfer-Encoding: 8bit\n";
+	}
 	out += "\n";
 	out += "*** BLURB HERE ***\n";
 	out += "\n";

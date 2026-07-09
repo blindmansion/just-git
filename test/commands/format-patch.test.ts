@@ -291,6 +291,70 @@ ${SIG}\n`,
 			// Cover letter is separated from the first patch by a single blank line.
 			expect(result.stdout).toContain(`${SIG}\nFrom `);
 		});
+
+		test("an all-ASCII series gets no MIME headers on the cover", async () => {
+			const bash = await setupTwoCommits();
+			const result = await bash.exec("git format-patch --cover-letter -2 --stdout");
+			// The cover subject goes straight to the blank line / blurb.
+			expect(result.stdout).toContain(
+				"Subject: [PATCH 0/2] *** SUBJECT HERE ***\n\n*** BLURB HERE ***\n",
+			);
+			const cover = result.stdout.split("\nFrom ")[0] as string;
+			expect(cover).not.toContain("MIME-Version");
+			expect(cover).not.toContain("Content-Transfer-Encoding");
+		});
+
+		test("a non-ASCII series adds MIME headers and encodes the cover From", async () => {
+			const env = {
+				...TEST_ENV,
+				GIT_AUTHOR_NAME: "Tëst Üser",
+				GIT_COMMITTER_NAME: "Tëst Üser",
+			};
+			const bash = createTestBash({ files: EMPTY_REPO, env });
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/f", "a\n");
+			await bash.exec("git add f");
+			await bash.exec('git commit -m "Café subject" -m "Bödy line."');
+			await bash.fs.writeFile("/repo/g", "b\n");
+			await bash.exec("git add g");
+			await bash.exec('git commit -m "plain second"');
+			const result = await bash.exec("git format-patch --cover-letter -2 --stdout");
+			const cover = result.stdout.split("\nFrom ")[0] as string;
+			// Sender name RFC-2047 encoded in the cover's From line.
+			expect(cover).toContain("From: =?UTF-8?q?T=C3=ABst=20=C3=9Cser?= <test@test.com>");
+			// MIME block sits directly under the cover Subject.
+			expect(cover).toContain(
+				"Subject: [PATCH 0/2] *** SUBJECT HERE ***\n" +
+					"MIME-Version: 1.0\n" +
+					"Content-Type: text/plain; charset=UTF-8\n" +
+					"Content-Transfer-Encoding: 8bit\n",
+			);
+			// Shortlog subjects stay verbatim UTF-8 (8bit), never re-encoded.
+			expect(cover).toContain("Tëst Üser (2):\n  Café subject\n  plain second\n");
+		});
+
+		test("non-ASCII only in a commit body (not the shortlog) still adds MIME", async () => {
+			// git scans the whole commit buffer, so a non-ASCII byte outside the
+			// shortlog-rendered subject line still triggers the MIME block.
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/f", "a\n");
+			await bash.exec("git add f");
+			await bash.exec('git commit -m "ascii subject line" -m "body with café accent"');
+			await bash.fs.writeFile("/repo/g", "b\n");
+			await bash.exec("git add g");
+			await bash.exec('git commit -m "second ascii"');
+			const result = await bash.exec("git format-patch --cover-letter -2 --stdout");
+			const cover = result.stdout.split("\nFrom ")[0] as string;
+			expect(cover).toContain(
+				"Subject: [PATCH 0/2] *** SUBJECT HERE ***\n" +
+					"MIME-Version: 1.0\n" +
+					"Content-Type: text/plain; charset=UTF-8\n" +
+					"Content-Transfer-Encoding: 8bit\n",
+			);
+			// The shortlog shows only the (ASCII) subject lines.
+			expect(cover).toContain("Test (2):\n  ascii subject line\n  second ascii\n");
+		});
 	});
 
 	describe("empty commits", () => {

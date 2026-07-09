@@ -75,7 +75,7 @@ export function encodeHeaderWord(text: string): string {
 }
 
 /** True when the header text is safe to emit verbatim (no encoding needed). */
-function headerNeedsEncoding(text: string): boolean {
+export function headerNeedsEncoding(text: string): boolean {
 	return !isAscii(text);
 }
 
