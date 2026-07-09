@@ -26,6 +26,7 @@ import { getTrackingInfo } from "../lib/status-format.ts";
 import { clearIndex, readIndex, writeIndex } from "../lib/index.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { clearDetachPoint, readStateFile } from "../lib/operation-state.ts";
+import { isAmInProgress } from "../lib/am.ts";
 import { isRebaseInProgress } from "../lib/rebase.ts";
 import { logRef } from "../lib/refs/reflog.ts";
 import {
@@ -184,6 +185,14 @@ async function checkActiveOperation(
 	if (revertHead) {
 		return fatal(
 			'cannot switch branch while reverting\nConsider "git revert --quit" or "git worktree add".',
+		);
+	}
+	// `am` and `rebase --apply` share `rebase-apply/`; the `applying` marker
+	// gives `am` precedence, so a paused `am` session reports the am-specific
+	// message rather than the rebase one (matching git's `die_if_checked_out`).
+	if (await isAmInProgress(gitCtx)) {
+		return fatal(
+			'cannot switch branch in the middle of an am session\nConsider "git am --quit" or "git worktree add".',
 		);
 	}
 	if (await isRebaseInProgress(gitCtx)) {
