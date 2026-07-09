@@ -2,6 +2,7 @@ import type { GitExtensions } from "../git.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import { renderRebaseOutcome } from "./kit/rebase.ts";
 import { handleAbort, handleContinue, handleSkip, performRebase } from "../lib/rebase-engine.ts";
+import { isAmInProgress } from "../lib/am.ts";
 import { isRebaseInProgress, rebaseMergeDir } from "../lib/rebase.ts";
 import { readHead } from "../lib/refs/refs.ts";
 import type { ObjectId } from "../lib/types.ts";
@@ -27,6 +28,15 @@ export function registerRebaseCommand(parent: Command, ext?: GitExtensions) {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
 			const gitCtx = gitCtxOrError;
+
+			// Real git shares `rebase-apply/` between `git am` and `rebase --apply`,
+			// giving `am` precedence: `cmd_rebase` checks for the `applying` marker
+			// before dispatching any verb, so a paused `am` session blocks every
+			// rebase invocation (fresh, --onto, --abort, --skip, --continue) with
+			// this guard rather than acting on the rebase state.
+			if (await isAmInProgress(gitCtx)) {
+				return fatal("It looks like 'git am' is in progress. Cannot rebase.");
+			}
 
 			// ── Resume operations ────────────────────────────────────
 			if (args.abort) {

@@ -1,5 +1,4 @@
 import type { GitExtensions } from "../git.ts";
-import { isAmInProgress } from "./am.ts";
 import { isRejection } from "./hooks.ts";
 import { getSequencerDirtyState, type SequencerDirtyState } from "./command-utils.ts";
 import { bindAttributes } from "./attributes/bound-attributes.ts";
@@ -1111,20 +1110,6 @@ async function finishRebase(gitCtx: GitContext, env: Map<string, string>): Promi
 	return { kind: "finished", headName: state.headName };
 }
 
-/**
- * The `fatal` outcome for a rebase resume verb (`--abort`/`--skip`/`--continue`)
- * invoked with no rebase in progress. Real git shares `rebase-apply/` between
- * `git am` and `rebase --apply`, giving `am` precedence: when only an `am`
- * session exists, these verbs report the am guard (`die`, exit 128) rather than
- * `no rebase in progress`.
- */
-async function noRebaseInProgress(gitCtx: GitContext): Promise<RebaseOutcome> {
-	if (await isAmInProgress(gitCtx)) {
-		return { kind: "fatal", message: "It looks like 'git am' is in progress. Cannot rebase." };
-	}
-	return { kind: "fatal", message: "no rebase in progress" };
-}
-
 // ── --abort ─────────────────────────────────────────────────────────
 
 export async function handleAbort(
@@ -1133,7 +1118,7 @@ export async function handleAbort(
 ): Promise<RebaseOutcome> {
 	const state = await readRebaseState(gitCtx);
 	if (!state) {
-		return noRebaseInProgress(gitCtx);
+		return { kind: "fatal", message: "no rebase in progress" };
 	}
 
 	const headBeforeAbort = await resolveHead(gitCtx);
@@ -1195,7 +1180,7 @@ export async function handleContinue(
 
 	const state = await readRebaseState(gitCtx);
 	if (!state) {
-		return noRebaseInProgress(gitCtx);
+		return { kind: "fatal", message: "no rebase in progress" };
 	}
 
 	const index = await readIndex(gitCtx);
@@ -1360,7 +1345,7 @@ export async function handleSkip(
 ): Promise<RebaseOutcome> {
 	const state = await readRebaseState(gitCtx);
 	if (!state) {
-		return noRebaseInProgress(gitCtx);
+		return { kind: "fatal", message: "no rebase in progress" };
 	}
 
 	// Hard reset to current HEAD (discard in-progress merge)
