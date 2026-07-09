@@ -201,10 +201,7 @@ export function registerAmCommand(parent: Command, ext?: GitExtensions): void {
 
 			// ── Start mode ────────────────────────────────────────────
 			if (inProgress) {
-				return err(
-					"error: previous rebase directory .git/rebase-apply still exists but mbox given.\n",
-					128,
-				);
+				return fatal("previous rebase directory .git/rebase-apply still exists but mbox given.");
 			}
 
 			// Gather input (file args, else stdin).
