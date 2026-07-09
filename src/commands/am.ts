@@ -34,6 +34,7 @@ import { appendSignoff } from "../lib/patch/mbox.ts";
 import { parseMail, splitMailbox } from "../lib/patch/mailinfo.ts";
 import { ApplyParseError, type ParsedPatch, parsePatch } from "../lib/patch/parse-patch.ts";
 import { resolve } from "../lib/path.ts";
+import { clearAllOperationState } from "../lib/operation-state.ts";
 import { logRef } from "../lib/refs/reflog.ts";
 import {
 	advanceBranchRef,
@@ -671,6 +672,14 @@ async function cleanIndex(
 		reset: true,
 	});
 	await writeIndex(gitCtx, { version: 2, entries: oneway.newEntries });
+
+	// git's `clean_index` ends with `remove_branch_state()`: an `am --skip`/
+	// `--abort` that resets the tree also drops any lingering operation
+	// pseudo-refs (CHERRY_PICK_HEAD/MERGE_HEAD/REVERT_HEAD) and merge-message
+	// files left by an operation paused before the am session began. Without
+	// this a stale CHERRY_PICK_HEAD would make the next plain `git commit`
+	// wrongly preserve the cherry-picked author identity/date.
+	await clearAllOperationState(gitCtx);
 	return { ok: true };
 }
 
