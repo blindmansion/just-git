@@ -14,7 +14,6 @@
  * `ORIG_HEAD` ref (not a state-dir file), so `--abort` reads `ORIG_HEAD`. No
  * CLI concepts: pure state I/O.
  */
-import { parseMail } from "./patch/mailinfo.ts";
 import { join } from "./path.ts";
 import type { GitContext, Identity } from "./types.ts";
 
@@ -120,20 +119,29 @@ export async function readPatchMessage(ctx: GitContext, n: number): Promise<stri
 }
 
 /**
- * Whether the currently-paused `am` patch is empty (git's `am_empty_patch`,
- * derived from an empty extracted `patch`). Drives the empty-patch variant of
- * the `git status` "am session" advice.
+ * Persist the extracted diff of the patch currently being applied — git's
+ * `rebase-apply/patch`, written by `parse_mail` on each loop iteration. Its
+ * presence and size (not a re-parse of the stored mail) is what `git status`
+ * keys the empty-patch advice off, so a session that died *before* reaching the
+ * apply loop (e.g. a dirty-index death) never writes it and is not empty.
+ */
+export async function writeAmPatch(ctx: GitContext, patchText: string): Promise<void> {
+	await ctx.fs.writeFile(amPath(ctx, "patch"), patchText);
+}
+
+/**
+ * Whether the currently-paused `am` patch is empty (git's `am_empty_patch`:
+ * `rebase-apply/patch` exists and is empty). The `patch` file is written only
+ * once the apply loop has extracted a diff, so a dirty-index death (which dies
+ * before the loop, leaving no `patch`) reports *not* empty — matching git's
+ * default "fix conflicts" status advice rather than the empty-patch variant.
+ * Drives the empty-patch variant of the `git status` "am session" advice.
  */
 export async function isAmEmptyPatch(ctx: GitContext): Promise<boolean> {
-	const state = await readAmState(ctx);
-	if (!state || state.next > state.last) return false;
-	const raw = await readPatchMessage(ctx, state.next);
-	const mail = parseMail(raw, {
-		keep: state.keep,
-		scissors: state.scissors,
-		keepCr: state.keepCr,
-	});
-	return mail.patchText.trim() === "";
+	if (!(await isAmInProgress(ctx))) return false;
+	const p = amPath(ctx, "patch");
+	if (!(await ctx.fs.exists(p))) return false;
+	return (await ctx.fs.readFile(p)).trim() === "";
 }
 
 /** The metadata a paused patch left behind, replayed by `--continue`. */

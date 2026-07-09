@@ -13,6 +13,7 @@ import {
 	readPatchMessage,
 	refreshAbortSafety,
 	setAmNext,
+	writeAmPatch,
 	writeAmState,
 	writeAmStopMeta,
 } from "../lib/am.ts";
@@ -497,6 +498,13 @@ async function runAmLoop(gitCtx: GitContext, env: Map<string, string>): Promise<
 			keepCr: state.keepCr,
 		});
 		const patchName = patchFileName(state.next);
+
+		// git's `parse_mail` writes the extracted diff to `rebase-apply/patch`
+		// for the patch it is about to apply; `git status` reads that file's
+		// size to decide the empty-patch advice. Writing it here (and only here,
+		// inside the loop) mirrors git: a session that died before the loop
+		// leaves no `patch` and so is never reported as an empty patch.
+		await writeAmPatch(gitCtx, mail.patchText);
 
 		// Resolve the committer up front so the stored message (with signoff)
 		// is available on every stop path — including the empty-patch pause.
