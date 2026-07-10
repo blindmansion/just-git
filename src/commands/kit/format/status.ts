@@ -113,9 +113,9 @@ export function renderLongStatus(data: LongStatusData): string {
 	if (isDetached && rebase) {
 		lines.push(`interactive rebase in progress; onto ${rebase.ontoShort}`);
 	} else if (isDetached) {
-		if (data.detachPointShort) {
+		if (data.detachedFromLabel) {
 			const atOrFrom = data.detachedAt ? "at" : "from";
-			lines.push(`HEAD detached ${atOrFrom} ${data.detachPointShort}`);
+			lines.push(`HEAD detached ${atOrFrom} ${data.detachedFromLabel}`);
 		} else {
 			lines.push("Not currently on any branch.");
 		}

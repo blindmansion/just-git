@@ -56,6 +56,70 @@ describe("git branch", () => {
 		});
 	});
 
+	describe("detached HEAD label", () => {
+		test("shows abbreviated hash when detaching directly at a commit", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "first"');
+			const hash = (await bash.exec("git rev-parse HEAD")).stdout.trim();
+
+			await bash.exec(`git checkout ${hash}`);
+			const result = await bash.exec("git branch");
+			expect(result.stdout).toContain(`* (HEAD detached at ${hash.slice(0, 7)})`);
+		});
+
+		test("shows 'from <hash>' after committing while detached", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "first"');
+			const hash = (await bash.exec("git rev-parse HEAD")).stdout.trim();
+
+			await bash.exec(`git checkout ${hash}`);
+			await bash.exec("echo more >> README.md");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "second"');
+
+			const result = await bash.exec("git branch");
+			expect(result.stdout).toContain(`* (HEAD detached from ${hash.slice(0, 7)})`);
+		});
+
+		test("shows the tag name (not a hash) when detaching onto a tag", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "first"');
+			await bash.exec("git tag v1");
+
+			await bash.exec("git checkout v1");
+			const result = await bash.exec("git branch");
+			expect(result.stdout).toContain("* (HEAD detached at v1)");
+		});
+
+		test("shows the remote-tracking name (not a hash) when detaching onto it", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("git checkout origin/main", { cwd: "/local" });
+			const result = await bash.exec("git branch", { cwd: "/local" });
+			expect(result.stdout).toContain("* (HEAD detached at origin/main)");
+		});
+
+		test("falls back to '(no branch)' when HEAD has no checkout reflog entry", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "first"');
+			const hash = (await bash.exec("git rev-parse HEAD")).stdout.trim();
+
+			await bash.exec(`git checkout ${hash}`);
+			await bash.exec("rm .git/logs/HEAD");
+
+			const result = await bash.exec("git branch");
+			expect(result.stdout).toContain("* (no branch)");
+		});
+	});
+
 	describe("create branch", () => {
 		test("creates a new branch at HEAD", async () => {
 			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });

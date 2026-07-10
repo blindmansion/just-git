@@ -3,9 +3,10 @@ import { isBisectInProgress } from "./bisect.ts";
 import { countAheadBehind } from "./commit-walk.ts";
 import { getStage0Entries, hasConflicts, readIndex } from "./index.ts";
 import { readCommit } from "./object-db.ts";
-import { readDetachPoint, readStateFile } from "./operation-state.ts";
+import { readStateFile } from "./operation-state.ts";
 import { join as joinPath, comparePaths } from "./path.ts";
 import { isRebaseInProgress, readRebaseState } from "./rebase.ts";
+import { getDetachedFrom } from "./refs/detached-from.ts";
 import { readHead, resolveHead, resolveRef } from "./refs/refs.ts";
 import { detectRenames } from "./diff/rename-detection.ts";
 import { flattenTreeToMap } from "./tree-ops.ts";
@@ -76,8 +77,8 @@ export interface LongStatusData {
 	/** Abbreviated REVERT_HEAD, or null when not reverting. */
 	revertShort: string | null;
 	hasMergeHead: boolean;
-	/** Abbreviated detach point, or null when not detached / unknown. */
-	detachPointShort: string | null;
+	/** What HEAD detached from (ref name or abbreviated hash), or null when unknown. */
+	detachedFromLabel: string | null;
 	/** True when HEAD is exactly at the detach point ("at" vs "from"). */
 	detachedAt: boolean;
 	tracking: TrackingInfo | null;
@@ -191,13 +192,13 @@ export async function gatherLongStatus(
 		tracking = await getTrackingInfo(gitCtx, config, branchName);
 	}
 
-	let detachPointShort: string | null = null;
+	let detachedFromLabel: string | null = null;
 	let detachedAt = false;
 	if (isDetached && !rebaseRaw) {
-		const detachPoint = await readDetachPoint(gitCtx);
-		if (detachPoint) {
-			detachPointShort = await uniqueAbbrev(gitCtx, detachPoint);
-			detachedAt = headHash === detachPoint;
+		const detached = await getDetachedFrom(gitCtx);
+		if (detached) {
+			detachedFromLabel = detached.from;
+			detachedAt = detached.detachedAt;
 		}
 	}
 
@@ -222,7 +223,7 @@ export async function gatherLongStatus(
 		cherryPickShort: cherryPickHeadRef ? await uniqueAbbrev(gitCtx, cherryPickHeadRef) : null,
 		revertShort: revertHeadRef ? await uniqueAbbrev(gitCtx, revertHeadRef) : null,
 		hasMergeHead: !!mergeHeadRef,
-		detachPointShort,
+		detachedFromLabel,
 		detachedAt,
 		tracking,
 		bisectStartRef,

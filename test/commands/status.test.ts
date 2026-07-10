@@ -519,6 +519,47 @@ describe("git status", () => {
 		});
 	});
 
+	describe("detached HEAD label (long format)", () => {
+		test("shows abbreviated hash when detaching directly at a commit", async () => {
+			const bash = createTestBash({ files: BASIC_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			const hash = (await bash.exec("git rev-parse HEAD")).stdout.trim();
+
+			await bash.exec(`git checkout ${hash}`);
+			const status = await bash.exec("git status");
+			expect(status.stdout).toContain(`HEAD detached at ${hash.slice(0, 7)}`);
+		});
+
+		test("shows 'from <hash>' after committing while detached", async () => {
+			const bash = createTestBash({ files: BASIC_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			const hash = (await bash.exec("git rev-parse HEAD")).stdout.trim();
+
+			await bash.exec(`git checkout ${hash}`);
+			await bash.fs.writeFile("/repo/README.md", "# Changed\n");
+			await bash.exec("git commit -am second");
+
+			const status = await bash.exec("git status");
+			expect(status.stdout).toContain(`HEAD detached from ${hash.slice(0, 7)}`);
+		});
+
+		test("shows the tag name (not a hash) when detaching onto a tag", async () => {
+			const bash = createTestBash({ files: BASIC_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec("git tag v1");
+
+			await bash.exec("git checkout v1");
+			const status = await bash.exec("git status");
+			expect(status.stdout).toContain("HEAD detached at v1");
+		});
+	});
+
 	describe("unmerged paths (merge conflicts)", () => {
 		test("shows 'both modified' for content conflicts", async () => {
 			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });

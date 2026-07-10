@@ -2,10 +2,12 @@ import type { GitExtensions } from "../git.ts";
 import { setupTracking } from "../lib/worktree/checkout-utils.ts";
 import { renderTrackingSetup } from "./kit/format/checkout.ts";
 import { getReflogIdentity } from "../lib/identity.ts";
+import { isAmInProgress } from "../lib/am.ts";
 import { isAncestor } from "../lib/merge.ts";
 import { readCommit } from "../lib/object-db.ts";
 import { readDetachPoint } from "../lib/operation-state.ts";
 import { isRebaseInProgress, readRebaseState } from "../lib/rebase.ts";
+import { getDetachedFrom } from "../lib/refs/detached-from.ts";
 import { appendReflog, logRef, readReflog, writeReflog } from "../lib/refs/reflog.ts";
 import {
 	createSymbolicRef,
@@ -427,7 +429,12 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 			if (showLocal && !currentBranch) {
 				const headHash = await resolveHead(gitCtx);
 				if (headHash) {
-					const rebasing = await isRebaseInProgress(gitCtx);
+					// Mirrors git's `wt_status_check_rebase` else-chain: an `am`
+					// session (rebase-apply/applying) takes precedence over a
+					// leftover rebase-merge dir, and is never itself a "rebasing"
+					// label (`am_in_progress` isn't checked by `get_head_description`).
+					const amInProgress = await isAmInProgress(gitCtx);
+					const rebasing = !amInProgress && (await isRebaseInProgress(gitCtx));
 					let detachedName: string;
 
 					if (rebasing) {
@@ -445,10 +452,10 @@ export function registerBranchCommand(parent: Command, ext?: GitExtensions) {
 							detachedName = "(no branch)";
 						}
 					} else {
-						const detachPoint = await readDetachPoint(gitCtx);
-						if (detachPoint) {
-							const atOrFrom = headHash === detachPoint ? "at" : "from";
-							detachedName = `(HEAD detached ${atOrFrom} ${await uniqueAbbrev(gitCtx, detachPoint)})`;
+						const detached = await getDetachedFrom(gitCtx);
+						if (detached) {
+							const atOrFrom = detached.detachedAt ? "at" : "from";
+							detachedName = `(HEAD detached ${atOrFrom} ${detached.from})`;
 						} else {
 							detachedName = "(no branch)";
 						}
