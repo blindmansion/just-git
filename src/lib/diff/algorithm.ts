@@ -1149,6 +1149,15 @@ interface FormatOptions {
 	oldHash?: string;
 	/** New blob hash (abbreviated in the index line). */
 	newHash?: string;
+	/**
+	 * Resolver that abbreviates a full 40-char blob hash to the shortest prefix
+	 * that is unique in the object store (git's `find_unique_abbrev`), used for
+	 * the `index <old>..<new>` line. When omitted, the index line falls back to
+	 * the fixed 7-char abbreviation, which can print an ambiguous prefix when two
+	 * blobs share it. Callers with object-DB access should pass a resolver built
+	 * via {@link buildAbbrevResolver}.
+	 */
+	abbrevHash?: (hash: string) => string;
 	/** If set, this is a rename. The new path. */
 	renameTo?: string;
 	/** Similarity percentage for renames. */
@@ -1199,10 +1208,10 @@ function resolveBinariness(opts: FormatOptions, content: string): boolean {
 	return isBinaryStr(content);
 }
 
-function formatHashForIndexLine(hash?: string): string {
+function formatHashForIndexLine(hash?: string, abbrev?: (hash: string) => string): string {
 	if (!hash) return "0000000";
 	if (hash.length < 40) return hash;
-	return abbreviateHash(hash);
+	return abbrev ? abbrev(hash) : abbreviateHash(hash);
 }
 
 const ZERO_OID = "0".repeat(40);
@@ -1251,9 +1260,12 @@ function formatBinaryDiff(opts: FormatOptions, oldIsBinary: boolean, newIsBinary
 		// `--binary` form: full-length index + the appliable deflate payload.
 		const emitLiteral = opts.binaryPatch !== undefined;
 		if (oldHash || newHash) {
-			const fmt = emitLiteral ? fullHashForIndexLine : formatHashForIndexLine;
-			const oAbbrev = fmt(oldHash);
-			const nAbbrev = fmt(newHash);
+			const oAbbrev = emitLiteral
+				? fullHashForIndexLine(oldHash)
+				: formatHashForIndexLine(oldHash, opts.abbrevHash);
+			const nAbbrev = emitLiteral
+				? fullHashForIndexLine(newHash)
+				: formatHashForIndexLine(newHash, opts.abbrevHash);
 			if (isNew || isDeleted || isRename) {
 				out.push(`index ${oAbbrev}..${nAbbrev}`);
 			} else {
@@ -1352,8 +1364,8 @@ export function formatUnifiedDiff(opts: FormatOptions): string {
 
 	// index line: abbreviated hashes + mode
 	if (oldHash || newHash) {
-		const oAbbrev = formatHashForIndexLine(oldHash);
-		const nAbbrev = formatHashForIndexLine(newHash);
+		const oAbbrev = formatHashForIndexLine(oldHash, opts.abbrevHash);
+		const nAbbrev = formatHashForIndexLine(newHash, opts.abbrevHash);
 		if (isNew || isDeleted) {
 			// Mode is already shown on the new/deleted file mode line
 			out.push(`index ${oAbbrev}..${nAbbrev}`);

@@ -835,6 +835,10 @@ async function logPatch(
 	});
 
 	const bound = await boundDiffAttributes(ctx);
+	const abbrevHash = await buildAbbrevResolver(
+		ctx,
+		allItems.flatMap((i) => [i.entry.oldHash, i.entry.newHash].filter((h): h is string => !!h)),
+	);
 	let output = "";
 	for (const item of allItems) {
 		if (item.type === "rename") {
@@ -855,6 +859,7 @@ async function logPatch(
 				newMode: r.newMode,
 				oldHash: r.oldHash,
 				newHash: r.newHash,
+				abbrevHash,
 				renameTo: r.newPath,
 				similarity: r.similarity,
 				...pres,
@@ -877,6 +882,7 @@ async function logPatch(
 				newMode: d.newMode,
 				oldHash: d.oldHash,
 				newHash: d.newHash,
+				abbrevHash,
 				isNew: d.status === "added",
 				isDeleted: d.status === "deleted",
 				...pres,

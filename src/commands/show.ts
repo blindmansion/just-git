@@ -432,7 +432,11 @@ async function showNumstat(
 
 // ── Patch formatting helpers ────────────────────────────────────────
 
-async function formatTreeDiff(ctx: GitRepo, diff: TreeDiffEntry): Promise<string> {
+async function formatTreeDiff(
+	ctx: GitRepo,
+	diff: TreeDiffEntry,
+	abbrevHash?: (hash: string) => string,
+): Promise<string> {
 	const oldBytes = diff.oldHash ? await readBlobBytes(ctx, diff.oldHash) : new Uint8Array(0);
 	const newBytes = diff.newHash ? await readBlobBytes(ctx, diff.newHash) : new Uint8Array(0);
 	const pres = await resolveDiffPresentation(
@@ -450,11 +454,16 @@ async function formatTreeDiff(ctx: GitRepo, diff: TreeDiffEntry): Promise<string
 		newMode: diff.newMode,
 		oldHash: diff.oldHash,
 		newHash: diff.newHash,
+		abbrevHash,
 		...pres,
 	});
 }
 
-async function formatRenameDiff(ctx: GitRepo, rename: RenamePair): Promise<string> {
+async function formatRenameDiff(
+	ctx: GitRepo,
+	rename: RenamePair,
+	abbrevHash?: (hash: string) => string,
+): Promise<string> {
 	const oldBytes = rename.oldHash ? await readBlobBytes(ctx, rename.oldHash) : new Uint8Array(0);
 	const newBytes = rename.newHash ? await readBlobBytes(ctx, rename.newHash) : new Uint8Array(0);
 	const pres = await resolveDiffPresentation(
@@ -472,6 +481,7 @@ async function formatRenameDiff(ctx: GitRepo, rename: RenamePair): Promise<strin
 		newMode: rename.newMode,
 		oldHash: rename.oldHash,
 		newHash: rename.newHash,
+		abbrevHash,
 		renameTo: rename.newPath,
 		similarity: rename.similarity,
 		...pres,
@@ -494,12 +504,17 @@ async function formatDiffsWithRenames(
 		return pathA < pathB ? -1 : pathA > pathB ? 1 : 0;
 	});
 
+	const abbrevHash = await buildAbbrevResolver(
+		ctx,
+		allItems.flatMap((i) => [i.entry.oldHash, i.entry.newHash].filter((h): h is string => !!h)),
+	);
+
 	let output = "";
 	for (const item of allItems) {
 		if (item.type === "rename") {
-			output += await formatRenameDiff(ctx, item.entry);
+			output += await formatRenameDiff(ctx, item.entry, abbrevHash);
 		} else {
-			output += await formatTreeDiff(ctx, item.entry);
+			output += await formatTreeDiff(ctx, item.entry, abbrevHash);
 		}
 	}
 	return output;

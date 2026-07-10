@@ -1,3 +1,4 @@
+import { buildAbbrevResolver } from "../lib/abbrev.ts";
 import { blame as _blame, type BlameEntry } from "../lib/blame.ts";
 import {
 	CommitHeap,
@@ -332,6 +333,10 @@ export async function formatDiff(
 ): Promise<string> {
 	const entries = await resolveDiffs(repo, base, head, options);
 	const ctx = options?.contextLines;
+	const abbrevHash = await buildAbbrevResolver(
+		repo,
+		entries.flatMap((e) => [e.oldHash, e.newHash].filter((h): h is string => !!h)),
+	);
 	let output = "";
 
 	for (const e of entries) {
@@ -341,6 +346,7 @@ export async function formatDiff(
 			newContent: e.newContent,
 			oldHash: e.oldHash,
 			newHash: e.newHash,
+			abbrevHash,
 			oldMode: e.oldMode,
 			newMode: e.newMode,
 			isNew: e.status === "added",

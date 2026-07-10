@@ -11,6 +11,7 @@
  * orchestration half (range resolution, commit walk, diff + diffstat
  * generation, numbering, cover letter).
  */
+import { buildAbbrevResolver } from "../abbrev.ts";
 import type { BoundAttributes } from "../attributes/bound-attributes.ts";
 import { computeDiffStats } from "../commit-summary.ts";
 import { type CommitEntry, walkCommits } from "../commit-walk.ts";
@@ -406,6 +407,11 @@ async function formatPatchDiff(
 		return pathA < pathB ? -1 : pathA > pathB ? 1 : 0;
 	});
 
+	const abbrevHash = await buildAbbrevResolver(
+		repo,
+		allItems.flatMap((i) => [i.entry.oldHash, i.entry.newHash].filter((h): h is string => !!h)),
+	);
+
 	let output = "";
 	for (const item of allItems) {
 		if (item.type === "rename") {
@@ -426,6 +432,7 @@ async function formatPatchDiff(
 				newMode: r.newMode,
 				oldHash: r.oldHash,
 				newHash: r.newHash,
+				abbrevHash,
 				renameTo: r.newPath,
 				similarity: r.similarity,
 				...pres,
@@ -449,6 +456,7 @@ async function formatPatchDiff(
 				newMode: d.newMode,
 				oldHash: d.oldHash,
 				newHash: d.newHash,
+				abbrevHash,
 				isNew: d.status === "added",
 				isDeleted: d.status === "deleted",
 				...pres,
