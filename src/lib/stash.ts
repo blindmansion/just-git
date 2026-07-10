@@ -330,11 +330,17 @@ export async function saveStash(
 		await logRef(ctx, env, "HEAD", headHash, headHash, "reset: moving to HEAD");
 	}
 
-	// Clear in-progress operation state — stash saves the dirty state and
-	// resets to a clean HEAD, so any active merge/cherry-pick/rebase is gone.
-	for (const refName of ["CHERRY_PICK_HEAD", "MERGE_HEAD", "ORIG_HEAD", "REVERT_HEAD"]) {
+	// Clear in-progress operation state — git's stash resets to a clean HEAD via
+	// `reset_tree`, whose tail runs `remove_branch_state()`, dropping any active
+	// merge/cherry-pick/revert pseudo-refs and their message files.
+	for (const refName of ["CHERRY_PICK_HEAD", "MERGE_HEAD", "REVERT_HEAD"]) {
 		await deleteRef(ctx, refName);
 	}
+	// git's internal reset (like `git reset --hard`) points ORIG_HEAD at the
+	// pre-reset HEAD rather than deleting it. Since stash resets to HEAD, that is
+	// HEAD itself. Deleting it would strand a later `git am --abort` / `git reset
+	// ORIG_HEAD`, which read this ref to find the restore target.
+	await updateRef(ctx, "ORIG_HEAD", headHash);
 	for (const fileName of ["MERGE_MSG", "MERGE_MODE", "SQUASH_MSG"]) {
 		const p = join(ctx.gitDir, fileName);
 		if (await ctx.fs.exists(p)) {
