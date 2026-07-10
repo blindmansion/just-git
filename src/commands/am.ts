@@ -7,6 +7,7 @@ import {
 	isAmInProgress,
 	patchFileName,
 	readAbortSafety,
+	rebaseApplyDir,
 	setDirtyIndex,
 	readAmState,
 	readAmStopMeta,
@@ -109,6 +110,15 @@ function notResuming(): CommandResult {
 	return fatal("Resolve operation not in progress, we are not resuming.");
 }
 
+/**
+ * Path form for `rebase-apply` in user-facing messages. Real git prints a
+ * worktree-relative `.git/rebase-apply` in the main worktree, but the absolute
+ * admin path (`<commonDir>/worktrees/<id>/rebase-apply`) in a linked worktree.
+ */
+function rebaseApplyDirForMessage(gitCtx: GitContext): string {
+	return gitCtx.gitDir === gitCtx.commonDir ? ".git/rebase-apply" : rebaseApplyDir(gitCtx);
+}
+
 /** Assemble the commit message from a parsed mail + signoff option. */
 function buildMessage(subject: string, body: string, signoffLine: string | null): string {
 	const finalBody = signoffLine ? appendSignoff(subject, body, signoffLine) : body;
@@ -203,7 +213,10 @@ export function registerAmCommand(parent: Command, ext?: GitExtensions): void {
 
 			// ── Start mode ────────────────────────────────────────────
 			if (inProgress) {
-				return fatal("previous rebase directory .git/rebase-apply still exists but mbox given.");
+				// Main worktree: relative `.git/…`; linked worktree: absolute admin path.
+				return fatal(
+					`previous rebase directory ${rebaseApplyDirForMessage(gitCtx)} still exists but mbox given.`,
+				);
 			}
 
 			// Gather input (file args, else stdin).
@@ -744,8 +757,9 @@ async function handleContinue(
 	if (!meta) {
 		// git's `am_load` reads `final-commit` before the author script, so a
 		// resume with no stop metadata (e.g. after a dirty-index death) reports
-		// the missing `final-commit` first.
-		return fatal("cannot resume: .git/rebase-apply/final-commit does not exist.");
+		// the missing `final-commit` first. Path form matches rebase: relative
+		// `.git/…` in the main worktree, absolute admin path in a linked one.
+		return fatal(`cannot resume: ${rebaseApplyDirForMessage(gitCtx)}/final-commit does not exist.`);
 	}
 
 	const out: string[] = [];

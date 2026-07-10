@@ -270,6 +270,45 @@ describe("git am", () => {
 			expect(log.stdout.trim()).toBe("Test|touch b");
 			expect(await readFile(bash.fs, "/repo/f.txt")).toBe("a\nRESOLVED\nc\nd\ne\n");
 		});
+
+		test("--continue without stop meta names .git/rebase-apply in the main worktree", async () => {
+			const bash = await seed();
+			const patch = await makePatch(bash, (b) => b.replace("b\n", "B\n"), "change b");
+			await bash.fs.writeFile("/repo/f.txt", "a\nDIRTY\nc\nd\ne\n");
+			await bash.exec("git add f.txt");
+			const start = await am(bash, patch);
+			expect(start.exitCode).toBe(128);
+			expect(start.stderr).toContain("Dirty index: cannot apply patches");
+
+			const cont = await bash.exec("git am --continue");
+			expect(cont.exitCode).toBe(128);
+			expect(cont.stderr).toBe(
+				"fatal: cannot resume: .git/rebase-apply/final-commit does not exist.\n",
+			);
+		});
+
+		test("--continue without stop meta uses the absolute admin path in a linked worktree", async () => {
+			const bash = await seed();
+			const patch = await makePatch(bash, (b) => b.replace("b\n", "B\n"), "change b");
+			await bash.exec("git worktree add /wt -b topic");
+			await bash.fs.writeFile("/wt/f.txt", "a\nDIRTY\nc\nd\ne\n");
+			await bash.exec("git add f.txt", { cwd: "/wt" });
+			const start = await bash.exec("git am", { cwd: "/wt", stdin: patch });
+			expect(start.exitCode).toBe(128);
+			expect(start.stderr).toContain("Dirty index: cannot apply patches");
+
+			const cont = await bash.exec("git am --continue", { cwd: "/wt" });
+			expect(cont.exitCode).toBe(128);
+			expect(cont.stderr).toBe(
+				"fatal: cannot resume: /repo/.git/worktrees/wt/rebase-apply/final-commit does not exist.\n",
+			);
+
+			const again = await bash.exec("git am", { cwd: "/wt", stdin: patch });
+			expect(again.exitCode).toBe(128);
+			expect(again.stderr).toBe(
+				"fatal: previous rebase directory /repo/.git/worktrees/wt/rebase-apply still exists but mbox given.\n",
+			);
+		});
 	});
 
 	describe("-3 / --3way", () => {
