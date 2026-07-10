@@ -279,7 +279,7 @@ export class BatchChecker {
 	 * worktree at '<path>'") and unquoted ("is being rebased at <path>")
 	 * patterns.
 	 */
-	private static worktreePathStderrMatches(expected: string, actual: string): boolean {
+	static worktreePathStderrMatches(expected: string, actual: string): boolean {
 		const patterns: [RegExp, string][] = [
 			[/used by worktree at '[^']+'/g, "used by worktree at '<path>'"],
 			[/checked out at '[^']+'/g, "checked out at '<path>'"],
@@ -287,6 +287,16 @@ export class BatchChecker {
 			// "already a rebase-merge directory" prints `rm -fr "<abs path>"`;
 			// oracle uses a real temp dir, impl the VFS root.
 			[/rm -fr "[^"]*rebase-merge"/g, 'rm -fr "<path>/rebase-merge"'],
+			// `am --continue` / start-while-in-progress name the rebase-apply
+			// admin dir: absolute under a linked worktree (temp dir vs /repo).
+			[
+				/cannot resume: \/\S+\/rebase-apply\/final-commit/g,
+				"cannot resume: <path>/rebase-apply/final-commit",
+			],
+			[
+				/previous rebase directory \/\S+\/rebase-apply still exists/g,
+				"previous rebase directory <path>/rebase-apply still exists",
+			],
 		];
 		const norm = (s: string) => {
 			let r = s;
@@ -1289,5 +1299,8 @@ export class BatchChecker {
 export const checkerTestUtils = {
 	logRangeTimestampWalkerDiffers(command: string, expected: string, actual: string): boolean {
 		return BatchChecker.logRangeTimestampWalkerDiffers(command, expected, actual);
+	},
+	worktreePathStderrMatches(expected: string, actual: string): boolean {
+		return BatchChecker.worktreePathStderrMatches(expected, actual);
 	},
 };

@@ -123,6 +123,28 @@ describe("oracle checker tightening", () => {
 		).toBe(true);
 	});
 
+	test("worktree path matcher accepts am rebase-apply admin path drift", () => {
+		const oracle =
+			"fatal: cannot resume: /private/var/folders/x/T/oracle-git-abc/repo/.git/worktrees/wt-zu1w0t/rebase-apply/final-commit does not exist.\n";
+		const impl =
+			"fatal: cannot resume: /repo/.git/worktrees/wt-zu1w0t/rebase-apply/final-commit does not exist.\n";
+		expect(checkerTestUtils.worktreePathStderrMatches(oracle, impl)).toBe(true);
+
+		const oraclePrev =
+			"fatal: previous rebase directory /tmp/oracle/repo/.git/worktrees/wt/rebase-apply still exists but mbox given.\n";
+		const implPrev =
+			"fatal: previous rebase directory /repo/.git/worktrees/wt/rebase-apply still exists but mbox given.\n";
+		expect(checkerTestUtils.worktreePathStderrMatches(oraclePrev, implPrev)).toBe(true);
+
+		// Relative main-worktree form must not be treated as path drift against absolute.
+		expect(
+			checkerTestUtils.worktreePathStderrMatches(
+				oracle,
+				"fatal: cannot resume: .git/rebase-apply/final-commit does not exist.\n",
+			),
+		).toBe(false);
+	});
+
 	test("placeholder steps now have their output validated", async () => {
 		// Step 0: git init — real snapshot
 		const initResult = await captureReplayState("git init");
