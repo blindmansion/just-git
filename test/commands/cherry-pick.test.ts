@@ -441,6 +441,41 @@ describe("git cherry-pick", () => {
 		});
 	});
 
+	// ── --skip ───────────────────────────────────────────────────────
+
+	describe("--skip", () => {
+		test("preserves ORIG_HEAD owned by an enclosing operation", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/file.txt", "original");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			const gitCtx = await findRepo(bash.fs, "/repo");
+			const enclosingOrigHead = await resolveHead(gitCtx!);
+
+			await bash.exec("git branch feature");
+			await bash.exec("git checkout feature");
+			await bash.fs.writeFile("/repo/file.txt", "feature version");
+			await bash.exec("git add file.txt");
+			await bash.exec('git commit -m "feature change"');
+			const featureHash = await resolveHead(gitCtx!);
+
+			await bash.exec("git checkout main");
+			await bash.fs.writeFile("/repo/file.txt", "main version");
+			await bash.exec("git add file.txt");
+			await bash.exec('git commit -m "main change"');
+			expect((await bash.exec(`git cherry-pick ${featureHash}`)).exitCode).toBe(1);
+
+			// Simulate an enclosing operation (such as git am) taking ownership
+			// of ORIG_HEAD while the cherry-pick state is still present.
+			await bash.fs.writeFile("/repo/.git/ORIG_HEAD", `${enclosingOrigHead}\n`);
+
+			expect((await bash.exec("git cherry-pick --skip")).exitCode).toBe(0);
+			expect(await resolveRef(gitCtx!, "CHERRY_PICK_HEAD")).toBeNull();
+			expect(await resolveRef(gitCtx!, "ORIG_HEAD")).toBe(enclosingOrigHead);
+		});
+	});
+
 	// ── --abort ──────────────────────────────────────────────────────
 
 	describe("--abort", () => {

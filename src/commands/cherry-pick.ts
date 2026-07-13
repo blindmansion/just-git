@@ -9,6 +9,7 @@ import { applyMergeResult, mergeOrtNonRecursive } from "../lib/merge-ort.ts";
 import { renderApplyMerge } from "./kit/merge.ts";
 import { readCommit } from "../lib/object-db.ts";
 import {
+	clearAllOperationState,
 	clearCherryPickState,
 	clearRevertState,
 	readStateFile,
@@ -424,7 +425,12 @@ async function handleSkip(
 
 	await logRef(gitCtx, env, "HEAD", headHash, headHash, `reset: moving to ${headHash}`);
 
-	await clearCherryPickState(gitCtx);
+	// The sequencer's skip path ends through remove_branch_state(), which
+	// clears CHERRY_PICK_HEAD and merge-message files but preserves ORIG_HEAD.
+	// ORIG_HEAD may belong to an enclosing operation (for example, an am
+	// session interrupted by a cherry-pick), so deleting it here strands that
+	// operation's later --abort restore target.
+	await clearAllOperationState(gitCtx);
 
 	return { stdout: "", stderr: "", exitCode: 0 };
 }
