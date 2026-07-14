@@ -111,6 +111,20 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				};
 			}
 
+			// A resolved merge still has MERGE_HEAD until it is committed.
+			// Real git refuses pull here before considering tracking config.
+			const mergeHead = await resolveRef(gitCtx, "MERGE_HEAD");
+			if (mergeHead) {
+				return {
+					stdout: "",
+					stderr:
+						"error: You have not concluded your merge (MERGE_HEAD exists).\n" +
+						"hint: Please, commit your changes before merging.\n" +
+						"fatal: Exiting because of unfinished merge.\n",
+					exitCode: 128,
+				};
+			}
+
 			// Determine remote and branch from args or tracking config
 			let remoteName = args.remote;
 			let remoteBranch = args.branch;

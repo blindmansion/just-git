@@ -78,6 +78,31 @@ describe("git pull", () => {
 		expect(await pathExists(bash.fs, "/local/.git/MERGE_HEAD")).toBe(true);
 	});
 
+	test("refuses a resolved but uncommitted merge before checking tracking config", async () => {
+		const bash = await setupClonePair();
+
+		await bash.exec("cd /local && git switch -c feature");
+		await bash.exec(
+			"cd /local && echo 'local version' > README.md && git add . && git commit -m local",
+		);
+		await bash.exec(
+			"cd /remote && echo 'remote version' > README.md && git add . && git commit -m remote",
+		);
+		await bash.exec("cd /local && git fetch origin");
+		const merge = await bash.exec("git merge origin/main", { cwd: "/local" });
+		expect(merge.exitCode).toBe(1);
+		await bash.exec("git add .", { cwd: "/local" });
+
+		const result = await bash.exec("git pull", { cwd: "/local" });
+		expect(result.exitCode).toBe(128);
+		expect(result.stderr).toBe(
+			"error: You have not concluded your merge (MERGE_HEAD exists).\n" +
+				"hint: Please, commit your changes before merging.\n" +
+				"fatal: Exiting because of unfinished merge.\n",
+		);
+		expect(result.stderr).not.toContain("There is no tracking information");
+	});
+
 	test("--ff-only fails on diverged branches", async () => {
 		const bash = await setupClonePair();
 
