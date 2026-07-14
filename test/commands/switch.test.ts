@@ -29,6 +29,43 @@ describe("git switch", () => {
 			expect(results[3].exitCode).toBe(128);
 			expect(results[3].stderr).toContain("invalid reference: nonexistent");
 		});
+
+		test("reports rebase when a nested cherry-pick also left state", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "init"');
+			await bash.exec("git branch feature");
+			const head = (await bash.exec("git rev-parse HEAD")).stdout.trim();
+			await bash.fs.mkdir("/repo/.git/rebase-merge", { recursive: true });
+			await bash.fs.writeFile("/repo/.git/CHERRY_PICK_HEAD", `${head}\n`);
+
+			const result = await bash.exec("git switch feature");
+
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toBe(
+				'fatal: cannot switch branch while rebasing\nConsider "git rebase --quit" or "git worktree add".\n',
+			);
+		});
+
+		test("reports am when a prior revert also left state", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "init"');
+			await bash.exec("git branch feature");
+			const head = (await bash.exec("git rev-parse HEAD")).stdout.trim();
+			await bash.fs.mkdir("/repo/.git/rebase-apply", { recursive: true });
+			await bash.fs.writeFile("/repo/.git/rebase-apply/applying", "");
+			await bash.fs.writeFile("/repo/.git/REVERT_HEAD", `${head}\n`);
+
+			const result = await bash.exec("git switch feature");
+
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toBe(
+				'fatal: cannot switch branch in the middle of an am session\nConsider "git am --quit" or "git worktree add".\n',
+			);
+		});
 	});
 
 	describe("switch to existing branch", () => {

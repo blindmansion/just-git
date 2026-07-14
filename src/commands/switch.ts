@@ -169,27 +169,8 @@ export function registerSwitchCommand(parent: Command, ext?: GitExtensions) {
 async function checkActiveOperation(
 	gitCtx: GitContext,
 ): Promise<{ stdout: string; stderr: string; exitCode: number } | null> {
-	const cpHead = await readStateFile(gitCtx, "CHERRY_PICK_HEAD");
-	if (cpHead) {
-		return fatal(
-			'cannot switch branch while cherry-picking\nConsider "git cherry-pick --quit" or "git worktree add".',
-		);
-	}
-	const mergeHead = await readStateFile(gitCtx, "MERGE_HEAD");
-	if (mergeHead) {
-		return fatal(
-			'cannot switch branch while merging\nConsider "git merge --quit" or "git worktree add".',
-		);
-	}
-	const revertHead = await readStateFile(gitCtx, "REVERT_HEAD");
-	if (revertHead) {
-		return fatal(
-			'cannot switch branch while reverting\nConsider "git revert --quit" or "git worktree add".',
-		);
-	}
-	// `am` and `rebase --apply` share `rebase-apply/`; the `applying` marker
-	// gives `am` precedence, so a paused `am` session reports the am-specific
-	// message rather than the rebase one (matching git's `die_if_checked_out`).
+	// Match git's operation precedence when state from nested commands overlaps:
+	// am > rebase > cherry-pick > revert > merge.
 	if (await isAmInProgress(gitCtx)) {
 		return fatal(
 			'cannot switch branch in the middle of an am session\nConsider "git am --quit" or "git worktree add".',
@@ -198,6 +179,24 @@ async function checkActiveOperation(
 	if (await isRebaseInProgress(gitCtx)) {
 		return fatal(
 			'cannot switch branch while rebasing\nConsider "git rebase --quit" or "git worktree add".',
+		);
+	}
+	const cpHead = await readStateFile(gitCtx, "CHERRY_PICK_HEAD");
+	if (cpHead) {
+		return fatal(
+			'cannot switch branch while cherry-picking\nConsider "git cherry-pick --quit" or "git worktree add".',
+		);
+	}
+	const revertHead = await readStateFile(gitCtx, "REVERT_HEAD");
+	if (revertHead) {
+		return fatal(
+			'cannot switch branch while reverting\nConsider "git revert --quit" or "git worktree add".',
+		);
+	}
+	const mergeHead = await readStateFile(gitCtx, "MERGE_HEAD");
+	if (mergeHead) {
+		return fatal(
+			'cannot switch branch while merging\nConsider "git merge --quit" or "git worktree add".',
 		);
 	}
 	return null;
