@@ -312,6 +312,21 @@ describe("git am", () => {
 			expect(await readFile(bash.fs, "/repo/f.txt")).toBe("a\nLOCAL\nc\nd\ne\n");
 		});
 
+		test("--abort still restores the branch after an intervening revert --abort", async () => {
+			const { bash } = await stopOnConflict();
+			const before = (await bash.exec("git rev-parse HEAD")).stdout.trim();
+
+			// Model a revert conflict started while am is paused. Revert's abort
+			// cleanup must not remove the enclosing am session's ORIG_HEAD.
+			await bash.fs.writeFile("/repo/.git/REVERT_HEAD", `${before}\n`);
+			expect((await bash.exec("git revert --abort")).exitCode).toBe(0);
+
+			const result = await bash.exec("git am --abort");
+			expect(result.exitCode).toBe(0);
+			expect((await bash.exec("git rev-parse HEAD")).stdout.trim()).toBe(before);
+			expect(await readFile(bash.fs, "/repo/f.txt")).toBe("a\nLOCAL\nc\nd\ne\n");
+		});
+
 		test("--quit drops the state dir but leaves HEAD/worktree untouched", async () => {
 			const { bash } = await stopOnConflict();
 			const before = (await bash.exec("git rev-parse HEAD")).stdout.trim();

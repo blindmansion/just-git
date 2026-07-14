@@ -9,6 +9,7 @@ import { applyMergeResult, mergeOrtNonRecursive } from "../lib/merge-ort.ts";
 import { renderApplyMerge } from "./kit/merge.ts";
 import { readCommit } from "../lib/object-db.ts";
 import {
+	clearAllOperationState,
 	clearCherryPickState,
 	clearRevertState,
 	readStateFile,
@@ -332,10 +333,10 @@ async function handleAbort(
 			operationRef: "REVERT_HEAD",
 			noOpError: err("error: no cherry-pick or revert in progress\nfatal: revert failed\n", 128),
 			operationName: "revert",
-			clearState: async (ctx) => {
-				await clearRevertState(ctx);
-				await clearCherryPickState(ctx);
-			},
+			// The sequencer abort path ends in remove_branch_state(), which clears
+			// operation refs/messages but preserves the shared ORIG_HEAD pseudo-ref.
+			// An enclosing am session may still need it for its own later --abort.
+			clearState: clearAllOperationState,
 			origHeadAsTargetRev: true,
 		});
 	}
