@@ -19,7 +19,7 @@ bun oracle rebuild basic 5 42
 
 ## CLI reference
 
-All operations go through `cli.ts`. The first argument after the subcommand is always the **database name**. Databases are stored at `data/<name>/traces.sqlite`, keeping the sqlite file and its WAL/SHM sidecars contained in their own directory.
+All operations go through `cli.ts`. A dataset is identified by a relative path beneath `data/`. Paths may contain grouping directories, such as `experiments/core`, and the database is stored at `data/<path>/traces.sqlite`. Keeping each SQLite file in its own dataset directory also contains its WAL/SHM sidecars and test result log.
 
 ### `validate` — quick confidence check
 
@@ -46,7 +46,7 @@ bun oracle validate --seeds 1-3 -v     # fewer seeds, verbose output
 Runs the random walker against real git, capturing a full snapshot of repository state after each step.
 
 ```
-bun oracle generate [name] --seeds <spec> [options]
+bun oracle generate [path] --seeds <spec> [options]
 ```
 
 | Option              | Default      | Description                                                         |
@@ -65,10 +65,13 @@ If no name is given, defaults to the preset name.
 Each preset adjusts which random actions are enabled and their weight multipliers. The `-heavy` variants boost the weight of their respective operations. `am-heavy` boosts the `am` actions, which compose `format-patch` with `am` (a suffix round-trip, a cross-branch apply that also drives conflict/3-way stops, and the `--abort`/`--quit`/`--skip`/`--continue` resume verbs); only the resulting tree/refs/index/HEAD/operation-state are compared, never the mbox text. `core` focuses on ~60 daily-use actions with light chaos (5%) and fuzz (3%). `no-rename-show` excludes `mvFile` and `showHead` actions. `no-show` excludes only `showHead` (allows renames via `mvFile`). `chaos` / `chaos-heavy` set a `chaosRate` to bypass soft preconditions on a percentage of steps. `fuzz-*` presets inject wrong values (non-existent branches, files, commits) to exercise error handling. `clone-cannoli` / `clone-core` clone from a remote repo instead of `git init` (requires network). `kitchen` combines chaos, light fuzz, and gitignore generation. `stress` builds very large repos for performance profiling (best with `--steps 2000` or more). `remote` / `remote-core` / `remote-heavy` spin up a just-git HTTP server as a remote and exercise push/fetch/pull alongside normal operations (see [Remote presets](#remote-presets) below).
 
 ```bash
-# Uses preset name as db name → data/rebase-heavy/traces.sqlite
+# Uses preset name as dataset path → data/rebase-heavy/traces.sqlite
 bun oracle generate --preset rebase-heavy --seeds 1-20
 
-# Explicit name → data/my-experiment/traces.sqlite
+# Explicit nested path → data/experiments/merge/traces.sqlite
+bun oracle generate experiments/merge --preset merge-heavy --seeds 1-5
+
+# Explicit flat path → data/my-experiment/traces.sqlite
 bun oracle generate my-experiment --preset merge-heavy --seeds 1-5
 ```
 
@@ -101,7 +104,7 @@ Replays oracle traces against the virtual implementation, comparing both state a
 - **Output**: exit code, stdout, stderr (per-command skip lists in `checker.ts` bypass stdout/stderr for commands with known unimplemented output)
 
 ```
-bun oracle test [name] [trace] [-v] [--stop-at N] [--seeds <spec>] [--no-post-mortem]
+bun oracle test [path] [trace] [-v] [--stop-at N] [--seeds <spec>] [--no-post-mortem]
 ```
 
 Without a trace number, runs **all** traces in the DB. Default output is one line per trace:
@@ -124,12 +127,25 @@ bun oracle test basic 5        # single trace
 bun oracle test basic 5 -v     # verbose single trace
 ```
 
+### `test-all` — replay a dataset tree
+
+Recursively finds dataset leaves containing `traces.sqlite` and tests each one. With no path it scans all of `data/`; with a grouping path it scans only that subtree.
+
+```
+bun oracle test-all [path] [-v] [--no-post-mortem]
+```
+
+```bash
+bun oracle test-all                 # every dataset under data/
+bun oracle test-all experiments     # data/experiments/**/traces.sqlite
+```
+
 ### `inspect` — examine a step
 
 Replays the trace up to the given step, then shows oracle state, impl state, and any divergences side-by-side. Also shows context (preceding commands) and oracle stdout/stderr.
 
 ```
-bun oracle inspect <name> <trace> <step>
+bun oracle inspect <path> <trace> <step>
 ```
 
 Example output:
@@ -169,7 +185,7 @@ Prints the command sequence leading up to a step (with exit codes), useful for
 quick context without full inspect output.
 
 ```
-bun oracle trace-context <name> <trace> <step> [--before N]
+bun oracle trace-context <path> <trace> <step> [--before N]
 ```
 
 ```bash
@@ -183,7 +199,7 @@ Replays both oracle (real git) and impl (virtual git) to a step, then compares
 full worktree files path-by-path.
 
 ```
-bun oracle diff-worktree <name> <trace> <step> [--limit N]
+bun oracle diff-worktree <path> <trace> <step> [--limit N]
 ```
 
 Output includes each differing path with content length and SHA-1 for oracle vs
@@ -200,7 +216,7 @@ Shows the first line-level mismatch between oracle and impl for a specific
 path.
 
 ```
-bun oracle diff-file <name> <trace> <step> <path>
+bun oracle diff-file <dataset> <trace> <step> <file>
 ```
 
 ```bash
@@ -213,7 +229,7 @@ For conflicted paths, prints stage entries from oracle and impl with blob ids,
 modes, lengths, and content hashes; optional `--full` prints full content.
 
 ```
-bun oracle conflict-blobs <name> <trace> <step> <path> [--full]
+bun oracle conflict-blobs <dataset> <trace> <step> <file> [--full]
 ```
 
 ```bash
@@ -226,7 +242,7 @@ bun oracle conflict-blobs cherry-pick 149 281 initial.txt --full
 Replays a trace up to a given step using real git, leaving a directory you can `cd` into and inspect.
 
 ```
-bun oracle rebuild <name> <trace> <step>
+bun oracle rebuild <path> <trace> <step>
 ```
 
 ```bash
@@ -242,7 +258,7 @@ Clean up the temp directory when done.
 Replays traces and measures per-command execution time.
 
 ```
-bun oracle profile [name] [trace] [--csv] [--top N]
+bun oracle profile [path] [trace] [--csv] [--top N]
 ```
 
 ```bash
@@ -256,7 +272,7 @@ bun oracle profile basic --top 20 --csv
 Replays traces and measures repo size growth at regular intervals.
 
 ```
-bun oracle size [name] [trace] [--every N] [--csv]
+bun oracle size [path] [trace] [--every N] [--csv]
 ```
 
 Shows worktree files/bytes, index entries, conflict entries, and object store stats.
@@ -271,7 +287,7 @@ bun oracle size basic --csv
 Compares the rebase planner output against real git `rev-list` at the state before a given step. The specified step should be a rebase command.
 
 ```
-bun oracle planner-inspect <name> <trace> <step>
+bun oracle planner-inspect <path> <trace> <step>
 ```
 
 ```bash
@@ -280,10 +296,15 @@ bun oracle planner-inspect rebase-heavy 5 42
 
 ### `summary` — aggregate test results
 
-Scans all `test-results.log` files in `data/*/` and prints a summary of WARN, KNOWN, and FAIL counts by set and by pattern.
+Recursively scans `test-results.log` files and prints a summary of WARN, KNOWN, and FAIL counts by dataset and by pattern. An optional grouping path limits the summary to that subtree.
 
 ```
+bun oracle summary [path]
+```
+
+```bash
 bun oracle summary
+bun oracle summary experiments
 ```
 
 Example output:
@@ -531,7 +552,7 @@ Remote presets (`remote`, `remote-core`, `remote-heavy`) test push/fetch/pull by
 | `schema.ts`          | Database schema initialization                                                                                                  |
 | `snapshot-delta.ts`  | Delta-compressed snapshots: `diffSnapshot()`, `applyDelta()`, `SnapshotDelta`                                                   |
 | `planner-inspect.ts` | Standalone rebase planner comparison against real git `rev-list`                                                                |
-| `data/<name>/`       | Generated databases, one directory per DB name (gitignored)                                                                     |
+| `data/<path>/`       | Generated datasets, optionally nested beneath grouping directories (gitignored)                                                 |
 
 ### Shared modules (`test/random/`)
 

@@ -4,8 +4,8 @@ import { Database } from "bun:sqlite";
  * Bump on any change to the stored snapshot shape OR the steps-row shape.
  *
  * We deliberately do not build a migration framework: oracle traces are cheap
- * to regenerate (`bun oracle generate <name> …`), isolated per-file under
- * `data/<name>/traces.sqlite`, and gitignored. The correct "migration" is
+ * to regenerate (`bun oracle generate <path> …`), isolated per-file under
+ * `data/<path>/traces.sqlite`, and gitignored. The correct "migration" is
  * `rm` + regenerate. This version is a *guard*, not a migrator — it refuses to
  * read data the current code can't interpret, rather than transforming it.
  *
@@ -45,7 +45,7 @@ export function assertSchemaVersion(db: Database): void {
 	if (v !== SCHEMA_VERSION) {
 		throw new Error(
 			`Trace DB schema v${v} != code v${SCHEMA_VERSION}. ` +
-				`Regenerate: bun oracle generate <name> --seeds <spec>`,
+				`Regenerate: bun oracle generate <path> --seeds <spec>`,
 		);
 	}
 }

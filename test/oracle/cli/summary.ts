@@ -1,15 +1,6 @@
-import { readdirSync, readFileSync, statSync } from "fs";
-import { DATA_DIR } from "./shared/args";
+import { readFileSync } from "fs";
+import { DATA_DIR, discoverDatasets, parseArgs } from "./shared/args";
 import { join } from "path";
-
-/** True if `name` under DATA_DIR is a directory, following symlinks. */
-function isDatasetDir(name: string): boolean {
-	try {
-		return statSync(join(DATA_DIR, name)).isDirectory();
-	} catch {
-		return false;
-	}
-}
 
 interface SummaryEntry {
 	set: string;
@@ -20,16 +11,12 @@ interface SummaryEntry {
 	pattern: string | null;
 }
 
-export function cmdSummary(_args: string[]): void {
+export function cmdSummary(args: string[]): void {
+	const { positional } = parseArgs(args);
+	const prefix = positional[0];
 	const entries: SummaryEntry[] = [];
 	const setStats = new Map<string, { traces: number; steps: number }>();
-	let dirs: string[];
-	try {
-		dirs = readdirSync(DATA_DIR).filter(isDatasetDir).sort();
-	} catch {
-		console.log(`No data directory found at ${DATA_DIR}`);
-		process.exit(1);
-	}
+	const dirs = discoverDatasets("test-results.log", prefix);
 
 	for (const dir of dirs) {
 		const logPath = join(DATA_DIR, dir, "test-results.log");
@@ -85,7 +72,7 @@ export function cmdSummary(_args: string[]): void {
 	const allSetNames = [...setStats.keys()].sort();
 
 	if (allSetNames.length === 0) {
-		console.log("No test-results.log files found.");
+		console.log(`No test-results.log files found${prefix ? ` under ${prefix}` : ""}.`);
 		return;
 	}
 

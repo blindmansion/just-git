@@ -38,28 +38,28 @@ const USAGE = `Usage: bun oracle <command> [args]
 
 Commands:
   validate                          Generate + test core & kitchen presets
-  generate [name] --seeds <spec>    Create oracle traces from real git
-  test [name] [trace]               Replay and compare against oracle
-  test-all                          Test all datasets in data/
-  profile [name] [trace]            Profile command execution times
-  size [name] [trace]               Measure repo size growth over time
-  inspect <name> <trace> <step>     Examine a step with oracle + impl diff
-  trace-context <name> <trace> <step> [--before N]
+  generate [path] --seeds <spec>    Create oracle traces from real git
+  test [path] [trace]               Replay and compare against oracle
+  test-all [path]                   Test datasets recursively in data/[path]/
+  profile [path] [trace]            Profile command execution times
+  size [path] [trace]               Measure repo size growth over time
+  inspect <path> <trace> <step>     Examine a step with oracle + impl diff
+  trace-context <path> <trace> <step> [--before N]
                                     Show prior commands around a step
-  diff-worktree <name> <trace> <step> [--limit N] [--worktree path]
+  diff-worktree <path> <trace> <step> [--limit N] [--worktree path]
                                     Diff oracle vs impl worktree paths
-  diff-file <name> <trace> <step> <path> [--worktree path]
+  diff-file <dataset> <trace> <step> <file> [--worktree path]
                                     Show first mismatch for one file
-  conflict-blobs <name> <trace> <step> <path> [--full] [--worktree path]
+  conflict-blobs <dataset> <trace> <step> <file> [--full] [--worktree path]
                                     Show stage 1/2/3 blob details
-  rebuild <name> <trace> <step>     Materialize a real git repo at a step
-  planner-inspect <name> <trace> <step>
+  rebuild <path> <trace> <step>     Materialize a real git repo at a step
+  planner-inspect <path> <trace> <step>
                                     Compare planner output vs real git rev-list
-  summary                           Aggregate WARN/KNOWN/FAIL counts across all sets
+  summary [path]                    Summarize result logs recursively in data/[path]/
   clean                             Remove leftover temp directories
 
-The first argument after the subcommand is always the database name.
-Databases are stored at data/<name>/traces.sqlite.
+Dataset paths are relative to data/ and may include grouping directories.
+Databases are stored at data/<path>/traces.sqlite.
 
 Run any command without arguments for detailed help.`;
 

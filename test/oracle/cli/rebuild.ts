@@ -5,13 +5,13 @@ import { dirname } from "node:path";
 export async function cmdRebuild(args: string[]): Promise<void> {
 	const { positional, getOpt } = parseArgs(args);
 
-	// Positional: <name> <trace> <step>
+	// Positional: <path> <trace> <step>
 	const dbName = positional[0] ?? getOpt("--db");
 	const traceArg = positional[1] ?? getOpt("--trace");
 	const stepArg = positional[2] ?? getOpt("--step");
 
 	if (!dbName || !traceArg || !stepArg) {
-		console.log(`Usage: bun oracle rebuild <name> <trace> <step>
+		console.log(`Usage: bun oracle rebuild <path> <trace> <step>
 
 Replays a trace up to the given step using real git,
 leaving a directory you can cd into and inspect.

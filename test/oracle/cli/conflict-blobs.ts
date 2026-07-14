@@ -20,7 +20,7 @@ export async function cmdConflictBlobs(args: string[]): Promise<void> {
 	const worktreeId = getOpt("--worktree") ?? "main";
 
 	if (!dbName || !traceArg || !stepArg || !path) {
-		console.log(`Usage: bun oracle conflict-blobs <name> <trace> <step> <path> [--full] [--worktree path]
+		console.log(`Usage: bun oracle conflict-blobs <dataset> <trace> <step> <path> [--full] [--worktree path]
 
 Print stage 1/2/3 index blob info for a conflicted path in oracle and impl.
 Use --worktree <path> to read a linked worktree's private index (default: main).

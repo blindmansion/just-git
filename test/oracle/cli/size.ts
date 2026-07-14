@@ -76,7 +76,7 @@ export async function cmdSize(args: string[]): Promise<void> {
 }
 
 function printSizeUsage(): void {
-	console.log(`Usage: bun oracle size [name] [trace] [options]
+	console.log(`Usage: bun oracle size [path] [trace] [options]
 
 Replay traces and measure repo size at regular intervals.
 Shows worktree file count/bytes, index entries, object store stats.

@@ -11,7 +11,7 @@ import { runPostMortem } from "../post-mortem";
 export async function cmdTest(args: string[]): Promise<void> {
 	const { positional, getOpt, hasFlag } = parseArgs(args);
 
-	// Positional: [name] [trace]
+	// Positional: [path] [trace]
 	const dbName = positional[0] ?? getOpt("--db") ?? "default";
 	const db = dbPath(dbName);
 	const traceArg = positional[1] ?? getOpt("--trace");

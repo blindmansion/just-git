@@ -17,7 +17,7 @@ export async function cmdDiffWorktree(args: string[]): Promise<void> {
 	const worktreeId = getOpt("--worktree") ?? "main";
 
 	if (!dbName || !traceArg || !stepArg) {
-		console.log(`Usage: bun oracle diff-worktree <name> <trace> <step> [--limit N] [--worktree path]
+		console.log(`Usage: bun oracle diff-worktree <path> <trace> <step> [--limit N] [--worktree path]
 
 Compare oracle(real git) and impl virtual worktree files at a step.
 Use --worktree <path> to diff a linked worktree's checkout (default: main).

@@ -15,7 +15,7 @@ export async function cmdDiffFile(args: string[]): Promise<void> {
 	const worktreeId = getOpt("--worktree") ?? "main";
 
 	if (!dbName || !traceArg || !stepArg || !path) {
-		console.log(`Usage: bun oracle diff-file <name> <trace> <step> <path> [--worktree path]
+		console.log(`Usage: bun oracle diff-file <dataset> <trace> <step> <path> [--worktree path]
 
 Show first line-level mismatch for a specific file path.
 Use --worktree <path> to resolve the path in a linked worktree (default: main).

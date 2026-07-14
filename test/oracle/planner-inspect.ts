@@ -8,7 +8,7 @@
  */
 
 import { Database } from "bun:sqlite";
-import { dirname, join } from "node:path";
+import { dbPath } from "./cli/shared/args";
 import {
 	classifyPlannerDivergence,
 	comparePlannerOutput,
@@ -20,16 +20,13 @@ interface StepRow {
 	command: string;
 }
 
-function dbPathFor(name: string): string {
-	return join(dirname(import.meta.path), "data", name, "traces.sqlite");
-}
-
 export async function runPlannerInspect(
 	dbName: string,
 	traceId: number,
 	step: number,
 ): Promise<void> {
-	const db = new Database(dbPathFor(dbName), { readonly: true });
+	const path = dbPath(dbName);
+	const db = new Database(path, { readonly: true });
 	const row = db
 		.query("SELECT seq, command FROM steps WHERE trace_id = ? AND seq = ? LIMIT 1")
 		.get(traceId, step) as StepRow | null;
@@ -46,7 +43,7 @@ export async function runPlannerInspect(
 		process.exit(1);
 	}
 
-	const comparison = await comparePlannerOutput(dbPathFor(dbName), traceId, step, upstream);
+	const comparison = await comparePlannerOutput(path, traceId, step, upstream);
 
 	const classification = classifyPlannerDivergence(comparison);
 

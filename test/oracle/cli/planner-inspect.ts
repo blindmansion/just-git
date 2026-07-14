@@ -8,7 +8,7 @@ export async function cmdPlannerInspect(args: string[]): Promise<void> {
 	const stepArg = positional[2] ?? getOpt("--step");
 
 	if (!dbName || !traceArg || !stepArg) {
-		console.log(`Usage: bun oracle planner-inspect <name> <trace> <step>
+		console.log(`Usage: bun oracle planner-inspect <path> <trace> <step>
 
 Compares planner output against real git rev-list at the state BEFORE <step>.
 The specified step should be a rebase command.

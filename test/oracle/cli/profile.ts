@@ -81,7 +81,7 @@ export async function cmdProfile(args: string[]): Promise<void> {
 }
 
 function printProfileUsage(): void {
-	console.log(`Usage: bun oracle profile [name] [trace] [options]
+	console.log(`Usage: bun oracle profile [path] [trace] [options]
 
 Profile command execution times across oracle trace replays.
 Times only git command execution — no state capture or comparison.

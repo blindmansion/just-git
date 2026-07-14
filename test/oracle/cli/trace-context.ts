@@ -10,7 +10,7 @@ export async function cmdTraceContext(args: string[]): Promise<void> {
 	const beforeArg = getOpt("--before");
 
 	if (!dbName || !traceArg || !stepArg) {
-		console.log(`Usage: bun oracle trace-context <name> <trace> <step> [--before N]
+		console.log(`Usage: bun oracle trace-context <path> <trace> <step> [--before N]
 
 Print preceding commands leading up to a step.
 

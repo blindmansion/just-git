@@ -10,18 +10,18 @@ export async function cmdGenerate(args: string[]): Promise<void> {
 	const chaosArg = getOpt("--chaos");
 	const cloneUrl = getOpt("--clone-url");
 	const description = getOpt("--description");
-	// First positional = db name. If it matches a known preset, use it as
-	// both the db name and preset (unless --preset explicitly overrides).
+	// First positional = dataset path. If it matches a known preset, use it as
+	// both the dataset path and preset (unless --preset explicitly overrides).
 	const dbName = positional[0] ?? getOpt("--db") ?? "default";
 	const presetName =
 		getOpt("--preset") ?? (positional[0] && positional[0] in PRESETS ? positional[0] : "default");
 	const db = dbPath(dbName);
 
 	if (!seedsArg) {
-		console.log(`Usage: bun oracle generate [name] --seeds <spec> [options]
+		console.log(`Usage: bun oracle generate [path] --seeds <spec> [options]
 
-  First argument is the database name (default: preset name).
-  Stored at: data/<name>/traces.sqlite
+  First argument is the dataset path (default: preset name).
+  Stored at: data/<path>/traces.sqlite
 
 Options:
   --seeds <spec>      Seed specification: "1-10" or "1,2,42" (required)
@@ -35,6 +35,7 @@ Options:
 
 Examples:
   generate basic --seeds 1-20
+  generate experiments/core --preset core --seeds 1-20
   generate --preset rebase-heavy --seeds 1-20 --steps 300
   generate chaos --seeds 1-10
   generate my-experiment --preset merge-heavy --seeds 1-5 --chaos 0.15

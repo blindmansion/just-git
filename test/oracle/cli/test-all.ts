@@ -1,37 +1,21 @@
-import { existsSync, readdirSync, statSync } from "fs";
-import { DATA_DIR } from "./shared/args";
 import { dirname, join } from "path";
 import { color } from "./shared/format";
-
-/** True if `name` under DATA_DIR is a directory, following symlinks. */
-function isDatasetDir(name: string): boolean {
-	try {
-		return statSync(join(DATA_DIR, name)).isDirectory();
-	} catch {
-		return false;
-	}
-}
+import { discoverDatasets, parseArgs } from "./shared/args";
 
 // The entry point that dispatches subcommands lives one level up at cli.ts.
 const CLI_ENTRY = join(dirname(import.meta.path), "..", "cli.ts");
 
 export async function cmdTestAll(args: string[]): Promise<void> {
+	const { positional } = parseArgs(args);
+	const prefix = positional[0];
 	const passthrough = args.filter(
 		(a) => a === "-v" || a === "--verbose" || a === "--no-post-mortem",
 	);
 
-	let dirs: string[];
-	try {
-		dirs = readdirSync(DATA_DIR).filter(isDatasetDir).sort();
-	} catch {
-		console.log(`No data directory found at ${DATA_DIR}`);
-		process.exit(1);
-	}
-
-	const sets = dirs.filter((d) => existsSync(join(DATA_DIR, d, "traces.sqlite")));
+	const sets = discoverDatasets("traces.sqlite", prefix);
 
 	if (sets.length === 0) {
-		console.log("No datasets with traces.sqlite found.");
+		console.log(`No datasets with traces.sqlite found${prefix ? ` under ${prefix}` : ""}.`);
 		process.exit(1);
 	}
 
@@ -52,6 +36,8 @@ export async function cmdTestAll(args: string[]): Promise<void> {
 		console.log("");
 	}
 
-	console.log(`Done. Run ${color.dim("bun oracle summary")} for aggregate results.`);
+	console.log(
+		`Done. Run ${color.dim(`bun oracle summary${prefix ? ` ${prefix}` : ""}`)} for aggregate results.`,
+	);
 	if (anyFailed) process.exit(1);
 }

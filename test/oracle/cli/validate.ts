@@ -44,7 +44,7 @@ Examples:
 
 	for (const presetName of presetNames) {
 		const preset = PRESETS[presetName];
-		const db = dbPath(`validate-${presetName}`);
+		const db = dbPath(`validate/${presetName}`);
 		ensureDbDir(db);
 
 		console.log(`── ${presetName} ${"─".repeat(Math.max(0, 55 - presetName.length))}`);
