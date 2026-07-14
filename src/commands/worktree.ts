@@ -221,7 +221,7 @@ async function handleAdd(
 			plan.createBranchRef,
 			ZERO_HASH,
 			plan.checkoutCommit,
-			`branch: Created from ${commitish}`,
+			`branch: Created from ${plan.trackingRef ?? commitish}`,
 		);
 		if (plan.trackingRef) {
 			await setupTracking(gitCtx, basename(plan.createBranchRef), plan.trackingRef);

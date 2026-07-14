@@ -61,7 +61,7 @@ export async function createSymbolicRef(ctx: GitRepo, name: string, target: stri
 /**
  * Create `refs/remotes/<remote>/HEAD` as a symbolic ref pointing at the
  * remote's default branch — but only on first encounter (skips if already set).
- * Mirrors the behavior of `git clone` for `fetch` and `pull` paths.
+ * Used by clone and successful default fetch/pull paths.
  *
  * When `headTarget` is provided (e.g. `"refs/heads/main"` from the transport's
  * symref capability), it is used directly. Otherwise falls back to hash matching,

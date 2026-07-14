@@ -47,7 +47,7 @@ export async function clearMergeState(gitCtx: GitContext): Promise<void> {
 }
 
 /**
- * Clear cherry-pick operation state (CHERRY_PICK_HEAD, ORIG_HEAD, MERGE_MSG, SQUASH_MSG).
+ * Clear cherry-pick operation state (CHERRY_PICK_HEAD, MERGE_MSG, SQUASH_MSG).
  *
  * `keepSquashMsg` preserves a pre-existing SQUASH_MSG (left by an earlier
  * `merge --squash`). A clean (non-conflict) cherry-pick builds its commit
@@ -59,13 +59,12 @@ export async function clearCherryPickState(
 	{ keepSquashMsg = false }: { keepSquashMsg?: boolean } = {},
 ): Promise<void> {
 	await deleteRef(gitCtx, "CHERRY_PICK_HEAD");
-	await deleteRef(gitCtx, "ORIG_HEAD");
 	await deleteStateFile(gitCtx, "MERGE_MSG");
 	if (!keepSquashMsg) await deleteStateFile(gitCtx, "SQUASH_MSG");
 }
 
 /**
- * Clear revert operation state (REVERT_HEAD, ORIG_HEAD, MERGE_MSG, SQUASH_MSG).
+ * Clear revert operation state (REVERT_HEAD, MERGE_MSG, SQUASH_MSG).
  *
  * `keepSquashMsg` preserves a pre-existing SQUASH_MSG — see
  * {@link clearCherryPickState}. A clean revert never consumes it; only
@@ -76,7 +75,6 @@ export async function clearRevertState(
 	{ keepSquashMsg = false }: { keepSquashMsg?: boolean } = {},
 ): Promise<void> {
 	await deleteRef(gitCtx, "REVERT_HEAD");
-	await deleteRef(gitCtx, "ORIG_HEAD");
 	await deleteStateFile(gitCtx, "MERGE_MSG");
 	if (!keepSquashMsg) await deleteStateFile(gitCtx, "SQUASH_MSG");
 }

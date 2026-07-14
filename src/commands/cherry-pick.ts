@@ -245,7 +245,6 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 					}
 
 					await updateRef(gitCtx, "CHERRY_PICK_HEAD", theirsHash);
-					await updateRef(gitCtx, "ORIG_HEAD", headHash);
 
 					await writeStateFile(gitCtx, "MERGE_MSG", cherryPickMessage);
 
@@ -301,7 +300,6 @@ export function registerCherryPickCommand(parent: Command, ext?: GitExtensions) 
 				}
 
 				await updateRef(gitCtx, "CHERRY_PICK_HEAD", theirsHash);
-				await updateRef(gitCtx, "ORIG_HEAD", headHash);
 				await writeStateFile(gitCtx, "MERGE_MSG", cherryPickMessage);
 
 				return {

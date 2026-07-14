@@ -403,8 +403,7 @@ async function fetchOneRemote(
 			? `branch '${headBranch.name.slice("refs/heads/".length)}' of`
 			: "of";
 		await gitCtx.fs.writeFile(fetchHeadPath, `${headRef.hash}\t\t${branchDesc} ${config.url}\n`);
-
-		if (!rawRefspecs || rawRefspecs.length === 0) {
+		if ((!rawRefspecs || rawRefspecs.length === 0) && !hadTagRejection) {
 			await ensureRemoteHead(gitCtx, remoteName, remoteRefs, transport.headTarget);
 		}
 	}

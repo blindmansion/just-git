@@ -151,7 +151,7 @@ export function registerSwitchCommand(parent: Command, ext?: GitExtensions) {
 						gitCtx,
 						positional,
 						false,
-						guessed.startPoint,
+						guessed.trackingRef,
 						ctx.env,
 						ext,
 						guessed.trackingRef,

@@ -411,6 +411,10 @@ describe("git switch", () => {
 			expect(result.exitCode).toBe(0);
 			expect(result.stdout).toContain("A\tlocal.txt");
 			expect(result.stdout).toContain("branch 'feature' set up to track 'origin/feature'.");
+			const reflog = await bash.exec("git reflog show feature -n 1", { cwd: "/local" });
+			expect(reflog.stdout).toContain(
+				"feature@{0}: branch: Created from refs/remotes/origin/feature",
+			);
 		});
 	});
 });

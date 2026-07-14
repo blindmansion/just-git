@@ -292,9 +292,10 @@ describe("git cherry-pick", () => {
 			const cpHead = await resolveRef(gitCtx!, "CHERRY_PICK_HEAD");
 			expect(cpHead).toBe(featureHash);
 
-			// ORIG_HEAD should be written
+			// Cherry-pick uses sequencer state and must not claim the shared
+			// ORIG_HEAD pseudo-ref.
 			const origHead = await resolveRef(gitCtx!, "ORIG_HEAD");
-			expect(origHead).toBeTruthy();
+			expect(origHead).toBeNull();
 
 			// Working tree should have conflict markers
 			const content = await readFile(bash.fs, "/repo/file.txt");

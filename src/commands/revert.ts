@@ -251,7 +251,7 @@ export function registerRevertCommand(parent: Command, ext?: GitExtensions) {
 
 			// ── Handle conflicts ──────────────────────────────────────
 			if (result.conflicts.length > 0) {
-				await setPendingRevertState(gitCtx, resolvedHash, revertMessage, headHash);
+				await setPendingRevertState(gitCtx, resolvedHash, revertMessage);
 
 				const mergeOutput = result.messages.join("\n");
 				await ext?.capabilities?.hooks?.postRevert?.({
@@ -496,12 +496,8 @@ async function setPendingRevertState(
 	gitCtx: GitContext,
 	revertHeadHash: ObjectId,
 	message: string,
-	origHead?: ObjectId,
 ) {
 	await updateRef(gitCtx, "REVERT_HEAD", revertHeadHash);
-	if (origHead) {
-		await updateRef(gitCtx, "ORIG_HEAD", origHead);
-	}
 	await writeStateFile(gitCtx, "MERGE_MSG", message);
 }
 
