@@ -168,7 +168,10 @@ export async function gatherLongStatus(
 
 	const amInProgress = await isAmInProgress(gitCtx);
 	const amEmptyPatch = amInProgress ? await isAmEmptyPatch(gitCtx) : false;
-	const rebaseInProgress = await isRebaseInProgress(gitCtx);
+	// Mirrors git's `wt_status_check_rebase` else-chain: an am session takes
+	// precedence when a failed `git am` leaves rebase-apply/applying alongside
+	// an existing rebase-merge directory.
+	const rebaseInProgress = !amInProgress && (await isRebaseInProgress(gitCtx));
 	const rebaseRaw = rebaseInProgress ? await readRebaseState(gitCtx) : null;
 
 	let rebase: RebaseStatusView | null = null;

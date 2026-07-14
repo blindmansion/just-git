@@ -245,6 +245,27 @@ describe("git am", () => {
 			expect(status.stdout).toContain("git am --abort");
 		});
 
+		test("an am session takes status precedence over an existing rebase", async () => {
+			const bash = await seed();
+			const patch = await makePatch(bash, (b) => b.replace("b\n", "PATCHED\n"), "touch b");
+			await bash.exec("git branch topic");
+			await bash.fs.writeFile("/repo/f.txt", BASE.replace("b\n", "MAIN\n"));
+			await bash.exec("git commit -am main");
+			await bash.exec("git checkout topic");
+			await bash.fs.writeFile("/repo/f.txt", BASE.replace("b\n", "TOPIC\n"));
+			await bash.exec("git commit -am topic");
+
+			const rebase = await bash.exec("git rebase main");
+			expect(rebase.exitCode).toBe(1);
+			const result = await am(bash, patch);
+			expect(result.exitCode).toBe(128);
+
+			const status = await bash.exec("git status");
+			expect(status.stdout).toContain("HEAD detached");
+			expect(status.stdout).toContain("You are in the middle of an am session.");
+			expect(status.stdout).not.toContain("interactive rebase in progress");
+		});
+
 		test("--show-current-patch prints the paused message", async () => {
 			const { bash } = await stopOnConflict();
 			const raw = await bash.exec("git am --show-current-patch");
