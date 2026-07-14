@@ -50,10 +50,10 @@ const amRebuildSuffix: Action = {
 	weight: () => 2,
 	async execute(harness, rng) {
 		// Need at least two commits so HEAD~N (the base to detach onto) resolves.
-		// `log --format=%H` (not `rev-list`, which just-git doesn't implement) is
-		// deterministic, so this probe matches real git; `-n 4` bounds it since we
-		// never rebuild more than the top 3 commits.
-		const logResult = await harness.git("log --format=%H -n 4");
+		// `HEAD~N` follows first parents, so count only that chain. A normal log
+		// can include a merge's side-parent commits and overestimate the depth.
+		// `-n 4` bounds it since we never rebuild more than the top 3 commits.
+		const logResult = await harness.git("log --first-parent --format=%H -n 4");
 		const depth = logResult.stdout.trim().split("\n").filter(Boolean).length;
 		if (depth < 2) {
 			return { description: "amRebuildSuffix: history too shallow", result: null };
