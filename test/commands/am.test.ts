@@ -185,6 +185,31 @@ describe("git am", () => {
 			expect(await bash.fs.exists("/repo/.git/rebase-merge")).toBe(true);
 			expect(await bash.fs.exists("/repo/.git/REBASE_HEAD")).toBe(false);
 		});
+
+		test("rejects a pure rename whose destination already exists in the index", async () => {
+			const bash = await seed();
+			await bash.exec("mkdir -p lib docs");
+			await bash.fs.writeFile("/repo/lib/z.txt", "same\n");
+			await bash.exec("git add lib/z.txt");
+			await bash.exec('git commit -m "rename base"');
+
+			await bash.exec("git mv lib/z.txt docs/z.txt");
+			await bash.exec('git commit -m "rename z"');
+			const patch = await bash.exec("git format-patch -1 --stdout");
+			await bash.exec("git reset --hard HEAD~1");
+
+			await bash.fs.writeFile("/repo/docs/z.txt", "same\n");
+			await bash.exec("git add docs/z.txt");
+			await bash.exec('git commit -m "occupy destination"');
+			const head = (await bash.exec("git rev-parse HEAD")).stdout.trim();
+
+			const result = await am(bash, patch.stdout);
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("error: docs/z.txt: already exists in index");
+			expect((await bash.exec("git rev-parse HEAD")).stdout.trim()).toBe(head);
+			expect(await readFile(bash.fs, "/repo/lib/z.txt")).toBe("same\n");
+			expect(await readFile(bash.fs, "/repo/docs/z.txt")).toBe("same\n");
+		});
 	});
 
 	describe("conflict stop", () => {
@@ -338,6 +363,33 @@ describe("git am", () => {
 			const content = await readFile(bash.fs, "/repo/f.txt");
 			expect(content).toContain("<<<<<<<");
 			expect(content).toContain(">>>>>>>");
+		});
+
+		test("uses the current index as the fake ancestor for a pure rename", async () => {
+			const bash = await seed();
+			await bash.fs.writeFile("/repo/old.txt", "rename-base\n");
+			await bash.exec("git add old.txt");
+			await bash.exec('git commit -m "rename base"');
+
+			await bash.fs.writeFile("/repo/f.txt", "a\nPATCH\nc\nd\ne\n");
+			await bash.exec("git mv old.txt new.txt");
+			await bash.exec("git add f.txt");
+			await bash.exec('git commit -m "rename with conflict"');
+			const patch = await bash.exec("git format-patch -1 --stdout");
+			await bash.exec("git reset --hard HEAD~1");
+
+			await bash.fs.writeFile("/repo/f.txt", "a\nLOCAL\nc\nd\ne\n");
+			await bash.fs.writeFile("/repo/old.txt", "rename-local\n");
+			await bash.exec("git add f.txt old.txt");
+			await bash.exec('git commit -m "local divergence"');
+
+			const result = await am(bash, patch.stdout, "-3");
+			expect(result.exitCode).toBe(128);
+			expect(result.stdout).toContain("Falling back to patching base and 3-way merge");
+			expect(result.stderr).toContain("error: Failed to merge in the changes.");
+			expect((await bash.exec("git ls-files old.txt")).stdout).toBe("");
+			expect((await bash.exec("git ls-files new.txt")).stdout).toBe("new.txt\n");
+			expect(await readFile(bash.fs, "/repo/new.txt")).toBe("rename-local\n");
 		});
 	});
 });

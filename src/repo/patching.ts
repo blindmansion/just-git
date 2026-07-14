@@ -281,17 +281,27 @@ async function resolveBaseBlob(repo: GitRepo, prefix: string | undefined): Promi
 export async function buildFakeAncestor(
 	repo: GitRepo,
 	patches: ParsedPatch[],
+	fallbackEntries?: ReadonlyMap<string, FlatTreeEntry>,
 ): Promise<{ tree: string; entries: IndexEntry[] } | { missingPath: string }> {
 	const entries: IndexEntry[] = [];
 	for (const p of patches) {
 		if (p.kind === "new") continue;
 		const name = p.oldName ?? p.newName;
 		if (!name) continue;
-		const oid = await resolveBaseBlob(repo, p.oldOidPrefix);
+		let oid = await resolveBaseBlob(repo, p.oldOidPrefix);
+		let fallback: FlatTreeEntry | undefined;
+		// Pure metadata patches (notably 100% renames) have no `index
+		// <old>..<new>` line. git's build-fake-ancestor reads their preimage
+		// from the current index instead of treating the absent OID as a missing
+		// object. The caller supplies the stage-0/index tree for that fallback.
+		if (!oid && !p.oldOidPrefix && p.fragments.length === 0 && !p.isBinary) {
+			fallback = fallbackEntries?.get(name);
+			oid = fallback?.hash ?? null;
+		}
 		if (!oid) return { missingPath: name };
 		entries.push({
 			path: name,
-			mode: p.oldMode ?? p.newMode ?? 0o100644,
+			mode: p.oldMode ?? p.newMode ?? (fallback ? parseInt(fallback.mode, 8) : 0o100644),
 			hash: oid,
 			stage: 0,
 			stat: defaultStat(),
@@ -335,10 +345,10 @@ export async function fallBackThreeway(
 	labels?: MergeLabels,
 	mergeDriver?: ContentMergeFn,
 ): Promise<FallBackThreewayResult> {
-	const fake = await buildFakeAncestor(repo, patches);
+	const oursMap = await flattenTreeToMap(repo, oursTree);
+	const fake = await buildFakeAncestor(repo, patches, oursMap);
 	if ("missingPath" in fake) return { status: "no-base", missingPath: fake.missingPath };
 
-	const oursMap = await flattenTreeToMap(repo, oursTree);
 	const statusLines = fakeAncestorStatus(fake.entries, oursMap);
 
 	// "theirs" — the series applied to its own recorded preimage.

@@ -583,9 +583,11 @@ async function planPatch(
 ): Promise<FilePlan | PlanError> {
 	const path = (patch.kind === "delete" ? patch.oldName : patch.newName) ?? patch.oldName ?? "";
 
-	// git's `check_to_create` for a creation patch (git's `ok_if_exists` — the
+	// git's `check_to_create` for a creation (git's `ok_if_exists` — the
 	// fn_table `PATH_TO_BE_DELETED` marker — suppresses it when an earlier patch
-	// in the same series deleted/renamed that path away).
+	// in the same series deleted/renamed that path away). Rename/copy
+	// destinations are checked below, after their source preimage: git reports
+	// a missing or dirty source before an occupied destination.
 	if (patch.kind === "new" && !toBeDeleted.has(path)) {
 		// Index half (apply `--index`/`--cached`): a creation whose path already
 		// exists in the index is rejected up front, before any hunk work, with
@@ -594,10 +596,10 @@ async function planPatch(
 		if ((opts.target === "index" || opts.target === "cached") && findEntry(index, path)) {
 			return { error: `${path}: already exists in index`, path };
 		}
-		// Worktree half: a creation whose path already exists on disk is rejected
-		// with "already exists in working directory". `--cached` touches only the
-		// index, so it skips this check; under `-3` git defers the collision to
-		// the 3-way path (`direct_to_threeway`) rather than failing.
+		// Worktree half: an occupied destination is rejected with "already
+		// exists in working directory". `--cached` touches only the index, so it
+		// skips this check; under `-3` git defers the collision to the 3-way path
+		// (`direct_to_threeway`) rather than failing.
 		if (opts.target !== "cached" && !opts.threeway && (await worktreePathTaken(ctx, path))) {
 			return { error: `${path}: already exists in working directory`, path };
 		}
@@ -609,6 +611,21 @@ async function planPatch(
 
 	const pre = await loadPreimage(ctx, index, patch, opts.target);
 	if ("error" in pre) return { error: pre.error, path };
+
+	const createsRenameDestination =
+		patch.kind === "copy" || (patch.kind === "rename" && patch.oldName !== patch.newName);
+	if (createsRenameDestination && !toBeDeleted.has(path)) {
+		if ((opts.target === "index" || opts.target === "cached") && findEntry(index, path)) {
+			return { error: `${path}: already exists in index`, path, restore: pre.restore };
+		}
+		if (opts.target !== "cached" && !opts.threeway && (await worktreePathTaken(ctx, path))) {
+			return {
+				error: `${path}: already exists in working directory`,
+				path,
+				restore: pre.restore,
+			};
+		}
+	}
 
 	// `-3` / `--3way`: git tries the 3-way merge first and only falls back to
 	// direct application when the base blob is unavailable (git's apply_data).
