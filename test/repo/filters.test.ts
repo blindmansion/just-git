@@ -304,6 +304,115 @@ describe("filters — diff normalizes worktree content (Seam E)", () => {
 	});
 });
 
+describe("filters — apply / am (clean preimage + smudge result)", () => {
+	test("apply cleans the worktree preimage and smudges the applied result", async () => {
+		const { bash } = await setupRepo({
+			filters: secretFilters,
+			files: { ".gitattributes": "*.conf filter=secret\n", "app.conf": "SECRET=hunter2\n" },
+		});
+		await bash.exec("git add .", { env: TEST_ENV });
+		await bash.exec('git commit -m "init"', { env: TEST_ENV });
+
+		// A patch in the index (redacted) representation — exactly what `git diff`
+		// emits — that appends a secret-bearing line.
+		await bash.writeFile("/repo/app.conf", "SECRET=hunter2\nEXTRA=hunter2\n");
+		const diff = await bash.exec("git diff", { env: TEST_ENV });
+		expect(diff.stdout).toContain("+EXTRA=__REDACTED__");
+		expect(diff.stdout).not.toContain("hunter2");
+
+		// Restore the worktree, then apply the redacted patch back onto it.
+		await bash.exec("git checkout -- app.conf", { env: TEST_ENV });
+		expect(await bash.readFile("/repo/app.conf")).toBe("SECRET=hunter2\n");
+
+		const res = await bash.exec("git apply", { env: TEST_ENV, stdin: diff.stdout });
+		expect(res.exitCode).toBe(0);
+		// The context line only matched because the worktree was cleaned first;
+		// the appended line was smudged back to the secret form on write.
+		expect(await bash.readFile("/repo/app.conf")).toBe("SECRET=hunter2\nEXTRA=hunter2\n");
+	});
+
+	test("apply --index matches via cleaned bytes and stages the redacted blob", async () => {
+		const { bash } = await setupRepo({
+			filters: secretFilters,
+			files: { ".gitattributes": "*.conf filter=secret\n", "app.conf": "SECRET=hunter2\n" },
+		});
+		await bash.exec("git add .", { env: TEST_ENV });
+		await bash.exec('git commit -m "init"', { env: TEST_ENV });
+
+		await bash.writeFile("/repo/app.conf", "SECRET=hunter2\nEXTRA=hunter2\n");
+		const diff = await bash.exec("git diff", { env: TEST_ENV });
+		await bash.exec("git checkout -- app.conf", { env: TEST_ENV });
+
+		// Without cleaning, the raw worktree bytes would not hash to the index
+		// blob and git would reject the file as "does not match index".
+		const res = await bash.exec("git apply --index", { env: TEST_ENV, stdin: diff.stdout });
+		expect(res.exitCode).toBe(0);
+		expect(await bash.readFile("/repo/app.conf")).toBe("SECRET=hunter2\nEXTRA=hunter2\n");
+
+		// The staged blob is the cleaned (redacted) form, never the secret.
+		const cached = await bash.exec("git diff --cached", { env: TEST_ENV });
+		expect(cached.stdout).toContain("+EXTRA=__REDACTED__");
+		expect(cached.stdout).not.toContain("hunter2");
+	});
+
+	test("am applies a patch through the clean/smudge round trip", async () => {
+		const { bash, fs } = await setupRepo({
+			filters: secretFilters,
+			files: { ".gitattributes": "*.conf filter=secret\n", "app.conf": "SECRET=hunter2\n" },
+		});
+		await bash.exec("git add .", { env: TEST_ENV });
+		await bash.exec('git commit -m "init"', { env: TEST_ENV });
+
+		// Record a follow-up commit that appends a secret line, format it as a
+		// patch, then rewind so `am` has to re-apply it.
+		await bash.writeFile("/repo/app.conf", "SECRET=hunter2\nEXTRA=hunter2\n");
+		await bash.exec("git add app.conf", { env: TEST_ENV });
+		await bash.exec('git commit -m "add extra"', { env: TEST_ENV });
+		const patch = await bash.exec("git format-patch -1 --stdout", { env: TEST_ENV });
+		expect(patch.stdout).toContain("+EXTRA=__REDACTED__");
+
+		await bash.exec("git reset --hard HEAD~1", { env: TEST_ENV });
+		expect(await bash.readFile("/repo/app.conf")).toBe("SECRET=hunter2\n");
+
+		const res = await bash.exec("git am", { env: TEST_ENV, stdin: patch.stdout });
+		expect(res.exitCode).toBe(0);
+		// Worktree carries the smudged (secret) form again…
+		expect(await bash.readFile("/repo/app.conf")).toBe("SECRET=hunter2\nEXTRA=hunter2\n");
+		// …while the recommitted blob stays redacted.
+		const repo = (await findRepo(fs, "/repo"))!;
+		expect(await readCommittedBlob(repo, "app.conf")).toBe("SECRET=__REDACTED__\nEXTRA=__REDACTED__\n");
+	});
+
+	test("apply -3 honors the merge= driver on a non-trivial merge", async () => {
+		// A `union` merge driver keeps both sides; the patch's base blob must be
+		// present for `-3`, so commit the base content first.
+		const fs = new InMemoryFs();
+		const git = createGit({ attributes: gitAttributes({}) });
+		const bash = new Bash({ fs, cwd: "/repo", customCommands: [git] });
+		await bash.writeFile("/repo/.gitattributes", "*.list merge=union\n");
+		await bash.writeFile("/repo/items.list", "a\n");
+		await bash.exec("git init", { env: TEST_ENV });
+		await bash.exec("git add .", { env: TEST_ENV });
+		await bash.exec('git commit -m "base"', { env: TEST_ENV });
+
+		// Build a patch (recorded against the committed base blob) that appends
+		// "b", then diverge the worktree by appending "c" instead.
+		await bash.writeFile("/repo/items.list", "a\nb\n");
+		const diff = await bash.exec("git diff", { env: TEST_ENV });
+		await bash.exec("git checkout -- items.list", { env: TEST_ENV });
+		await bash.writeFile("/repo/items.list", "a\nc\n");
+		await bash.exec("git add items.list", { env: TEST_ENV });
+
+		const res = await bash.exec("git apply -3", { env: TEST_ENV, stdin: diff.stdout });
+		expect(res.exitCode).toBe(0);
+		// diff3 would leave conflict markers here; the union driver keeps both.
+		const merged = await bash.readFile("/repo/items.list");
+		expect(merged).not.toContain("<<<<<<<");
+		expect(merged).toContain("b");
+		expect(merged).toContain("c");
+	});
+});
+
 describe("attributes provider", () => {
 	async function providerFor(files: Record<string, string>) {
 		const fs = new InMemoryFs();

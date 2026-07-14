@@ -14,6 +14,7 @@
  * default (`p_context = UINT_MAX`, so git never reduces context or drops the
  * begin/end anchors without an explicit `-C<n>`, which is out of scope).
  */
+import { type BoundAttributes, resolveAttributes } from "../attributes/bound-attributes.ts";
 import { isInsideWorkTree, verifyPath } from "../attributes/path-safety.ts";
 import { splitLinesWithNL } from "../diff/algorithm.ts";
 import { type BinaryHunk, inflateBinaryHunk } from "../diff/binary-patch.ts";
@@ -447,13 +448,6 @@ interface FilePlan {
 	restore?: Restore;
 }
 
-async function readWorktree(ctx: GitContext, path: string): Promise<string | null> {
-	if (!ctx.workTree) return null;
-	const full = join(ctx.workTree, path);
-	if (!(await ctx.fs.exists(full))) return null;
-	return decoder.decode(await ctx.fs.readFileBuffer(full));
-}
-
 /**
  * git's `checkout_target` side effect: a missing worktree file that exists in
  * the index is materialized from the index during the check phase, so it
@@ -465,12 +459,19 @@ interface Restore {
 	mode: number;
 }
 
-/** Resolve the preimage a patch applies to, per the target matrix. */
+/**
+ * Resolve the preimage a patch applies to, per the target matrix. Patch hunks
+ * are expressed in the index (post-`clean`) representation, so worktree-sourced
+ * bytes are run through the `clean` filter before matching — git's
+ * `read_old_data` → `convert_to_git`. Index/`--cached` blobs are already clean,
+ * so they pass through untouched.
+ */
 async function loadPreimage(
 	ctx: GitContext,
 	index: Index,
 	patch: ParsedPatch,
 	target: ApplyTarget,
+	bound: BoundAttributes | undefined,
 ): Promise<{ content: string; restore?: Restore } | { error: string }> {
 	if (patch.kind === "new") return { content: "" };
 	const src = patch.oldName;
@@ -499,16 +500,18 @@ async function loadPreimage(
 				restore: { path: src, content: indexBytes, mode: entry.mode },
 			};
 		}
-		if ((await hashObject("blob", bytes)) !== entry.hash) {
+		const cleaned = bound ? await bound.clean(src, bytes) : bytes;
+		if ((await hashObject("blob", cleaned)) !== entry.hash) {
 			return { error: `${src}: does not match index` };
 		}
-		return { content: decoder.decode(bytes) };
+		return { content: decoder.decode(cleaned) };
 	}
 
 	// Plain worktree apply (`check_index` off): only the worktree matters.
-	const content = await readWorktree(ctx, src);
-	if (content === null) return { error: `${src}: No such file or directory` };
-	return { content };
+	const bytes = await readWorktreeBytes(ctx, src);
+	if (bytes === null) return { error: `${src}: No such file or directory` };
+	const cleaned = bound ? await bound.clean(src, bytes) : bytes;
+	return { content: decoder.decode(cleaned) };
 }
 
 /** Choose the resulting file mode for a plan. */
@@ -580,6 +583,7 @@ async function planPatch(
 	patch: ParsedPatch,
 	opts: ApplyEngineOptions,
 	toBeDeleted: ReadonlySet<string>,
+	bound: BoundAttributes | undefined,
 ): Promise<FilePlan | PlanError> {
 	const path = (patch.kind === "delete" ? patch.oldName : patch.newName) ?? patch.oldName ?? "";
 
@@ -606,10 +610,10 @@ async function planPatch(
 	}
 
 	if (patch.isBinary) {
-		return planBinaryPatch(ctx, index, patch, opts);
+		return planBinaryPatch(ctx, index, patch, opts, bound);
 	}
 
-	const pre = await loadPreimage(ctx, index, patch, opts.target);
+	const pre = await loadPreimage(ctx, index, patch, opts.target, bound);
 	if ("error" in pre) return { error: pre.error, path };
 
 	const createsRenameDestination =
@@ -631,7 +635,7 @@ async function planPatch(
 	// direct application when the base blob is unavailable (git's apply_data).
 	let threewayFallback: { note?: string } | undefined;
 	if (opts.threeway) {
-		const tw = await planThreeway(ctx, index, patch, opts, pre.content);
+		const tw = await planThreeway(ctx, index, patch, opts, pre.content, bound);
 		if (!("fallback" in tw)) return tw;
 		threewayFallback = { note: tw.note };
 	}
@@ -730,6 +734,7 @@ async function planThreeway(
 	patch: ParsedPatch,
 	opts: ApplyEngineOptions,
 	oursText: string,
+	bound: BoundAttributes | undefined,
 ): Promise<FilePlan | { fallback: true; note?: string }> {
 	// git skips 3-way for deletions, no-fragment renames, and (for now) pure
 	// creations — the add/add `direct_to_threeway` path is deferred.
@@ -766,9 +771,24 @@ async function planThreeway(
 		mergedText = oursText;
 		conflict = false;
 	} else {
-		const m = threeWayMergeText(oursText, baseText, theirsText);
-		mergedText = m.text;
-		conflict = m.conflict;
+		// git's `three_way_merge` → `ll_merge` consults the path's `merge=<driver>`
+		// attribute; a driver (e.g. `union`, `binary`) overrides the diff3 fallback.
+		const driven = bound?.merge
+			? await bound.merge({
+					path: patch.newName ?? patch.oldName ?? "",
+					base: baseBytes,
+					ours: oursBytes,
+					theirs: theirsBytes,
+				})
+			: null;
+		if (driven) {
+			mergedText = decoder.decode(driven.content);
+			conflict = driven.conflict;
+		} else {
+			const m = threeWayMergeText(oursText, baseText, theirsText);
+			mergedText = m.text;
+			conflict = m.conflict;
+		}
 	}
 
 	const mode = resolveMode(patch, index, opts.target);
@@ -802,12 +822,17 @@ async function readWorktreeBytes(ctx: GitContext, path: string): Promise<Uint8Ar
 	return ctx.fs.readFileBuffer(full);
 }
 
-/** Raw-byte preimage loader for binary patches (no lossy UTF-8 round-trip). */
+/**
+ * Raw-byte preimage loader for binary patches (no lossy UTF-8 round-trip).
+ * Worktree bytes are `clean`ed to the index representation before use, matching
+ * the text path; `--cached` reads the already-clean index blob.
+ */
 async function loadPreimageBytes(
 	ctx: GitContext,
 	index: Index,
 	patch: ParsedPatch,
 	target: ApplyTarget,
+	bound: BoundAttributes | undefined,
 ): Promise<{ content: Uint8Array } | { error: string }> {
 	if (patch.kind === "new") return { content: new Uint8Array(0) };
 	const src = patch.oldName;
@@ -820,7 +845,7 @@ async function loadPreimageBytes(
 	}
 	const content = await readWorktreeBytes(ctx, src);
 	if (content === null) return { error: `${src}: No such file or directory` };
-	return { content };
+	return { content: bound ? await bound.clean(src, content) : content };
 }
 
 /** Reconstruct a postimage from a decoded binary hunk (`apply_binary_fragment`). */
@@ -841,6 +866,7 @@ async function planBinaryPatch(
 	index: Index,
 	patch: ParsedPatch,
 	opts: ApplyEngineOptions,
+	bound: BoundAttributes | undefined,
 ): Promise<FilePlan | { error: string; path: string; doesNotApply?: boolean }> {
 	const path = (patch.kind === "delete" ? patch.oldName : patch.newName) ?? patch.oldName ?? "";
 	const name = patch.oldName ?? patch.newName ?? path;
@@ -859,7 +885,7 @@ async function planBinaryPatch(
 		};
 	}
 
-	const pre = await loadPreimageBytes(ctx, index, patch, opts.target);
+	const pre = await loadPreimageBytes(ctx, index, patch, opts.target, bound);
 	if ("error" in pre) return { error: pre.error, path };
 
 	// Verify the preimage matches what the patch expects (creation ⇒ empty).
@@ -938,11 +964,22 @@ async function planBinaryPatch(
 	};
 }
 
+/**
+ * Write a result to the worktree, running the path's `smudge` filter first —
+ * git's `create_file` → `convert_to_working_tree`. `content` is always the
+ * index (post-`clean`) representation (an applied hunk result, a binary
+ * postimage, or a restored index blob), so `smudge` is passthrough for any
+ * path with no `filter=` driver. `blobOid` is the stored blob id when known
+ * (a smudge cache hint for pointer-style filters); undefined for worktree-only
+ * results that were never written to the object store.
+ */
 async function writeWorktreeFile(
 	ctx: GitContext,
 	path: string,
 	content: Uint8Array,
 	mode: number,
+	bound: BoundAttributes | undefined,
+	blobOid?: string,
 ): Promise<void> {
 	if (!ctx.workTree) throw new Error("cannot write to worktree in a bare repository");
 	if (!verifyPath(path)) throw new Error(`refusing to write unsafe path '${path}'`);
@@ -950,9 +987,10 @@ async function writeWorktreeFile(
 	if (!isInsideWorkTree(ctx.workTree, full)) {
 		throw new Error(`refusing to write path outside worktree: '${path}'`);
 	}
+	const smudged = bound ? await bound.smudge(path, content, blobOid) : content;
 	const slash = full.lastIndexOf("/");
 	if (slash > 0) await ctx.fs.mkdir(full.slice(0, slash), { recursive: true });
-	await ctx.fs.writeFile(full, content);
+	await ctx.fs.writeFile(full, smudged);
 	// Reflect the git mode's executable bit on disk (git's `create_file` honors
 	// 100755 vs 100644). Only regular-file blobs come through here; symlinks
 	// ride the content path per the plan's deferral.
@@ -995,6 +1033,7 @@ async function commitPlan(
 	index: Index,
 	plan: FilePlan,
 	target: ApplyTarget,
+	bound: BoundAttributes | undefined,
 ): Promise<Index> {
 	let next = index;
 	const touchesIndex = target === "index" || target === "cached";
@@ -1014,7 +1053,7 @@ async function commitPlan(
 	}
 
 	if (plan.newPath && plan.content !== undefined) {
-		if (touchesWorktree) await writeWorktreeFile(ctx, plan.newPath, plan.content, plan.mode);
+		if (touchesWorktree) await writeWorktreeFile(ctx, plan.newPath, plan.content, plan.mode, bound);
 		if (touchesIndex) {
 			// A conflicted `-3` merge records stages 1/2/3 instead of a resolved
 			// stage-0 entry (git's add_conflicted_stages_file).
@@ -1062,6 +1101,12 @@ export async function applyPatches(
 ): Promise<ApplyResult> {
 	const effective = opts.reverse ? patches.map((p) => reversePatch(p)) : patches;
 
+	// Bind the `.gitattributes` accessor once per run: worktree preimages are
+	// `clean`ed to the index representation before matching, worktree results are
+	// `smudge`d on write, and `-3` honors the path's `merge=<driver>`. `undefined`
+	// (no attributes capability) keeps the whole engine byte-for-byte as before.
+	const bound = await resolveAttributes(ctx, "apply");
+
 	const touchesIndex = opts.target === "index" || opts.target === "cached";
 	let index: Index = touchesIndex ? await readIndex(ctx) : { version: 2, entries: [] };
 
@@ -1082,7 +1127,7 @@ export async function applyPatches(
 	const toBeDeleted = new Set<string>();
 
 	for (const patch of effective) {
-		const planned = await planPatch(ctx, index, patch, opts, toBeDeleted);
+		const planned = await planPatch(ctx, index, patch, opts, toBeDeleted, bound);
 		if ((patch.kind === "delete" || patch.kind === "rename") && patch.oldName) {
 			toBeDeleted.add(patch.oldName);
 		}
@@ -1133,7 +1178,7 @@ export async function applyPatches(
 	const restored: string[] = [];
 	if (!opts.check) {
 		for (const r of restorations) {
-			await writeWorktreeFile(ctx, r.path, r.content, r.mode);
+			await writeWorktreeFile(ctx, r.path, r.content, r.mode, bound);
 			restored.push(r.path);
 		}
 	}
@@ -1147,7 +1192,7 @@ export async function applyPatches(
 
 	// ── Pass 2: commit ───────────────────────────────────────────────
 	for (const plan of plans) {
-		index = await commitPlan(ctx, index, plan, opts.target);
+		index = await commitPlan(ctx, index, plan, opts.target, bound);
 		// git's write_out_one_reject: applied hunks are kept in the file above;
 		// the rejected ones are dropped into `<new_name>.rej`.
 		if (plan.rejected.length > 0 && plan.newPath) {

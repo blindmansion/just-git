@@ -431,6 +431,7 @@ export type GitOperation =
 	| "cherry-pick"
 	| "revert"
 	| "am"
+	| "apply"
 	| "clone"
 	| "fetch"
 	| "push"
