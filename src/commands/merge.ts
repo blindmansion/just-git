@@ -17,6 +17,7 @@ import { applyMergeResult, mergeOrtRecursive } from "../lib/merge-ort.ts";
 import { renderApplyMerge } from "./kit/merge.ts";
 import { peelToCommit, readCommit } from "../lib/object-db.ts";
 import {
+	clearAllOperationState,
 	clearMergeState,
 	clearRevertState,
 	deleteStateFile,
@@ -699,6 +700,12 @@ async function handleAbort(
 		operationRef: "MERGE_HEAD",
 		noOpError: fatal("There is no merge to abort (MERGE_HEAD missing)."),
 		operationName: "merge",
-		clearState: clearMergeState,
+		// `git merge --abort` is `git reset --merge`, which runs
+		// remove_branch_state(): it clears every operation ref (including a stray
+		// CHERRY_PICK_HEAD/REVERT_HEAD from an interleaved sequence) plus the
+		// merge-message files, and preserves ORIG_HEAD at the pre-abort HEAD
+		// (recorded by handleOperationAbort). clearMergeState would instead leave
+		// the stray refs and delete ORIG_HEAD.
+		clearState: clearAllOperationState,
 	});
 }

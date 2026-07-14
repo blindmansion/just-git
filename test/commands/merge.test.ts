@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { resolveRef } from "../../src/lib/refs/refs.ts";
+import { findRepo } from "../../src/lib/repo";
 import { EMPTY_REPO, TEST_ENV_NAMED as TEST_ENV, envAt } from "../fixtures";
 import { createTestBash, readFile } from "../util";
 
@@ -373,8 +375,49 @@ describe("git merge", () => {
 
 			// Merge state files should be cleaned up
 			expect(await bash.fs.exists("/repo/.git/MERGE_HEAD")).toBe(false);
-			expect(await bash.fs.exists("/repo/.git/ORIG_HEAD")).toBe(false);
 			expect(await bash.fs.exists("/repo/.git/MERGE_MSG")).toBe(false);
+
+			// `git merge --abort` is `git reset --merge`, which records the
+			// pre-abort HEAD in ORIG_HEAD (here the un-moved pre-merge HEAD).
+			expect((await readFile(bash.fs, "/repo/.git/ORIG_HEAD"))?.trim()).toBe(preMainRef);
+		});
+
+		test("clears stray cherry-pick/revert state from an interleaved sequence", async () => {
+			// `git merge --abort` runs remove_branch_state(), which clears every
+			// operation ref — including a CHERRY_PICK_HEAD/REVERT_HEAD left behind
+			// by an interleaved sequence — not just the merge's own state.
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec("git branch feature");
+
+			await bash.fs.writeFile("/repo/README.md", "# Main\n");
+			await bash.exec("git add README.md");
+			await bash.exec('git commit -m "main"');
+
+			const gitCtx = await findRepo(bash.fs, "/repo");
+			const featureRef = (await readFile(bash.fs, "/repo/.git/refs/heads/feature"))?.trim();
+
+			await bash.exec("git checkout feature");
+			await bash.fs.writeFile("/repo/README.md", "# Feature\n");
+			await bash.exec("git add README.md");
+			await bash.exec('git commit -m "feature"');
+
+			await bash.exec("git checkout main");
+			await bash.exec("git merge feature"); // conflicts
+
+			// Simulate cherry-pick/revert state co-existing with the merge.
+			await bash.fs.writeFile("/repo/.git/CHERRY_PICK_HEAD", `${featureRef}\n`);
+			await bash.fs.writeFile("/repo/.git/REVERT_HEAD", `${featureRef}\n`);
+
+			const result = await bash.exec("git merge --abort");
+			expect(result.exitCode).toBe(0);
+
+			expect(await resolveRef(gitCtx!, "MERGE_HEAD")).toBeNull();
+			expect(await resolveRef(gitCtx!, "CHERRY_PICK_HEAD")).toBeNull();
+			expect(await resolveRef(gitCtx!, "REVERT_HEAD")).toBeNull();
+			expect(await bash.fs.exists("/repo/.git/MERGE_MODE")).toBe(false);
 		});
 
 		test("errors when no merge in progress", async () => {
