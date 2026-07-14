@@ -380,7 +380,9 @@ describe("filters — apply / am (clean preimage + smudge result)", () => {
 		expect(await bash.readFile("/repo/app.conf")).toBe("SECRET=hunter2\nEXTRA=hunter2\n");
 		// …while the recommitted blob stays redacted.
 		const repo = (await findRepo(fs, "/repo"))!;
-		expect(await readCommittedBlob(repo, "app.conf")).toBe("SECRET=__REDACTED__\nEXTRA=__REDACTED__\n");
+		expect(await readCommittedBlob(repo, "app.conf")).toBe(
+			"SECRET=__REDACTED__\nEXTRA=__REDACTED__\n",
+		);
 	});
 
 	test("apply -3 honors the merge= driver on a non-trivial merge", async () => {
