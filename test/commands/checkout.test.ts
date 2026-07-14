@@ -500,5 +500,31 @@ describe("git checkout", () => {
 			expect(result.exitCode).toBe(0);
 			expect(result.stdout).toContain("set up to track");
 		});
+
+		test("remote revision guessing validates the resulting local branch name", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("cd /remote && echo 1 > one && git add . && git commit -m one");
+			await bash.exec("cd /remote && echo 2 > two && git add . && git commit -m two");
+			await bash.exec("cd /remote && echo 3 > three && git add . && git commit -m three");
+			await bash.exec("git fetch origin", { cwd: "/local" });
+
+			const localRevision = await bash.exec("git checkout HEAD~0", { cwd: "/local" });
+			expect(localRevision.exitCode).toBe(0);
+
+			const guessed = await bash.exec("git checkout HEAD~3", { cwd: "/local" });
+			expect(guessed.exitCode).toBe(128);
+			expect(guessed.stderr).toBe(
+				"fatal: 'HEAD~3' is not a valid branch name\n" +
+					"hint: See 'git help check-ref-format'\n" +
+					'hint: Disable this message with "git config set advice.refSyntax false"\n',
+			);
+
+			const noGuess = await bash.exec("git checkout --no-guess HEAD~3", { cwd: "/local" });
+			expect(noGuess.exitCode).toBe(1);
+			expect(noGuess.stderr).toBe(
+				"error: pathspec 'HEAD~3' did not match any file(s) known to git\n",
+			);
+		});
 	});
 });

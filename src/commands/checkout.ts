@@ -59,6 +59,7 @@ export function registerCheckoutCommand(parent: Command, ext?: GitExtensions) {
 			orphan: f().describe("Create a new orphan branch"),
 			ours: f().describe("Checkout our version for unmerged files"),
 			theirs: f().describe("Checkout their version for unmerged files"),
+			guess: f().default(true).describe("Guess branch from remote tracking"),
 			ignoreOtherWorktrees: f().describe("Allow checking out a branch used by another worktree"),
 		},
 		handler: async (args, ctx, meta) => {
@@ -165,10 +166,30 @@ export function registerCheckoutCommand(parent: Command, ext?: GitExtensions) {
 				return switchBranch(gitCtx, target, refName, branchHash, ctx.env, ext);
 			}
 
+			// Revision expressions that resolve locally take precedence over
+			// remote branch guessing. If they do not resolve, Git may still
+			// interpret the same expression relative to a remote (below).
+			if (!isValidBranchName(target)) {
+				const detachedHash = await resolveRevision(gitCtx, target);
+				if (detachedHash) {
+					const commitHash = await peelToCommit(gitCtx, detachedHash);
+					return detachHead(gitCtx, target, commitHash, ctx.env, ext);
+				}
+			}
+
 			// ── DWIM: guess from remote tracking refs ───────────────────
-			const guessed = await guessRemoteBranch(gitCtx, target);
-			if (guessed) {
-				return createAndSwitchFromRemote(gitCtx, target, guessed.trackingRef, ctx.env, ext);
+			if (args.guess !== false) {
+				const guessed = await guessRemoteBranch(gitCtx, target);
+				if (guessed) {
+					if (!isValidBranchName(target)) {
+						return fatal(
+							`'${target}' is not a valid branch name\n` +
+								"hint: See 'git help check-ref-format'\n" +
+								'hint: Disable this message with "git config set advice.refSyntax false"',
+						);
+					}
+					return createAndSwitchFromRemote(gitCtx, target, guessed.trackingRef, ctx.env, ext);
+				}
 			}
 
 			// ── Try as detached HEAD (commit hash, tag, etc.) ──────────

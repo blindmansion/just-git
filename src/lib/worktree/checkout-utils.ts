@@ -457,30 +457,40 @@ export async function setupTracking(
 
 /**
  * DWIM: guess a remote tracking branch for a name that doesn't match
- * any local branch. Returns the match if exactly one remote has the branch,
- * or uses `checkout.defaultRemote` config to disambiguate multiple matches.
+ * any local branch. Git treats `<remote>/<name>` as a revision expression
+ * while probing, so names such as `HEAD~3` can match `origin/HEAD~3` even
+ * though they are not themselves valid branch names. Returns the match if
+ * exactly one remote resolves it, or uses `checkout.defaultRemote` config to
+ * disambiguate multiple matches.
  */
 export async function guessRemoteBranch(
 	gitCtx: GitContext,
 	name: string,
 ): Promise<{ remote: string; startPoint: string; trackingRef: string } | null> {
 	const allRefs = await listRefs(gitCtx, "refs/remotes");
-	const candidates: { remote: string; ref: string }[] = [];
+	const remotes = new Set<string>();
 
 	for (const ref of allRefs) {
 		const parts = ref.name.replace(/^refs\/remotes\//, "").split("/");
 		const remote = parts[0];
-		if (parts.length >= 2 && remote) {
-			const branch = parts.slice(1).join("/");
-			if (branch === name) {
-				candidates.push({ remote, ref: ref.name });
-			}
+		if (parts.length >= 2 && remote) remotes.add(remote);
+	}
+
+	const candidates: { remote: string; startPoint: string; trackingRef: string }[] = [];
+	for (const remote of remotes) {
+		const startPoint = `${remote}/${name}`;
+		if (await resolveRevision(gitCtx, startPoint)) {
+			candidates.push({
+				remote,
+				startPoint,
+				trackingRef: `refs/remotes/${startPoint}`,
+			});
 		}
 	}
 
 	if (candidates.length === 1) {
 		const c = candidates[0]!;
-		return { remote: c.remote, startPoint: c.ref, trackingRef: c.ref };
+		return c;
 	}
 
 	if (candidates.length > 1) {
@@ -488,8 +498,7 @@ export async function guessRemoteBranch(
 		if (defaultRemote) {
 			const filtered = candidates.filter((c) => c.remote === defaultRemote);
 			if (filtered.length === 1) {
-				const c = filtered[0]!;
-				return { remote: c.remote, startPoint: c.ref, trackingRef: c.ref };
+				return filtered[0]!;
 			}
 		}
 	}

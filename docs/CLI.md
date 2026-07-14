@@ -393,6 +393,7 @@ Options:
   --orphan                     Create a new orphan branch
   --ours                       Checkout our version for unmerged files
   --theirs                     Checkout their version for unmerged files
+  --guess                      Guess branch from remote tracking (default: true)
   --ignore-other-worktrees     Allow checking out a branch used by another worktree
 ```
 
