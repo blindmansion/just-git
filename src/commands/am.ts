@@ -441,12 +441,14 @@ async function attemptThreeway(
 
 	if (fb.status === "no-base") {
 		// git's build_fake_ancestor bailed before the "Using index info…" line.
+		const detail =
+			fb.reason === "missing-mode-source"
+				? `mode change for ${fb.missingPath}, which is not in current HEAD`
+				: `sha1 information is lacking or useless (${fb.missingPath}).`;
 		return {
 			kind: "stop",
 			stdout: "",
-			stderr:
-				`error: sha1 information is lacking or useless (${fb.missingPath}).\n` +
-				`error: could not build fake ancestor\n${RESOLVE_HINT}`,
+			stderr: `error: ${detail}\nerror: could not build fake ancestor\n${RESOLVE_HINT}`,
 		};
 	}
 	if (fb.status === "apply-failed") {

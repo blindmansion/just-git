@@ -252,7 +252,7 @@ export type MergeOrtResultData = Awaited<ReturnType<typeof mergeOrtNonRecursive>
  *   prints between "Using index info…" and "Falling back…".
  */
 export type FallBackThreewayResult =
-	| { status: "no-base"; missingPath: string }
+	| { status: "no-base"; missingPath: string; reason: "missing-oid" | "missing-mode-source" }
 	| { status: "apply-failed" }
 	| {
 			status: "merged";
@@ -275,14 +275,17 @@ async function resolveBaseBlob(repo: GitRepo, prefix: string | undefined): Promi
  * git's `build_fake_ancestor`: assemble a synthetic base tree from every
  * (non-creation) patch's recorded old blob OID, so a tree merge has the exact
  * preimage the series was cut against. Creations contribute no base entry (they
- * become add/add at merge time). Returns `{ missingPath }` for the first file
- * whose old blob can't be resolved — git's blob-missing bail.
+ * become add/add at merge time). Returns the first unresolved path and whether
+ * it lacked a recorded OID or a current-HEAD source for a metadata-only patch.
  */
 export async function buildFakeAncestor(
 	repo: GitRepo,
 	patches: ParsedPatch[],
 	fallbackEntries?: ReadonlyMap<string, FlatTreeEntry>,
-): Promise<{ tree: string; entries: IndexEntry[] } | { missingPath: string }> {
+): Promise<
+	| { tree: string; entries: IndexEntry[] }
+	| { missingPath: string; reason: "missing-oid" | "missing-mode-source" }
+> {
 	const entries: IndexEntry[] = [];
 	for (const p of patches) {
 		if (p.kind === "new") continue;
@@ -290,15 +293,21 @@ export async function buildFakeAncestor(
 		if (!name) continue;
 		let oid = await resolveBaseBlob(repo, p.oldOidPrefix);
 		let fallback: FlatTreeEntry | undefined;
+		const usesModeFallback = !p.oldOidPrefix && p.fragments.length === 0 && !p.isBinary;
 		// Pure metadata patches (notably 100% renames) have no `index
 		// <old>..<new>` line. git's build-fake-ancestor reads their preimage
 		// from the current index instead of treating the absent OID as a missing
 		// object. The caller supplies the stage-0/index tree for that fallback.
-		if (!oid && !p.oldOidPrefix && p.fragments.length === 0 && !p.isBinary) {
+		if (!oid && usesModeFallback) {
 			fallback = fallbackEntries?.get(name);
 			oid = fallback?.hash ?? null;
 		}
-		if (!oid) return { missingPath: name };
+		if (!oid) {
+			return {
+				missingPath: name,
+				reason: usesModeFallback ? "missing-mode-source" : "missing-oid",
+			};
+		}
 		entries.push({
 			path: name,
 			mode: p.oldMode ?? p.newMode ?? (fallback ? parseInt(fallback.mode, 8) : 0o100644),
@@ -347,7 +356,9 @@ export async function fallBackThreeway(
 ): Promise<FallBackThreewayResult> {
 	const oursMap = await flattenTreeToMap(repo, oursTree);
 	const fake = await buildFakeAncestor(repo, patches, oursMap);
-	if ("missingPath" in fake) return { status: "no-base", missingPath: fake.missingPath };
+	if ("missingPath" in fake) {
+		return { status: "no-base", missingPath: fake.missingPath, reason: fake.reason };
+	}
 
 	const statusLines = fakeAncestorStatus(fake.entries, oursMap);
 

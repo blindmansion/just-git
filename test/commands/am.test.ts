@@ -438,5 +438,28 @@ describe("git am", () => {
 			expect((await bash.exec("git ls-files new.txt")).stdout).toBe("new.txt\n");
 			expect(await readFile(bash.fs, "/repo/new.txt")).toBe("rename-local\n");
 		});
+
+		test("reports a metadata-only rename whose source is absent from HEAD", async () => {
+			const bash = await seed();
+			await bash.fs.writeFile("/repo/old.txt", "rename-base\n");
+			await bash.exec("git add old.txt");
+			await bash.exec('git commit -m "rename base"');
+
+			await bash.exec("git mv old.txt new.txt");
+			await bash.exec('git commit -m "pure rename"');
+			const patch = await bash.exec("git format-patch -1 --stdout");
+			expect(patch.stdout).toContain("rename from old.txt");
+			await bash.exec("git reset --hard HEAD~1");
+
+			await bash.exec("git rm old.txt");
+			await bash.exec('git commit -m "remove source"');
+			const result = await am(bash, patch.stdout, "-3");
+
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain(
+				"error: mode change for old.txt, which is not in current HEAD",
+			);
+			expect(result.stderr).toContain("error: could not build fake ancestor");
+		});
 	});
 });
