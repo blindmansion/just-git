@@ -193,7 +193,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			// advertisement (FETCH_HEAD, tag auto-follow, prune, ensureRemoteHead,
 			// "couldn't find remote ref" errors). The programmatic `pull`
 			// (`src/repo/operations.ts`) *does* use `want-ref` — it has no such
-			// parity constraint. See `local-docs/plans/want-ref-consumer-adoption.md` §3.5.
+			// parity constraint.
 			const fetchSpec = parseRefspec(config.fetchRefspec);
 			const remoteRefs = await transport.advertiseRefs();
 

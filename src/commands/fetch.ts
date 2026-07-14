@@ -196,9 +196,9 @@ async function applyFetchRefUpdates(
 	const orderedTagEntries: Array<
 		| TransferRefLine
 		| {
-				update: FetchRefUpdate;
-				oldHash: string | null;
-		  }
+			update: FetchRefUpdate;
+			oldHash: string | null;
+		}
 	> = [];
 
 	for (const update of refUpdates) {
@@ -294,8 +294,7 @@ async function fetchOneRemote(
 	// `want <oid>`, so we match its observable wire behavior. We also consume the
 	// full advertisement here — FETCH_HEAD-from-remote-`HEAD`, tag auto-follow,
 	// `--prune` stale detection, `ensureRemoteHead`, and "couldn't find remote
-	// ref" errors — which the by-name result can't supply. See
-	// `local-docs/plans/want-ref-consumer-adoption.md` §3.5.
+	// ref" errors.
 	const remoteRefs = await transport.advertiseRefs();
 
 	if (remoteRefs.length === 0) {

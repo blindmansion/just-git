@@ -36,7 +36,7 @@ import {
  *
  *   - No data-core layer may import the kit, so any `data → commands/kit` runtime
  *     edge is a violation ("presentation/orchestration is owned by the command
- *     tier"; see `local-docs/plans/lib-formatting-data-separation.md`).
+ *     tier".
  *   - `format`/`parse` sit below the orchestration, so a renderer or the parser
  *     reaching *up* into the orchestration (e.g. importing `command-result` /
  *     `CommandResult`) is a violation — this keeps them pure.
@@ -122,7 +122,7 @@ describe("src layering policy", () => {
 //
 // `lib` gathers structured data; the command tier renders it and decides the
 // exit code. These guards are the end-state of the formatting/data-separation
-// work (see `local-docs/plans/lib-formatting-data-separation.md`): they fail if
+// work: they fail if
 // the `CommandResult` contract — named *or* by its `{ stdout, stderr, exitCode }`
 // shape — ever leaks back into the data core.
 // ──────────────────────────────────────────────────────────────────────────

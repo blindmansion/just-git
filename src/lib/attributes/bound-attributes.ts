@@ -17,9 +17,6 @@ const encoder = new TextEncoder();
  * are passthrough when no `filter=` driver applies, and `merge` returns `null`
  * (diff3 fallback) when no `merge=` driver applies — so a path with no
  * attributes keeps the engine's zero-overhead default behavior.
- *
- * See `local-docs/plans/attribute-resolver-seam.md` and the type sketch
- * `local-docs/sketches/attribute-resolver-types.d.ts`.
  */
 export interface BoundAttributes {
 	/** Worktree → blob. Passthrough when no filter applies to `path`. */
@@ -121,10 +118,10 @@ export async function bindAttributes(
 			funcname: driver.funcname,
 			textconv: convert
 				? async (content, blobOid) => {
-						const out = await convert(ctx, { path, content, blobOid });
-						if (out == null) return content;
-						return typeof out === "string" ? encoder.encode(out) : out;
-					}
+					const out = await convert(ctx, { path, content, blobOid });
+					if (out == null) return content;
+					return typeof out === "string" ? encoder.encode(out) : out;
+				}
 				: undefined,
 		};
 	};

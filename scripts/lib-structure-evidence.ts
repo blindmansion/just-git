@@ -1,8 +1,7 @@
 // Evidence report for the internal structure of `src/lib`.
 //
 // Three complementary lenses, all scoped to lib-internal edges only (external
-// command-layer consumers are deliberately out of scope — see the plan in
-// local-docs/plans/lib-reorg-symbol-level.md):
+// command-layer consumers are deliberately out of scope:
 //
 //   1. Import graph  — files, edges, subdirectory coupling, hubs, depth, cycles.
 //   2. Symbol graph  — per-module export co-usage clustering (split-seam finder).
@@ -41,7 +40,7 @@ const runtimeEdges = internalEdges.filter(isRuntimeEdge);
 line("# lib internal structure — evidence\n");
 line(
 	`files: ${nodes.length} | internal edges: ${internalEdges.length} ` +
-		`(runtime: ${runtimeEdges.length})\n`,
+	`(runtime: ${runtimeEdges.length})\n`,
 );
 
 const byDir = new Map<string, number>();
@@ -80,8 +79,8 @@ line(`${"module".padEnd(28)}exp  fanIn  clusters  singletons`);
 for (const r of coUsageClusters(graph, { minExports: 4 }))
 	line(
 		`  ${r.module.padEnd(28)}${String(r.exports).padStart(2)}  ` +
-			`${String(r.fanIn).padStart(5)}  ${String(r.clusters.length).padStart(8)}  ` +
-			`${String(r.singletons).padStart(10)}`,
+		`${String(r.fanIn).padStart(5)}  ${String(r.clusters.length).padStart(8)}  ` +
+		`${String(r.singletons).padStart(10)}`,
 	);
 
 // ── 3. Call graph: intra-module cohesion, cycles, dead helpers ───────────────
@@ -94,8 +93,8 @@ line(`${"largest module".padEnd(28)}fns  intra  cohesion  fanOut`);
 for (const r of cohesion.slice(0, 15))
 	line(
 		`  ${r.module.padEnd(28)}${String(r.functions).padStart(3)}  ` +
-			`${String(r.intraEdges).padStart(5)}  ${r.cohesion.toFixed(2).padStart(8)}  ` +
-			`${String(r.fanOut).padStart(6)}`,
+		`${String(r.intraEdges).padStart(5)}  ${r.cohesion.toFixed(2).padStart(8)}  ` +
+		`${String(r.fanOut).padStart(6)}`,
 	);
 
 const nodeOf = (id: string) => cg.nodes.get(id);

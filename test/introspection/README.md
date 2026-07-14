@@ -124,10 +124,7 @@ exploration (e.g. ad-hoc clustering) in scripts.
 
 Anything you discover can become a standing test. `layering.test.ts` encodes the
 current architecture (dependency-free core, downward-only runtime deps, a
-baselined cycle allowlist) and fails if a regression sneaks in. See
-[`local-docs/plans/lib-internal-structure.md`](../../local-docs/plans/lib-internal-structure.md)
-and its `lib-structure-evidence.ts` for an example of an investigation written
-up as a plan plus a reproducible evidence script.
+baselined cycle allowlist) and fails if a regression sneaks in.
 
 ## Validation
 
