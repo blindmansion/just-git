@@ -71,11 +71,11 @@ describe("createMemoryDiscoveryCache", () => {
 		fetchedAt: 0,
 	};
 
-	test("round-trips an entry by origin", async () => {
+	test("round-trips an entry by repository URL", async () => {
 		const cache = createMemoryDiscoveryCache();
-		await cache.set("https://example.com", entry);
-		expect(await cache.get("https://example.com")).toMatchObject({ protocolVersion: 2 });
-		expect(await cache.get("https://other.com")).toBeUndefined();
+		await cache.set(URL_A, entry);
+		expect(await cache.get(URL_A)).toMatchObject({ protocolVersion: 2 });
+		expect(await cache.get("https://example.com/other.git")).toBeUndefined();
 	});
 
 	test("treats an entry older than maxAge as a miss and drops it", async () => {
@@ -122,6 +122,23 @@ describe("SmartHttpTransport + DiscoveryCache", () => {
 		expect(counts.lsRefs).toBe(2); // refs are volatile, so ls-refs still runs
 	});
 
+	test("repositories on the same origin have separate discovery entries", async () => {
+		const { fetch, counts } = mockUploadPack();
+		const cache = createMemoryDiscoveryCache();
+
+		await new SmartHttpTransport(NO_LOCAL, URL_A, fetch, undefined, 2, cache).advertiseRefs();
+		await new SmartHttpTransport(
+			NO_LOCAL,
+			"https://example.com/other.git",
+			fetch,
+			undefined,
+			2,
+			cache,
+		).advertiseRefs();
+
+		expect(counts.infoRefs).toBe(2);
+	});
+
 	test("without a cache, every transport re-discovers", async () => {
 		const { fetch, counts } = mockUploadPack();
 		await new SmartHttpTransport(NO_LOCAL, URL_A, fetch).advertiseRefs();
@@ -150,7 +167,7 @@ describe("SmartHttpTransport + DiscoveryCache", () => {
 		expect(counts.lsRefs).toBe(3);
 
 		// The freshly re-discovered entry is back in the cache for the next op.
-		expect(await cache.get("https://example.com")).toMatchObject({ protocolVersion: 2 });
+		expect(await cache.get(URL_A)).toMatchObject({ protocolVersion: 2 });
 	});
 
 	test("a cached entry claiming an unsupported object-format self-corrects", async () => {
@@ -159,7 +176,7 @@ describe("SmartHttpTransport + DiscoveryCache", () => {
 		// Poison the cache: an entry asserting sha256, which the transport can't
 		// consume. It must evict + re-discover (the wire advertises sha1) rather
 		// than hard-failing.
-		await cache.set("https://example.com", {
+		await cache.set(URL_A, {
 			protocolVersion: 2,
 			uploadPack: {
 				v2: {
@@ -173,7 +190,7 @@ describe("SmartHttpTransport + DiscoveryCache", () => {
 		const t = new SmartHttpTransport(NO_LOCAL, URL_A, fetch, undefined, 2, cache);
 		expect(await t.advertiseRefs()).toEqual([{ name: "refs/heads/main", hash: HASH_A }]);
 		expect(counts.infoRefs).toBe(1); // re-discovered once from the wire
-		const restored = await cache.get("https://example.com");
+		const restored = await cache.get(URL_A);
 		expect(restored?.uploadPack).toMatchObject({ v2: { objectFormat: "sha1" } });
 	});
 

@@ -256,38 +256,33 @@ export interface V2CapabilitiesSnapshot {
 }
 
 /**
- * A cached discovery result for one remote origin: the protocol version the
- * server agreed to plus its (stable) capabilities. Deliberately holds **no ref
- * values** — ref churn is the point of syncing, so refs are only ever reused
- * behind an HTTP validator (see `etag`). Capabilities are advisory: a stale
- * entry costs at most one wasted request, never a wrong answer.
+ * A cached upload-pack discovery result for one remote repository: the
+ * protocol version the server agreed to plus its (stable) capabilities.
+ * Deliberately holds **no ref values** — ref churn is the point of syncing.
+ * Capabilities are advisory: a stale entry costs at most one wasted request
+ * before re-discovery, never a stale ref answer.
  */
 export interface DiscoveryEntry {
 	protocolVersion: 1 | 2;
 	/** Upload-pack capabilities: a v2 snapshot, or a v1 cap list + object-format. */
 	uploadPack: { v2: V2CapabilitiesSnapshot } | { v1: string[]; objectFormat: string };
-	/** Receive-pack (push) capabilities, present once push discovery has run. */
-	receivePack?: { caps: string[] };
-	/** HTTP validator from the `info/refs` response, for conditional `GET`. */
-	etag?: string;
 	/** Wall-clock fetch time in epoch ms, for TTL bounding. */
 	fetchedAt: number;
 }
 
 /**
- * Cross-operation cache of stable per-remote protocol discovery (version +
- * capabilities), keyed by `new URL(url).origin`. Injected via
- * {@link RepoCapabilities.discoveryCache}; the host owns its lifetime so it can
- * survive a whole sync loop. Absent ⇒ today's per-instance behavior. The
- * transport only reads/writes it to *suppress* requests whose answer it already
- * holds — nothing here is ever sent on the wire, so third-party servers
- * (GitHub/GitLab) are unaffected.
+ * Cross-operation cache of stable per-repository upload-pack discovery
+ * (version + capabilities). Keys are canonical remote URLs, including the
+ * repository path rather than only the server origin. Injected via
+ * {@link RepoCapabilities.discoveryCache}; the host owns its lifetime and
+ * should not share one cache across authorization contexts that can advertise
+ * different capabilities. Absent ⇒ per-instance discovery.
  */
 export interface DiscoveryCache {
-	get(origin: string): DiscoveryEntry | undefined | Promise<DiscoveryEntry | undefined>;
-	set(origin: string, entry: DiscoveryEntry): void | Promise<void>;
+	get(key: string): DiscoveryEntry | undefined | Promise<DiscoveryEntry | undefined>;
+	set(key: string, entry: DiscoveryEntry): void | Promise<void>;
 	/** Drop a stale entry after a protocol error, forcing one re-discovery. */
-	evict?(origin: string): void | Promise<void>;
+	evict?(key: string): void | Promise<void>;
 }
 
 // ── Repository context ──────────────────────────────────────────────
@@ -342,16 +337,17 @@ export interface RepoCapabilities {
 	onProgress?: ProgressCallback;
 
 	/**
-	 * Cross-operation cache of stable per-remote protocol discovery (version +
-	 * capabilities). When set, a {@link SmartHttpTransport} consults it before
-	 * issuing the capability `GET /info/refs` and skips that round-trip on a hit,
-	 * so a tight sync loop stops re-discovering the same server every cycle.
+	 * Optional cross-operation cache of stable per-repository upload-pack
+	 * discovery (version + capabilities). When set, a
+	 * {@link SmartHttpTransport} can skip the capability `GET /info/refs` on a
+	 * v2 cache hit. This is most useful for repeated operations against a
+	 * high-latency remote; it is not installed automatically.
 	 *
-	 * Purely advisory and safe by default: it caches only version + caps (never
-	 * ref values), is TTL-bounded, and self-corrects by evicting + re-discovering
-	 * on any protocol error — so a stale entry costs at most one wasted request,
-	 * never a wrong result. Absent ⇒ per-instance discovery only (today's
-	 * behavior). Build the shipped default with `createMemoryDiscoveryCache()`.
+	 * Only capabilities are cached, never refs. A stale entry is evicted and
+	 * re-discovered after an upload-pack failure. Scope a cache instance to one
+	 * authorization context; use separate instances if the same repository URL
+	 * can advertise different capabilities to different callers. The shipped
+	 * `createMemoryDiscoveryCache()` applies a five-minute TTL by default.
 	 */
 	discoveryCache?: DiscoveryCache;
 	/**

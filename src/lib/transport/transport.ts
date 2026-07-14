@@ -448,8 +448,8 @@ export class SmartHttpTransport implements Transport {
 	/** v2 capabilities, populated only when `protocolVersion === 2`. */
 	private cachedV2Caps: V2Capabilities | null = null;
 
-	/** Remote origin (cache key), or null when the URL can't be parsed. */
-	private readonly origin: string | null;
+	/** Canonical remote repository URL used as the cache key. */
+	private readonly discoveryCacheKey: string | null;
 	/** True when the active discovery was restored from the cache, not the wire. */
 	private discoveryFromCache = false;
 	/** Guards evict-on-error so a stale entry triggers at most one re-discovery. */
@@ -472,7 +472,7 @@ export class SmartHttpTransport implements Transport {
 		private protocolPreference: 1 | 2 = 2,
 		private discoveryCache?: DiscoveryCache,
 	) {
-		this.origin = originOf(url);
+		this.discoveryCacheKey = cacheKeyForUrl(url);
 	}
 
 	/**
@@ -483,9 +483,8 @@ export class SmartHttpTransport implements Transport {
 	private async ensureDiscovery(): Promise<void> {
 		if (this.protocolVersion !== null) return;
 
-		// Cache hit: restore v2 caps and skip the capability GET entirely. (A v1
-		// advertisement bundles refs *with* caps, so it can't be skipped on caps
-		// alone — that win needs the conditional GET; see DiscoveryEntry.etag.)
+		// Cache hit: restore v2 caps and skip the capability GET entirely. A v1
+		// advertisement bundles refs with caps, so a caps-only cache cannot skip it.
 		const cached = await this.readDiscoveryCache();
 		if (cached && this.protocolPreference === 2 && "v2" in cached.uploadPack) {
 			this.protocolVersion = 2;
@@ -519,38 +518,22 @@ export class SmartHttpTransport implements Transport {
 	}
 
 	private async readDiscoveryCache(): Promise<DiscoveryEntry | undefined> {
-		if (!this.discoveryCache || this.origin === null) return undefined;
-		return (await this.discoveryCache.get(this.origin)) ?? undefined;
+		if (!this.discoveryCache || this.discoveryCacheKey === null) return undefined;
+		return (await this.discoveryCache.get(this.discoveryCacheKey)) ?? undefined;
 	}
 
-	/** Persist the just-discovered upload-pack version + caps, keeping any cached receive-pack caps. */
+	/** Persist the just-discovered upload-pack version and capabilities. */
 	private async writeUploadPackDiscovery(): Promise<void> {
-		if (!this.discoveryCache || this.origin === null || this.protocolVersion === null) return;
+		if (!this.discoveryCache || this.discoveryCacheKey === null || this.protocolVersion === null) {
+			return;
+		}
 		const uploadPack: DiscoveryEntry["uploadPack"] =
 			this.protocolVersion === 2 && this.cachedV2Caps
 				? { v2: { raw: this.cachedV2Caps.raw, objectFormat: this.cachedV2Caps.objectFormat } }
 				: { v1: this.cachedFetchCaps ?? [], objectFormat: "sha1" };
-		const prev = await this.readDiscoveryCache();
-		await this.discoveryCache.set(this.origin, {
+		await this.discoveryCache.set(this.discoveryCacheKey, {
 			protocolVersion: this.protocolVersion,
 			uploadPack,
-			receivePack: prev?.receivePack,
-			fetchedAt: Date.now(),
-		});
-	}
-
-	/** Merge the just-discovered receive-pack caps into the cache entry. */
-	private async writeReceivePackDiscovery(): Promise<void> {
-		if (!this.discoveryCache || this.origin === null || !this.cachedPushCaps) return;
-		const prev = await this.readDiscoveryCache();
-		const base: DiscoveryEntry = prev ?? {
-			protocolVersion: 1,
-			uploadPack: { v1: [], objectFormat: "sha1" },
-			fetchedAt: Date.now(),
-		};
-		await this.discoveryCache.set(this.origin, {
-			...base,
-			receivePack: { caps: this.cachedPushCaps },
 			fetchedAt: Date.now(),
 		});
 	}
@@ -576,7 +559,9 @@ export class SmartHttpTransport implements Transport {
 		} catch (err) {
 			if (!this.discoveryFromCache || this.recoveredFromStaleCache) throw err;
 			this.recoveredFromStaleCache = true;
-			if (this.origin !== null) await this.discoveryCache?.evict?.(this.origin);
+			if (this.discoveryCacheKey !== null) {
+				await this.discoveryCache?.evict?.(this.discoveryCacheKey);
+			}
 			this.resetDiscovery();
 			return op();
 		}
@@ -638,7 +623,6 @@ export class SmartHttpTransport implements Transport {
 			// the push path reads remote `oldHash` values from here rather than
 			// from a redundant upload-pack advertisement.
 			this.cachedPushRefs = result.refs;
-			await this.writeReceivePackDiscovery();
 		}
 		return this.cachedPushCaps as string[];
 	}
@@ -878,10 +862,13 @@ async function fetchRefsViaAdvertisement(
 	};
 }
 
-/** Parse a URL's origin (the discovery-cache key), or null when it can't be parsed. */
-function originOf(url: string): string | null {
+/** Canonicalize a remote repository URL for use as a discovery-cache key. */
+function cacheKeyForUrl(url: string): string | null {
 	try {
-		return new URL(url).origin;
+		const parsed = new URL(url);
+		parsed.hash = "";
+		if (parsed.pathname.length > 1) parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+		return parsed.href;
 	} catch {
 		return null;
 	}

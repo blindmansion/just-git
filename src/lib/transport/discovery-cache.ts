@@ -1,12 +1,10 @@
 // Default in-memory implementation of the `DiscoveryCache` capability.
 //
-// A host sets one of these once on a handle (`capabilities.discoveryCache`) so a
-// tight sync loop reuses stable per-remote protocol discovery (version + caps)
-// across operations instead of re-running the capability `GET` every cycle. It
-// is a plain `Map` with a TTL: entries older than `maxAgeMs` are treated as a
-// miss (and dropped), so a server upgrade is picked up automatically. Caps are
-// advisory, so a stale entry only ever costs one wasted request — the transport
-// evicts and re-discovers on any protocol error.
+// A host can set one of these on a handle (`capabilities.discoveryCache`) so
+// repeated operations reuse stable per-repository upload-pack discovery
+// (version + caps) instead of re-running the capability `GET` every time. It is
+// a plain `Map` with a TTL: entries older than `maxAgeMs` are treated as a miss
+// and dropped. This is opt-in; ordinary handles allocate no cache.
 
 import type { DiscoveryCache, DiscoveryEntry } from "../types.ts";
 
@@ -24,11 +22,11 @@ export interface MemoryDiscoveryCacheOptions {
 const DEFAULT_MAX_AGE_MS = 5 * 60 * 1000;
 
 /**
- * Create the shipped default {@link DiscoveryCache}: a `Map` keyed by remote
- * origin with TTL eviction. `set` re-stamps the entry's `fetchedAt` with this
- * cache's own clock so freshness is judged consistently regardless of what the
- * transport recorded. A multi-tenant server wanting cross-process sharing can
- * implement the interface over its own storage instead.
+ * Create the provided {@link DiscoveryCache} implementation: a `Map` keyed by
+ * canonical remote repository URL with TTL eviction. `set` re-stamps the
+ * entry's `fetchedAt` with this cache's own clock so freshness is judged
+ * consistently regardless of what the transport recorded. Scope an instance
+ * to one authorization context.
  */
 export function createMemoryDiscoveryCache(options?: MemoryDiscoveryCacheOptions): DiscoveryCache {
 	const maxAgeMs = options?.maxAgeMs ?? DEFAULT_MAX_AGE_MS;
@@ -36,20 +34,20 @@ export function createMemoryDiscoveryCache(options?: MemoryDiscoveryCacheOptions
 	const store = new Map<string, DiscoveryEntry>();
 
 	return {
-		get(origin: string): DiscoveryEntry | undefined {
-			const entry = store.get(origin);
+		get(key: string): DiscoveryEntry | undefined {
+			const entry = store.get(key);
 			if (!entry) return undefined;
 			if (now() - entry.fetchedAt > maxAgeMs) {
-				store.delete(origin);
+				store.delete(key);
 				return undefined;
 			}
 			return entry;
 		},
-		set(origin: string, entry: DiscoveryEntry): void {
-			store.set(origin, { ...entry, fetchedAt: now() });
+		set(key: string, entry: DiscoveryEntry): void {
+			store.set(key, { ...entry, fetchedAt: now() });
 		},
-		evict(origin: string): void {
-			store.delete(origin);
+		evict(key: string): void {
+			store.delete(key);
 		},
 	};
 }
