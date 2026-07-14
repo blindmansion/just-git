@@ -10,7 +10,13 @@ import { readConfigView } from "../../lib/config/view.ts";
 import { readIndex, writeIndex } from "../../lib/index.ts";
 import { readCommit } from "../../lib/object-db.ts";
 import { logRef } from "../../lib/refs/reflog.ts";
-import { advanceBranchRef, readHead, resolveHead, resolveRef } from "../../lib/refs/refs.ts";
+import {
+	advanceBranchRef,
+	readHead,
+	resolveHead,
+	resolveRef,
+	updateRef,
+} from "../../lib/refs/refs.ts";
 import { type Signer, resolveConfiguredSigner, SigningError } from "../../lib/signing.ts";
 import type { ConfigView, GitContext, GitRepo } from "../../lib/types.ts";
 import { applyWorktreeOps, mergeAbort } from "../../lib/worktree/unpack-trees.ts";
@@ -58,10 +64,10 @@ export async function handleOperationAbort(
 	if (!opHead) return opts.noOpError;
 
 	// A conflicted merge / cherry-pick / revert never advances HEAD, so the
-	// abort target is the current HEAD. ORIG_HEAD is a shared pseudo-ref that an
-	// earlier, unrelated operation may have left pointing elsewhere, so it can't
-	// be trusted here (git resets to the recorded operation start, which for
-	// these conflicts is exactly HEAD).
+	// abort target is the current HEAD. ORIG_HEAD is not used to pick the target
+	// (an earlier, unrelated operation may have left it pointing elsewhere); git
+	// resets to the recorded operation start, which for these conflicts is
+	// exactly HEAD.
 	const targetHead = await resolveHead(gitCtx);
 	if (!targetHead) {
 		return fatal(`There is no ${opts.operationName} to abort (HEAD missing).`);
@@ -84,6 +90,14 @@ export async function handleOperationAbort(
 	await advanceBranchRef(gitCtx, targetHead);
 	await writeIndex(gitCtx, { version: 2, entries: abortResult.newEntries });
 	await applyWorktreeOps(gitCtx, abortResult.worktreeOps);
+
+	// git's abort rewinds via an internal reset (`reset_merge` / sequencer
+	// rollback), which — like any `git reset` — records the pre-abort HEAD in
+	// `ORIG_HEAD`. For a conflicted merge / single pick this equals the current
+	// HEAD; after partial picks in a multi-commit sequence it is the tip reached
+	// so far. A later `am --abort` reads `ORIG_HEAD`, so keeping it current here
+	// steers that rewind exactly as git does.
+	await updateRef(gitCtx, "ORIG_HEAD", headBeforeAbort);
 
 	const head = await readHead(gitCtx);
 	const isOnBranch = head?.type === "symbolic";

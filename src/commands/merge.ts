@@ -144,6 +144,17 @@ export function registerMergeCommand(parent: Command, ext?: GitExtensions) {
 			);
 			if (verifyErr) return verifyErr;
 
+			// Real git records the pre-merge HEAD in `ORIG_HEAD` as soon as it
+			// commits to a merge attempt — after the "concluded merge",
+			// cherry-pick, and invalid-branch guards, but before the
+			// unrelated-histories / already-up-to-date / --ff-only decisions and
+			// the merge itself (git's `update_ref("updating ORIG_HEAD", …)` in
+			// `cmd_merge`). Every outcome from here on — up-to-date, fast-forward,
+			// squash, clean, conflict, and even the exit-2 "local changes would be
+			// overwritten" failure — leaves `ORIG_HEAD` at this commit, which is
+			// what a later `git merge --abort` / `git am --abort` rewinds to.
+			await updateRef(gitCtx, "ORIG_HEAD", headHash);
+
 			// Find merge bases for already-up-to-date / fast-forward checks
 			const bases = await findAllMergeBases(gitCtx, headHash, theirsHash);
 			const baseCommit = bases[0] ?? null;
@@ -310,7 +321,8 @@ async function handleThreeWayMerge(
 	// Step 3: Handle conflicts or create merge commit
 	if (result.conflicts.length > 0) {
 		await updateRef(gitCtx, "MERGE_HEAD", theirsHash);
-		await updateRef(gitCtx, "ORIG_HEAD", headHash);
+		// `ORIG_HEAD` was already recorded up front (see the merge entrypoint),
+		// covering conflict, clean, and the exit-2 apply-failure paths alike.
 
 		let mergeMsg = customMessage ?? (await buildMergeMessage(gitCtx, branchName, currentBranch));
 		const msgEventConflict = {
