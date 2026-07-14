@@ -210,6 +210,32 @@ describe("git am", () => {
 			expect(await readFile(bash.fs, "/repo/lib/z.txt")).toBe("same\n");
 			expect(await readFile(bash.fs, "/repo/docs/z.txt")).toBe("same\n");
 		});
+
+		test("a failed rename hunk reports the source path", async () => {
+			const bash = await seed();
+			const base = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
+			await bash.exec("mkdir -p lib docs");
+			await bash.fs.writeFile("/repo/lib/z.txt", base);
+			await bash.exec("git add lib/z.txt");
+			await bash.exec('git commit -m "rename base"');
+
+			await bash.exec("git mv lib/z.txt docs/z.txt");
+			await bash.fs.writeFile("/repo/docs/z.txt", base.replace("line 16\n", "patch line\n"));
+			await bash.exec("git add docs/z.txt");
+			await bash.exec('git commit -m "rename and edit"');
+			const patch = await bash.exec("git format-patch -1 --stdout");
+			expect(patch.stdout).toContain("rename from lib/z.txt");
+			await bash.exec("git reset --hard HEAD~1");
+
+			await bash.fs.writeFile("/repo/lib/z.txt", base.replace("line 16\n", "local line\n"));
+			await bash.exec("git commit -am local");
+			const result = await am(bash, patch.stdout);
+
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("error: patch failed: lib/z.txt:");
+			expect(result.stderr).toContain("error: lib/z.txt: patch does not apply");
+			expect(result.stderr).not.toContain("error: patch failed: docs/z.txt:");
+		});
 	});
 
 	describe("conflict stop", () => {

@@ -647,9 +647,12 @@ async function planPatch(
 	// surfaced separately (git keeps applying and reports them at the end).
 	if (applied.failedAtLine !== undefined && !opts.reject) {
 		const line = applied.failedAtLine;
+		// Hunks apply against the preimage, so git names the source path in
+		// failure diagnostics for renames rather than the destination path.
+		const failurePath = patch.oldName ?? path;
 		return {
-			error: `patch failed: ${path}:${line}`,
-			path,
+			error: `patch failed: ${failurePath}:${line}`,
+			path: failurePath,
 			doesNotApply: true,
 			threewayFallback,
 			restore: pre.restore,
