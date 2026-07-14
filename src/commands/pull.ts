@@ -657,15 +657,8 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					callerCommand: "merge",
 					errorExitCode: 2,
 				});
-				// A forced merge on a fast-forwardable branch runs the ort strategy.
-				// If its worktree preflight fails, git still emits this strategy's
-				// "Already up to date." line before the failure trailer.
-				const upToDateOutput =
-					isFastForward && noFf
-						? pullUpToDateMessage(head, pullMode, !!args.ffOnly, fetchOutput, true)
-						: "";
 				return {
-					stdout: upToDateOutput + rendered.stdout,
+					stdout: rendered.stdout,
 					stderr: fetchOutput + rendered.stderr,
 					exitCode: rendered.exitCode,
 				};

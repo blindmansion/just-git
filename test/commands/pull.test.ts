@@ -531,6 +531,22 @@ describe("git pull", () => {
 			expect(result.stdout).toContain("Merge made by");
 		});
 
+		test("--no-ff worktree preflight failure has no stdout", async () => {
+			const bash = await setupClonePair();
+
+			await bash.exec("cd /remote && echo remote > README.md && git add . && git commit -m update");
+			await bash.exec("echo local > README.md && git add README.md", { cwd: "/local" });
+
+			const result = await bash.exec("git pull --no-ff", { cwd: "/local" });
+
+			expect(result.exitCode).toBe(2);
+			expect(result.stdout).toBe("");
+			expect(result.stderr).toContain(
+				"error: Your local changes to the following files would be overwritten by merge:",
+			);
+			expect(result.stderr).toContain("Merge with strategy ort failed.");
+		});
+
 		test("--ff-only overrides pull.ff=false on diverged branches", async () => {
 			const bash = await setupClonePair();
 
