@@ -448,7 +448,11 @@ async function handleAbort(
 				128,
 			),
 			operationName: "cherry-pick",
-			clearState: clearCherryPickState,
+			// The sequencer abort path ends in remove_branch_state(), which clears
+			// every operation ref/message — including a MERGE_HEAD/MERGE_MODE left
+			// behind by an interleaved merge — not just the cherry-pick's own
+			// state. It preserves the shared ORIG_HEAD pseudo-ref.
+			clearState: clearAllOperationState,
 			origHeadAsTargetRev: true,
 		});
 	}
@@ -461,7 +465,7 @@ async function handleAbort(
 				128,
 			),
 			operationName: "cherry-pick",
-			clearState: clearRevertState,
+			clearState: clearAllOperationState,
 			origHeadAsTargetRev: true,
 		});
 	}

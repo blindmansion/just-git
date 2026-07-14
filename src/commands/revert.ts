@@ -346,7 +346,9 @@ async function handleAbort(
 			operationRef: "CHERRY_PICK_HEAD",
 			noOpError: err("error: no cherry-pick or revert in progress\nfatal: revert failed\n", 128),
 			operationName: "revert",
-			clearState: clearCherryPickState,
+			// remove_branch_state() clears every operation ref/message (including a
+			// stray MERGE_HEAD/MERGE_MODE), preserving only ORIG_HEAD.
+			clearState: clearAllOperationState,
 			origHeadAsTargetRev: true,
 		});
 	}
