@@ -118,10 +118,10 @@ export async function bindAttributes(
 			funcname: driver.funcname,
 			textconv: convert
 				? async (content, blobOid) => {
-					const out = await convert(ctx, { path, content, blobOid });
-					if (out == null) return content;
-					return typeof out === "string" ? encoder.encode(out) : out;
-				}
+						const out = await convert(ctx, { path, content, blobOid });
+						if (out == null) return content;
+						return typeof out === "string" ? encoder.encode(out) : out;
+					}
 				: undefined,
 		};
 	};

@@ -196,9 +196,9 @@ async function applyFetchRefUpdates(
 	const orderedTagEntries: Array<
 		| TransferRefLine
 		| {
-			update: FetchRefUpdate;
-			oldHash: string | null;
-		}
+				update: FetchRefUpdate;
+				oldHash: string | null;
+		  }
 	> = [];
 
 	for (const update of refUpdates) {
