@@ -484,6 +484,48 @@ describe("git rebase", () => {
 			expect(result.stderr).toBe("");
 			expect(await resolveHead(gitCtx!)).toBe(before);
 		});
+
+		test("--onto moves to onto when every commit is skipped after a divergent upstream", async () => {
+			// history: initial -> O -> A, then up = A -> Cx and feature = A -> Cy,
+			// where Cx and Cy are the same patch. Since the upstream/HEAD
+			// merge-base is A rather than onto O, git starts a real rebase at O.
+			// Skipping the only pick therefore leaves feature at O.
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+
+			await bash.fs.writeFile("/repo/o.txt", "o");
+			await bash.exec("git add o.txt");
+			await bash.exec('git commit -m "O"');
+			await bash.exec("git branch onto-base");
+
+			await bash.fs.writeFile("/repo/a.txt", "a");
+			await bash.exec("git add a.txt");
+			await bash.exec('git commit -m "A"');
+			await bash.exec("git branch feature");
+
+			await bash.exec("git checkout -b up");
+			await bash.fs.writeFile("/repo/x.txt", "X");
+			await bash.exec("git add x.txt");
+			await bash.exec('git commit -m "Cx"');
+
+			await bash.exec("git checkout feature");
+			await bash.fs.writeFile("/repo/x.txt", "X");
+			await bash.exec("git add x.txt");
+			await bash.exec('git commit -m "Cy"');
+
+			const gitCtx = await findRepo(bash.fs, "/repo");
+			const ontoHash = await resolveRef(gitCtx!, "refs/heads/onto-base");
+			const before = await resolveHead(gitCtx!);
+
+			const result = await bash.exec("git rebase --onto onto-base up");
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("skipped previously applied commit");
+			expect(result.stderr).toContain("Successfully rebased and updated refs/heads/feature.");
+			expect(await resolveHead(gitCtx!)).toBe(ontoHash);
+			expect(await resolveHead(gitCtx!)).not.toBe(before);
+		});
 	});
 
 	// ── Conflicts ────────────────────────────────────────────────────

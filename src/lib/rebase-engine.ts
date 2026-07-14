@@ -10,7 +10,7 @@ import {
 	readIndex,
 	writeIndex,
 } from "./index.ts";
-import { findAllMergeBases, isAncestor } from "./merge.ts";
+import { findAllMergeBases } from "./merge.ts";
 import { type ContentMergeFn, mergeOrtNonRecursive } from "./merge-ort.ts";
 import { readCommit } from "./object-db.ts";
 import { type Signer, resolveConfiguredSigner, SigningError } from "./signing.ts";
@@ -579,26 +579,8 @@ export async function performRebase(
 	if (filteredCommits.length === 0) {
 		// Every commit in the range was already applied on the target. The
 		// preemptive up-to-date check already returned for the fast-forwardable
-		// case, so here git still runs the (no-op) replay and reports success
-		// with any skip warnings. If `onto` is already contained in HEAD, HEAD
-		// *is* the rebased result: git keeps it where it is — fast-forwarding to
-		// `onto` here would move HEAD backwards and drop commits.
-		if (await isAncestor(gitCtx, ontoHash, origHead)) {
-			// HEAD stays put, but git still ran the rebase: it logs the HEAD
-			// start/finish pair (the branch reflog is left alone since the tip
-			// didn't move — handled inside writeRebaseFfReflog).
-			await writeRebaseFfReflog(
-				gitCtx,
-				env,
-				origHead,
-				origHead,
-				headName,
-				checkoutLabel,
-				reflogAction,
-				ontoHash,
-			);
-			return { kind: "rebased", headName, skipped, steps: [] };
-		}
+		// case. Git therefore starts the rebase at `onto`; when every pick is
+		// skipped, the branch finishes there even if that moves it backwards.
 		const rejected = await fastForwardTo(gitCtx, ontoHash, currentIndex, headName);
 		if (rejected) return { kind: "checkoutBlocked", rejected, skipped };
 		await writeRebaseFfReflog(
