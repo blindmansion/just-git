@@ -18,6 +18,7 @@ import {
 	writeAmState,
 	writeAmStopMeta,
 } from "../lib/am.ts";
+import { clockNow } from "../lib/capabilities.ts";
 import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import { writeCommitAndAdvance } from "../lib/commit-write.ts";
 import { getConfigValue } from "../lib/config/store.ts";
@@ -530,6 +531,7 @@ async function runAmLoop(gitCtx: GitContext, env: Map<string, string>): Promise<
 			keep: state.keep,
 			scissors: state.scissors,
 			keepCr: state.keepCr,
+			now: () => clockNow(gitCtx.capabilities),
 		});
 		const patchName = patchFileName(state.next);
 

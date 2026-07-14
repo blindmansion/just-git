@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { createGit, MemoryFileSystem } from "../../src";
 import { withCapabilities } from "../../src/lib/capabilities.ts";
+import { makeConfigView } from "../../src/lib/config/view.ts";
+import { reflogIdentityFrom } from "../../src/lib/identity.ts";
 import type { GitRepo } from "../../src/lib/types.ts";
 import { readCommit } from "../../src/repo/reading.ts";
 import { commit, createCommit, writeTree } from "../../src/repo/writing.ts";
@@ -49,6 +51,59 @@ describe("injected `now` capability — command path", () => {
 		expect(at.stdout.trim()).toBe("1718454600");
 		expect(ct.stdout.trim()).toBe(String(FIXED_SEC));
 	});
+
+	test("does not read the clock when explicit author and committer dates are valid", async () => {
+		let calls = 0;
+		const fs = new MemoryFileSystem();
+		const git = createGit({
+			fs,
+			cwd: "/repo",
+			now: () => {
+				calls++;
+				return FIXED;
+			},
+		});
+		const env = {
+			...IDENTITY_ENV,
+			GIT_AUTHOR_DATE: "1718454600",
+			GIT_COMMITTER_DATE: "1718454601",
+		};
+		await git.exec("init", { env });
+		await fs.writeFile("/repo/file.txt", "hi\n");
+		await git.exec("add -A", { env });
+		const result = await git.exec('commit -m "first"', { env });
+
+		expect(result.exitCode).toBe(0);
+		expect(calls).toBe(0);
+	});
+
+	test("git am uses the clock when a patch has no Date header", async () => {
+		const fs = new MemoryFileSystem();
+		const git = createGit({ fs, cwd: "/repo", now });
+		await git.exec("init", { env: IDENTITY_ENV });
+		await fs.writeFile("/repo/file.txt", "old\n");
+		await git.exec("add -A", { env: IDENTITY_ENV });
+		await git.exec('commit -m "base"', { env: IDENTITY_ENV });
+		const patch = [
+			"From: Alice <alice@example.com>",
+			"Subject: [PATCH] update",
+			"",
+			"---",
+			"diff --git a/file.txt b/file.txt",
+			"--- a/file.txt",
+			"+++ b/file.txt",
+			"@@ -1 +1 @@",
+			"-old",
+			"+new",
+			"",
+		].join("\n");
+
+		const result = await git.exec("am", { env: IDENTITY_ENV, stdin: patch });
+		const authorTime = await git.exec("log -1 --format=%at", { env: IDENTITY_ENV });
+
+		expect(result.exitCode).toBe(0);
+		expect(authorTime.stdout.trim()).toBe(String(FIXED_SEC));
+	});
 });
 
 describe("injected `now` capability — SDK path", () => {
@@ -95,5 +150,20 @@ describe("injected `now` capability — SDK path", () => {
 		const c = await readCommit(repo, hash);
 		expect(c.author.timestamp).toBe(FIXED_SEC);
 		expect(c.committer.timestamp).toBe(FIXED_SEC);
+	});
+
+	test("reflog fallback reads the clock once when identity is missing", async () => {
+		let calls = 0;
+		const repo = await freshRepo({
+			now: () => {
+				calls++;
+				return FIXED;
+			},
+		});
+
+		const identity = reflogIdentityFrom(repo, makeConfigView({}), new Map());
+
+		expect(identity.timestamp).toBe(FIXED_SEC);
+		expect(calls).toBe(1);
 	});
 });

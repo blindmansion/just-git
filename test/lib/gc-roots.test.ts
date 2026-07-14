@@ -22,13 +22,13 @@ function ctxFor(fs: MemoryFileSystem, gitDir: string): GitContext {
 	};
 }
 
-function oldEntry(newHash: string) {
+function oldEntry(newHash: string, timestamp = 1) {
 	return {
 		oldHash: "0".repeat(40),
 		newHash,
 		name: "Test",
 		email: "test@test.com",
-		timestamp: 1,
+		timestamp,
 		tz: "+0000",
 		message: "old",
 	};
@@ -78,6 +78,20 @@ describe("collectAllRoots across worktrees", () => {
 });
 
 describe("reflog expiry is repo-wide", () => {
+	test("uses the injected clock for the expiry cutoff", async () => {
+		const fs = new MemoryFileSystem();
+		await fs.mkdir(COMMON, { recursive: true });
+		const ctx = ctxFor(fs, COMMON);
+		ctx.capabilities = { now: () => new Date(1_000_000) };
+		await appendReflog(ctx, "HEAD", oldEntry("a".repeat(40), 899));
+		await appendReflog(ctx, "HEAD", oldEntry("b".repeat(40), 900));
+
+		await expireReflogs(ctx, 100);
+
+		const entries = await readReflogAt(fs, `${COMMON}/logs/HEAD`);
+		expect(entries.map((entry) => entry.timestamp)).toEqual([900]);
+	});
+
 	test("expiring from a linked worktree trims every worktree's HEAD reflog, like git reflog expire --all", async () => {
 		const fs = new MemoryFileSystem();
 		const siblingDir = `${COMMON}/worktrees/wt1`;

@@ -1,4 +1,5 @@
 import type { GitExtensions } from "../git.ts";
+import { clockNow } from "../lib/capabilities.ts";
 import { collectAllRoots } from "../lib/gc-roots.ts";
 import { clearDetachPoint } from "../lib/operation-state.ts";
 import { join } from "../lib/path.ts";
@@ -124,7 +125,7 @@ export async function expireReflogs(
 	gitCtx: GitContext,
 	expireAge: number = DEFAULT_REFLOG_EXPIRE_SECONDS,
 ): Promise<void> {
-	const cutoff = Math.floor(Date.now() / 1000) - expireAge;
+	const cutoff = Math.floor(clockNow(gitCtx.capabilities).getTime() / 1000) - expireAge;
 
 	await expireLogsDir(
 		gitCtx,

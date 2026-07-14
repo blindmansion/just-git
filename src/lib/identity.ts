@@ -52,9 +52,8 @@ export function resolveIdentityFrom(
 	const keys = ROLE_ENV[role];
 	const override = repo.capabilities?.identity;
 
-	const { timestamp, timezone } = parseDateEnv(env.get(keys.date), repo.capabilities?.now);
-
 	if (override?.locked) {
+		const { timestamp, timezone } = parseDateEnv(env.get(keys.date), repo.capabilities?.now);
 		return {
 			name: override.name,
 			email: override.email,
@@ -76,6 +75,7 @@ export function resolveIdentityFrom(
 		);
 	}
 
+	const { timestamp, timezone } = parseDateEnv(env.get(keys.date), repo.capabilities?.now);
 	return {
 		name,
 		email,
@@ -168,14 +168,14 @@ function parseDateEnv(
 	dateStr: string | undefined,
 	now?: () => Date,
 ): { timestamp: number; timezone: string } {
-	const fallback = {
+	const fallback = () => ({
 		timestamp: Math.floor((now?.() ?? new Date()).getTime() / 1000),
 		timezone: "+0000",
-	};
-	if (!dateStr) return fallback;
+	});
+	if (!dateStr) return fallback();
 
 	const s = dateStr.trim();
-	if (!s) return fallback;
+	if (!s) return fallback();
 
 	// @<epoch> — raw epoch with @ prefix
 	if (s.startsWith("@")) {
@@ -202,7 +202,7 @@ function parseDateEnv(
 		return { timestamp: Math.floor(ms / 1000), timezone: extractTimezone(s) };
 	}
 
-	return fallback;
+	return fallback();
 }
 
 /** Extract a timezone offset string from a date string. */

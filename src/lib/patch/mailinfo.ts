@@ -28,6 +28,8 @@ export interface MailInfoOptions {
 	scissors?: boolean;
 	/** `--keep-cr`: keep a trailing `\r` on body/patch lines (default strips). */
 	keepCr?: boolean;
+	/** Current time used when the message has no parseable `Date:` header. */
+	now?: () => Date;
 }
 
 /** One parsed message: the pieces `git am` needs to write a commit. */
@@ -48,6 +50,17 @@ export interface ParsedMail {
 /** Strip a single trailing `\r` (mbox lines split on `\n` keep a lone CR). */
 function chompCr(line: string): string {
 	return line.endsWith("\r") ? line.slice(0, -1) : line;
+}
+
+/** Format `Date#getTimezoneOffset()` as git's `+HHMM` / `-HHMM`. */
+function formatTimezone(offsetMinutes: number): string {
+	const sign = offsetMinutes <= 0 ? "+" : "-";
+	const abs = Math.abs(offsetMinutes);
+	const hours = Math.floor(abs / 60)
+		.toString()
+		.padStart(2, "0");
+	const minutes = (abs % 60).toString().padStart(2, "0");
+	return `${sign}${hours}${minutes}`;
 }
 
 /**
@@ -296,11 +309,15 @@ export function parseMail(raw: string, opts: MailInfoOptions = {}): ParsedMail {
 	const patchText = diffStart === -1 ? "" : bodyLines.slice(diffStart).join("\n");
 
 	const parsedDate = dateStr ? parseRFC2822(dateStr) : null;
+	const fallbackDate = !parsedDate && opts.now ? opts.now() : null;
 	const author: Identity = {
 		name,
 		email,
-		timestamp: parsedDate?.timestamp ?? 0,
-		timezone: parsedDate?.timezone ?? "+0000",
+		timestamp:
+			parsedDate?.timestamp ?? (fallbackDate ? Math.floor(fallbackDate.getTime() / 1000) : 0),
+		timezone:
+			parsedDate?.timezone ??
+			(fallbackDate ? formatTimezone(fallbackDate.getTimezoneOffset()) : "+0000"),
 	};
 
 	return {

@@ -84,6 +84,14 @@ describe("parseMail — headers & subject", () => {
 		expect(mail.author.timezone).toBe("+0000");
 	});
 
+	test("uses the supplied clock when the message has no Date header", () => {
+		const fixed = new Date("2024-01-02T03:04:05Z");
+		const raw = `From: Ada <ada@example.com>\n` + `Subject: [PATCH] undated\n\n` + `---\n${DIFF}`;
+		const mail = parseMail(raw, { now: () => fixed });
+
+		expect(mail.author.timestamp).toBe(Math.floor(fixed.getTime() / 1000));
+	});
+
 	test("strips a bracket prefix and a leading Re: by default", () => {
 		expect(parseMail(message({ subject: "[PATCH v3 2/5] Re: fix it" })).subject).toBe("fix it");
 	});
