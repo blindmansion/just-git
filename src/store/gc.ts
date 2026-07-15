@@ -2,7 +2,8 @@ import { findBestDeltas, type DeltaObject } from "../lib/pack/delta.ts";
 import { deflate } from "../lib/pack/zlib.ts";
 import { enumerateObjects } from "../lib/transport/object-walk.ts";
 import type { GitRepo, RawObject, RefEntry } from "../lib/types.ts";
-import type { DeltaObjectRow, Storage } from "./repo-store.ts";
+import type { RepoStorage } from "./repo-storage.ts";
+import type { DeltaObjectRow } from "./repo-store.ts";
 
 // ── Defaults ────────────────────────────────────────────────────────
 
@@ -85,8 +86,7 @@ export interface GcResult {
  * concurrent pushes that complete during the walk. Callers can retry.
  *
  * @param repo - The GitRepo handle (objectStore + refStore).
- * @param driver - The raw Storage backend (for listObjectHashes / deleteObjects / putDeltaObjects).
- * @param repoId - The repo ID in the storage backend.
+ * @param storage - Raw object and ref persistence scoped to this repo.
  * @param options - GC options.
  * @param forkRepos - Handles for any forks of this repo. Each fork's reachable
  *   closure (walked through its own handle, so fork-partition objects resolve)
@@ -96,8 +96,7 @@ export interface GcResult {
  */
 export async function gcRepo(
 	repo: GitRepo,
-	driver: Storage,
-	repoId: string,
+	storage: RepoStorage,
 	options?: GcOptions,
 	forkRepos?: ReadonlyArray<GitRepo>,
 ): Promise<GcResult> {
@@ -125,7 +124,7 @@ export async function gcRepo(
 		}
 	}
 
-	const allHashes = await driver.listObjectHashes(repoId);
+	const allHashes = await storage.listObjectHashes();
 	const unreachable: string[] = [];
 	for (const hash of allHashes) {
 		if (!reachable.has(hash)) unreachable.push(hash);
@@ -138,11 +137,10 @@ export async function gcRepo(
 	let bytesBefore: number | undefined;
 	let bytesAfter: number | undefined;
 	if (compact) {
-		bytesBefore = await maybeByteSize(driver, repoId);
+		bytesBefore = await maybeByteSize(storage);
 		const stats = await compactReachable(
 			repo,
-			driver,
-			repoId,
+			storage,
 			allHashes,
 			reachable,
 			window,
@@ -150,7 +148,7 @@ export async function gcRepo(
 			compress,
 		);
 		deltified = stats.deltified;
-		bytesAfter = await maybeByteSize(driver, repoId);
+		bytesAfter = await maybeByteSize(storage);
 	}
 
 	const afterRefs = await snapshotRefs(repo);
@@ -176,8 +174,8 @@ export async function gcRepo(
 		};
 	}
 
-	const deleted = await driver.deleteObjects(repoId, unreachable);
-	if (compact) bytesAfter = await maybeByteSize(driver, repoId);
+	const deleted = await storage.deleteObjects(unreachable);
+	if (compact) bytesAfter = await maybeByteSize(storage);
 	return { deleted, retained: reachable.size, deltified, bytesBefore, bytesAfter };
 }
 
@@ -194,8 +192,7 @@ export async function gcRepo(
  */
 async function compactReachable(
 	repo: GitRepo,
-	driver: Storage,
-	repoId: string,
+	storage: RepoStorage,
 	allHashes: ReadonlyArray<string>,
 	reachable: ReadonlySet<string>,
 	window: number,
@@ -247,7 +244,7 @@ async function compactReachable(
 		}
 	}
 
-	await driver.putDeltaObjects(repoId, rows);
+	await storage.putDeltaObjects(rows);
 	return { deltified };
 }
 
@@ -276,9 +273,9 @@ async function readAll(
 	return result;
 }
 
-async function maybeByteSize(driver: Storage, repoId: string): Promise<number | undefined> {
-	if (!driver.repoByteSize) return undefined;
-	return driver.repoByteSize(repoId);
+async function maybeByteSize(storage: RepoStorage): Promise<number | undefined> {
+	if (!storage.repoByteSize) return undefined;
+	return storage.repoByteSize();
 }
 
 async function snapshotRefs(repo: GitRepo): Promise<RefEntry[]> {

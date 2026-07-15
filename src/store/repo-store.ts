@@ -9,6 +9,7 @@ import { normalizeRef } from "../lib/types.ts";
 import { gcRepo } from "./gc.ts";
 import type { GcOptions, GcResult } from "./gc.ts";
 import { MemoryStorage } from "./memory-storage.ts";
+import { partitionStorage, type RepoStorage } from "./repo-storage.ts";
 import type {
 	GitRepo,
 	ObjectId,
@@ -430,9 +431,11 @@ export function createRepoStore(
 
 	async function buildRepo(repoId: string, override?: RepoCapabilities): Promise<GitRepo> {
 		const parentId = driver.getForkParent ? await driver.getForkParent(repoId) : null;
+		const own = partitionStorage(driver, repoId);
+		const parent = parentId ? partitionStorage(driver, parentId) : undefined;
 		const repo: GitRepo = {
-			objectStore: new AdaptedObjectStore(driver, repoId, parentId),
-			refStore: new AdaptedRefStore(driver, repoId),
+			objectStore: new AdaptedObjectStore(own, parent),
+			refStore: new AdaptedRefStore(own),
 		};
 		return withCapabilities(repo, mergeCapabilities(defaultCapabilities, override));
 	}
@@ -538,7 +541,7 @@ export function createRepoStore(
 		async gc(repoId: string, options?: GcOptions): Promise<GcResult> {
 			const repo = await requireRepo(repoId);
 			const forkRepos = await collectForkRepos(repoId);
-			return gcRepo(repo, driver, repoId, options, forkRepos);
+			return gcRepo(repo, partitionStorage(driver, repoId), options, forkRepos);
 		},
 	};
 }
@@ -593,15 +596,14 @@ class AdaptedObjectStore implements ObjectStore, DeferrableObjectStore {
 	private cache = new ObjectCache();
 
 	constructor(
-		private driver: Storage,
-		private repoId: string,
-		private parentId: string | null = null,
+		private own: RepoStorage,
+		private parent?: RepoStorage,
 	) {}
 
 	async write(type: ObjectType, content: Uint8Array): Promise<ObjectId> {
 		const data = envelope(type, content);
 		const hash = await sha1(data);
-		await this.driver.putObject(this.repoId, hash, type, content);
+		await this.own.putObject(hash, type, content);
 		return hash;
 	}
 
@@ -626,9 +628,9 @@ class AdaptedObjectStore implements ObjectStore, DeferrableObjectStore {
 
 	/** Fetch a stored row from the own partition, falling through to parent. */
 	private async fetchStored(hash: ObjectId): Promise<StoredObject | null> {
-		let obj = await this.driver.getObject(this.repoId, hash);
-		if (!obj && this.parentId) {
-			obj = await this.driver.getObject(this.parentId, hash);
+		let obj = await this.own.getObject(hash);
+		if (!obj && this.parent) {
+			obj = await this.parent.getObject(hash);
 		}
 		return obj;
 	}
@@ -671,14 +673,14 @@ class AdaptedObjectStore implements ObjectStore, DeferrableObjectStore {
 		}
 
 		if (missingOwn.length > 0) {
-			const ownStored = await this.loadStored(this.repoId, missingOwn);
+			const ownStored = await this.loadStored(this.own, missingOwn);
 			await this.decodeInto(ownStored, result);
 		}
 
-		if (this.parentId) {
+		if (this.parent) {
 			const missingParent = missingOwn.filter((hash) => !result.has(hash));
 			if (missingParent.length > 0) {
-				const parentStored = await this.loadStored(this.parentId, missingParent);
+				const parentStored = await this.loadStored(this.parent, missingParent);
 				await this.decodeInto(parentStored, result);
 			}
 		}
@@ -700,8 +702,8 @@ class AdaptedObjectStore implements ObjectStore, DeferrableObjectStore {
 	}
 
 	async exists(hash: ObjectId): Promise<boolean> {
-		if (await this.driver.hasObject(this.repoId, hash)) return true;
-		if (this.parentId) return !!(await this.driver.hasObject(this.parentId, hash));
+		if (await this.own.hasObject(hash)) return true;
+		if (this.parent) return !!(await this.parent.hasObject(hash));
 		return false;
 	}
 
@@ -719,14 +721,14 @@ class AdaptedObjectStore implements ObjectStore, DeferrableObjectStore {
 		}
 
 		if (missingOwn.length > 0) {
-			const ownSet = await this.checkObjects(this.repoId, missingOwn);
+			const ownSet = await this.checkObjects(this.own, missingOwn);
 			for (const hash of ownSet) present.add(hash);
 		}
 
-		if (this.parentId) {
+		if (this.parent) {
 			const missingParent = missingOwn.filter((hash) => !present.has(hash));
 			if (missingParent.length > 0) {
-				const parentSet = await this.checkObjects(this.parentId, missingParent);
+				const parentSet = await this.checkObjects(this.parent, missingParent);
 				for (const hash of parentSet) present.add(hash);
 			}
 		}
@@ -778,7 +780,7 @@ class AdaptedObjectStore implements ObjectStore, DeferrableObjectStore {
 		batch: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
 	): Promise<string[]> {
 		if (batch.length === 0) return [];
-		return await this.driver.putObjects(this.repoId, batch);
+		return await this.own.putObjects(batch);
 	}
 
 	async ingestPack(packData: Uint8Array): Promise<number> {
@@ -795,49 +797,49 @@ class AdaptedObjectStore implements ObjectStore, DeferrableObjectStore {
 
 	async deleteObjects(hashes: ReadonlyArray<string>): Promise<number> {
 		if (hashes.length === 0) return 0;
-		return this.driver.deleteObjects(this.repoId, hashes);
+		return this.own.deleteObjects(hashes);
 	}
 
 	async findByPrefix(prefix: string): Promise<ObjectId[]> {
 		if (prefix.length < 4) return [];
-		const own = await this.driver.findObjectsByPrefix(this.repoId, prefix);
-		if (!this.parentId) return Array.from(own);
-		const parent = await this.driver.findObjectsByPrefix(this.parentId, prefix);
+		const own = await this.own.findObjectsByPrefix(prefix);
+		if (!this.parent) return Array.from(own);
+		const parent = await this.parent.findObjectsByPrefix(prefix);
 		const set = new Set(own);
 		for (const h of parent) set.add(h);
 		return Array.from(set);
 	}
 
 	private async loadStored(
-		repoId: string,
+		storage: RepoStorage,
 		hashes: ReadonlyArray<ObjectId>,
 	): Promise<Map<ObjectId, StoredObject>> {
 		if (hashes.length === 0) return new Map();
-		if (this.driver.getObjects) {
-			return await this.driver.getObjects(repoId, hashes);
+		if (storage.getObjects) {
+			return await storage.getObjects(hashes);
 		}
 
 		const result = new Map<ObjectId, StoredObject>();
 		for (const hash of hashes) {
-			const obj = await this.driver.getObject(repoId, hash);
+			const obj = await storage.getObject(hash);
 			if (obj) result.set(hash, obj);
 		}
 		return result;
 	}
 
 	private async checkObjects(
-		repoId: string,
+		storage: RepoStorage,
 		hashes: ReadonlyArray<ObjectId>,
 	): Promise<Set<ObjectId>> {
 		if (hashes.length === 0) return new Set();
-		if (this.driver.hasObjects) {
-			const rows = await this.driver.hasObjects(repoId, hashes);
+		if (storage.hasObjects) {
+			const rows = await storage.hasObjects(hashes);
 			return new Set(rows as Set<ObjectId>);
 		}
 
 		const result = new Set<ObjectId>();
 		for (const hash of hashes) {
-			if (await this.driver.hasObject(repoId, hash)) result.add(hash);
+			if (await storage.hasObject(hash)) result.add(hash);
 		}
 		return result;
 	}
@@ -846,34 +848,28 @@ class AdaptedObjectStore implements ObjectStore, DeferrableObjectStore {
 // ── AdaptedRefStore (private) ───────────────────────────────────────
 
 class AdaptedRefStore implements RefStore {
-	constructor(
-		private driver: Storage,
-		private repoId: string,
-	) {}
+	constructor(private storage: RepoStorage) {}
 
 	async readRef(name: string): Promise<Ref | null> {
-		return (await this.driver.getRef(this.repoId, name)) ?? null;
+		return (await this.storage.getRef(name)) ?? null;
 	}
 
 	async writeRef(name: string, refOrHash: Ref | string): Promise<void> {
-		await this.driver.putRef(this.repoId, name, normalizeRef(refOrHash));
+		await this.storage.putRef(name, normalizeRef(refOrHash));
 	}
 
 	async deleteRef(name: string): Promise<void> {
-		await this.driver.removeRef(this.repoId, name);
+		await this.storage.removeRef(name);
 	}
 
 	async listRefs(prefix?: string): Promise<RefEntry[]> {
-		const raw = await this.driver.listRefs(this.repoId, prefix);
+		const raw = await this.storage.listRefs(prefix);
 		const results: RefEntry[] = [];
 		for (const entry of raw) {
 			if (entry.ref.type === "direct") {
 				results.push({ name: entry.name, hash: entry.ref.hash });
 			} else if (entry.ref.type === "symbolic") {
-				const resolved = await resolveRefChain(
-					(n) => this.driver.getRef(this.repoId, n),
-					entry.ref.target,
-				);
+				const resolved = await resolveRefChain((n) => this.storage.getRef(n), entry.ref.target);
 				if (resolved) results.push({ name: entry.name, hash: resolved });
 			}
 		}
@@ -885,7 +881,7 @@ class AdaptedRefStore implements RefStore {
 		expectedOldHash: string | null,
 		newRef: Ref | null,
 	): Promise<boolean> {
-		return !!(await this.driver.atomicRefUpdate(this.repoId, (ops) => {
+		return !!(await this.storage.atomicRefUpdate((ops) => {
 			return chain(ops.getRef(name), (current) => {
 				const hashResult: MaybeAsync<string | null> = !current
 					? null

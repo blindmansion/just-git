@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createServer } from "../../src/server/handler.ts";
 import { MemoryStorage } from "../../src/store/memory-storage.ts";
 import { gcRepo } from "../../src/store/gc.ts";
+import { partitionStorage } from "../../src/store/repo-storage.ts";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { resolveRef } from "../../src/repo/reading.ts";
 import type { Identity } from "../../src/lib/types.ts";
@@ -178,7 +179,7 @@ describe("server.gc", () => {
 			return result;
 		};
 
-		const result = await gcRepo(repo, driver, "test");
+		const result = await gcRepo(repo, partitionStorage(driver, "test"));
 		expect(result.aborted).toBe(true);
 		expect(result.deleted).toBe(0);
 	});

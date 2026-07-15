@@ -6,6 +6,7 @@
 
 // Manager construction
 export { createRepoStore } from "./repo-store.ts";
+export { partitionStorage } from "./repo-storage.ts";
 
 // Manager + backend contract types
 export type {
@@ -20,6 +21,8 @@ export type {
 	RawRefEntry,
 	MaybeAsync,
 } from "./repo-store.ts";
+export type { RepoStorage } from "./repo-storage.ts";
+export type { RepoPool } from "./repo-pool.ts";
 
 // Maintenance — run via `RepoStore.gc` (fork-safe). The underlying free
 // function is intentionally not exported; go through the manager.
