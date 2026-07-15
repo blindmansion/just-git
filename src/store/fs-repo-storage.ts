@@ -33,10 +33,6 @@ export async function createFsRepoStorage(
 	await cleanupBareRepoStages(fs, root);
 	if (await fs.exists(root)) {
 		await validateBareRepoLayout(fs, root);
-		// Reap abandoned ref-lock claimants left by a crashed lock release.
-		// The lock file itself is never removed here; that requires explicit
-		// recovery through recoverFsRepoStorage.
-		await cleanupRefLockClaimants(fs, root);
 	} else {
 		await createBareRepoLayout(fs, root);
 	}
@@ -45,8 +41,8 @@ export async function createFsRepoStorage(
 }
 
 /**
- * Explicitly recover a repository after the operator has established that no
- * process still owns its durable ref lock.
+ * Explicitly recover a repository after the operator has excluded all ref
+ * operations, including acquisitions that have not published their lock yet.
  */
 export async function recoverFsRepoStorage(
 	fs: DurableFileSystem,
@@ -56,7 +52,7 @@ export async function recoverFsRepoStorage(
 	await validateBareRepoLayout(fs, root);
 	const lockPath = join(root, REF_LOCK);
 	if (await fs.exists(lockPath)) await removeFileDurable(fs, lockPath);
-	// The remaining claimant sweep is delegated to createFsRepoStorage.
+	await cleanupRefLockClaimants(fs, root);
 	return createFsRepoStorage(fs, root);
 }
 

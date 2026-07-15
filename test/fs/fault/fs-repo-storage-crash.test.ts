@@ -38,7 +38,7 @@ describe("filesystem bare repository crash durability", () => {
 		});
 	});
 
-	test("ordinary startup reaps abandoned ref-lock claimants without touching refs", async () => {
+	test("explicit recovery reaps abandoned ref-lock claimants without touching refs", async () => {
 		const { CrashableDurableFileSystem } = await import("./crashable-durable-fs.ts");
 		const fs = new CrashableDurableFileSystem();
 		const repo = await createFsRepoStorage(fs, REPO);
@@ -46,7 +46,7 @@ describe("filesystem bare repository crash durability", () => {
 		await replaceFileDurable(fs, `${REPO}/.just-git-ref.lock.tmp-abandoned`, "");
 		fs.checkpoint();
 
-		const reopened = await createFsRepoStorage(fs, REPO);
+		const reopened = await recoverFsRepoStorage(fs, REPO);
 		expect(await fs.exists(`${REPO}/.just-git-ref.lock.tmp-abandoned`)).toBe(false);
 		expect(await fs.exists(`${REPO}/.just-git-ref.lock`)).toBe(false);
 		expect(await reopened.getRef("refs/heads/main")).toEqual({
@@ -55,7 +55,7 @@ describe("filesystem bare repository crash durability", () => {
 		});
 	});
 
-	test("ordinary startup never breaks a held ref lock while reaping claimants", async () => {
+	test("ordinary startup preserves a held ref lock and its claimants", async () => {
 		const { CrashableDurableFileSystem } = await import("./crashable-durable-fs.ts");
 		const fs = new CrashableDurableFileSystem();
 		await createFsRepoStorage(fs, REPO);
@@ -65,7 +65,49 @@ describe("filesystem bare repository crash durability", () => {
 
 		await createFsRepoStorage(fs, REPO);
 		expect(await fs.exists(`${REPO}/.just-git-ref.lock`)).toBe(true);
-		expect(await fs.exists(`${REPO}/.just-git-ref.lock.tmp-abandoned`)).toBe(false);
+		expect(await fs.exists(`${REPO}/.just-git-ref.lock.tmp-abandoned`)).toBe(true);
+	});
+
+	test("ordinary open cannot remove a live ref-lock claimant before publication", async () => {
+		const { CrashableDurableFileSystem } = await import("./crashable-durable-fs.ts");
+		const fs = new CrashableDurableFileSystem();
+		const repo = await createFsRepoStorage(fs, REPO);
+		const originalFsync = fs.fsync.bind(fs);
+		let releaseClaimant!: () => void;
+		const claimantReleased = new Promise<void>((resolve) => {
+			releaseClaimant = resolve;
+		});
+		let reportClaimant!: (path: string) => void;
+		const claimantReady = new Promise<string>((resolve) => {
+			reportClaimant = resolve;
+		});
+		let paused = false;
+
+		fs.fsync = async (path) => {
+			await originalFsync(path);
+			if (!paused && path.startsWith(`${REPO}/.just-git-ref.lock.tmp-`)) {
+				paused = true;
+				reportClaimant(path);
+				await claimantReleased;
+			}
+		};
+
+		const update = repo.putRef("refs/heads/main", {
+			type: "direct",
+			hash: "a".repeat(40),
+		});
+		const claimant = await claimantReady;
+		expect(await fs.exists(claimant)).toBe(true);
+
+		await createFsRepoStorage(fs, REPO);
+		expect(await fs.exists(claimant)).toBe(true);
+
+		releaseClaimant();
+		await update;
+		expect(await repo.getRef("refs/heads/main")).toEqual({
+			type: "direct",
+			hash: "a".repeat(40),
+		});
 	});
 
 	test("durable ref locks require explicit operator recovery", async () => {
