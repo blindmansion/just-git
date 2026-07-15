@@ -128,8 +128,12 @@ export async function installPackPair(
 	indexPath: string,
 	indexBytes: Uint8Array,
 ): Promise<void> {
-	await createFileDurable(fs, packPath, packBytes);
-	await createFileDurable(fs, indexPath, indexBytes);
+	if (!(await createFileDurable(fs, packPath, packBytes))) {
+		await assertImmutableFileContent(fs, packPath, packBytes);
+	}
+	if (!(await createFileDurable(fs, indexPath, indexBytes))) {
+		await assertImmutableFileContent(fs, indexPath, indexBytes);
+	}
 }
 
 /** Ensure a directory, using durable publication when the filesystem supports it. */
@@ -253,4 +257,23 @@ function isAlreadyExistsError(error: unknown): boolean {
 	if (typeof error !== "object" || error === null) return false;
 	if ("code" in error && (error as { code?: unknown }).code === "EEXIST") return true;
 	return "message" in error && /^EEXIST\b/.test(String((error as { message?: unknown }).message));
+}
+
+async function assertImmutableFileContent(
+	fs: FileSystem,
+	path: string,
+	expected: Uint8Array,
+): Promise<void> {
+	const actual = await fs.readFileBuffer(path);
+	if (actual.byteLength === expected.byteLength) {
+		let equal = true;
+		for (let i = 0; i < actual.byteLength; i++) {
+			if (actual[i] !== expected[i]) {
+				equal = false;
+				break;
+			}
+		}
+		if (equal) return;
+	}
+	throw new Error(`immutable file content mismatch at '${path}'`);
 }
