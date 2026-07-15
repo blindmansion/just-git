@@ -2,7 +2,8 @@ import type { GitRepo, RepoCapabilities, TransportResolver } from "../lib/types.
 import type { Rejection } from "../hooks.ts";
 import type { NodeHttpRequest, NodeHttpResponse } from "../node-http.ts";
 import type { CommitOptions, CommitResult } from "../repo/writing.ts";
-import type { Storage, CreateRepoOptions } from "../store/repo-store.ts";
+import type { RepoPool } from "../store/repo-pool.ts";
+import type { CreateRepoOptions } from "../store/repo-store.ts";
 import type { GcOptions, GcResult } from "../store/gc.ts";
 import type { NetworkPolicy } from "../lib/transport/transport.ts";
 export type { NodeHttpRequest, NodeHttpResponse } from "../node-http.ts";
@@ -131,7 +132,7 @@ export interface ServerPolicy {
 
 export interface GitServerConfig<A = Auth> {
 	/**
-	 * Storage backend for git object and ref persistence.
+	 * Multi-repo storage pool for git object and ref persistence.
 	 *
 	 * The server calls `createRepoStore(storage)` internally to build the
 	 * git-aware adapter. Users provide the storage backend; they never see
@@ -139,7 +140,7 @@ export interface GitServerConfig<A = Auth> {
 	 *
 	 * Defaults to {@link MemoryStorage} when omitted.
 	 */
-	storage?: Storage;
+	storage?: RepoPool;
 
 	/**
 	 * Map a request path to a repo ID.

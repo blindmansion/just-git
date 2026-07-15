@@ -5,9 +5,10 @@ import type {
 	RawRefEntry,
 	RefOps,
 	RefRow,
-	Storage,
 	StoredObject,
 } from "./repo-store.ts";
+import type { RepoPool } from "./repo-pool.ts";
+import type { RepoStorage } from "./repo-storage.ts";
 
 // ── Durable Object SQLite types ─────────────────────────────────────
 
@@ -129,7 +130,7 @@ function first(cursor: DOSqlCursor): any {
  * }
  * ```
  */
-export class DurableObjectSqliteStorage implements Storage {
+export class DurableObjectSqliteStorage implements RepoPool {
 	private sql: DOSqlApi;
 
 	constructor(private storage: DurableObjectStorageSql) {
@@ -143,7 +144,7 @@ export class DurableObjectSqliteStorage implements Storage {
 		return first(this.sql.exec(SQL.repoExists, repoId)) !== null;
 	}
 
-	insertRepo(repoId: string): void {
+	createRepo(repoId: string): void {
 		this.sql.exec(SQL.repoInsert, repoId);
 	}
 
@@ -154,13 +155,34 @@ export class DurableObjectSqliteStorage implements Storage {
 		this.sql.exec(SQL.forkDelete, repoId);
 	}
 
+	open(repoId: string): RepoStorage {
+		return {
+			getObject: (hash) => this.getObject(repoId, hash),
+			getObjects: (hashes) => this.getObjects(repoId, hashes),
+			putObject: (hash, type, content) => this.putObject(repoId, hash, type, content),
+			putObjects: (objects) => this.putObjects(repoId, objects),
+			putDeltaObjects: (rows) => this.putDeltaObjects(repoId, rows),
+			hasObject: (hash) => this.hasObject(repoId, hash),
+			hasObjects: (hashes) => this.hasObjects(repoId, hashes),
+			findObjectsByPrefix: (prefix) => this.findObjectsByPrefix(repoId, prefix),
+			listObjectHashes: () => this.listObjectHashes(repoId),
+			repoByteSize: () => this.repoByteSize(repoId),
+			deleteObjects: (hashes) => this.deleteObjects(repoId, hashes),
+			getRef: (name) => this.getRef(repoId, name),
+			putRef: (name, ref) => this.putRef(repoId, name, ref),
+			removeRef: (name) => this.removeRef(repoId, name),
+			listRefs: (prefix) => this.listRefs(repoId, prefix),
+			atomicRefUpdate: (fn) => this.atomicRefUpdate(repoId, fn),
+		};
+	}
+
 	// ── Objects ─────────────────────────────────────────────────
 
-	getObject(repoId: string, hash: string): StoredObject | null {
+	private getObject(repoId: string, hash: string): StoredObject | null {
 		return rowToStored(first(this.sql.exec(SQL.objRead, repoId, hash)));
 	}
 
-	getObjects(repoId: string, hashes: ReadonlyArray<string>): Map<string, StoredObject> {
+	private getObjects(repoId: string, hashes: ReadonlyArray<string>): Map<string, StoredObject> {
 		const uniqueHashes = Array.from(new Set(hashes));
 		if (uniqueHashes.length === 0) return new Map();
 		if (uniqueHashes.length === 1) {
@@ -182,11 +204,11 @@ export class DurableObjectSqliteStorage implements Storage {
 		return result;
 	}
 
-	putObject(repoId: string, hash: string, type: string, content: Uint8Array): void {
+	private putObject(repoId: string, hash: string, type: string, content: Uint8Array): void {
 		this.sql.exec(SQL.objInsert, repoId, hash, type, content);
 	}
 
-	putObjects(
+	private putObjects(
 		repoId: string,
 		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
 	): string[] {
@@ -200,7 +222,7 @@ export class DurableObjectSqliteStorage implements Storage {
 		return inserted;
 	}
 
-	putDeltaObjects(repoId: string, rows: ReadonlyArray<DeltaObjectRow>): void {
+	private putDeltaObjects(repoId: string, rows: ReadonlyArray<DeltaObjectRow>): void {
 		if (rows.length === 0) return;
 		this.storage.transactionSync(() => {
 			for (const row of rows) {
@@ -218,11 +240,11 @@ export class DurableObjectSqliteStorage implements Storage {
 		});
 	}
 
-	hasObject(repoId: string, hash: string): boolean {
+	private hasObject(repoId: string, hash: string): boolean {
 		return first(this.sql.exec(SQL.objExists, repoId, hash)) !== null;
 	}
 
-	hasObjects(repoId: string, hashes: ReadonlyArray<string>): Set<string> {
+	private hasObjects(repoId: string, hashes: ReadonlyArray<string>): Set<string> {
 		const uniqueHashes = Array.from(new Set(hashes));
 		if (uniqueHashes.length === 0) return new Set();
 		if (uniqueHashes.length === 1) {
@@ -238,26 +260,26 @@ export class DurableObjectSqliteStorage implements Storage {
 		return new Set(rows.map((row) => row.hash));
 	}
 
-	findObjectsByPrefix(repoId: string, prefix: string): string[] {
+	private findObjectsByPrefix(repoId: string, prefix: string): string[] {
 		return this.sql
 			.exec(SQL.objPrefix, repoId, `${prefix}*`)
 			.toArray()
 			.map((r) => r.hash);
 	}
 
-	listObjectHashes(repoId: string): string[] {
+	private listObjectHashes(repoId: string): string[] {
 		return this.sql
 			.exec(SQL.objListHashes, repoId)
 			.toArray()
 			.map((r) => r.hash);
 	}
 
-	repoByteSize(repoId: string): number {
+	private repoByteSize(repoId: string): number {
 		const row = first(this.sql.exec(SQL.objByteSize, repoId));
 		return row ? Number(row.size) : 0;
 	}
 
-	deleteObjects(repoId: string, hashes: ReadonlyArray<string>): number {
+	private deleteObjects(repoId: string, hashes: ReadonlyArray<string>): number {
 		if (hashes.length === 0) return 0;
 		const uniqueHashes = Array.from(new Set(hashes));
 		const existing = this.hasObjects(repoId, uniqueHashes);
@@ -274,11 +296,11 @@ export class DurableObjectSqliteStorage implements Storage {
 
 	// ── Refs ────────────────────────────────────────────────────
 
-	getRef(repoId: string, name: string): Ref | null {
+	private getRef(repoId: string, name: string): Ref | null {
 		return rowToRef(first(this.sql.exec(SQL.refRead, repoId, name)));
 	}
 
-	putRef(repoId: string, name: string, ref: Ref): void {
+	private putRef(repoId: string, name: string, ref: Ref): void {
 		if (ref.type === "symbolic") {
 			this.sql.exec(SQL.refWrite, repoId, name, "symbolic", null, ref.target);
 		} else {
@@ -286,11 +308,11 @@ export class DurableObjectSqliteStorage implements Storage {
 		}
 	}
 
-	removeRef(repoId: string, name: string): void {
+	private removeRef(repoId: string, name: string): void {
 		this.sql.exec(SQL.refDelete, repoId, name);
 	}
 
-	listRefs(repoId: string, prefix?: string): RawRefEntry[] {
+	private listRefs(repoId: string, prefix?: string): RawRefEntry[] {
 		const rows: RefRow[] = prefix
 			? this.sql.exec(SQL.refList, repoId, `${prefix}*`).toArray()
 			: this.sql.exec(SQL.refListAll, repoId).toArray();
@@ -300,7 +322,7 @@ export class DurableObjectSqliteStorage implements Storage {
 		});
 	}
 
-	atomicRefUpdate<T>(repoId: string, fn: (ops: RefOps) => T): T {
+	private atomicRefUpdate<T>(repoId: string, fn: (ops: RefOps) => T): T {
 		return this.storage.transactionSync(() => {
 			return fn({
 				getRef: (name) => rowToRef(first(this.sql.exec(SQL.refRead, repoId, name))),
@@ -320,16 +342,16 @@ export class DurableObjectSqliteStorage implements Storage {
 
 	// ── Forks ───────────────────────────────────────────────────
 
-	forkRepo(sourceId: string, targetId: string): void {
+	fork(sourceId: string, targetId: string): void {
 		this.sql.exec(SQL.forkInsert, targetId, sourceId);
 	}
 
-	getForkParent(repoId: string): string | null {
+	parentOf(repoId: string): string | null {
 		const row = first(this.sql.exec(SQL.forkGetParent, repoId));
 		return row?.parent_id ?? null;
 	}
 
-	listForks(repoId: string): string[] {
+	forksOf(repoId: string): string[] {
 		return this.sql
 			.exec(SQL.forkListChildren, repoId)
 			.toArray()

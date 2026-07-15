@@ -88,18 +88,17 @@ describe("BunSqliteStorage", () => {
 
 		test("deleteObjects counts only hashes actually removed", () => {
 			const driver = new BunSqliteStorage(db);
-			driver.insertRepo("test-repo-delete");
+			driver.createRepo("test-repo-delete");
+			const repoStorage = driver.open("test-repo-delete");
 			const alpha = encoder.encode("alpha");
 			const bravo = encoder.encode("bravo");
 
-			driver.putObject("test-repo-delete", "a".repeat(40), "blob", alpha);
-			driver.putObject("test-repo-delete", "b".repeat(40), "blob", bravo);
+			repoStorage.putObject("a".repeat(40), "blob", alpha);
+			repoStorage.putObject("b".repeat(40), "blob", bravo);
 
-			expect(
-				driver.deleteObjects("test-repo-delete", ["a".repeat(40), "a".repeat(40), "nope"]),
-			).toBe(1);
-			expect(driver.hasObject("test-repo-delete", "a".repeat(40))).toBe(false);
-			expect(driver.hasObject("test-repo-delete", "b".repeat(40))).toBe(true);
+			expect(repoStorage.deleteObjects(["a".repeat(40), "a".repeat(40), "nope"])).toBe(1);
+			expect(repoStorage.hasObject("a".repeat(40))).toBe(false);
+			expect(repoStorage.hasObject("b".repeat(40))).toBe(true);
 		});
 
 		test("findByPrefix", async () => {
@@ -475,22 +474,22 @@ describe("BunSqliteStorage", () => {
 	// ── Forks ────────────────────────────────────────────────────
 
 	describe("Forks", () => {
-		test("forkRepo records relationship", async () => {
+		test("fork records relationship", async () => {
 			const driver = new BunSqliteStorage(db);
-			driver.insertRepo("upstream");
-			driver.forkRepo("upstream", "fork-a");
+			driver.createRepo("upstream");
+			driver.fork("upstream", "fork-a");
 
-			expect(driver.getForkParent("fork-a")).toBe("upstream");
-			expect(driver.getForkParent("upstream")).toBeNull();
+			expect(driver.parentOf("fork-a")).toBe("upstream");
+			expect(driver.parentOf("upstream")).toBeNull();
 		});
 
-		test("listForks returns child IDs", async () => {
+		test("forksOf returns child IDs", async () => {
 			const driver = new BunSqliteStorage(db);
-			driver.insertRepo("upstream");
-			driver.forkRepo("upstream", "fork-a");
-			driver.forkRepo("upstream", "fork-b");
+			driver.createRepo("upstream");
+			driver.fork("upstream", "fork-a");
+			driver.fork("upstream", "fork-b");
 
-			const forks = driver.listForks("upstream");
+			const forks = driver.forksOf("upstream");
 			expect(forks).toContain("fork-a");
 			expect(forks).toContain("fork-b");
 			expect(forks.length).toBe(2);
@@ -498,14 +497,14 @@ describe("BunSqliteStorage", () => {
 
 		test("deleteRepo cleans up fork record", async () => {
 			const driver = new BunSqliteStorage(db);
-			driver.insertRepo("upstream");
-			driver.insertRepo("fork-a");
-			driver.forkRepo("upstream", "fork-a");
+			driver.createRepo("upstream");
+			driver.createRepo("fork-a");
+			driver.fork("upstream", "fork-a");
 
-			expect(driver.getForkParent("fork-a")).toBe("upstream");
+			expect(driver.parentOf("fork-a")).toBe("upstream");
 			driver.deleteRepo("fork-a");
-			expect(driver.getForkParent("fork-a")).toBeNull();
-			expect(driver.listForks("upstream").length).toBe(0);
+			expect(driver.parentOf("fork-a")).toBeNull();
+			expect(driver.forksOf("upstream").length).toBe(0);
 		});
 
 		test("fork with adapter — object fallback works", async () => {
@@ -524,7 +523,7 @@ describe("BunSqliteStorage", () => {
 			expect(new TextDecoder().decode(obj.content)).toBe("hello from upstream");
 
 			// Fork's own partition is empty
-			expect(driver.listObjectHashes("fork-a").length).toBe(0);
+			expect((await driver.open("fork-a").listObjectHashes()).length).toBe(0);
 		});
 	});
 });

@@ -8,8 +8,9 @@ import { sha1 } from "../lib/sha1.ts";
 import { normalizeRef } from "../lib/types.ts";
 import { gcRepo } from "./gc.ts";
 import type { GcOptions, GcResult } from "./gc.ts";
-import { MemoryStorage } from "./memory-storage.ts";
-import { partitionStorage, type RepoStorage } from "./repo-storage.ts";
+import { createMemoryRepoStorage, MemoryStorage } from "./memory-storage.ts";
+import type { RepoPool } from "./repo-pool.ts";
+import type { RepoStorage } from "./repo-storage.ts";
 import type {
 	GitRepo,
 	ObjectId,
@@ -52,7 +53,7 @@ export type ObjectEncoding = "raw" | "raw-zlib" | "delta" | "delta-zlib";
 
 /**
  * The stored representation of a git object as returned by a backend's
- * {@link Storage.getObject} / {@link Storage.getObjects}.
+ * {@link RepoStorage.getObject} / {@link RepoStorage.getObjects}.
  *
  * Backends persist objects verbatim and report how the `content` bytes are
  * encoded; the adapter (`createRepoStore`) reconstructs the raw object body
@@ -74,7 +75,7 @@ export interface StoredObject {
 }
 
 /**
- * A row written by {@link Storage.putDeltaObjects} during compaction.
+ * A row written by {@link RepoStorage.putDeltaObjects} during compaction.
  *
  * A row is either a self-contained object (`raw`/`raw-zlib`) or a delta
  * (`delta`/`delta-zlib`) that names its `baseHash`. The hash is always of
@@ -124,7 +125,7 @@ export interface CreateRepoOptions {
  * is passed through server code.
  *
  * Construct a `RepoStore` with {@link createRepoStore}. The adapter
- * adds all git-aware behavior on top of a raw {@link Storage} backend.
+ * adds all git-aware behavior on top of a raw {@link RepoPool} backend.
  */
 export interface RepoStore {
 	/**
@@ -192,7 +193,7 @@ export interface RawRefEntry {
 }
 
 /**
- * Ref operations available inside a {@link Storage.atomicRefUpdate} callback.
+ * Ref operations available inside a {@link RepoStorage.atomicRefUpdate} callback.
  *
  * The storage backend wraps the callback in a transaction (or lock), and the
  * adapter layer uses these operations to implement compare-and-swap with
@@ -410,13 +411,13 @@ export interface RepoStoreOptions {
 }
 
 /**
- * Build a {@link RepoStore} from a {@link Storage} backend.
+ * Build a {@link RepoStore} from a {@link RepoPool} backend.
  *
  * The returned adapter handles all git-aware logic (object hashing,
  * pack ingestion, batch object lookup fallback, symref resolution, and CAS
  * on top of the backend's raw I/O.
  *
- * Defaults to {@link MemoryStorage} when no driver is supplied, mirroring
+ * Defaults to {@link MemoryStorage} when no pool is supplied, mirroring
  * `createServer`. In-memory data is lost when the process exits — pass an
  * explicit backend for persistence.
  *
@@ -424,24 +425,20 @@ export interface RepoStoreOptions {
  * signing, identity, config, …) to every handle the store returns.
  */
 export function createRepoStore(
-	driver: Storage = new MemoryStorage(),
+	pool: RepoPool = new MemoryStorage(),
 	options?: RepoStoreOptions,
 ): RepoStore {
 	const defaultCapabilities = options?.capabilities;
 
 	async function buildRepo(repoId: string, override?: RepoCapabilities): Promise<GitRepo> {
-		const parentId = driver.getForkParent ? await driver.getForkParent(repoId) : null;
-		const own = partitionStorage(driver, repoId);
-		const parent = parentId ? partitionStorage(driver, parentId) : undefined;
-		const repo: GitRepo = {
-			objectStore: new AdaptedObjectStore(own, parent),
-			refStore: new AdaptedRefStore(own),
-		};
-		return withCapabilities(repo, mergeCapabilities(defaultCapabilities, override));
+		const parentId = pool.parentOf ? await pool.parentOf(repoId) : null;
+		const own = await pool.open(repoId);
+		const parent = parentId ? await pool.open(parentId) : undefined;
+		return buildGitRepo(own, parent, mergeCapabilities(defaultCapabilities, override));
 	}
 
 	async function requireRepo(repoId: string): Promise<GitRepo> {
-		if (!(await driver.hasRepo(repoId))) throw new Error(`repo '${repoId}' not found`);
+		if (!(await pool.hasRepo(repoId))) throw new Error(`repo '${repoId}' not found`);
 		return buildRepo(repoId);
 	}
 
@@ -454,14 +451,14 @@ export function createRepoStore(
 	 * backends without fork support — forks are gc'd as themselves.
 	 */
 	async function collectForkRepos(repoId: string): Promise<GitRepo[] | undefined> {
-		if (!driver.listForks || !driver.getForkParent) return undefined;
-		const parentId = await driver.getForkParent(repoId);
+		if (!pool.forksOf || !pool.parentOf) return undefined;
+		const parentId = await pool.parentOf(repoId);
 		if (parentId) return undefined;
-		const forkIds = await driver.listForks(repoId);
+		const forkIds = await pool.forksOf(repoId);
 		if (forkIds.length === 0) return undefined;
 		const forks: GitRepo[] = [];
 		for (const forkId of forkIds) {
-			if (!(await driver.hasRepo(forkId))) continue;
+			if (!(await pool.hasRepo(forkId))) continue;
 			forks.push(await buildRepo(forkId));
 		}
 		return forks.length > 0 ? forks : undefined;
@@ -469,11 +466,12 @@ export function createRepoStore(
 
 	return {
 		async createRepo(repoId: string, options?: CreateRepoOptions): Promise<GitRepo> {
-			const exists = await driver.hasRepo(repoId);
+			const exists = await pool.hasRepo(repoId);
 			if (exists) throw new Error(`repo '${repoId}' already exists`);
 			const defaultBranch = options?.defaultBranch ?? "main";
-			await driver.insertRepo(repoId);
-			await driver.putRef(repoId, "HEAD", {
+			await pool.createRepo(repoId);
+			const storage = await pool.open(repoId);
+			await storage.putRef("HEAD", {
 				type: "symbolic",
 				target: `refs/heads/${defaultBranch}`,
 			});
@@ -481,19 +479,19 @@ export function createRepoStore(
 		},
 
 		async repo(repoId: string, override?: RepoCapabilities): Promise<GitRepo | null> {
-			const exists = await driver.hasRepo(repoId);
+			const exists = await pool.hasRepo(repoId);
 			if (!exists) return null;
 			return buildRepo(repoId, override);
 		},
 
 		async deleteRepo(repoId: string): Promise<void> {
-			if (driver.listForks) {
-				const forks = await driver.listForks(repoId);
+			if (pool.forksOf) {
+				const forks = await pool.forksOf(repoId);
 				if (forks.length > 0) {
 					throw new Error(`cannot delete repo '${repoId}': has ${forks.length} active fork(s)`);
 				}
 			}
-			await driver.deleteRepo(repoId);
+			await pool.deleteRepo(repoId);
 		},
 
 		async forkRepo(
@@ -501,35 +499,37 @@ export function createRepoStore(
 			targetId: string,
 			options?: CreateRepoOptions,
 		): Promise<GitRepo> {
-			if (!driver.forkRepo || !driver.getForkParent || !driver.listForks) {
+			if (!pool.fork || !pool.parentOf || !pool.forksOf) {
 				throw new Error("storage backend does not support forks");
 			}
 
-			const sourceExists = await driver.hasRepo(sourceId);
+			const sourceExists = await pool.hasRepo(sourceId);
 			if (!sourceExists) throw new Error(`source repo '${sourceId}' not found`);
-			const targetExists = await driver.hasRepo(targetId);
+			const targetExists = await pool.hasRepo(targetId);
 			if (targetExists) throw new Error(`repo '${targetId}' already exists`);
 
 			// Resolve to root: if source is itself a fork, fork from its root
-			const sourceParent = await driver.getForkParent(sourceId);
+			const sourceParent = await pool.parentOf(sourceId);
 			const rootId = sourceParent ?? sourceId;
 
-			await driver.insertRepo(targetId);
-			await driver.forkRepo(rootId, targetId);
+			await pool.createRepo(targetId);
+			await pool.fork(rootId, targetId);
 
 			// Copy all refs from source to target
-			const refs = await driver.listRefs(sourceId);
+			const source = await pool.open(sourceId);
+			const target = await pool.open(targetId);
+			const refs = await source.listRefs();
 			for (const entry of refs) {
-				await driver.putRef(targetId, entry.name, entry.ref);
+				await target.putRef(entry.name, entry.ref);
 			}
 
 			// Copy HEAD
-			const head = await driver.getRef(sourceId, "HEAD");
+			const head = await source.getRef("HEAD");
 			if (head) {
-				await driver.putRef(targetId, "HEAD", head);
+				await target.putRef("HEAD", head);
 			} else {
 				const defaultBranch = options?.defaultBranch ?? "main";
-				await driver.putRef(targetId, "HEAD", {
+				await target.putRef("HEAD", {
 					type: "symbolic",
 					target: `refs/heads/${defaultBranch}`,
 				});
@@ -541,9 +541,36 @@ export function createRepoStore(
 		async gc(repoId: string, options?: GcOptions): Promise<GcResult> {
 			const repo = await requireRepo(repoId);
 			const forkRepos = await collectForkRepos(repoId);
-			return gcRepo(repo, partitionStorage(driver, repoId), options, forkRepos);
+			return gcRepo(repo, await pool.open(repoId), options, forkRepos);
 		},
 	};
+}
+
+/**
+ * Create a git-aware handle backed by one repository's raw storage.
+ *
+ * A fresh in-memory store is used by default. Existing HEAD values are
+ * preserved; otherwise HEAD is initialized to `refs/heads/main`.
+ */
+export async function createRepo(
+	storage: RepoStorage = createMemoryRepoStorage(),
+): Promise<GitRepo> {
+	if (!(await storage.getRef("HEAD"))) {
+		await storage.putRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
+	}
+	return buildGitRepo(storage);
+}
+
+function buildGitRepo(
+	own: RepoStorage,
+	parent?: RepoStorage,
+	capabilities?: RepoCapabilities,
+): GitRepo {
+	const repo: GitRepo = {
+		objectStore: new AdaptedObjectStore(own, parent),
+		refStore: new AdaptedRefStore(own),
+	};
+	return withCapabilities(repo, capabilities);
 }
 
 // ── Deferred ingestion interface ────────────────────────────────────

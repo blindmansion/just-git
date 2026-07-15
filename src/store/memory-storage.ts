@@ -1,5 +1,7 @@
 import type { Ref } from "../lib/types.ts";
-import type { DeltaObjectRow, Storage, StoredObject, RawRefEntry, RefOps } from "./repo-store.ts";
+import type { RepoPool } from "./repo-pool.ts";
+import type { RepoStorage } from "./repo-storage.ts";
+import type { DeltaObjectRow, StoredObject, RawRefEntry, RefOps } from "./repo-store.ts";
 
 // ── MemoryStorage ───────────────────────────────────────────────────
 
@@ -15,7 +17,7 @@ import type { DeltaObjectRow, Storage, StoredObject, RawRefEntry, RefOps } from 
  * const server2 = createServer({ storage: new MemoryStorage() });
  * ```
  */
-export class MemoryStorage implements Storage {
+export class MemoryStorage implements RepoPool {
 	private repos = new Set<string>();
 	private objects = new Map<string, Map<string, StoredObject>>();
 	private refs = new Map<string, Map<string, Ref>>();
@@ -25,7 +27,7 @@ export class MemoryStorage implements Storage {
 		return this.repos.has(repoId);
 	}
 
-	insertRepo(repoId: string): void {
+	createRepo(repoId: string): void {
 		this.repos.add(repoId);
 	}
 
@@ -38,153 +40,21 @@ export class MemoryStorage implements Storage {
 		this.forks.delete(repoId);
 	}
 
-	getObject(repoId: string, hash: string): StoredObject | null {
-		const obj = this.getObjMap(repoId).get(hash);
-		if (!obj) return null;
-		return cloneStored(obj);
-	}
-
-	getObjects(repoId: string, hashes: ReadonlyArray<string>): Map<string, StoredObject> {
-		const map = this.getObjMap(repoId);
-		const result = new Map<string, StoredObject>();
-		for (const hash of new Set(hashes)) {
-			const obj = map.get(hash);
-			if (!obj) continue;
-			result.set(hash, cloneStored(obj));
-		}
-		return result;
-	}
-
-	putObject(repoId: string, hash: string, type: string, content: Uint8Array): void {
-		const map = this.getObjMap(repoId);
-		if (!map.has(hash)) {
-			map.set(hash, {
-				type: type as StoredObject["type"],
-				encoding: "raw",
-				content: new Uint8Array(content),
-			});
-		}
-	}
-
-	putObjects(
-		repoId: string,
-		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
-	): string[] {
-		const map = this.getObjMap(repoId);
-		const inserted: string[] = [];
-		for (const obj of objects) {
-			if (!map.has(obj.hash)) {
-				map.set(obj.hash, {
-					type: obj.type as StoredObject["type"],
-					encoding: "raw",
-					content: new Uint8Array(obj.content),
-				});
-				inserted.push(obj.hash);
-			}
-		}
-		return inserted;
-	}
-
-	putDeltaObjects(repoId: string, rows: ReadonlyArray<DeltaObjectRow>): void {
-		const map = this.getObjMap(repoId);
-		for (const row of rows) {
-			map.set(row.hash, {
-				type: row.type as StoredObject["type"],
-				encoding: row.encoding,
-				baseHash: "baseHash" in row ? row.baseHash : null,
-				content: new Uint8Array(row.content),
-			});
-		}
-	}
-
-	hasObject(repoId: string, hash: string): boolean {
-		return this.getObjMap(repoId).has(hash);
-	}
-
-	hasObjects(repoId: string, hashes: ReadonlyArray<string>): Set<string> {
-		const map = this.getObjMap(repoId);
-		const result = new Set<string>();
-		for (const hash of new Set(hashes)) {
-			if (map.has(hash)) result.add(hash);
-		}
-		return result;
-	}
-
-	findObjectsByPrefix(repoId: string, prefix: string): string[] {
-		const matches: string[] = [];
-		for (const hash of this.getObjMap(repoId).keys()) {
-			if (hash.startsWith(prefix)) matches.push(hash);
-		}
-		return matches;
-	}
-
-	listObjectHashes(repoId: string): string[] {
-		return Array.from(this.getObjMap(repoId).keys());
-	}
-
-	repoByteSize(repoId: string): number {
-		let total = 0;
-		for (const obj of this.getObjMap(repoId).values()) {
-			total += obj.content.byteLength;
-		}
-		return total;
-	}
-
-	deleteObjects(repoId: string, hashes: ReadonlyArray<string>): number {
-		const map = this.getObjMap(repoId);
-		let deleted = 0;
-		for (const hash of hashes) {
-			if (map.delete(hash)) deleted++;
-		}
-		return deleted;
-	}
-
-	getRef(repoId: string, name: string): Ref | null {
-		return this.getRefMap(repoId).get(name) ?? null;
-	}
-
-	putRef(repoId: string, name: string, ref: Ref): void {
-		this.getRefMap(repoId).set(name, ref);
-	}
-
-	removeRef(repoId: string, name: string): void {
-		this.getRefMap(repoId).delete(name);
-	}
-
-	listRefs(repoId: string, prefix?: string): RawRefEntry[] {
-		const entries: RawRefEntry[] = [];
-		for (const [name, ref] of this.getRefMap(repoId)) {
-			if (prefix && !name.startsWith(prefix)) continue;
-			entries.push({ name, ref });
-		}
-		return entries;
-	}
-
-	atomicRefUpdate<T>(repoId: string, fn: (ops: RefOps) => T): T {
-		// Single-threaded JS — no lock needed; just delegate to the same maps.
-		const refMap = this.getRefMap(repoId);
-		return fn({
-			getRef: (name) => refMap.get(name) ?? null,
-			putRef: (name, ref) => {
-				refMap.set(name, ref);
-			},
-			removeRef: (name) => {
-				refMap.delete(name);
-			},
-		});
+	open(repoId: string): RepoStorage {
+		return new MemoryRepoStorage(this.getObjMap(repoId), this.getRefMap(repoId));
 	}
 
 	// ── Forks ──────────────────────────────────────────────────
 
-	forkRepo(sourceId: string, targetId: string): void {
+	fork(sourceId: string, targetId: string): void {
 		this.forks.set(targetId, sourceId);
 	}
 
-	getForkParent(repoId: string): string | null {
+	parentOf(repoId: string): string | null {
 		return this.forks.get(repoId) ?? null;
 	}
 
-	listForks(repoId: string): string[] {
+	forksOf(repoId: string): string[] {
 		const result: string[] = [];
 		for (const [child, parent] of this.forks) {
 			if (parent === repoId) result.push(child);
@@ -192,7 +62,7 @@ export class MemoryStorage implements Storage {
 		return result;
 	}
 
-	// ── Extras (not part of Storage interface) ──────────────────
+	// ── Extras (not part of RepoPool) ───────────────────────────
 
 	/** List all created repo IDs. Convenience for tests and debugging. */
 	repoIds(): string[] {
@@ -217,6 +87,139 @@ export class MemoryStorage implements Storage {
 			this.refs.set(repoId, map);
 		}
 		return map;
+	}
+}
+
+/** Create isolated in-memory storage for the standalone single-repo API. */
+export function createMemoryRepoStorage(): RepoStorage {
+	return new MemoryRepoStorage(new Map(), new Map());
+}
+
+class MemoryRepoStorage implements RepoStorage {
+	constructor(
+		private objects: Map<string, StoredObject>,
+		private refs: Map<string, Ref>,
+	) {}
+
+	getObject(hash: string): StoredObject | null {
+		const obj = this.objects.get(hash);
+		return obj ? cloneStored(obj) : null;
+	}
+
+	getObjects(hashes: ReadonlyArray<string>): Map<string, StoredObject> {
+		const result = new Map<string, StoredObject>();
+		for (const hash of new Set(hashes)) {
+			const obj = this.objects.get(hash);
+			if (obj) result.set(hash, cloneStored(obj));
+		}
+		return result;
+	}
+
+	putObject(hash: string, type: string, content: Uint8Array): void {
+		if (!this.objects.has(hash)) {
+			this.objects.set(hash, {
+				type: type as StoredObject["type"],
+				encoding: "raw",
+				content: new Uint8Array(content),
+			});
+		}
+	}
+
+	putObjects(
+		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
+	): string[] {
+		const inserted: string[] = [];
+		for (const obj of objects) {
+			if (this.objects.has(obj.hash)) continue;
+			this.objects.set(obj.hash, {
+				type: obj.type as StoredObject["type"],
+				encoding: "raw",
+				content: new Uint8Array(obj.content),
+			});
+			inserted.push(obj.hash);
+		}
+		return inserted;
+	}
+
+	putDeltaObjects(rows: ReadonlyArray<DeltaObjectRow>): void {
+		for (const row of rows) {
+			this.objects.set(row.hash, {
+				type: row.type as StoredObject["type"],
+				encoding: row.encoding,
+				baseHash: "baseHash" in row ? row.baseHash : null,
+				content: new Uint8Array(row.content),
+			});
+		}
+	}
+
+	hasObject(hash: string): boolean {
+		return this.objects.has(hash);
+	}
+
+	hasObjects(hashes: ReadonlyArray<string>): Set<string> {
+		const result = new Set<string>();
+		for (const hash of new Set(hashes)) {
+			if (this.objects.has(hash)) result.add(hash);
+		}
+		return result;
+	}
+
+	findObjectsByPrefix(prefix: string): string[] {
+		const matches: string[] = [];
+		for (const hash of this.objects.keys()) {
+			if (hash.startsWith(prefix)) matches.push(hash);
+		}
+		return matches;
+	}
+
+	listObjectHashes(): string[] {
+		return Array.from(this.objects.keys());
+	}
+
+	repoByteSize(): number {
+		let total = 0;
+		for (const obj of this.objects.values()) total += obj.content.byteLength;
+		return total;
+	}
+
+	deleteObjects(hashes: ReadonlyArray<string>): number {
+		let deleted = 0;
+		for (const hash of hashes) {
+			if (this.objects.delete(hash)) deleted++;
+		}
+		return deleted;
+	}
+
+	getRef(name: string): Ref | null {
+		return this.refs.get(name) ?? null;
+	}
+
+	putRef(name: string, ref: Ref): void {
+		this.refs.set(name, ref);
+	}
+
+	removeRef(name: string): void {
+		this.refs.delete(name);
+	}
+
+	listRefs(prefix?: string): RawRefEntry[] {
+		const entries: RawRefEntry[] = [];
+		for (const [name, ref] of this.refs) {
+			if (!prefix || name.startsWith(prefix)) entries.push({ name, ref });
+		}
+		return entries;
+	}
+
+	atomicRefUpdate<T>(fn: (ops: RefOps) => T): T {
+		return fn({
+			getRef: (name) => this.refs.get(name) ?? null,
+			putRef: (name, ref) => {
+				this.refs.set(name, ref);
+			},
+			removeRef: (name) => {
+				this.refs.delete(name);
+			},
+		});
 	}
 }
 

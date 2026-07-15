@@ -148,8 +148,9 @@ describe.skipIf(!canRun)("PgStorage", () => {
 			const hashB = await objects.write("blob", bravo);
 			const missing = "0000000000000000000000000000000000000000";
 
-			expect(driver!.getObjects).toBeDefined();
-			expect(driver!.hasObjects).toBeDefined();
+			const repoStorage = driver!.open("test-repo-obj-4b");
+			expect(repoStorage.getObjects).toBeDefined();
+			expect(repoStorage.hasObjects).toBeDefined();
 			expect(objects.readMany).toBeDefined();
 			expect(objects.existsMany).toBeDefined();
 

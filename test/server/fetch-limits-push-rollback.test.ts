@@ -237,7 +237,7 @@ describe("rejected push side effects", () => {
 	test("preReceive rejection leaves zero new objects (memory/http)", async () => {
 		const { driver } = await setupRepo();
 
-		const objsBefore = driver.listObjectHashes("repo");
+		const objsBefore = await driver.open("repo").listObjectHashes();
 		const countBefore = objsBefore.length;
 
 		const { srv, port } = startServer({
@@ -263,7 +263,7 @@ describe("rejected push side effects", () => {
 			const pushResult = await client.exec("git push origin main", { cwd: "/local" });
 			expect(pushResult.exitCode).not.toBe(0);
 
-			const objsAfter = driver.listObjectHashes("repo");
+			const objsAfter = await driver.open("repo").listObjectHashes();
 			const delta = objsAfter.length - countBefore;
 			expect(delta).toBeLessThanOrEqual(0);
 		} finally {
@@ -273,7 +273,7 @@ describe("rejected push side effects", () => {
 
 	test("update rejection with no applied refs rolls back new objects", async () => {
 		const { driver } = await setupRepo();
-		const countBefore = driver.listObjectHashes("repo").length;
+		const countBefore = (await driver.open("repo").listObjectHashes()).length;
 
 		const { server, srv, port } = startServer({
 			storage: driver,
@@ -303,7 +303,7 @@ describe("rejected push side effects", () => {
 
 			const repo = await server.requireRepo("repo");
 			expect(await repo.objectStore.exists(commitHash)).toBe(false);
-			expect(driver.listObjectHashes("repo")).toHaveLength(countBefore);
+			expect(await driver.open("repo").listObjectHashes()).toHaveLength(countBefore);
 		} finally {
 			srv.stop();
 		}
@@ -312,7 +312,7 @@ describe("rejected push side effects", () => {
 	test("approved push persists objects correctly (regression)", async () => {
 		const { driver } = await setupRepo();
 
-		const objsBefore = driver.listObjectHashes("repo");
+		const objsBefore = await driver.open("repo").listObjectHashes();
 		const countBefore = objsBefore.length;
 
 		const { srv, port } = startServer({ storage: driver });
@@ -333,7 +333,7 @@ describe("rejected push side effects", () => {
 			const pushResult = await client.exec("git push origin main", { cwd: "/local" });
 			expect(pushResult.exitCode).toBe(0);
 
-			const objsAfter = driver.listObjectHashes("repo");
+			const objsAfter = await driver.open("repo").listObjectHashes();
 			expect(objsAfter.length).toBeGreaterThan(countBefore);
 		} finally {
 			srv.stop();

@@ -64,11 +64,11 @@ describe("forkRepo", () => {
 		expect(forkMainHash).toBe(upstreamMainHash);
 
 		// No objects in fork's own partition
-		const forkObjects = driver.listObjectHashes("user/fork");
+		const forkObjects = await driver.open("user/fork").listObjectHashes();
 		expect(forkObjects.length).toBe(0);
 
 		// Upstream still has its objects
-		const upstreamObjects = driver.listObjectHashes("upstream");
+		const upstreamObjects = await driver.open("upstream").listObjectHashes();
 		expect(upstreamObjects.length).toBeGreaterThan(0);
 	});
 
@@ -91,7 +91,7 @@ describe("forkRepo", () => {
 
 		await server.forkRepo("upstream", "user/fork");
 
-		const head = driver.getRef("user/fork", "HEAD");
+		const head = await driver.open("user/fork").getRef("HEAD");
 		expect(head).toEqual({ type: "symbolic", target: "refs/heads/main" });
 	});
 
@@ -113,12 +113,12 @@ describe("forkRepo", () => {
 		});
 
 		// Fork has its own objects now
-		const forkObjects = driver.listObjectHashes("user/fork");
+		const forkObjects = await driver.open("user/fork").listObjectHashes();
 		expect(forkObjects.length).toBeGreaterThan(0);
 
 		// Fork objects should not be in upstream
 		for (const hash of forkObjects) {
-			expect(driver.hasObject("upstream", hash)).toBe(false);
+			expect(await driver.open("upstream").hasObject(hash)).toBe(false);
 		}
 	});
 
@@ -130,8 +130,8 @@ describe("forkRepo", () => {
 		await server.forkRepo("fork-a", "fork-b");
 
 		// fork-b should be recorded as fork of upstream, not fork-a
-		expect(driver.getForkParent("fork-b")).toBe("upstream");
-		expect(driver.getForkParent("fork-a")).toBe("upstream");
+		expect(driver.parentOf("fork-b")).toBe("upstream");
+		expect(driver.parentOf("fork-a")).toBe("upstream");
 
 		// fork-b can still read upstream objects
 		const forkB = await server.requireRepo("fork-b");
@@ -173,7 +173,7 @@ describe("forkRepo", () => {
 		const fork = await server.forkRepo("upstream", "user/fork");
 
 		// Upstream objects are visible via exists
-		const upstreamHashes = driver.listObjectHashes("upstream");
+		const upstreamHashes = await driver.open("upstream").listObjectHashes();
 		for (const hash of upstreamHashes) {
 			expect(await fork.objectStore.exists(hash)).toBe(true);
 		}
@@ -194,8 +194,8 @@ describe("forkRepo", () => {
 		expect(hash).toBeTruthy();
 
 		// Fork record is cleaned up
-		expect(driver.getForkParent("user/fork")).toBeNull();
-		expect(driver.listForks("upstream").length).toBe(0);
+		expect(driver.parentOf("user/fork")).toBeNull();
+		expect(driver.forksOf("upstream").length).toBe(0);
 	});
 
 	test("delete root with active forks throws", async () => {
@@ -432,14 +432,14 @@ describe("fork GC", () => {
 
 		// Write a blob to fork, then make it orphaned
 		await writeBlob(fork, "fork-orphan");
-		expect(driver.listObjectHashes("user/fork").length).toBeGreaterThan(0);
+		expect((await driver.open("user/fork").listObjectHashes()).length).toBeGreaterThan(0);
 
 		// GC fork — should delete the orphaned blob
 		const result = await server.gc("user/fork");
 		expect(result.deleted).toBeGreaterThan(0);
 
 		// Upstream objects should be completely unaffected
-		const upstreamBefore = driver.listObjectHashes("upstream");
+		const upstreamBefore = await driver.open("upstream").listObjectHashes();
 		expect(upstreamBefore.length).toBeGreaterThan(0);
 	});
 
@@ -461,12 +461,12 @@ describe("fork GC", () => {
 			branch: "main",
 		});
 
-		const beforeCount = driver.listObjectHashes("user/fork").length;
+		const beforeCount = (await driver.open("user/fork").listObjectHashes()).length;
 
 		const result = await server.gc("user/fork");
 		expect(result.deleted).toBe(0);
 
-		const afterCount = driver.listObjectHashes("user/fork").length;
+		const afterCount = (await driver.open("user/fork").listObjectHashes()).length;
 		expect(afterCount).toBe(beforeCount);
 	});
 });

@@ -5,9 +5,10 @@ import type {
 	RawRefEntry,
 	RefOps,
 	RefRow,
-	Storage,
 	StoredObject,
 } from "./repo-store.ts";
+import type { RepoPool } from "./repo-pool.ts";
+import type { RepoStorage } from "./repo-storage.ts";
 
 // ── Postgres pool interface ────────────────────────────────────────
 
@@ -106,7 +107,7 @@ const OBJECT_INSERT_BATCH_SIZE = 256;
  * const storage = await PgStorage.create(pool);
  * ```
  */
-export class PgStorage implements Storage {
+export class PgStorage implements RepoPool {
 	private constructor(private pool: PgPool) {}
 
 	static async create(pool: PgPool): Promise<PgStorage> {
@@ -136,7 +137,7 @@ export class PgStorage implements Storage {
 		return rows.length > 0;
 	}
 
-	async insertRepo(repoId: string): Promise<void> {
+	async createRepo(repoId: string): Promise<void> {
 		await this.pool.query(SQL.repoInsert, [repoId]);
 	}
 
@@ -147,14 +148,35 @@ export class PgStorage implements Storage {
 		await this.pool.query(SQL.forkDelete, [repoId]);
 	}
 
+	open(repoId: string): RepoStorage {
+		return {
+			getObject: (hash) => this.getObject(repoId, hash),
+			getObjects: (hashes) => this.getObjects(repoId, hashes),
+			putObject: (hash, type, content) => this.putObject(repoId, hash, type, content),
+			putObjects: (objects) => this.putObjects(repoId, objects),
+			putDeltaObjects: (rows) => this.putDeltaObjects(repoId, rows),
+			hasObject: (hash) => this.hasObject(repoId, hash),
+			hasObjects: (hashes) => this.hasObjects(repoId, hashes),
+			findObjectsByPrefix: (prefix) => this.findObjectsByPrefix(repoId, prefix),
+			listObjectHashes: () => this.listObjectHashes(repoId),
+			repoByteSize: () => this.repoByteSize(repoId),
+			deleteObjects: (hashes) => this.deleteObjects(repoId, hashes),
+			getRef: (name) => this.getRef(repoId, name),
+			putRef: (name, ref) => this.putRef(repoId, name, ref),
+			removeRef: (name) => this.removeRef(repoId, name),
+			listRefs: (prefix) => this.listRefs(repoId, prefix),
+			atomicRefUpdate: (fn) => this.atomicRefUpdate(repoId, fn),
+		};
+	}
+
 	// ── Objects ─────────────────────────────────────────────────
 
-	async getObject(repoId: string, hash: string): Promise<StoredObject | null> {
+	private async getObject(repoId: string, hash: string): Promise<StoredObject | null> {
 		const { rows } = await this.pool.query<ObjectRow>(SQL.objRead, [repoId, hash]);
 		return rowToStored(rows[0] ?? null);
 	}
 
-	async getObjects(
+	private async getObjects(
 		repoId: string,
 		hashes: ReadonlyArray<string>,
 	): Promise<Map<string, StoredObject>> {
@@ -171,11 +193,16 @@ export class PgStorage implements Storage {
 		return result;
 	}
 
-	async putObject(repoId: string, hash: string, type: string, content: Uint8Array): Promise<void> {
+	private async putObject(
+		repoId: string,
+		hash: string,
+		type: string,
+		content: Uint8Array,
+	): Promise<void> {
 		await this.pool.query(SQL.objInsert, [repoId, hash, type, content]);
 	}
 
-	async putObjects(
+	private async putObjects(
 		repoId: string,
 		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
 	): Promise<string[]> {
@@ -193,7 +220,10 @@ export class PgStorage implements Storage {
 		});
 	}
 
-	async putDeltaObjects(repoId: string, rows: ReadonlyArray<DeltaObjectRow>): Promise<void> {
+	private async putDeltaObjects(
+		repoId: string,
+		rows: ReadonlyArray<DeltaObjectRow>,
+	): Promise<void> {
 		if (rows.length === 0) return;
 		await this.transaction(async (query) => {
 			for (const batch of chunkArray(rows, OBJECT_INSERT_BATCH_SIZE)) {
@@ -203,12 +233,12 @@ export class PgStorage implements Storage {
 		});
 	}
 
-	async hasObject(repoId: string, hash: string): Promise<boolean> {
+	private async hasObject(repoId: string, hash: string): Promise<boolean> {
 		const { rows } = await this.pool.query(SQL.objExists, [repoId, hash]);
 		return rows.length > 0;
 	}
 
-	async hasObjects(repoId: string, hashes: ReadonlyArray<string>): Promise<Set<string>> {
+	private async hasObjects(repoId: string, hashes: ReadonlyArray<string>): Promise<Set<string>> {
 		if (hashes.length === 0) return new Set();
 		const { rows } = await this.pool.query<{ hash: string }>(SQL.objExistsMany, [
 			repoId,
@@ -217,22 +247,22 @@ export class PgStorage implements Storage {
 		return new Set(rows.map((row) => row.hash));
 	}
 
-	async findObjectsByPrefix(repoId: string, prefix: string): Promise<string[]> {
+	private async findObjectsByPrefix(repoId: string, prefix: string): Promise<string[]> {
 		const { rows } = await this.pool.query<{ hash: string }>(SQL.objPrefix, [repoId, `${prefix}%`]);
 		return rows.map((r) => r.hash);
 	}
 
-	async listObjectHashes(repoId: string): Promise<string[]> {
+	private async listObjectHashes(repoId: string): Promise<string[]> {
 		const { rows } = await this.pool.query<{ hash: string }>(SQL.objListHashes, [repoId]);
 		return rows.map((r) => r.hash);
 	}
 
-	async repoByteSize(repoId: string): Promise<number> {
+	private async repoByteSize(repoId: string): Promise<number> {
 		const { rows } = await this.pool.query<{ size: string | number }>(SQL.objByteSize, [repoId]);
 		return rows[0] ? Number(rows[0].size) : 0;
 	}
 
-	async deleteObjects(repoId: string, hashes: ReadonlyArray<string>): Promise<number> {
+	private async deleteObjects(repoId: string, hashes: ReadonlyArray<string>): Promise<number> {
 		if (hashes.length === 0) return 0;
 		const { rows } = await this.pool.query<{ count: string }>(
 			"DELETE FROM git_objects WHERE repo_id = $1 AND hash = ANY($2::text[]) RETURNING hash",
@@ -243,12 +273,12 @@ export class PgStorage implements Storage {
 
 	// ── Refs ────────────────────────────────────────────────────
 
-	async getRef(repoId: string, name: string): Promise<Ref | null> {
+	private async getRef(repoId: string, name: string): Promise<Ref | null> {
 		const { rows } = await this.pool.query<RefRow>(SQL.refRead, [repoId, name]);
 		return rowToRef(rows[0] ?? null);
 	}
 
-	async putRef(repoId: string, name: string, ref: Ref): Promise<void> {
+	private async putRef(repoId: string, name: string, ref: Ref): Promise<void> {
 		if (ref.type === "symbolic") {
 			await this.pool.query(SQL.refWrite, [repoId, name, "symbolic", null, ref.target]);
 		} else {
@@ -256,11 +286,11 @@ export class PgStorage implements Storage {
 		}
 	}
 
-	async removeRef(repoId: string, name: string): Promise<void> {
+	private async removeRef(repoId: string, name: string): Promise<void> {
 		await this.pool.query(SQL.refDelete, [repoId, name]);
 	}
 
-	async listRefs(repoId: string, prefix?: string): Promise<RawRefEntry[]> {
+	private async listRefs(repoId: string, prefix?: string): Promise<RawRefEntry[]> {
 		let rows: RefRow[];
 		if (prefix) {
 			({ rows } = await this.pool.query<RefRow>(SQL.refList, [repoId, `${prefix}%`]));
@@ -273,7 +303,10 @@ export class PgStorage implements Storage {
 		});
 	}
 
-	async atomicRefUpdate<T>(repoId: string, fn: (ops: RefOps) => Promise<T> | T): Promise<T> {
+	private async atomicRefUpdate<T>(
+		repoId: string,
+		fn: (ops: RefOps) => Promise<T> | T,
+	): Promise<T> {
 		return this.transaction(async (query) => {
 			return fn({
 				getRef: async (name) => {
@@ -296,16 +329,16 @@ export class PgStorage implements Storage {
 
 	// ── Forks ───────────────────────────────────────────────────
 
-	async forkRepo(sourceId: string, targetId: string): Promise<void> {
+	async fork(sourceId: string, targetId: string): Promise<void> {
 		await this.pool.query(SQL.forkInsert, [targetId, sourceId]);
 	}
 
-	async getForkParent(repoId: string): Promise<string | null> {
+	async parentOf(repoId: string): Promise<string | null> {
 		const { rows } = await this.pool.query<{ parent_id: string }>(SQL.forkGetParent, [repoId]);
 		return rows[0]?.parent_id ?? null;
 	}
 
-	async listForks(repoId: string): Promise<string[]> {
+	async forksOf(repoId: string): Promise<string[]> {
 		const { rows } = await this.pool.query<{ repo_id: string }>(SQL.forkListChildren, [repoId]);
 		return rows.map((r) => r.repo_id);
 	}

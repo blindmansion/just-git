@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { createServer } from "../../src/server/handler.ts";
 import { MemoryStorage } from "../../src/store/memory-storage.ts";
 import { gcRepo } from "../../src/store/gc.ts";
-import { partitionStorage } from "../../src/store/repo-storage.ts";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { resolveRef } from "../../src/repo/reading.ts";
 import type { Identity } from "../../src/lib/types.ts";
@@ -52,14 +51,14 @@ describe("server.gc", () => {
 	test("all objects reachable — nothing deleted", async () => {
 		const { server, driver } = await setupServer();
 
-		const beforeCount = driver.listObjectHashes("test").length;
+		const beforeCount = (await driver.open("test").listObjectHashes()).length;
 		expect(beforeCount).toBeGreaterThan(0);
 
 		const result = await server.gc("test");
 		expect(result.deleted).toBe(0);
 		expect(result.retained).toBe(beforeCount);
 
-		const afterCount = driver.listObjectHashes("test").length;
+		const afterCount = (await driver.open("test").listObjectHashes()).length;
 		expect(afterCount).toBe(beforeCount);
 	});
 
@@ -80,13 +79,13 @@ describe("server.gc", () => {
 		// Force-push main back to initial, making second commit + its blob/tree unreachable
 		await server.updateRefs("test", [{ ref: "refs/heads/main", newHash: initialHash }]);
 
-		const beforeCount = driver.listObjectHashes("test").length;
+		const beforeCount = (await driver.open("test").listObjectHashes()).length;
 		const result = await server.gc("test");
 
 		expect(result.deleted).toBeGreaterThan(0);
 		expect(result.retained).toBeGreaterThan(0);
 
-		const afterCount = driver.listObjectHashes("test").length;
+		const afterCount = (await driver.open("test").listObjectHashes()).length;
 		expect(afterCount).toBe(beforeCount - result.deleted);
 
 		// The initial commit should still resolve
@@ -113,13 +112,13 @@ describe("server.gc", () => {
 		// Force main back to initial commit
 		await server.updateRefs("test", [{ ref: "refs/heads/main", newHash: initialHash }]);
 
-		const beforeHashes = new Set(driver.listObjectHashes("test"));
+		const beforeHashes = new Set(await driver.open("test").listObjectHashes());
 		expect(beforeHashes.has(blob2)).toBe(true);
 
 		const result = await server.gc("test");
 		expect(result.deleted).toBeGreaterThan(0);
 
-		const afterHashes = new Set(driver.listObjectHashes("test"));
+		const afterHashes = new Set(await driver.open("test").listObjectHashes());
 		expect(afterHashes.has(blob2)).toBe(false);
 	});
 
@@ -139,14 +138,14 @@ describe("server.gc", () => {
 
 		await server.updateRefs("test", [{ ref: "refs/heads/main", newHash: initialHash }]);
 
-		const beforeCount = driver.listObjectHashes("test").length;
+		const beforeCount = (await driver.open("test").listObjectHashes()).length;
 
 		const result = await server.gc("test", { dryRun: true });
 		expect(result.deleted).toBeGreaterThan(0);
 		expect(result.retained).toBeGreaterThan(0);
 
 		// Objects should NOT be deleted in dry run
-		const afterCount = driver.listObjectHashes("test").length;
+		const afterCount = (await driver.open("test").listObjectHashes()).length;
 		expect(afterCount).toBe(beforeCount);
 	});
 
@@ -179,7 +178,7 @@ describe("server.gc", () => {
 			return result;
 		};
 
-		const result = await gcRepo(repo, partitionStorage(driver, "test"));
+		const result = await gcRepo(repo, driver.open("test"));
 		expect(result.aborted).toBe(true);
 		expect(result.deleted).toBe(0);
 	});
@@ -213,7 +212,7 @@ describe("server.gc", () => {
 
 		await server.updateRefs("test", [{ ref: "refs/heads/feature", newHash: featureHash }]);
 
-		const beforeCount = driver.listObjectHashes("test").length;
+		const beforeCount = (await driver.open("test").listObjectHashes()).length;
 		const result = await server.gc("test");
 
 		expect(result.deleted).toBe(0);
@@ -243,8 +242,8 @@ describe("server.gc", () => {
 			});
 		}
 
-		const before = driver.repoByteSize("sync");
-		const countBefore = driver.listObjectHashes("sync").length;
+		const before = await driver.open("sync").repoByteSize!();
+		const countBefore = (await driver.open("sync").listObjectHashes()).length;
 
 		const result = await server.gc("sync", { compact: true, prune: false });
 		expect(result.deltified).toBeGreaterThan(0);
@@ -252,7 +251,7 @@ describe("server.gc", () => {
 		expect(result.deleted).toBe(0);
 
 		// prune: false never deletes — object count is unchanged.
-		expect(driver.listObjectHashes("sync").length).toBe(countBefore);
+		expect((await driver.open("sync").listObjectHashes()).length).toBe(countBefore);
 
 		// HEAD still resolves on a fresh handle.
 		const fresh = await server.requireRepo("sync");
@@ -276,7 +275,7 @@ describe("server.gc", () => {
 
 		const result = await server.gc("test", { compact: true });
 		expect(result.deleted).toBeGreaterThan(0);
-		expect(new Set(driver.listObjectHashes("test")).has(blob2)).toBe(false);
+		expect(new Set(await driver.open("test").listObjectHashes()).has(blob2)).toBe(false);
 
 		const fresh = await server.requireRepo("test");
 		expect(await resolveRef(fresh, "refs/heads/main")).toBe(initialHash);
@@ -312,7 +311,7 @@ describe("server.gc", () => {
 		expect(result.deleted).toBe(0);
 
 		// The tagged commit's blob should still exist
-		const afterHashes = new Set(driver.listObjectHashes("test"));
+		const afterHashes = new Set(await driver.open("test").listObjectHashes());
 		expect(afterHashes.has(blob2)).toBe(true);
 	});
 });

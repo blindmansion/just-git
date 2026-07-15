@@ -2,7 +2,8 @@ import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { BunSqliteStorage } from "../../src/store/bun-sqlite-storage.ts";
 import { MemoryStorage } from "../../src/store/memory-storage.ts";
-import { createRepoStore, type Storage } from "../../src/store/repo-store.ts";
+import { createRepoStore } from "../../src/store/repo-store.ts";
+import type { RepoPool } from "../../src/store/repo-pool.ts";
 import { commit, createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { resolveRef } from "../../src/repo/reading.ts";
 import type { GitRepo, Identity } from "../../src/lib/types.ts";
@@ -32,8 +33,8 @@ function makeDoc(seed: number): string {
 }
 
 /** Capture every stored object's reconstructed body via a *fresh* repo handle. */
-async function captureAll(store: RepoStore, repoId: string, driver: Storage) {
-	const hashes = await driver.listObjectHashes(repoId);
+async function captureAll(store: RepoStore, repoId: string, driver: RepoPool) {
+	const hashes = await (await driver.open(repoId)).listObjectHashes();
 	const repo = (await store.repo(repoId))!;
 	const map = new Map<string, { type: string; content: Uint8Array }>();
 	for (const hash of hashes) {
@@ -51,7 +52,7 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
 
 interface BackendCase {
 	name: string;
-	make: () => Storage;
+	make: () => RepoPool;
 }
 
 const BACKENDS: BackendCase[] = [
@@ -61,7 +62,7 @@ const BACKENDS: BackendCase[] = [
 
 for (const backend of BACKENDS) {
 	describe(`repack/compaction — ${backend.name}`, () => {
-		let driver: Storage;
+		let driver: RepoPool;
 		let store: RepoStore;
 
 		beforeEach(() => {
@@ -108,13 +109,14 @@ for (const backend of BACKENDS) {
 
 		test("repack delta-compresses near-duplicate history", async () => {
 			await syncRepo("r", 40);
-			const before = driver.repoByteSize ? await driver.repoByteSize("r") : 0;
+			const repoStorage = await driver.open("r");
+			const before = repoStorage.repoByteSize ? await repoStorage.repoByteSize() : 0;
 
 			const result = await repack("r", { window: 250, depth: 250 });
 
 			expect(result.deltified).toBeGreaterThan(0);
-			if (driver.repoByteSize) {
-				const after = await driver.repoByteSize("r");
+			if (repoStorage.repoByteSize) {
+				const after = await repoStorage.repoByteSize();
 				expect(after).toBeLessThan(before);
 				// Sync workload over a large doc should compress dramatically.
 				expect(after).toBeLessThan(before / 2);
@@ -147,7 +149,8 @@ for (const backend of BACKENDS) {
 
 		test("dryRun writes nothing", async () => {
 			await syncRepo("r", 10);
-			const before = driver.repoByteSize ? await driver.repoByteSize("r") : 0;
+			const repoStorage = await driver.open("r");
+			const before = repoStorage.repoByteSize ? await repoStorage.repoByteSize() : 0;
 
 			const result = await repack("r", { dryRun: true });
 			// dryRun skips compaction entirely (no rewrites), and prune:false
@@ -155,8 +158,8 @@ for (const backend of BACKENDS) {
 			expect(result.retained).toBeGreaterThan(0);
 			expect(result.deltified).toBeUndefined();
 
-			if (driver.repoByteSize) {
-				expect(await driver.repoByteSize("r")).toBe(before);
+			if (repoStorage.repoByteSize) {
+				expect(await repoStorage.repoByteSize()).toBe(before);
 			}
 		});
 
@@ -197,14 +200,15 @@ for (const backend of BACKENDS) {
 			});
 			await repo.refStore.deleteRef("refs/heads/side");
 
-			const sizeBefore = driver.repoByteSize ? await driver.repoByteSize("r") : 0;
+			const repoStorage = await driver.open("r");
+			const sizeBefore = repoStorage.repoByteSize ? await repoStorage.repoByteSize() : 0;
 			const result = await store.gc("r", { compact: true, window: 250, depth: 250 });
 
 			expect(result.deleted).toBeGreaterThan(0);
 			expect(result.deltified).toBeGreaterThan(0);
 
 			// Orphan blob is gone.
-			const hashes = new Set(driver.listObjectHashes("r") as string[]);
+			const hashes = new Set(await repoStorage.listObjectHashes());
 			expect(hashes.has(orphanBlob)).toBe(false);
 
 			// Reachable content reads correctly from a fresh handle.
@@ -213,7 +217,7 @@ for (const backend of BACKENDS) {
 			const after = await captureAll(store, "r", driver);
 			expect(after.size).toBeGreaterThan(0);
 
-			if (driver.repoByteSize) {
+			if (repoStorage.repoByteSize) {
 				expect(result.bytesBefore).toBe(sizeBefore);
 				expect(result.bytesAfter).toBeLessThan(sizeBefore);
 			}
@@ -227,8 +231,9 @@ for (const backend of BACKENDS) {
 			expect(result.deltified).toBeGreaterThan(0);
 
 			// No stored row is zlib-encoded; only raw / delta.
-			for (const hash of await driver.listObjectHashes("r")) {
-				const stored = await driver.getObject("r", hash);
+			const repoStorage = await driver.open("r");
+			for (const hash of await repoStorage.listObjectHashes()) {
+				const stored = await repoStorage.getObject(hash);
 				expect(stored).not.toBeNull();
 				expect(stored!.encoding === "raw" || stored!.encoding === "delta").toBe(true);
 			}
@@ -254,12 +259,13 @@ for (const backend of BACKENDS) {
 			});
 			expect(repacked.deltified).toBeGreaterThan(0);
 			expect(repacked.deleted).toBe(0);
-			expect(new Set(driver.listObjectHashes("r") as string[]).has(dangling)).toBe(true);
+			const repoStorage = await driver.open("r");
+			expect(new Set(await repoStorage.listObjectHashes()).has(dangling)).toBe(true);
 
 			// compact + prune: drops the dangling blob and compresses.
 			const gced = await store.gc("r", { compact: true, window: 250, depth: 250 });
 			expect(gced.deleted).toBeGreaterThan(0);
-			expect(new Set(driver.listObjectHashes("r") as string[]).has(dangling)).toBe(false);
+			expect(new Set(await repoStorage.listObjectHashes()).has(dangling)).toBe(false);
 		});
 
 		test("repack does not delete unreachable objects", async () => {
@@ -279,7 +285,7 @@ for (const backend of BACKENDS) {
 
 			await repack("r", { window: 250, depth: 250 });
 
-			const hashes = new Set(driver.listObjectHashes("r") as string[]);
+			const hashes = new Set(await (await driver.open("r")).listObjectHashes());
 			expect(hashes.has(dangling)).toBe(true);
 		});
 	});
@@ -321,7 +327,7 @@ describe("repack — forks (MemoryStorage)", () => {
 		const freshFork = (await store.repo("fork"))!;
 		expect(await resolveRef(freshFork, "refs/heads/main")).toBe(forkHead);
 
-		const hashes = await driver.listObjectHashes("fork");
+		const hashes = await driver.open("fork").listObjectHashes();
 		for (const hash of hashes) {
 			await freshFork.objectStore.read(hash); // must not throw
 		}

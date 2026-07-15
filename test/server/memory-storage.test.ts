@@ -73,8 +73,9 @@ describe("MemoryStorage", () => {
 			const hashB = await objects.write("blob", bravo);
 			const missing = "0000000000000000000000000000000000000000";
 
-			expect(driver.getObjects).toBeDefined();
-			expect(driver.hasObjects).toBeDefined();
+			const repoStorage = driver.open("test-repo");
+			expect(repoStorage.getObjects).toBeDefined();
+			expect(repoStorage.hasObjects).toBeDefined();
 			expect(objects.readMany).toBeDefined();
 			expect(objects.existsMany).toBeDefined();
 
@@ -89,17 +90,18 @@ describe("MemoryStorage", () => {
 
 		test("deleteObjects counts only hashes actually removed", async () => {
 			await storage.createRepo("test-repo-delete");
+			const repoStorage = driver.open("test-repo-delete");
 			const alpha = encoder.encode("alpha");
 			const bravo = encoder.encode("bravo");
 			const hashA = await makeHash("blob", alpha);
 			const hashB = await makeHash("blob", bravo);
 
-			driver.putObject("test-repo-delete", hashA, "blob", alpha);
-			driver.putObject("test-repo-delete", hashB, "blob", bravo);
+			await repoStorage.putObject(hashA, "blob", alpha);
+			await repoStorage.putObject(hashB, "blob", bravo);
 
-			expect(driver.deleteObjects("test-repo-delete", [hashA, hashA, "nope"])).toBe(1);
-			expect(driver.hasObject("test-repo-delete", hashA)).toBe(false);
-			expect(driver.hasObject("test-repo-delete", hashB)).toBe(true);
+			expect(await repoStorage.deleteObjects([hashA, hashA, "nope"])).toBe(1);
+			expect(await repoStorage.hasObject(hashA)).toBe(false);
+			expect(await repoStorage.hasObject(hashB)).toBe(true);
 		});
 
 		test("findByPrefix", async () => {
@@ -152,23 +154,24 @@ describe("MemoryStorage", () => {
 
 		test("putObjects reports only newly inserted hashes", async () => {
 			await storage.createRepo("test-repo");
+			const repoStorage = driver.open("test-repo");
 
 			const existing = encoder.encode("existing");
 			const fresh = encoder.encode("fresh");
 			const existingHash = await makeHash("blob", existing);
 			const freshHash = await makeHash("blob", fresh);
 
-			driver.putObject("test-repo", existingHash, "blob", existing);
-			const inserted = driver.putObjects("test-repo", [
+			await repoStorage.putObject(existingHash, "blob", existing);
+			const inserted = await repoStorage.putObjects([
 				{ hash: existingHash, type: "blob", content: existing },
 				{ hash: freshHash, type: "blob", content: fresh },
 			]);
 
 			expect(inserted).toEqual([freshHash]);
 
-			driver.deleteObjects("test-repo", inserted);
-			expect(driver.hasObject("test-repo", existingHash)).toBe(true);
-			expect(driver.hasObject("test-repo", freshHash)).toBe(false);
+			await repoStorage.deleteObjects(inserted);
+			expect(await repoStorage.hasObject(existingHash)).toBe(true);
+			expect(await repoStorage.hasObject(freshHash)).toBe(false);
 		});
 	});
 
@@ -459,11 +462,13 @@ describe("MemoryStorage", () => {
 			expect(storage.createRepo("test-repo")).rejects.toThrow("already exists");
 		});
 
-		test("listRepos returns created repo IDs", async () => {
-			expect(driver.repoIds()).toEqual([]);
+		test("hasRepo tracks created repo IDs", async () => {
+			expect(driver.hasRepo("alpha")).toBe(false);
+			expect(driver.hasRepo("beta")).toBe(false);
 			await storage.createRepo("alpha");
 			await storage.createRepo("beta");
-			expect(driver.repoIds().sort()).toEqual(["alpha", "beta"]);
+			expect(driver.hasRepo("alpha")).toBe(true);
+			expect(driver.hasRepo("beta")).toBe(true);
 		});
 
 		test("createRepo initializes HEAD", async () => {

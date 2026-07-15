@@ -5,9 +5,10 @@ import type {
 	RawRefEntry,
 	RefOps,
 	RefRow,
-	Storage,
 	StoredObject,
 } from "./repo-store.ts";
+import type { RepoPool } from "./repo-pool.ts";
+import type { RepoStorage } from "./repo-storage.ts";
 
 // ── bun:sqlite types ────────────────────────────────────────────────
 
@@ -139,7 +140,7 @@ function prepareStatements(db: BunSqliteDatabase): Statements {
  * const storage = createRepoStore(new BunSqliteStorage(new Database("repos.db")));
  * ```
  */
-export class BunSqliteStorage implements Storage {
+export class BunSqliteStorage implements RepoPool {
 	private stmts: Statements;
 	private objectReadManyStatements = new Map<number, BunSqliteStatement>();
 	private objectExistsManyStatements = new Map<number, BunSqliteStatement>();
@@ -197,7 +198,7 @@ export class BunSqliteStorage implements Storage {
 		return this.stmts.repoExists.get(repoId) !== null;
 	}
 
-	insertRepo(repoId: string): void {
+	createRepo(repoId: string): void {
 		this.stmts.repoInsert.run(repoId);
 	}
 
@@ -208,13 +209,34 @@ export class BunSqliteStorage implements Storage {
 		this.stmts.forkDelete.run(repoId);
 	}
 
+	open(repoId: string): RepoStorage {
+		return {
+			getObject: (hash) => this.getObject(repoId, hash),
+			getObjects: (hashes) => this.getObjects(repoId, hashes),
+			putObject: (hash, type, content) => this.putObject(repoId, hash, type, content),
+			putObjects: (objects) => this.putObjects(repoId, objects),
+			putDeltaObjects: (rows) => this.putDeltaObjects(repoId, rows),
+			hasObject: (hash) => this.hasObject(repoId, hash),
+			hasObjects: (hashes) => this.hasObjects(repoId, hashes),
+			findObjectsByPrefix: (prefix) => this.findObjectsByPrefix(repoId, prefix),
+			listObjectHashes: () => this.listObjectHashes(repoId),
+			repoByteSize: () => this.repoByteSize(repoId),
+			deleteObjects: (hashes) => this.deleteObjects(repoId, hashes),
+			getRef: (name) => this.getRef(repoId, name),
+			putRef: (name, ref) => this.putRef(repoId, name, ref),
+			removeRef: (name) => this.removeRef(repoId, name),
+			listRefs: (prefix) => this.listRefs(repoId, prefix),
+			atomicRefUpdate: (fn) => this.atomicRefUpdate(repoId, fn),
+		};
+	}
+
 	// ── Objects ─────────────────────────────────────────────────
 
-	getObject(repoId: string, hash: string): StoredObject | null {
+	private getObject(repoId: string, hash: string): StoredObject | null {
 		return rowToStored(this.stmts.objRead.get(repoId, hash) as ObjectRow | null);
 	}
 
-	getObjects(repoId: string, hashes: ReadonlyArray<string>): Map<string, StoredObject> {
+	private getObjects(repoId: string, hashes: ReadonlyArray<string>): Map<string, StoredObject> {
 		const uniqueHashes = Array.from(new Set(hashes));
 		if (uniqueHashes.length === 0) return new Map();
 		if (uniqueHashes.length === 1) {
@@ -231,27 +253,27 @@ export class BunSqliteStorage implements Storage {
 		return result;
 	}
 
-	putObject(repoId: string, hash: string, type: string, content: Uint8Array): void {
+	private putObject(repoId: string, hash: string, type: string, content: Uint8Array): void {
 		this.stmts.objInsert.run(repoId, hash, type, content);
 	}
 
-	putObjects(
+	private putObjects(
 		repoId: string,
 		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
 	): string[] {
 		return this.batchInsertTx(objects.map((o) => ({ repoId, ...o })));
 	}
 
-	putDeltaObjects(repoId: string, rows: ReadonlyArray<DeltaObjectRow>): void {
+	private putDeltaObjects(repoId: string, rows: ReadonlyArray<DeltaObjectRow>): void {
 		if (rows.length === 0) return;
 		this.batchReplaceTx(repoId, rows);
 	}
 
-	hasObject(repoId: string, hash: string): boolean {
+	private hasObject(repoId: string, hash: string): boolean {
 		return this.stmts.objExists.get(repoId, hash) !== null;
 	}
 
-	hasObjects(repoId: string, hashes: ReadonlyArray<string>): Set<string> {
+	private hasObjects(repoId: string, hashes: ReadonlyArray<string>): Set<string> {
 		const uniqueHashes = Array.from(new Set(hashes));
 		if (uniqueHashes.length === 0) return new Set();
 		if (uniqueHashes.length === 1) {
@@ -262,22 +284,22 @@ export class BunSqliteStorage implements Storage {
 		return new Set(rows.map((row) => row.hash));
 	}
 
-	findObjectsByPrefix(repoId: string, prefix: string): string[] {
+	private findObjectsByPrefix(repoId: string, prefix: string): string[] {
 		const rows = this.stmts.objPrefix.all(repoId, `${prefix}*`) as Array<{ hash: string }>;
 		return rows.map((r) => r.hash);
 	}
 
-	listObjectHashes(repoId: string): string[] {
+	private listObjectHashes(repoId: string): string[] {
 		const rows = this.stmts.objListHashes.all(repoId) as Array<{ hash: string }>;
 		return rows.map((r) => r.hash);
 	}
 
-	repoByteSize(repoId: string): number {
+	private repoByteSize(repoId: string): number {
 		const row = this.stmts.objByteSize.get(repoId) as { size: number } | null;
 		return row ? Number(row.size) : 0;
 	}
 
-	deleteObjects(repoId: string, hashes: ReadonlyArray<string>): number {
+	private deleteObjects(repoId: string, hashes: ReadonlyArray<string>): number {
 		if (hashes.length === 0) return 0;
 		const uniqueHashes = Array.from(new Set(hashes));
 		const existing = this.hasObjects(repoId, uniqueHashes);
@@ -320,12 +342,12 @@ export class BunSqliteStorage implements Storage {
 
 	// ── Refs ────────────────────────────────────────────────────
 
-	getRef(repoId: string, name: string): Ref | null {
+	private getRef(repoId: string, name: string): Ref | null {
 		const row = this.stmts.refRead.get(repoId, name) as RefRow | null;
 		return rowToRef(row);
 	}
 
-	putRef(repoId: string, name: string, ref: Ref): void {
+	private putRef(repoId: string, name: string, ref: Ref): void {
 		if (ref.type === "symbolic") {
 			this.stmts.refWrite.run(repoId, name, "symbolic", null, ref.target);
 		} else {
@@ -333,11 +355,11 @@ export class BunSqliteStorage implements Storage {
 		}
 	}
 
-	removeRef(repoId: string, name: string): void {
+	private removeRef(repoId: string, name: string): void {
 		this.stmts.refDelete.run(repoId, name);
 	}
 
-	listRefs(repoId: string, prefix?: string): RawRefEntry[] {
+	private listRefs(repoId: string, prefix?: string): RawRefEntry[] {
 		const rows: RefRow[] = prefix
 			? (this.stmts.refList.all(repoId, `${prefix}*`) as RefRow[])
 			: (this.stmts.refListAll.all(repoId) as RefRow[]);
@@ -347,7 +369,7 @@ export class BunSqliteStorage implements Storage {
 		});
 	}
 
-	atomicRefUpdate<T>(repoId: string, fn: (ops: RefOps) => T): T {
+	private atomicRefUpdate<T>(repoId: string, fn: (ops: RefOps) => T): T {
 		const stmts = this.stmts;
 		const tx = this.db.transaction(() => {
 			return fn({
@@ -369,16 +391,16 @@ export class BunSqliteStorage implements Storage {
 
 	// ── Forks ───────────────────────────────────────────────────
 
-	forkRepo(sourceId: string, targetId: string): void {
+	fork(sourceId: string, targetId: string): void {
 		this.stmts.forkInsert.run(targetId, sourceId);
 	}
 
-	getForkParent(repoId: string): string | null {
+	parentOf(repoId: string): string | null {
 		const row = this.stmts.forkGetParent.get(repoId) as { parent_id: string } | null;
 		return row?.parent_id ?? null;
 	}
 
-	listForks(repoId: string): string[] {
+	forksOf(repoId: string): string[] {
 		const rows = this.stmts.forkListChildren.all(repoId) as Array<{ repo_id: string }>;
 		return rows.map((r) => r.repo_id);
 	}

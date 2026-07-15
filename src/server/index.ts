@@ -63,7 +63,7 @@ export type {
 	UpdateEvent,
 } from "./types.ts";
 
-// Re-exported lib types used in Storage and hook signatures
+// Re-exported lib types used in storage and hook signatures
 export type { GitRepo, RawObject, Ref, RepoCapabilities } from "../lib/types.ts";
 
 // Storage backends — re-exported from just-git/store for back-compat. The
@@ -80,7 +80,8 @@ export {
 } from "../store/index.ts";
 export type {
 	CreateRepoOptions,
-	Storage,
+	RepoPool,
+	RepoStorage,
 	RefOps,
 	RawRefEntry,
 	MaybeAsync,

@@ -5,14 +5,12 @@
 // storage-backed repo manager standalone (headless, browser, edge).
 
 // Manager construction
-export { createRepoStore } from "./repo-store.ts";
-export { partitionStorage } from "./repo-storage.ts";
+export { createRepo, createRepoStore } from "./repo-store.ts";
 
 // Manager + backend contract types
 export type {
 	RepoStore,
 	RepoStoreOptions,
-	Storage,
 	StoredObject,
 	ObjectEncoding,
 	DeltaObjectRow,
@@ -29,11 +27,11 @@ export type { RepoPool } from "./repo-pool.ts";
 export type { GcOptions, GcResult } from "./gc.ts";
 
 // Backends
-export { MemoryStorage } from "./memory-storage.ts";
+export { createMemoryRepoStorage, MemoryStorage } from "./memory-storage.ts";
 export { BunSqliteStorage, type BunSqliteDatabase } from "./bun-sqlite-storage.ts";
 export { BetterSqlite3Storage, type BetterSqlite3Database } from "./better-sqlite3-storage.ts";
 export { PgStorage, type PgPool } from "./pg-storage.ts";
 export { DurableObjectSqliteStorage, type DurableObjectStorageSql } from "./do-sqlite-storage.ts";
 
-// Re-exported lib types used in the Storage / RepoStore signatures
+// Re-exported lib types used in the RepoStorage / RepoStore signatures
 export type { GitRepo, RawObject, Ref, RepoCapabilities } from "../lib/types.ts";
