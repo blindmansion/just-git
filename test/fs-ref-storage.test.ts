@@ -171,9 +171,7 @@ describe("FsRefStorage", () => {
 		expect(storage.putRef("/absolute", direct(HASH_A))).rejects.toThrow(
 			"invalid filesystem ref name",
 		);
-		expect(storage.removeRef("refs//heads/main")).rejects.toThrow(
-			"invalid filesystem ref name",
-		);
+		expect(storage.removeRef("refs//heads/main")).rejects.toThrow("invalid filesystem ref name");
 		expect(storage.listRefs("../refs")).rejects.toThrow("invalid filesystem ref name");
 	});
 });
