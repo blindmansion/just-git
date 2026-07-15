@@ -1,0 +1,203 @@
+import { ensureDirectoryDurable, replaceFileDurable } from "../fs/durable-io.ts";
+import type { DurableFileSystem } from "../fs/index.ts";
+import { configBool, parseConfig, serializeConfig } from "../lib/config/parse.ts";
+import { parseLooseRef, serializeLooseRef } from "../lib/file-ref-database.ts";
+import { dirname, join, resolve } from "../lib/path.ts";
+import { checkRefFormat } from "../lib/refs/name.ts";
+import type { Ref } from "../lib/types.ts";
+import { FsObjectStorage } from "./fs-object-storage.ts";
+import { FsRefStorage } from "./fs-ref-storage.ts";
+import type { RepoStorage } from "./repo-storage.ts";
+import type {
+	DeltaObjectRow,
+	MaybeAsync,
+	RawRefEntry,
+	RefOps,
+	StoredObject,
+} from "./repo-store.ts";
+
+const OBJECT_ID = /^[0-9a-f]{40}$/;
+
+/**
+ * Open or create native-layout storage for one bare repository.
+ *
+ * Existing directories must already be complete bare repositories and are
+ * never repaired or rewritten. A missing directory is initialized with a
+ * durable empty layout whose HEAD points at refs/heads/main.
+ */
+export async function createFsRepoStorage(
+	fs: DurableFileSystem,
+	repoDir: string,
+): Promise<RepoStorage> {
+	const root = requireAbsoluteNormalizedPath(repoDir);
+	if (await fs.exists(root)) {
+		await validateBareRepoLayout(fs, root);
+	} else {
+		await createBareRepoLayout(fs, root);
+	}
+
+	return new FsRepoStorage(new FsObjectStorage(fs, root), new FsRefStorage(fs, root));
+}
+
+class FsRepoStorage implements RepoStorage {
+	constructor(
+		private objects: FsObjectStorage,
+		private refs: FsRefStorage,
+	) {}
+
+	getObject(hash: string): Promise<StoredObject | null> {
+		return this.objects.getObject(hash);
+	}
+
+	getObjects(hashes: ReadonlyArray<string>): Promise<Map<string, StoredObject>> {
+		return this.objects.getObjects(hashes);
+	}
+
+	putObject(hash: string, type: string, content: Uint8Array): Promise<void> {
+		return this.objects.putObject(hash, type, content);
+	}
+
+	putObjects(
+		objects: ReadonlyArray<{ hash: string; type: string; content: Uint8Array }>,
+	): Promise<string[]> {
+		return this.objects.putObjects(objects);
+	}
+
+	putDeltaObjects(rows: ReadonlyArray<DeltaObjectRow>): Promise<void> {
+		return this.objects.putDeltaObjects(rows);
+	}
+
+	hasObject(hash: string): Promise<boolean> {
+		return this.objects.hasObject(hash);
+	}
+
+	hasObjects(hashes: ReadonlyArray<string>): Promise<Set<string>> {
+		return this.objects.hasObjects(hashes);
+	}
+
+	findObjectsByPrefix(prefix: string): Promise<string[]> {
+		return this.objects.findObjectsByPrefix(prefix);
+	}
+
+	listObjectHashes(): Promise<string[]> {
+		return this.objects.listObjectHashes();
+	}
+
+	repoByteSize(): Promise<number> {
+		return this.objects.repoByteSize();
+	}
+
+	deleteObjects(hashes: ReadonlyArray<string>): Promise<number> {
+		return this.objects.deleteObjects(hashes);
+	}
+
+	getRef(name: string): Promise<Ref | null> {
+		return this.refs.getRef(name);
+	}
+
+	putRef(name: string, ref: Ref): Promise<void> {
+		return this.refs.putRef(name, ref);
+	}
+
+	removeRef(name: string): Promise<void> {
+		return this.refs.removeRef(name);
+	}
+
+	listRefs(prefix?: string): Promise<RawRefEntry[]> {
+		return this.refs.listRefs(prefix);
+	}
+
+	atomicRefUpdate<T>(fn: (ops: RefOps) => MaybeAsync<T>): Promise<T> {
+		return this.refs.atomicRefUpdate(fn);
+	}
+}
+
+async function createBareRepoLayout(fs: DurableFileSystem, repoDir: string): Promise<void> {
+	const parent = dirname(repoDir);
+	await ensureDirectoryDurable(fs, parent);
+	await fs.mkdir(repoDir);
+	await fs.fsync(parent);
+
+	let complete = false;
+	try {
+		await ensureDirectoryDurable(fs, join(repoDir, "objects"));
+		await ensureDirectoryDurable(fs, join(repoDir, "refs", "heads"));
+		await ensureDirectoryDurable(fs, join(repoDir, "refs", "tags"));
+		await replaceFileDurable(
+			fs,
+			join(repoDir, "config"),
+			serializeConfig({
+				core: {
+					repositoryformatversion: "0",
+					filemode: "true",
+					bare: "true",
+				},
+			}),
+		);
+		// HEAD is the visibility point: all other required entries are durable
+		// before the directory can be recognized as a repository.
+		await replaceFileDurable(
+			fs,
+			join(repoDir, "HEAD"),
+			serializeLooseRef({ type: "symbolic", target: "refs/heads/main" }),
+		);
+		complete = true;
+	} finally {
+		if (!complete) {
+			await fs.rm(repoDir, { recursive: true, force: true });
+			await fs.fsync(parent);
+		}
+	}
+}
+
+async function validateBareRepoLayout(fs: DurableFileSystem, repoDir: string): Promise<void> {
+	await requireEntryType(fs, join(repoDir, "HEAD"), "file");
+	await requireEntryType(fs, join(repoDir, "config"), "file");
+	await requireEntryType(fs, join(repoDir, "objects"), "directory");
+	await requireEntryType(fs, join(repoDir, "refs"), "directory");
+
+	const head = parseLooseRef(await fs.readFile(join(repoDir, "HEAD")));
+	if (
+		(head.type === "direct" && !OBJECT_ID.test(head.hash)) ||
+		(head.type === "symbolic" && (!head.target.startsWith("refs/") || !checkRefFormat(head.target)))
+	) {
+		throw new Error(`invalid bare repository HEAD at ${JSON.stringify(repoDir)}`);
+	}
+
+	const config = parseConfig(await fs.readFile(join(repoDir, "config")));
+	if (configBool(config.core?.bare) !== true) {
+		throw new Error(`repository is not configured as bare: ${JSON.stringify(repoDir)}`);
+	}
+	const formatVersion = config.core?.repositoryformatversion ?? "0";
+	const objectFormat = config.extensions?.objectformat ?? "sha1";
+	const refStorage = config.extensions?.refstorage ?? "files";
+	if (formatVersion !== "0" || objectFormat !== "sha1" || refStorage !== "files") {
+		throw new Error(`unsupported bare repository format at ${JSON.stringify(repoDir)}`);
+	}
+}
+
+async function requireEntryType(
+	fs: DurableFileSystem,
+	path: string,
+	expected: "file" | "directory",
+): Promise<void> {
+	let stat;
+	try {
+		stat = await fs.stat(path);
+	} catch {
+		throw new Error(`bare repository is missing required ${expected}: ${JSON.stringify(path)}`);
+	}
+	const valid = expected === "file" ? stat.isFile : stat.isDirectory;
+	if (!valid) {
+		throw new Error(`bare repository entry is not a ${expected}: ${JSON.stringify(path)}`);
+	}
+}
+
+function requireAbsoluteNormalizedPath(path: string): string {
+	const normalized = resolve(path);
+	const withoutTrailingSlashes = path.length > 1 ? path.replace(/\/+$/, "") : path;
+	if (!path.startsWith("/") || path.includes("\0") || normalized !== withoutTrailingSlashes) {
+		throw new Error(`repository path must be absolute and normalized: ${JSON.stringify(path)}`);
+	}
+	return normalized;
+}
