@@ -1,4 +1,6 @@
-export type { FileStat, FileSystem } from "./fs/index.ts";
+export type { DurableFileSystem, FileStat, FileSystem } from "./fs/index.ts";
+export { isDurable } from "./fs/index.ts";
+export { durableFileSystemFromNodeFs, type NodeFsPromises } from "./fs/node-durable-fs.ts";
 export type { ExecContext, GitCommandName, GitOptions } from "./git.ts";
 export { createGit, Git } from "./git.ts";
 export type { CommandResult } from "./commands/kit/command-result.ts";

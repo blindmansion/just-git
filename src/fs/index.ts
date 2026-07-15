@@ -102,4 +102,49 @@ export interface FileSystem {
 	 * best-effort. Used by `git apply` to honor 100755 vs 100644 on disk.
 	 */
 	chmod?(path: string, mode: number): Promise<void>;
+	/**
+	 * Flush a file or directory to stable storage.
+	 *
+	 * Optional: backends without durability guarantees may omit this method.
+	 * Directory synchronization is required to make a completed atomic rename
+	 * durable.
+	 */
+	fsync?(path: string): Promise<void>;
+	/**
+	 * Atomically rename `src` to `dest` within the same filesystem.
+	 *
+	 * Unlike {@link FileSystem.mv}, this method must not degrade to copy +
+	 * remove. Implementations must either provide an atomic rename or reject
+	 * the operation.
+	 */
+	rename?(src: string, dest: string): Promise<void>;
+	/**
+	 * Create a hard link at `newPath` to `existingPath`.
+	 *
+	 * The operation must fail when `newPath` already exists, allowing callers
+	 * to use it as an exclusive-create primitive.
+	 */
+	link?(existingPath: string, newPath: string): Promise<void>;
+}
+
+/**
+ * A filesystem that supports crash-safe file replacement.
+ *
+ * Implementations must provide real durability and atomicity guarantees;
+ * in-memory or best-effort implementations should remain plain
+ * {@link FileSystem}s instead of implementing this interface with no-ops.
+ */
+export interface DurableFileSystem extends FileSystem {
+	fsync(path: string): Promise<void>;
+	rename(src: string, dest: string): Promise<void>;
+	link(existingPath: string, newPath: string): Promise<void>;
+}
+
+/** Return whether a filesystem provides all required durability primitives. */
+export function isDurable(fs: FileSystem): fs is DurableFileSystem {
+	return (
+		typeof fs.fsync === "function" &&
+		typeof fs.rename === "function" &&
+		typeof fs.link === "function"
+	);
 }
