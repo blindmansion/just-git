@@ -1,8 +1,9 @@
 import { expect } from "bun:test";
-import type { FileSystem } from "../../../src/fs/index.ts";
+import type { DurableFileSystem, FileSystem } from "../../../src/fs/index.ts";
 import { parseCommit } from "../../../src/lib/objects/commit.ts";
 import { parseTag } from "../../../src/lib/objects/tag.ts";
 import { parseTree } from "../../../src/lib/objects/tree.ts";
+import { validateBareRepoLayout } from "../../../src/store/fs-repo-storage.ts";
 import type { RepoStorage } from "../../../src/store/repo-storage.ts";
 
 export async function readFileIfPresent(fs: FileSystem, path: string): Promise<string | undefined> {
@@ -57,4 +58,28 @@ export async function assertAllVisibleRefsReachObjects(storage: RepoStorage): Pr
 			pending.push(parseTag(object.content).object);
 		}
 	}
+}
+
+/** Assert that a publication path is absent or a complete supported bare repo. */
+export async function assertBareRepoOrAbsent(fs: DurableFileSystem, path: string): Promise<void> {
+	if (await fs.exists(path)) await validateBareRepoLayout(fs, path);
+}
+
+/** Parse and validate the versioned pool metadata when it is visible. */
+export async function assertPoolMetadataValid(
+	fs: FileSystem,
+	path: string,
+): Promise<{ version: 1; forks: Record<string, string> } | undefined> {
+	if (!(await fs.exists(path))) return undefined;
+	const value = JSON.parse(await fs.readFile(path)) as {
+		version?: unknown;
+		forks?: unknown;
+	};
+	expect(value.version).toBe(1);
+	expect(value.forks).toBeObject();
+	expect(Array.isArray(value.forks)).toBe(false);
+	for (const parent of Object.values(value.forks as Record<string, unknown>)) {
+		expect(parent).toBeString();
+	}
+	return value as { version: 1; forks: Record<string, string> };
 }
