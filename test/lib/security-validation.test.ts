@@ -217,9 +217,9 @@ describe("loose object hash verification", () => {
 		await fs.writeFile(loosePath, wrongCompressed);
 
 		// Clear the cache so the store re-reads from disk
-		(store as any).cache.clear();
+		store.invalidatePacks();
 
-		await expect(store.read(hash)).rejects.toThrow(/SHA-1 mismatch/i);
+		expect(store.read(hash)).rejects.toThrow(/SHA-1 mismatch/i);
 	});
 
 	test("reads valid loose object without error", async () => {
@@ -230,7 +230,7 @@ describe("loose object hash verification", () => {
 		const hash = await store.write("blob", content);
 
 		// Clear cache to force re-read
-		(store as any).cache.clear();
+		store.invalidatePacks();
 
 		const obj = await store.read(hash);
 		expect(obj.type).toBe("blob");
@@ -260,7 +260,7 @@ describe("pack checksum verification", () => {
 
 		const fs = new InMemoryFs();
 		const store = new PackedObjectStore(fs, "/repo/.git");
-		await expect(store.ingestPack(corrupted)).rejects.toThrow(/pack signature/i);
+		expect(store.ingestPack(corrupted)).rejects.toThrow(/pack signature/i);
 	});
 
 	test("accepts valid pack", async () => {
