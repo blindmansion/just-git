@@ -1,4 +1,5 @@
 import type { FileSystem } from "../fs/index.ts";
+import { ensureDirectory, replaceFile } from "../fs/durable-io.ts";
 import { PackedObjectStore } from "./object-store.ts";
 import { join, resolve } from "./path.ts";
 import { createSymbolicRef } from "./refs/refs.ts";
@@ -182,9 +183,9 @@ export async function initRepository(
 	const reinit = await fs.exists(headPath);
 
 	// Create the directory structure (idempotent with recursive: true)
-	await fs.mkdir(join(gitDir, "objects"), { recursive: true });
-	await fs.mkdir(join(gitDir, "refs", "heads"), { recursive: true });
-	await fs.mkdir(join(gitDir, "refs", "tags"), { recursive: true });
+	await ensureDirectory(fs, join(gitDir, "objects"));
+	await ensureDirectory(fs, join(gitDir, "refs", "heads"));
+	await ensureDirectory(fs, join(gitDir, "refs", "tags"));
 
 	const ctx: GitContext = {
 		fs,
@@ -206,7 +207,7 @@ export async function initRepository(
 				...(bare ? {} : { logallrefupdates: "true" }),
 			},
 		};
-		await fs.writeFile(join(gitDir, "config"), serializeConfig(config));
+		await replaceFile(fs, join(gitDir, "config"), serializeConfig(config));
 	}
 
 	return { ctx, reinit };

@@ -1,4 +1,5 @@
 import { bytesToHex, hexToBytes } from "./hex.ts";
+import { replaceFile } from "../fs/durable-io.ts";
 import { verifyPath } from "./attributes/path-safety.ts";
 import { join } from "./path.ts";
 import { sha1 } from "./sha1.ts";
@@ -35,7 +36,7 @@ export async function readIndex(ctx: GitContext): Promise<Index> {
 export async function writeIndex(ctx: GitContext, index: Index): Promise<void> {
 	const path = join(ctx.gitDir, "index");
 	const data = await serializeIndex(index);
-	await ctx.fs.writeFile(path, data);
+	await replaceFile(ctx.fs, path, data);
 }
 
 /**

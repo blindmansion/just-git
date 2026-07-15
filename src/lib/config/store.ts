@@ -4,6 +4,7 @@
 // it materializes around (`getConfigFrom`, `setConfig`, …) so the value-state
 // boundary is easy to follow. Depends only on the pure {@link parse} leaf.
 
+import { replaceFile } from "../../fs/durable-io.ts";
 import { join } from "../path.ts";
 import type { GitContext } from "../types.ts";
 import {
@@ -128,7 +129,7 @@ export async function readConfigData(ctx: GitContext): Promise<ConfigData> {
 
 /** Persist {@link ConfigData} to `.git/config`. The shell write boundary. */
 export async function writeConfigData(ctx: GitContext, data: ConfigData): Promise<void> {
-	await ctx.fs.writeFile(join(ctx.commonDir, "config"), data.text);
+	await replaceFile(ctx.fs, join(ctx.commonDir, "config"), data.text);
 }
 
 // ── Filesystem operations ───────────────────────────────────────────
@@ -148,7 +149,7 @@ async function readConfigRaw(ctx: GitContext): Promise<string> {
 /** Serialize and write .git/config. */
 export async function writeConfig(ctx: GitContext, config: GitConfig): Promise<void> {
 	const path = join(ctx.commonDir, "config");
-	await ctx.fs.writeFile(path, serializeConfig(config));
+	await replaceFile(ctx.fs, path, serializeConfig(config));
 }
 
 /** Read and parse .git/config preserving duplicate keys. Empty if no file. */

@@ -1,5 +1,6 @@
 import type { FileSystem } from "../../fs/index.ts";
-import { ensureParentDir, join } from "../path.ts";
+import { removeFile, replaceFile } from "../../fs/durable-io.ts";
+import { join } from "../path.ts";
 import { isPerWorktreeRef } from "./classify.ts";
 import {
 	type DirectRef,
@@ -63,19 +64,16 @@ export class FileSystemRefStore implements RefStore {
 	async writeRef(name: string, refOrHash: Ref | string): Promise<void> {
 		const ref = normalizeRef(refOrHash);
 		const path = join(this.dirFor(name), name);
-		await ensureParentDir(this.fs, path);
 		if (ref.type === "symbolic") {
-			await this.fs.writeFile(path, `${SYMBOLIC_PREFIX}${ref.target}\n`);
+			await replaceFile(this.fs, path, `${SYMBOLIC_PREFIX}${ref.target}\n`);
 		} else {
-			await this.fs.writeFile(path, `${ref.hash}\n`);
+			await replaceFile(this.fs, path, `${ref.hash}\n`);
 		}
 	}
 
 	async deleteRef(name: string): Promise<void> {
 		const path = join(this.dirFor(name), name);
-		if (await this.fs.exists(path)) {
-			await this.fs.rm(path);
-		}
+		await removeFile(this.fs, path);
 		await this.removePackedRef(name);
 	}
 
@@ -232,9 +230,9 @@ export class FileSystemRefStore implements RefStore {
 
 		const hasRefs = filtered.some((l) => l && !l.startsWith("#") && !l.startsWith("^"));
 		if (!hasRefs) {
-			await this.fs.rm(packedPath);
+			await removeFile(this.fs, packedPath);
 		} else {
-			await this.fs.writeFile(packedPath, filtered.join("\n"));
+			await replaceFile(this.fs, packedPath, filtered.join("\n"));
 		}
 	}
 

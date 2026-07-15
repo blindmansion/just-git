@@ -1,4 +1,5 @@
 import type { FileSystem } from "../fs/index.ts";
+import { createFile, ensureDirectory, installPackPairBestEffort } from "../fs/durable-io.ts";
 import { bytesToHex } from "./hex.ts";
 import { ObjectCache } from "./object-cache.ts";
 import { buildPackIndex, PackIndex } from "./pack/pack-index.ts";
@@ -101,9 +102,9 @@ export class PackedObjectStore implements ObjectStore {
 		}
 
 		const dir = join(this.gitDir, "objects", hash.slice(0, 2));
-		await this.fs.mkdir(dir, { recursive: true });
+		await ensureDirectory(this.fs, dir);
 
-		await this.fs.writeFile(path, await deflate(data));
+		await createFile(this.fs, path, await deflate(data));
 		return hash;
 	}
 
@@ -172,15 +173,14 @@ export class PackedObjectStore implements ObjectStore {
 			throw new Error(`pack checksum mismatch: expected ${packHash}, computed ${computedChecksum}`);
 		}
 
-		await this.fs.mkdir(this.packDir, { recursive: true });
+		await ensureDirectory(this.fs, this.packDir);
 
 		const packName = `pack-${packHash}`;
 		const packPath = join(this.packDir, `${packName}.pack`);
-		await this.fs.writeFile(packPath, packData);
 
 		const idxData = await buildPackIndex(packData);
 		const idxPath = join(this.packDir, `${packName}.idx`);
-		await this.fs.writeFile(idxPath, idxData);
+		await installPackPairBestEffort(this.fs, packPath, packData, idxPath, idxData);
 
 		this.loadedPackNames.add(packName);
 		const index = new PackIndex(idxData);

@@ -1,3 +1,4 @@
+import { ensureDirectory, removeFile, replaceFile } from "../../fs/durable-io.ts";
 import { readObject } from "../object-db.ts";
 import { parseTag } from "../objects/tag.ts";
 import { join } from "../path.ts";
@@ -185,21 +186,19 @@ export async function writePackedRefs(ctx: GitContext): Promise<void> {
 		}
 	}
 
-	await ctx.fs.writeFile(join(ctx.commonDir, "packed-refs"), `${lines.join("\n")}\n`);
+	await replaceFile(ctx.fs, join(ctx.commonDir, "packed-refs"), `${lines.join("\n")}\n`);
 
 	for (const name of packed) {
 		const loosePath = join(ctx.commonDir, name);
-		if (await ctx.fs.exists(loosePath)) {
-			await ctx.fs.rm(loosePath);
-		}
+		await removeFile(ctx.fs, loosePath);
 	}
 
 	await cleanEmptyRefDirs(ctx, join(ctx.commonDir, "refs"));
 
 	const refsDir = join(ctx.commonDir, "refs");
-	await ctx.fs.mkdir(refsDir, { recursive: true });
-	await ctx.fs.mkdir(join(refsDir, "heads"), { recursive: true });
-	await ctx.fs.mkdir(join(refsDir, "tags"), { recursive: true });
+	await ensureDirectory(ctx.fs, refsDir);
+	await ensureDirectory(ctx.fs, join(refsDir, "heads"));
+	await ensureDirectory(ctx.fs, join(refsDir, "tags"));
 }
 
 /**
