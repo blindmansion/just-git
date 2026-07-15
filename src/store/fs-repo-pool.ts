@@ -1,9 +1,14 @@
-import { ensureDirectoryDurable, replaceFileDurable, withFileLock } from "../fs/durable-io.ts";
+import {
+	ensureDirectoryDurable,
+	removeFileDurable,
+	replaceFileDurable,
+	withFileLock,
+} from "../fs/durable-io.ts";
 import type { DurableFileSystem } from "../fs/index.ts";
 import { dirname, join, relative } from "../lib/path.ts";
 import { sha1 } from "../lib/sha1.ts";
 import {
-	createBareRepoLayout,
+	createBareRepoLayoutInPlace,
 	createFsRepoStorage,
 	requireAbsoluteNormalizedPath,
 	validateBareRepoLayout,
@@ -21,6 +26,10 @@ interface ForkMetadata {
 	forks: Record<string, string>;
 }
 
+type PoolOperation =
+	| { version: 1; type: "fork"; sourceId: string; targetId: string }
+	| { version: 1; type: "delete"; repoId: string; tombstone: string };
+
 /** Create a durable, managed pool of native bare repositories. */
 export async function createFsRepoPool(fs: DurableFileSystem, rootDir: string): Promise<RepoPool> {
 	const root = requireAbsoluteNormalizedPath(rootDir);
@@ -29,16 +38,27 @@ export async function createFsRepoPool(fs: DurableFileSystem, rootDir: string): 
 	const tombstonesDir = join(controlDir, "tombstones");
 	const lockPath = join(controlDir, "pool.lock");
 	const metadataPath = join(controlDir, "forks.json");
+	const operationPath = join(controlDir, "operation.json");
 
 	await ensureDirectoryDurable(fs, controlDir);
 	await ensureDirectoryDurable(fs, reposDir);
 	await ensureDirectoryDurable(fs, tombstonesDir);
 
-	await withFileLock(fs, lockPath, async () => {
+	await withPoolLock(fs, lockPath, async () => {
 		if (!(await fs.exists(metadataPath))) {
 			await writeMetadata(fs, metadataPath, emptyMetadata());
 		}
-		await cleanupAbandonedEntries(fs, reposDir, tombstonesDir);
+		await recoverPoolOperation(fs, root, metadataPath, tombstonesDir, operationPath);
+		await cleanupAbandonedEntries(
+			fs,
+			root,
+			metadataPath,
+			reposDir,
+			tombstonesDir,
+			controlDir,
+			lockPath,
+			operationPath,
+		);
 		await validatePool(fs, root, metadataPath);
 	});
 
@@ -55,14 +75,14 @@ export async function createFsRepoPool(fs: DurableFileSystem, rootDir: string): 
 
 		async createRepo(repoId) {
 			const finalPath = await pathFor(repoId);
-			await withFileLock(fs, lockPath, async () => {
+			await withPoolLock(fs, lockPath, async () => {
 				if (await fs.exists(finalPath)) throw new Error(`repo '${repoId}' already exists`);
 				const shardDir = dirname(finalPath);
 				await ensureDirectoryDurable(fs, shardDir);
 				const stagePath = join(shardDir, `.stage-${basename(finalPath)}-${nonce()}`);
 				let published = false;
 				try {
-					await createBareRepoLayout(fs, stagePath);
+					await createBareRepoLayoutInPlace(fs, stagePath);
 					await fs.fsync(stagePath);
 					await fs.rename(stagePath, finalPath);
 					published = true;
@@ -85,7 +105,7 @@ export async function createFsRepoPool(fs: DurableFileSystem, rootDir: string): 
 
 		async deleteRepo(repoId) {
 			const path = await pathFor(repoId);
-			await withFileLock(fs, lockPath, async () => {
+			await withPoolLock(fs, lockPath, async () => {
 				const metadata = await readMetadata();
 				const children = childrenOf(metadata, repoId);
 				if (children.length > 0) {
@@ -94,24 +114,22 @@ export async function createFsRepoPool(fs: DurableFileSystem, rootDir: string): 
 				if (!(await fs.exists(path))) throw new Error(`repo '${repoId}' not found`);
 				await validateBareRepoLayout(fs, path);
 
-				const tombstone = join(tombstonesDir, `${basename(path)}-${nonce()}`);
-				await fs.rename(path, tombstone);
-				await fs.fsync(dirname(path));
-				await fs.fsync(tombstonesDir);
-
-				if (metadata.forks[repoId] !== undefined) {
-					delete metadata.forks[repoId];
-					await writeMetadata(fs, metadataPath, metadata);
-				}
-				await fs.rm(tombstone, { recursive: true });
-				await fs.fsync(tombstonesDir);
+				const operation: PoolOperation = {
+					version: 1,
+					type: "delete",
+					repoId,
+					tombstone: `${basename(path)}-${nonce()}`,
+				};
+				await writeOperation(fs, operationPath, operation);
+				await finishDeleteOperation(fs, root, metadataPath, tombstonesDir, operation);
+				await removeFileDurable(fs, operationPath);
 			});
 		},
 
 		async fork(sourceId, targetId) {
 			const sourcePath = await pathFor(sourceId);
 			const targetPath = await pathFor(targetId);
-			await withFileLock(fs, lockPath, async () => {
+			await withPoolLock(fs, lockPath, async () => {
 				if (!(await fs.exists(sourcePath))) throw new Error(`source repo '${sourceId}' not found`);
 				if (!(await fs.exists(targetPath))) throw new Error(`repo '${targetId}' not found`);
 				await validateBareRepoLayout(fs, sourcePath);
@@ -121,16 +139,29 @@ export async function createFsRepoPool(fs: DurableFileSystem, rootDir: string): 
 				if (metadata.forks[sourceId] !== undefined) {
 					throw new Error(`fork source '${sourceId}' is not a root repository`);
 				}
-				if (metadata.forks[targetId] !== undefined) {
+				if (metadata.forks[targetId] !== undefined && metadata.forks[targetId] !== sourceId) {
 					throw new Error(`repo '${targetId}' is already a fork`);
 				}
 				if (sourceId === targetId) throw new Error("a repository cannot fork itself");
+				if (metadata.forks[targetId] === sourceId) {
+					await finishForkOperation(fs, root, metadataPath, {
+						version: 1,
+						type: "fork",
+						sourceId,
+						targetId,
+					});
+					return;
+				}
 
-				const alternatesPath = join(targetPath, "objects", "info", "alternates");
-				const alternate = relative(join(targetPath, "objects"), join(sourcePath, "objects"));
-				await replaceFileDurable(fs, alternatesPath, `${alternate}\n`);
-				metadata.forks[targetId] = sourceId;
-				await writeMetadata(fs, metadataPath, metadata);
+				const operation: PoolOperation = {
+					version: 1,
+					type: "fork",
+					sourceId,
+					targetId,
+				};
+				await writeOperation(fs, operationPath, operation);
+				await finishForkOperation(fs, root, metadataPath, operation);
+				await removeFileDurable(fs, operationPath);
 			});
 		},
 
@@ -144,6 +175,26 @@ export async function createFsRepoPool(fs: DurableFileSystem, rootDir: string): 
 			return childrenOf(await readMetadata(), repoId);
 		},
 	};
+}
+
+/**
+ * Explicitly recover a pool after the operator has established that no process
+ * still owns its durable lock. Recovery removes that lock, then replays any
+ * versioned operation manifest before opening the pool.
+ */
+export async function recoverFsRepoPool(fs: DurableFileSystem, rootDir: string): Promise<RepoPool> {
+	const root = requireAbsoluteNormalizedPath(rootDir);
+	const controlDir = join(root, ".just-git");
+	const lockPath = join(controlDir, "pool.lock");
+	if (await fs.exists(lockPath)) await removeFileDurable(fs, lockPath);
+	if (await fs.exists(controlDir)) {
+		for (const name of await fs.readdir(controlDir)) {
+			if (!name.startsWith(`${basename(lockPath)}.tmp-`)) continue;
+			await fs.rm(join(controlDir, name), { force: true });
+			await fs.fsync(controlDir);
+		}
+	}
+	return createFsRepoPool(fs, root);
 }
 
 /**
@@ -226,13 +277,132 @@ async function validatePool(
 	}
 }
 
+async function recoverPoolOperation(
+	fs: DurableFileSystem,
+	root: string,
+	metadataPath: string,
+	tombstonesDir: string,
+	operationPath: string,
+): Promise<void> {
+	if (!(await fs.exists(operationPath))) return;
+	const operation = await loadOperation(fs, operationPath);
+	if (operation.type === "fork") {
+		await finishForkOperation(fs, root, metadataPath, operation);
+	} else {
+		await finishDeleteOperation(fs, root, metadataPath, tombstonesDir, operation);
+	}
+	await removeFileDurable(fs, operationPath);
+}
+
+async function finishForkOperation(
+	fs: DurableFileSystem,
+	root: string,
+	metadataPath: string,
+	operation: Extract<PoolOperation, { type: "fork" }>,
+): Promise<void> {
+	const sourcePath = await repoPath(root, operation.sourceId);
+	const targetPath = await repoPath(root, operation.targetId);
+	if (!(await fs.exists(sourcePath)) || !(await fs.exists(targetPath))) {
+		throw new Error(
+			`cannot recover filesystem pool fork with a missing repository: '${operation.targetId}' -> '${operation.sourceId}'`,
+		);
+	}
+	await validateBareRepoLayout(fs, sourcePath);
+	await validateBareRepoLayout(fs, targetPath);
+
+	const metadata = await loadMetadata(fs, metadataPath);
+	if (metadata.forks[operation.sourceId] !== undefined) {
+		throw new Error(`cannot recover fork from non-root repo '${operation.sourceId}'`);
+	}
+	const existingParent = metadata.forks[operation.targetId];
+	if (existingParent !== undefined && existingParent !== operation.sourceId) {
+		throw new Error(
+			`cannot recover fork '${operation.targetId}': metadata names parent '${existingParent}'`,
+		);
+	}
+
+	const alternatesPath = join(targetPath, "objects", "info", "alternates");
+	const alternate = `${relative(join(targetPath, "objects"), join(sourcePath, "objects"))}\n`;
+	if (!(await fs.exists(alternatesPath)) || (await fs.readFile(alternatesPath)) !== alternate) {
+		await replaceFileDurable(fs, alternatesPath, alternate);
+	}
+	if (existingParent === undefined) {
+		metadata.forks[operation.targetId] = operation.sourceId;
+		await writeMetadata(fs, metadataPath, metadata);
+	}
+}
+
+async function finishDeleteOperation(
+	fs: DurableFileSystem,
+	root: string,
+	metadataPath: string,
+	tombstonesDir: string,
+	operation: Extract<PoolOperation, { type: "delete" }>,
+): Promise<void> {
+	const path = await repoPath(root, operation.repoId);
+	if (
+		!operation.tombstone.startsWith(`${basename(path)}-`) ||
+		!/^[a-z0-9.-]+$/.test(operation.tombstone)
+	) {
+		throw new Error("malformed filesystem repository pool operation manifest");
+	}
+	const tombstone = join(tombstonesDir, operation.tombstone);
+	const liveExists = await fs.exists(path);
+	const tombstoneExists = await fs.exists(tombstone);
+
+	if (liveExists) await validateBareRepoLayout(fs, path);
+	if (liveExists && tombstoneExists) {
+		// A cross-directory rename can durably appear in both parents until
+		// the source parent is fsynced. Keep the recognized tombstone.
+		await fs.rm(path, { recursive: true });
+		await fs.fsync(dirname(path));
+	} else if (liveExists) {
+		await fs.rename(path, tombstone);
+		// Persist the recovery copy before publishing removal from the live shard.
+		await fs.fsync(tombstonesDir);
+		await fs.fsync(dirname(path));
+	}
+
+	const metadata = await loadMetadata(fs, metadataPath);
+	const children = childrenOf(metadata, operation.repoId);
+	if (children.length > 0) {
+		throw new Error(
+			`cannot recover deletion of repo '${operation.repoId}': has ${children.length} active fork(s)`,
+		);
+	}
+	if (metadata.forks[operation.repoId] !== undefined) {
+		delete metadata.forks[operation.repoId];
+		await writeMetadata(fs, metadataPath, metadata);
+	}
+	if (await fs.exists(tombstone)) {
+		await fs.rm(tombstone, { recursive: true });
+		await fs.fsync(tombstonesDir);
+	}
+}
+
 async function cleanupAbandonedEntries(
 	fs: DurableFileSystem,
+	root: string,
+	metadataPath: string,
 	reposDir: string,
 	tombstonesDir: string,
+	controlDir: string,
+	lockPath: string,
+	operationPath: string,
 ): Promise<void> {
+	const metadata = await loadMetadata(fs, metadataPath);
+	const relatedPaths = await Promise.all(
+		[...new Set([...Object.keys(metadata.forks), ...Object.values(metadata.forks)])].map((repoId) =>
+			repoPath(root, repoId),
+		),
+	);
 	for (const name of await fs.readdir(tombstonesDir)) {
 		if (!/^r-[a-z2-7]+\.git-[a-z0-9-]+$/.test(name)) continue;
+		if (relatedPaths.some((path) => name.startsWith(`${basename(path)}-`))) {
+			throw new Error(
+				`filesystem repository pool has an ambiguous fork tombstone requiring recovery: ${JSON.stringify(name)}`,
+			);
+		}
 		await fs.rm(join(tombstonesDir, name), { recursive: true });
 		await fs.fsync(tombstonesDir);
 	}
@@ -244,6 +414,16 @@ async function cleanupAbandonedEntries(
 			if (!/^\.stage-r-[a-z2-7]+\.git-[a-z0-9-]+$/.test(name)) continue;
 			await fs.rm(join(shardDir, name), { recursive: true });
 			await fs.fsync(shardDir);
+		}
+	}
+	for (const name of await fs.readdir(controlDir)) {
+		if (
+			name.startsWith(`${basename(metadataPath)}.tmp-`) ||
+			name.startsWith(`${basename(lockPath)}.tmp-`) ||
+			name.startsWith(`${basename(operationPath)}.tmp-`)
+		) {
+			await fs.rm(join(controlDir, name), { force: true });
+			await fs.fsync(controlDir);
 		}
 	}
 }
@@ -319,6 +499,66 @@ async function writeMetadata(
 	await replaceFileDurable(fs, path, `${JSON.stringify(metadata, null, 2)}\n`);
 }
 
+async function loadOperation(fs: DurableFileSystem, path: string): Promise<PoolOperation> {
+	let value: unknown;
+	try {
+		value = JSON.parse(await fs.readFile(path));
+	} catch {
+		throw new Error(
+			`malformed filesystem repository pool operation manifest at ${JSON.stringify(path)}`,
+		);
+	}
+	if (
+		typeof value !== "object" ||
+		value === null ||
+		(value as { version?: unknown }).version !== 1
+	) {
+		throw new Error(
+			`malformed filesystem repository pool operation manifest at ${JSON.stringify(path)}`,
+		);
+	}
+	const operation = value as Record<string, unknown>;
+	if (
+		operation.type === "fork" &&
+		typeof operation.sourceId === "string" &&
+		typeof operation.targetId === "string" &&
+		isValidRepoId(operation.sourceId) &&
+		isValidRepoId(operation.targetId) &&
+		operation.sourceId !== operation.targetId
+	) {
+		return {
+			version: 1,
+			type: "fork",
+			sourceId: operation.sourceId,
+			targetId: operation.targetId,
+		};
+	}
+	if (
+		operation.type === "delete" &&
+		typeof operation.repoId === "string" &&
+		typeof operation.tombstone === "string" &&
+		isValidRepoId(operation.repoId)
+	) {
+		return {
+			version: 1,
+			type: "delete",
+			repoId: operation.repoId,
+			tombstone: operation.tombstone,
+		};
+	}
+	throw new Error(
+		`malformed filesystem repository pool operation manifest at ${JSON.stringify(path)}`,
+	);
+}
+
+async function writeOperation(
+	fs: DurableFileSystem,
+	path: string,
+	operation: PoolOperation,
+): Promise<void> {
+	await replaceFileDurable(fs, path, `${JSON.stringify(operation, null, 2)}\n`);
+}
+
 function emptyMetadata(): ForkMetadata {
 	return { version: METADATA_VERSION, forks: Object.create(null) as Record<string, string> };
 }
@@ -336,4 +576,29 @@ function basename(path: string): string {
 
 function nonce(): string {
 	return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function withPoolLock<T>(
+	fs: DurableFileSystem,
+	lockPath: string,
+	fn: () => Promise<T>,
+): Promise<T> {
+	try {
+		return await withFileLock(fs, lockPath, fn);
+	} catch (error) {
+		if (isAlreadyExistsError(error)) throw stalePoolLockError(lockPath);
+		throw error;
+	}
+}
+
+function stalePoolLockError(lockPath: string): Error {
+	return new Error(
+		`EEXIST: filesystem repository pool lock is already present at ${JSON.stringify(lockPath)}; explicit stale-lock recovery is required`,
+	);
+}
+
+function isAlreadyExistsError(error: unknown): boolean {
+	if (typeof error !== "object" || error === null) return false;
+	if ("code" in error && (error as { code?: unknown }).code === "EEXIST") return true;
+	return "message" in error && /^EEXIST\b/.test(String((error as { message?: unknown }).message));
 }

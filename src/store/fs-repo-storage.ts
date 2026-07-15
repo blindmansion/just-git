@@ -1,4 +1,4 @@
-import { ensureDirectoryDurable, replaceFileDurable } from "../fs/durable-io.ts";
+import { ensureDirectoryDurable, removeFileDurable, replaceFileDurable } from "../fs/durable-io.ts";
 import type { DurableFileSystem } from "../fs/index.ts";
 import { configBool, parseConfig, serializeConfig } from "../lib/config/parse.ts";
 import { parseLooseRef, serializeLooseRef } from "../lib/file-ref-database.ts";
@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "../lib/path.ts";
 import { checkRefFormat } from "../lib/refs/name.ts";
 import type { Ref } from "../lib/types.ts";
 import { FsObjectStorage } from "./fs-object-storage.ts";
-import { FsRefStorage } from "./fs-ref-storage.ts";
+import { FsRefStorage, REF_LOCK } from "./fs-ref-storage.ts";
 import type { RepoStorage } from "./repo-storage.ts";
 import type {
 	DeltaObjectRow,
@@ -30,13 +30,34 @@ export async function createFsRepoStorage(
 	repoDir: string,
 ): Promise<RepoStorage> {
 	const root = requireAbsoluteNormalizedPath(repoDir);
+	await cleanupBareRepoStages(fs, root);
 	if (await fs.exists(root)) {
 		await validateBareRepoLayout(fs, root);
+		// Reap abandoned ref-lock claimants left by a crashed lock release.
+		// The lock file itself is never removed here; that requires explicit
+		// recovery through recoverFsRepoStorage.
+		await cleanupRefLockClaimants(fs, root);
 	} else {
 		await createBareRepoLayout(fs, root);
 	}
 
 	return new FsRepoStorage(new FsObjectStorage(fs, root), new FsRefStorage(fs, root));
+}
+
+/**
+ * Explicitly recover a repository after the operator has established that no
+ * process still owns its durable ref lock.
+ */
+export async function recoverFsRepoStorage(
+	fs: DurableFileSystem,
+	repoDir: string,
+): Promise<RepoStorage> {
+	const root = requireAbsoluteNormalizedPath(repoDir);
+	await validateBareRepoLayout(fs, root);
+	const lockPath = join(root, REF_LOCK);
+	if (await fs.exists(lockPath)) await removeFileDurable(fs, lockPath);
+	// The remaining claimant sweep is delegated to createFsRepoStorage.
+	return createFsRepoStorage(fs, root);
 }
 
 class FsRepoStorage implements RepoStorage {
@@ -112,10 +133,40 @@ class FsRepoStorage implements RepoStorage {
 	}
 }
 
-/** Initialize a missing directory as a complete durable bare repository. */
+/**
+ * Initialize a missing directory through a complete sibling stage, then
+ * atomically publish it at the requested path.
+ */
 export async function createBareRepoLayout(fs: DurableFileSystem, repoDir: string): Promise<void> {
 	const parent = dirname(repoDir);
 	await ensureDirectoryDurable(fs, parent);
+	await cleanupBareRepoStages(fs, repoDir);
+	if (await fs.exists(repoDir)) {
+		throw new Error(`repository path already exists: ${JSON.stringify(repoDir)}`);
+	}
+
+	const stagePath = join(parent, `${bareRepoStagePrefix(repoDir)}${nonce()}`);
+	let published = false;
+	try {
+		await createBareRepoLayoutInPlace(fs, stagePath);
+		await fs.fsync(stagePath);
+		await fs.rename(stagePath, repoDir);
+		published = true;
+		await fs.fsync(parent);
+	} finally {
+		if (!published) {
+			await fs.rm(stagePath, { recursive: true, force: true });
+			await fs.fsync(parent);
+		}
+	}
+}
+
+/** Construct a complete durable bare layout at an unpublished staging path. */
+export async function createBareRepoLayoutInPlace(
+	fs: DurableFileSystem,
+	repoDir: string,
+): Promise<void> {
+	const parent = dirname(repoDir);
 	await fs.mkdir(repoDir);
 	await fs.fsync(parent);
 
@@ -149,6 +200,38 @@ export async function createBareRepoLayout(fs: DurableFileSystem, repoDir: strin
 			await fs.fsync(parent);
 		}
 	}
+}
+
+async function cleanupBareRepoStages(fs: DurableFileSystem, repoDir: string): Promise<void> {
+	const parent = dirname(repoDir);
+	if (!(await fs.exists(parent))) return;
+	const prefix = bareRepoStagePrefix(repoDir);
+	for (const name of await fs.readdir(parent)) {
+		if (!name.startsWith(prefix) || !/^[a-z0-9-]+$/.test(name.slice(prefix.length))) continue;
+		await fs.rm(join(parent, name), { recursive: true });
+		await fs.fsync(parent);
+	}
+}
+
+async function cleanupRefLockClaimants(fs: DurableFileSystem, repoDir: string): Promise<void> {
+	const prefix = `${REF_LOCK}.tmp-`;
+	for (const name of await fs.readdir(repoDir)) {
+		if (!name.startsWith(prefix)) continue;
+		await fs.rm(join(repoDir, name), { force: true });
+		await fs.fsync(repoDir);
+	}
+}
+
+function bareRepoStagePrefix(repoDir: string): string {
+	return `.stage-${basename(repoDir)}-`;
+}
+
+function basename(path: string): string {
+	return path.slice(path.lastIndexOf("/") + 1);
+}
+
+function nonce(): string {
+	return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
 /** Validate the native bare-repository shape supported by filesystem storage. */

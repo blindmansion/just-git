@@ -506,13 +506,19 @@ export function createRepoStore(
 			const sourceExists = await pool.hasRepo(sourceId);
 			if (!sourceExists) throw new Error(`source repo '${sourceId}' not found`);
 			const targetExists = await pool.hasRepo(targetId);
-			if (targetExists) throw new Error(`repo '${targetId}' already exists`);
 
 			// Resolve to root: if source is itself a fork, fork from its root
 			const sourceParent = await pool.parentOf(sourceId);
 			const rootId = sourceParent ?? sourceId;
 
-			await pool.createRepo(targetId);
+			if (targetExists) {
+				const targetParent = await pool.parentOf(targetId);
+				if (targetParent !== rootId) throw new Error(`repo '${targetId}' already exists`);
+			} else {
+				await pool.createRepo(targetId);
+			}
+			// Idempotently verify/repair the pool-level relationship before
+			// resuming a possibly interrupted ref copy.
 			await pool.fork(rootId, targetId);
 
 			// Copy all refs from source to target

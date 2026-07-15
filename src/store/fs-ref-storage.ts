@@ -13,7 +13,7 @@ import { join } from "../lib/path.ts";
 import type { Ref } from "../lib/types.ts";
 import type { MaybeAsync, RawRefEntry, RefOps } from "./repo-store.ts";
 
-const REF_LOCK = ".just-git-ref.lock";
+export const REF_LOCK = ".just-git-ref.lock";
 
 /**
  * Native-layout ref persistence for one bare repository.
@@ -42,12 +42,12 @@ export class FsRefStorage {
 
 	async putRef(name: string, ref: Ref): Promise<void> {
 		refPath(this.repoDir, name);
-		await withFileLock(this.fs, this.lockPath, () => this.putRefUnlocked(name, ref));
+		await this.withRefLock(() => this.putRefUnlocked(name, ref));
 	}
 
 	async removeRef(name: string): Promise<void> {
 		refPath(this.repoDir, name);
-		await withFileLock(this.fs, this.lockPath, () => this.removeRefUnlocked(name));
+		await this.withRefLock(() => this.removeRefUnlocked(name));
 	}
 
 	async listRefs(prefix?: string): Promise<RawRefEntry[]> {
@@ -76,7 +76,7 @@ export class FsRefStorage {
 	}
 
 	async atomicRefUpdate<T>(fn: (ops: RefOps) => MaybeAsync<T>): Promise<T> {
-		return withFileLock(this.fs, this.lockPath, async () => {
+		return this.withRefLock(async () => {
 			const overlay = new Map<string, Ref | null>();
 			let mutatedName: string | undefined;
 
@@ -110,6 +110,19 @@ export class FsRefStorage {
 		});
 	}
 
+	private async withRefLock<T>(fn: () => Promise<T>): Promise<T> {
+		try {
+			return await withFileLock(this.fs, this.lockPath, fn);
+		} catch (error) {
+			if (isAlreadyExistsError(error)) {
+				throw new Error(
+					`EEXIST: filesystem repository ref lock is already present at ${JSON.stringify(this.lockPath)}; explicit stale-lock recovery is required`,
+				);
+			}
+			throw error;
+		}
+	}
+
 	private async putRefUnlocked(name: string, ref: Ref): Promise<void> {
 		await replaceFileDurable(this.fs, refPath(this.repoDir, name), serializeLooseRef(ref));
 	}
@@ -140,4 +153,10 @@ function isSafeStoredName(repoDir: string, name: string): boolean {
 	} catch {
 		return false;
 	}
+}
+
+function isAlreadyExistsError(error: unknown): boolean {
+	if (typeof error !== "object" || error === null) return false;
+	if ("code" in error && (error as { code?: unknown }).code === "EEXIST") return true;
+	return "message" in error && /^EEXIST\b/.test(String((error as { message?: unknown }).message));
 }
