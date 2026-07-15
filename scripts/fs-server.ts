@@ -1,10 +1,9 @@
 #!/usr/bin/env bun
 import * as nodeFs from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { durableFileSystemFromNodeFs } from "../src/fs/node-durable-fs.ts";
 import { getChangedFiles } from "../src/repo/index.ts";
 import { createServer } from "../src/server/index.ts";
-import { createFsRepoPool } from "../src/store/fs-repo-pool.ts";
+import { createNodeFsRepoPool } from "../src/store/index.ts";
 
 const DEFAULT_PORT = 4201;
 const projectRoot = join(dirname(import.meta.path), "..");
@@ -33,8 +32,7 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
 }
 
 await nodeFs.mkdir(rootDir, { recursive: true });
-const fs = durableFileSystemFromNodeFs(nodeFs);
-const pool = await createFsRepoPool(fs, rootDir);
+const pool = await createNodeFsRepoPool(nodeFs, rootDir);
 const server = createServer({
 	storage: pool,
 	autoCreate: true,

@@ -28,6 +28,14 @@ export type { GcOptions, GcResult } from "./gc.ts";
 
 // Backends
 export { createMemoryRepoStorage, MemoryStorage } from "./memory-storage.ts";
+export { createFsRepoStorage } from "./fs-repo-storage.ts";
+export { createFsRepoPool, createFsSingleRepoPool } from "./fs-repo-pool.ts";
+export {
+	createNodeFsRepoPool,
+	createNodeFsRepoStorage,
+	createNodeFsSingleRepoPool,
+} from "./node-fs.ts";
+export type { NodeFsPromises } from "../fs/node-durable-fs.ts";
 export { BunSqliteStorage, type BunSqliteDatabase } from "./bun-sqlite-storage.ts";
 export { BetterSqlite3Storage, type BetterSqlite3Database } from "./better-sqlite3-storage.ts";
 export { PgStorage, type PgPool } from "./pg-storage.ts";

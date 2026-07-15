@@ -5,6 +5,7 @@ import { join, relative } from "node:path";
 import { durableFileSystemFromNodeFs } from "../src/fs/node-durable-fs.ts";
 import { createFsRepoPool, createFsSingleRepoPool } from "../src/store/fs-repo-pool.ts";
 import { createFsRepoStorage } from "../src/store/fs-repo-storage.ts";
+import { createNodeFsRepoPool, createNodeFsSingleRepoPool } from "../src/store/node-fs.ts";
 import { createRepoStore } from "../src/store/repo-store.ts";
 
 const tempDirs: string[] = [];
@@ -23,6 +24,14 @@ afterEach(async () => {
 });
 
 describe("createFsRepoPool", () => {
+	test("accepts node:fs/promises through the Node convenience factory", async () => {
+		const { root } = await tempRoot();
+		const pool = await createNodeFsRepoPool(nodeFs, root);
+
+		await pool.createRepo("demo");
+		expect(await pool.hasRepo("demo")).toBe(true);
+	});
+
 	test("creates, opens, and deletes a deterministically encoded bare repository", async () => {
 		const { root, fs } = await tempRoot();
 		const pool = await createFsRepoPool(fs, root);
@@ -138,6 +147,15 @@ describe("createFsRepoPool", () => {
 });
 
 describe("createFsSingleRepoPool", () => {
+	test("accepts node:fs/promises through the Node convenience factory", async () => {
+		const { root, fs } = await tempRoot();
+		const repoDir = join(root, "external.git");
+		await createFsRepoStorage(fs, repoDir);
+		const pool = await createNodeFsSingleRepoPool(nodeFs, "public/repo", repoDir);
+
+		expect(await pool.hasRepo("public/repo")).toBe(true);
+	});
+
 	test("maps exactly one ID to an existing bare repo and rejects mutations", async () => {
 		const { root, fs } = await tempRoot();
 		const repoDir = join(root, "external.git");

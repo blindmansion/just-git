@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { durableFileSystemFromNodeFs } from "../src/fs/node-durable-fs.ts";
 import { createRepo } from "../src/store/repo-store.ts";
 import { createFsRepoStorage } from "../src/store/fs-repo-storage.ts";
+import { createNodeFsRepoStorage } from "../src/store/node-fs.ts";
 
 const tempDirs: string[] = [];
 const encoder = new TextEncoder();
@@ -26,6 +27,16 @@ afterEach(async () => {
 });
 
 describe("createFsRepoStorage", () => {
+	test("accepts node:fs/promises through the Node convenience factory", async () => {
+		const { repoDir } = await tempRepoPath();
+		const storage = await createNodeFsRepoStorage(nodeFs, repoDir);
+
+		expect(await storage.getRef("HEAD")).toEqual({
+			type: "symbolic",
+			target: "refs/heads/main",
+		});
+	});
+
 	test("creates a durable empty bare layout at a missing path", async () => {
 		const { fs, repoDir } = await tempRepoPath();
 		const storage = await createFsRepoStorage(fs, repoDir);
