@@ -112,7 +112,8 @@ class FsRepoStorage implements RepoStorage {
 	}
 }
 
-async function createBareRepoLayout(fs: DurableFileSystem, repoDir: string): Promise<void> {
+/** Initialize a missing directory as a complete durable bare repository. */
+export async function createBareRepoLayout(fs: DurableFileSystem, repoDir: string): Promise<void> {
 	const parent = dirname(repoDir);
 	await ensureDirectoryDurable(fs, parent);
 	await fs.mkdir(repoDir);
@@ -150,7 +151,11 @@ async function createBareRepoLayout(fs: DurableFileSystem, repoDir: string): Pro
 	}
 }
 
-async function validateBareRepoLayout(fs: DurableFileSystem, repoDir: string): Promise<void> {
+/** Validate the native bare-repository shape supported by filesystem storage. */
+export async function validateBareRepoLayout(
+	fs: DurableFileSystem,
+	repoDir: string,
+): Promise<void> {
 	await requireEntryType(fs, join(repoDir, "HEAD"), "file");
 	await requireEntryType(fs, join(repoDir, "config"), "file");
 	await requireEntryType(fs, join(repoDir, "objects"), "directory");
@@ -193,7 +198,8 @@ async function requireEntryType(
 	}
 }
 
-function requireAbsoluteNormalizedPath(path: string): string {
+/** Require an absolute normalized POSIX filesystem path. */
+export function requireAbsoluteNormalizedPath(path: string): string {
 	const normalized = resolve(path);
 	const withoutTrailingSlashes = path.length > 1 ? path.replace(/\/+$/, "") : path;
 	if (!path.startsWith("/") || path.includes("\0") || normalized !== withoutTrailingSlashes) {

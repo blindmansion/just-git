@@ -40,6 +40,7 @@ import { buildReportStatus, parseV2CommandRequest } from "./protocol.ts";
 import { handleSshSession } from "./ssh-session.ts";
 import { createRepoStore, type CreateRepoOptions } from "../store/repo-store.ts";
 import { MemoryStorage } from "../store/memory-storage.ts";
+import { isValidRepoId } from "../store/repo-id.ts";
 import { RequestLimitError } from "./errors.ts";
 import type {
 	GitServerConfig,
@@ -63,25 +64,7 @@ const defaultAuthProvider: AuthProvider<Auth> = {
 	ssh: (info) => ({ transport: "ssh", username: info.username }),
 };
 
-/**
- * Validate a repo ID for use with `createServer`.
- *
- * Rejects empty strings, null bytes, control characters, backslashes,
- * empty path components (double slashes, leading/trailing slash), and
- * components starting with `.` (blocks `..` traversal, `.git`, etc.).
- */
-export function isValidRepoId(id: string): boolean {
-	if (id.length === 0) return false;
-	for (let i = 0; i < id.length; i++) {
-		const c = id.charCodeAt(i);
-		if (c === 0 || c < 0x20 || c === 0x7f || c === 0x5c) return false;
-	}
-	const parts = id.split("/");
-	for (const part of parts) {
-		if (part.length === 0 || part.charCodeAt(0) === 0x2e) return false;
-	}
-	return true;
-}
+export { isValidRepoId } from "../store/repo-id.ts";
 
 /**
  * Create a unified Git server that handles both HTTP and SSH.

@@ -1,5 +1,5 @@
 // HTTP + SSH handler
-export { createServer, composeHooks } from "./handler.ts";
+export { createServer, composeHooks, isValidRepoId } from "./handler.ts";
 
 // Transport-agnostic operations (advanced — for building custom transports)
 export {
