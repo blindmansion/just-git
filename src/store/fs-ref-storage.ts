@@ -51,7 +51,7 @@ export class FsRefStorage {
 	}
 
 	async listRefs(prefix?: string): Promise<RawRefEntry[]> {
-		if (prefix !== undefined && prefix !== "") refPath(this.repoDir, prefix);
+		validateRefPrefix(this.repoDir, prefix);
 
 		const byName = new Map<string, Ref>();
 		for (const [name, hash] of await readPackedRefs(this.fs, this.repoDir)) {
@@ -120,6 +120,11 @@ export class FsRefStorage {
 		await removePackedRef(this.fs, this.repoDir, name);
 		await removeFileDurable(this.fs, refPath(this.repoDir, name));
 	}
+}
+
+function validateRefPrefix(repoDir: string, prefix?: string): void {
+	if (prefix === undefined || prefix === "") return;
+	refPath(repoDir, prefix.endsWith("/") ? prefix.slice(0, -1) : prefix);
 }
 
 function cloneRef(ref: Ref): Ref {

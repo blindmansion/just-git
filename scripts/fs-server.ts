@@ -39,8 +39,25 @@ const server = createServer({
 	storage: pool,
 	autoCreate: true,
 	hooks: {
+		advertiseRefs: ({ repoId, service, refs }) => {
+			console.log(`[advertise] ${repoId} ${service}: ${refs.length} refs`);
+		},
+		preReceive: ({ repoId, updates }) => {
+			console.log(`[pre-receive] ${repoId}: ${updates.length} updates`);
+		},
+		update: ({ repoId, update }) => {
+			console.log(
+				`[update] ${repoId} ${update.ref}: ${shortHash(update.oldHash)}..${shortHash(update.newHash)}`,
+			);
+		},
 		postReceive: async ({ repo, repoId, updates }) => {
 			for (const update of updates) {
+				if (update.isDelete || !update.ref.startsWith("refs/heads/")) {
+					console.log(
+						`[push] ${repoId} ${update.ref}: ${shortHash(update.oldHash)}..${shortHash(update.newHash)}`,
+					);
+					continue;
+				}
 				const files = await getChangedFiles(repo, update.oldHash, update.newHash);
 				console.log(
 					`[push] ${repoId} ${update.ref}: ${shortHash(update.oldHash)}..${shortHash(update.newHash)} (${files.length} files changed)`,

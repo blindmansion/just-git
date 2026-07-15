@@ -88,6 +88,13 @@ describe("FsRefStorage", () => {
 			{ name: "refs/heads/dev", ref: symbolic("refs/heads/main") },
 			{ name: "refs/heads/main", ref: direct(HASH_C) },
 		]);
+		expect(await storage.listRefs("refs/heads/")).toEqual([
+			{ name: "refs/heads/dev", ref: symbolic("refs/heads/main") },
+			{ name: "refs/heads/main", ref: direct(HASH_C) },
+		]);
+		expect(await storage.listRefs("refs/tags/")).toEqual([
+			{ name: "refs/tags/v1", ref: direct(HASH_B) },
+		]);
 		expect(await storage.listRefs("HEAD")).toEqual([
 			{ name: "HEAD", ref: symbolic("refs/heads/main") },
 		]);
@@ -173,6 +180,9 @@ describe("FsRefStorage", () => {
 		);
 		expect(storage.removeRef("refs//heads/main")).rejects.toThrow("invalid filesystem ref name");
 		expect(storage.listRefs("../refs")).rejects.toThrow("invalid filesystem ref name");
+		for (const prefix of ["/", "refs//", "refs/heads//", "../", "refs/../"]) {
+			expect(storage.listRefs(prefix)).rejects.toThrow("invalid filesystem ref name");
+		}
 	});
 });
 
