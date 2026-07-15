@@ -3,12 +3,11 @@ import type {
 	DeltaObjectRow,
 	ObjectRow,
 	RawRefEntry,
-	RefOps,
 	RefRow,
 	StoredObject,
 } from "./repo-store.ts";
 import type { RepoPool } from "./repo-pool.ts";
-import type { RepoStorage } from "./repo-storage.ts";
+import { compareAndSwapRawRef, type RepoStorage } from "./repo-storage.ts";
 
 // ── Postgres pool interface ────────────────────────────────────────
 
@@ -46,6 +45,10 @@ CREATE TABLE IF NOT EXISTS git_refs (
   type    TEXT NOT NULL CHECK(type IN ('direct', 'symbolic')),
   hash    TEXT,
   target  TEXT,
+  CHECK (
+    (type = 'direct' AND hash IS NOT NULL AND target IS NULL) OR
+    (type = 'symbolic' AND hash IS NULL AND target IS NOT NULL)
+  ),
   PRIMARY KEY (repo_id, name)
 );
 
@@ -79,6 +82,7 @@ const SQL = {
 	refRead: "SELECT type, hash, target FROM git_refs WHERE repo_id = $1 AND name = $2",
 	refReadForUpdate:
 		"SELECT type, hash, target FROM git_refs WHERE repo_id = $1 AND name = $2 FOR UPDATE",
+	refAdvisoryLock: "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))",
 	refWrite: `INSERT INTO git_refs (repo_id, name, type, hash, target) VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (repo_id, name) DO UPDATE SET type = EXCLUDED.type, hash = EXCLUDED.hash, target = EXCLUDED.target`,
 	refDelete: "DELETE FROM git_refs WHERE repo_id = $1 AND name = $2",
@@ -165,7 +169,8 @@ export class PgStorage implements RepoPool {
 			putRef: (name, ref) => this.putRef(repoId, name, ref),
 			removeRef: (name) => this.removeRef(repoId, name),
 			listRefs: (prefix) => this.listRefs(repoId, prefix),
-			atomicRefUpdate: (fn) => this.atomicRefUpdate(repoId, fn),
+			compareAndSwapRef: (name, expectedOld, newRef) =>
+				this.compareAndSwapRef(repoId, name, expectedOld, newRef),
 		};
 	}
 
@@ -303,27 +308,32 @@ export class PgStorage implements RepoPool {
 		});
 	}
 
-	private async atomicRefUpdate<T>(
+	private async compareAndSwapRef(
 		repoId: string,
-		fn: (ops: RefOps) => Promise<T> | T,
-	): Promise<T> {
+		name: string,
+		expectedOld: Ref | null,
+		newRef: Ref | null,
+	): Promise<boolean> {
 		return this.transaction(async (query) => {
-			return fn({
-				getRef: async (name) => {
+			await query(SQL.refAdvisoryLock, [repoId, name]);
+			return await compareAndSwapRawRef(
+				async () => {
 					const { rows } = await query<RefRow>(SQL.refReadForUpdate, [repoId, name]);
 					return rowToRef(rows[0] ?? null);
 				},
-				putRef: async (name, ref) => {
+				async (ref) => {
 					if (ref.type === "symbolic") {
 						await query(SQL.refWrite, [repoId, name, "symbolic", null, ref.target]);
 					} else {
 						await query(SQL.refWrite, [repoId, name, "direct", ref.hash, null]);
 					}
 				},
-				removeRef: async (name) => {
+				async () => {
 					await query(SQL.refDelete, [repoId, name]);
 				},
-			});
+				expectedOld,
+				newRef,
+			);
 		});
 	}
 
@@ -384,13 +394,13 @@ function buildBulkDeltaUpsert(
 
 function rowToRef(row: RefRow | null): Ref | null {
 	if (!row) return null;
-	if (row.type === "symbolic" && row.target) {
+	if (row.type === "symbolic" && row.target !== null && row.hash === null) {
 		return { type: "symbolic", target: row.target };
 	}
-	if (row.type === "direct" && row.hash) {
+	if (row.type === "direct" && row.hash !== null && row.target === null) {
 		return { type: "direct", hash: row.hash };
 	}
-	return null;
+	throw new Error("corrupt ref row: invalid type/hash/target combination");
 }
 
 function buildBulkObjectInsert(

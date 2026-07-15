@@ -15,7 +15,6 @@ export type {
 	ObjectEncoding,
 	DeltaObjectRow,
 	CreateRepoOptions,
-	RefOps,
 	RawRefEntry,
 	MaybeAsync,
 } from "./repo-store.ts";

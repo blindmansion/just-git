@@ -740,7 +740,9 @@ async function advanceBranchTo(
 ): Promise<void> {
 	const branchRef = `refs/heads/${branch}`;
 	if (expectedOldHash !== undefined) {
-		const ok = await repo.refStore.compareAndSwapRef(branchRef, expectedOldHash, {
+		const expectedOld =
+			expectedOldHash === null ? null : { type: "direct" as const, hash: expectedOldHash };
+		const ok = await repo.refStore.compareAndSwapRef(branchRef, expectedOld, {
 			type: "direct",
 			hash,
 		});

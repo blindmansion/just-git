@@ -359,7 +359,9 @@ export class LocalTransport implements Transport {
 		for (const update of updates) {
 			try {
 				const isDelete = update.newHash === ZERO_HASH;
-				const expectedOld = update.oldHash ?? null;
+				const expectedOld = update.oldHash !== null
+					? { type: "direct" as const, hash: update.oldHash }
+					: null;
 
 				if (isTagRewrite(update) && !update.ok) {
 					results.push({

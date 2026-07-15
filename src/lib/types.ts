@@ -194,18 +194,19 @@ export interface RefStore {
 	/** List all refs under a prefix, returning resolved hashes. */
 	listRefs(prefix?: string): Promise<RefEntry[]>;
 	/**
-	 * Atomically update a ref only if its current resolved hash matches
-	 * `expectedOldHash`. Returns true on success, false if the ref has
-	 * been modified concurrently.
+	 * Atomically update a named ref only if its current raw value exactly
+	 * matches `expectedOld`. Symbolic refs are compared by target and are not
+	 * resolved. Returns true on success, false on comparison mismatch.
 	 *
-	 * - `expectedOldHash === null` — create-only: fails if the ref exists.
-	 * - `expectedOldHash === "<hash>"` — fails if current hash !== expected.
+	 * - `expectedOld === null` — create-only: fails if the ref exists.
+	 * - `expectedOld.type === "direct"` — matches only the same direct hash.
+	 * - `expectedOld.type === "symbolic"` — matches only the same symbolic target.
 	 * - `newRef === null` — conditional delete.
 	 * - `newRef === Ref` — conditional create/update.
 	 */
 	compareAndSwapRef(
 		name: string,
-		expectedOldHash: string | null,
+		expectedOld: Ref | null,
 		newRef: Ref | null,
 	): Promise<boolean>;
 }

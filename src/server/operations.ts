@@ -874,7 +874,9 @@ export async function applyCasRefUpdates(
 		}
 
 		try {
-			const expectedOld = update.isCreate ? null : update.oldHash;
+			const expectedOld = update.isCreate
+				? null
+				: { type: "direct" as const, hash: update.oldHash };
 			const newRef = update.isDelete ? null : { type: "direct" as const, hash: update.newHash };
 			const ok = await repo.refStore.compareAndSwapRef(update.ref, expectedOld, newRef);
 			if (!ok) {
@@ -972,7 +974,9 @@ export async function applyReceivePack<A = unknown>(
 		}
 
 		try {
-			const expectedOld = update.isCreate ? null : update.oldHash;
+			const expectedOld = update.isCreate
+				? null
+				: { type: "direct" as const, hash: update.oldHash };
 			const newRef = update.isDelete ? null : { type: "direct" as const, hash: update.newHash };
 			const ok = await repo.refStore.compareAndSwapRef(update.ref, expectedOld, newRef);
 			if (!ok) {

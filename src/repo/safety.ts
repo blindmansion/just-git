@@ -14,6 +14,7 @@ import type {
 } from "../lib/types.ts";
 import type { PackObject } from "../lib/pack/packfile.ts";
 import { readPack } from "../lib/pack/packfile.ts";
+import { rawRefsEqual } from "../lib/refs/equality.ts";
 
 // ── Read-only repo wrapper ──────────────────────────────────────────
 
@@ -57,7 +58,7 @@ class ReadonlyRefStore implements RefStore {
 	}
 	compareAndSwapRef(
 		_name: string,
-		_expectedOldHash: string | null,
+		_expectedOld: Ref | null,
 		_newRef: Ref | null,
 	): Promise<boolean> {
 		throw new Error("cannot update ref: ref store is read-only");
@@ -227,24 +228,11 @@ class OverlayRefStore implements RefStore {
 
 	async compareAndSwapRef(
 		name: string,
-		expectedOldHash: string | null,
+		expectedOld: Ref | null,
 		newRef: Ref | null,
 	): Promise<boolean> {
 		const current = await this.readRef(name);
-		let currentHash: string | null = null;
-		if (current) {
-			if (current.type === "direct") {
-				currentHash = current.hash;
-			} else if (current.type === "symbolic") {
-				currentHash = await this.resolveSymbolic(current.target);
-			}
-		}
-
-		if (expectedOldHash === null) {
-			if (current !== null) return false;
-		} else {
-			if (currentHash !== expectedOldHash) return false;
-		}
+		if (!rawRefsEqual(current, expectedOld)) return false;
 
 		if (newRef === null) {
 			this.overlay.delete(name);

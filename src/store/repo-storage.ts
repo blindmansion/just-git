@@ -1,11 +1,49 @@
 import type { Ref } from "../lib/types.ts";
+import { rawRefsEqual } from "../lib/refs/equality.ts";
 import type {
 	DeltaObjectRow,
 	MaybeAsync,
 	RawRefEntry,
-	RefOps,
 	StoredObject,
 } from "./repo-store.ts";
+
+/**
+ * Apply raw single-ref CAS using operations that are already isolated by the
+ * caller. This helper provides comparison and mutation semantics, not locking.
+ */
+export function compareAndSwapRawRef(
+	read: () => Ref | null,
+	write: (ref: Ref) => void,
+	remove: () => void,
+	expectedOld: Ref | null,
+	newRef: Ref | null,
+): boolean;
+export function compareAndSwapRawRef(
+	read: () => MaybeAsync<Ref | null>,
+	write: (ref: Ref) => MaybeAsync<void>,
+	remove: () => MaybeAsync<void>,
+	expectedOld: Ref | null,
+	newRef: Ref | null,
+): MaybeAsync<boolean>;
+export function compareAndSwapRawRef(
+	read: () => MaybeAsync<Ref | null>,
+	write: (ref: Ref) => MaybeAsync<void>,
+	remove: () => MaybeAsync<void>,
+	expectedOld: Ref | null,
+	newRef: Ref | null,
+): MaybeAsync<boolean> {
+	return chain(read(), (current) => {
+		if (!rawRefsEqual(current, expectedOld)) return false;
+		if (newRef === null) {
+			return chain(remove(), () => true);
+		}
+		return chain(write(newRef), () => true);
+	});
+}
+
+function chain<A, B>(value: MaybeAsync<A>, next: (result: A) => MaybeAsync<B>): MaybeAsync<B> {
+	return value instanceof Promise ? value.then(next) : next(value);
+}
 
 /**
  * Raw object and ref persistence for a single repository.
@@ -32,5 +70,13 @@ export interface RepoStorage {
 	putRef(name: string, ref: Ref): MaybeAsync<void>;
 	removeRef(name: string): MaybeAsync<void>;
 	listRefs(prefix?: string): MaybeAsync<RawRefEntry[]>;
-	atomicRefUpdate<T>(fn: (ops: RefOps) => MaybeAsync<T>): MaybeAsync<T>;
+	/**
+	 * Atomically replace the raw value of `name` when it exactly matches
+	 * `expectedOld`. Symbolic refs are compared by target, without resolution.
+	 */
+	compareAndSwapRef(
+		name: string,
+		expectedOld: Ref | null,
+		newRef: Ref | null,
+	): MaybeAsync<boolean>;
 }

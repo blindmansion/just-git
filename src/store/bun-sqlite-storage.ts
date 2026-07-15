@@ -3,12 +3,11 @@ import type {
 	DeltaObjectRow,
 	ObjectRow,
 	RawRefEntry,
-	RefOps,
 	RefRow,
 	StoredObject,
 } from "./repo-store.ts";
 import type { RepoPool } from "./repo-pool.ts";
-import type { RepoStorage } from "./repo-storage.ts";
+import { compareAndSwapRawRef, type RepoStorage } from "./repo-storage.ts";
 
 // ── bun:sqlite types ────────────────────────────────────────────────
 
@@ -49,6 +48,10 @@ CREATE TABLE IF NOT EXISTS git_refs (
   type    TEXT NOT NULL CHECK(type IN ('direct', 'symbolic')),
   hash    TEXT,
   target  TEXT,
+  CHECK (
+    (type = 'direct' AND hash IS NOT NULL AND target IS NULL) OR
+    (type = 'symbolic' AND hash IS NULL AND target IS NOT NULL)
+  ),
   PRIMARY KEY (repo_id, name)
 ) WITHOUT ROWID;
 
@@ -226,7 +229,8 @@ export class BunSqliteStorage implements RepoPool {
 			putRef: (name, ref) => this.putRef(repoId, name, ref),
 			removeRef: (name) => this.removeRef(repoId, name),
 			listRefs: (prefix) => this.listRefs(repoId, prefix),
-			atomicRefUpdate: (fn) => this.atomicRefUpdate(repoId, fn),
+			compareAndSwapRef: (name, expectedOld, newRef) =>
+				this.compareAndSwapRef(repoId, name, expectedOld, newRef),
 		};
 	}
 
@@ -369,22 +373,20 @@ export class BunSqliteStorage implements RepoPool {
 		});
 	}
 
-	private atomicRefUpdate<T>(repoId: string, fn: (ops: RefOps) => T): T {
-		const stmts = this.stmts;
+	private compareAndSwapRef(
+		repoId: string,
+		name: string,
+		expectedOld: Ref | null,
+		newRef: Ref | null,
+	): boolean {
 		const tx = this.db.transaction(() => {
-			return fn({
-				getRef: (name) => rowToRef(stmts.refRead.get(repoId, name) as RefRow | null),
-				putRef: (name, ref) => {
-					if (ref.type === "symbolic") {
-						stmts.refWrite.run(repoId, name, "symbolic", null, ref.target);
-					} else {
-						stmts.refWrite.run(repoId, name, "direct", ref.hash, null);
-					}
-				},
-				removeRef: (name) => {
-					stmts.refDelete.run(repoId, name);
-				},
-			});
+			return compareAndSwapRawRef(
+				() => this.getRef(repoId, name),
+				(ref) => this.putRef(repoId, name, ref),
+				() => this.removeRef(repoId, name),
+				expectedOld,
+				newRef,
+			);
 		});
 		return tx();
 	}
@@ -420,13 +422,13 @@ function rowToStored(row: ObjectRow | null): StoredObject | null {
 
 function rowToRef(row: RefRow | null): Ref | null {
 	if (!row) return null;
-	if (row.type === "symbolic" && row.target) {
+	if (row.type === "symbolic" && row.target !== null && row.hash === null) {
 		return { type: "symbolic", target: row.target };
 	}
-	if (row.type === "direct" && row.hash) {
+	if (row.type === "direct" && row.hash !== null && row.target === null) {
 		return { type: "direct", hash: row.hash };
 	}
-	return null;
+	throw new Error("corrupt ref row: invalid type/hash/target combination");
 }
 
 function placeholders(count: number): string {

@@ -82,7 +82,6 @@ export type {
 	CreateRepoOptions,
 	RepoPool,
 	RepoStorage,
-	RefOps,
 	RawRefEntry,
 	MaybeAsync,
 	GcOptions,

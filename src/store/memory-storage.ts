@@ -1,7 +1,7 @@
 import type { Ref } from "../lib/types.ts";
 import type { RepoPool } from "./repo-pool.ts";
-import type { RepoStorage } from "./repo-storage.ts";
-import type { DeltaObjectRow, StoredObject, RawRefEntry, RefOps } from "./repo-store.ts";
+import { compareAndSwapRawRef, type RepoStorage } from "./repo-storage.ts";
+import type { DeltaObjectRow, StoredObject, RawRefEntry } from "./repo-store.ts";
 
 // ── MemoryStorage ───────────────────────────────────────────────────
 
@@ -210,16 +210,18 @@ class MemoryRepoStorage implements RepoStorage {
 		return entries;
 	}
 
-	atomicRefUpdate<T>(fn: (ops: RefOps) => T): T {
-		return fn({
-			getRef: (name) => this.refs.get(name) ?? null,
-			putRef: (name, ref) => {
+	compareAndSwapRef(name: string, expectedOld: Ref | null, newRef: Ref | null): boolean {
+		return compareAndSwapRawRef(
+			() => this.refs.get(name) ?? null,
+			(ref) => {
 				this.refs.set(name, ref);
 			},
-			removeRef: (name) => {
+			() => {
 				this.refs.delete(name);
 			},
-		});
+			expectedOld,
+			newRef,
+		);
 	}
 }
 
