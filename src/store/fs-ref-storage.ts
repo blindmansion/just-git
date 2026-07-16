@@ -7,10 +7,7 @@ import {
 	walkLooseRefs,
 } from "../lib/file-ref-database.ts";
 import { join } from "../lib/path.ts";
-import {
-	createNativeRefMutation,
-	type NativeRefMutation,
-} from "../lib/refs/native-mutation.ts";
+import { createNativeRefMutation, type NativeRefMutation } from "../lib/refs/native-mutation.ts";
 import type { Ref } from "../lib/types.ts";
 import type { RawRefEntry } from "./repo-store.ts";
 
@@ -75,11 +72,7 @@ export class FsRefStorage {
 		return entries.sort((a, b) => a.name.localeCompare(b.name));
 	}
 
-	compareAndSwapRef(
-		name: string,
-		expectedOld: Ref | null,
-		newRef: Ref | null,
-	): Promise<boolean> {
+	compareAndSwapRef(name: string, expectedOld: Ref | null, newRef: Ref | null): Promise<boolean> {
 		return this.mutation.compareAndSwapRef(name, expectedOld, newRef);
 	}
 }

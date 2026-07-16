@@ -1,11 +1,6 @@
 import type { Ref } from "../lib/types.ts";
 import { rawRefsEqual } from "../lib/refs/equality.ts";
-import type {
-	DeltaObjectRow,
-	MaybeAsync,
-	RawRefEntry,
-	StoredObject,
-} from "./repo-store.ts";
+import type { DeltaObjectRow, MaybeAsync, RawRefEntry, StoredObject } from "./repo-store.ts";
 
 /**
  * Apply raw single-ref CAS using operations that are already isolated by the
@@ -74,9 +69,5 @@ export interface RepoStorage {
 	 * Atomically replace the raw value of `name` when it exactly matches
 	 * `expectedOld`. Symbolic refs are compared by target, without resolution.
 	 */
-	compareAndSwapRef(
-		name: string,
-		expectedOld: Ref | null,
-		newRef: Ref | null,
-	): MaybeAsync<boolean>;
+	compareAndSwapRef(name: string, expectedOld: Ref | null, newRef: Ref | null): MaybeAsync<boolean>;
 }

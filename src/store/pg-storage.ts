@@ -1,11 +1,5 @@
 import type { Ref } from "../lib/types.ts";
-import type {
-	DeltaObjectRow,
-	ObjectRow,
-	RawRefEntry,
-	RefRow,
-	StoredObject,
-} from "./repo-store.ts";
+import type { DeltaObjectRow, ObjectRow, RawRefEntry, RefRow, StoredObject } from "./repo-store.ts";
 import type { RepoPool } from "./repo-pool.ts";
 import { compareAndSwapRawRef, type RepoStorage } from "./repo-storage.ts";
 

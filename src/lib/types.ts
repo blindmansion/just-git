@@ -204,11 +204,7 @@ export interface RefStore {
 	 * - `newRef === null` — conditional delete.
 	 * - `newRef === Ref` — conditional create/update.
 	 */
-	compareAndSwapRef(
-		name: string,
-		expectedOld: Ref | null,
-		newRef: Ref | null,
-	): Promise<boolean>;
+	compareAndSwapRef(name: string, expectedOld: Ref | null, newRef: Ref | null): Promise<boolean>;
 }
 
 // ── Object store ────────────────────────────────────────────────────

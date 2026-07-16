@@ -10,10 +10,7 @@ import {
 } from "../file-ref-database.ts";
 import { isPerWorktreeRef } from "./classify.ts";
 import { rawRefsEqual } from "./equality.ts";
-import {
-	createNativeRefMutation,
-	type NativeRefMutation,
-} from "./native-mutation.ts";
+import { createNativeRefMutation, type NativeRefMutation } from "./native-mutation.ts";
 import {
 	type DirectRef,
 	normalizeRef,

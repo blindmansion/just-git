@@ -53,12 +53,7 @@ export async function recoverFsRepoStorage(
 ): Promise<RepoStorage> {
 	const root = requireAbsoluteNormalizedPath(repoDir);
 	await validateBareRepoLayout(fs, root);
-	await recoverNativeRefLock(
-		fs,
-		{ gitDir: root, commonDir: root },
-		refName,
-		options,
-	);
+	await recoverNativeRefLock(fs, { gitDir: root, commonDir: root }, refName, options);
 	const lockPath = join(root, LEGACY_REF_LOCK);
 	if (await fs.exists(lockPath)) await removeFileDurable(fs, lockPath);
 	await cleanupRefLockClaimants(fs, root);
@@ -133,11 +128,7 @@ class FsRepoStorage implements RepoStorage {
 		return this.refs.listRefs(prefix);
 	}
 
-	compareAndSwapRef(
-		name: string,
-		expectedOld: Ref | null,
-		newRef: Ref | null,
-	): Promise<boolean> {
+	compareAndSwapRef(name: string, expectedOld: Ref | null, newRef: Ref | null): Promise<boolean> {
 		return this.refs.compareAndSwapRef(name, expectedOld, newRef);
 	}
 }

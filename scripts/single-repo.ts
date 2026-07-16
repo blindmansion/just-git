@@ -99,7 +99,8 @@ if (latest) {
 const oursHash = await revParse(repo, oursRevision);
 const theirsHash = await revParse(repo, theirsRevision);
 if (!oursHash) throw new Error(`Could not resolve ours revision ${JSON.stringify(oursRevision)}`);
-if (!theirsHash) throw new Error(`Could not resolve theirs revision ${JSON.stringify(theirsRevision)}`);
+if (!theirsHash)
+	throw new Error(`Could not resolve theirs revision ${JSON.stringify(theirsRevision)}`);
 
 console.log(
 	`\nMerge preview: ${oursRevision} (${shortHash(oursHash)}) <- ${theirsRevision} (${shortHash(theirsHash)})`,
