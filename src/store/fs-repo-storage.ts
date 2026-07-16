@@ -3,20 +3,21 @@ import type { DurableFileSystem } from "../fs/index.ts";
 import { configBool, parseConfig, serializeConfig } from "../lib/config/parse.ts";
 import { parseLooseRef, serializeLooseRef } from "../lib/file-ref-database.ts";
 import { dirname, join, resolve } from "../lib/path.ts";
+import {
+	type NativeRefRecoveryOptions,
+	recoverNativeRefLock,
+} from "../lib/refs/native-mutation.ts";
 import { checkRefFormat } from "../lib/refs/name.ts";
 import type { Ref } from "../lib/types.ts";
 import { FsObjectStorage } from "./fs-object-storage.ts";
-import { FsRefStorage, REF_LOCK } from "./fs-ref-storage.ts";
+import { FsRefStorage } from "./fs-ref-storage.ts";
 import type { RepoStorage } from "./repo-storage.ts";
-import type {
-	DeltaObjectRow,
-	MaybeAsync,
-	RawRefEntry,
-	RefOps,
-	StoredObject,
-} from "./repo-store.ts";
+import type { DeltaObjectRow, RawRefEntry, StoredObject } from "./repo-store.ts";
 
 const OBJECT_ID = /^[0-9a-f]{40}$/;
+const LEGACY_REF_LOCK = ".just-git-ref.lock";
+
+export type RecoverFsRepoStorageOptions = NativeRefRecoveryOptions;
 
 /**
  * Open or create native-layout storage for one bare repository.
@@ -47,10 +48,18 @@ export async function createFsRepoStorage(
 export async function recoverFsRepoStorage(
 	fs: DurableFileSystem,
 	repoDir: string,
+	refName: string,
+	options: RecoverFsRepoStorageOptions = {},
 ): Promise<RepoStorage> {
 	const root = requireAbsoluteNormalizedPath(repoDir);
 	await validateBareRepoLayout(fs, root);
-	const lockPath = join(root, REF_LOCK);
+	await recoverNativeRefLock(
+		fs,
+		{ gitDir: root, commonDir: root },
+		refName,
+		options,
+	);
+	const lockPath = join(root, LEGACY_REF_LOCK);
 	if (await fs.exists(lockPath)) await removeFileDurable(fs, lockPath);
 	await cleanupRefLockClaimants(fs, root);
 	return createFsRepoStorage(fs, root);
@@ -124,8 +133,12 @@ class FsRepoStorage implements RepoStorage {
 		return this.refs.listRefs(prefix);
 	}
 
-	atomicRefUpdate<T>(fn: (ops: RefOps) => MaybeAsync<T>): Promise<T> {
-		return this.refs.atomicRefUpdate(fn);
+	compareAndSwapRef(
+		name: string,
+		expectedOld: Ref | null,
+		newRef: Ref | null,
+	): Promise<boolean> {
+		return this.refs.compareAndSwapRef(name, expectedOld, newRef);
 	}
 }
 
@@ -210,7 +223,7 @@ async function cleanupBareRepoStages(fs: DurableFileSystem, repoDir: string): Pr
 }
 
 async function cleanupRefLockClaimants(fs: DurableFileSystem, repoDir: string): Promise<void> {
-	const prefix = `${REF_LOCK}.tmp-`;
+	const prefix = `${LEGACY_REF_LOCK}.tmp-`;
 	for (const name of await fs.readdir(repoDir)) {
 		if (!name.startsWith(prefix)) continue;
 		await fs.rm(join(repoDir, name), { force: true });

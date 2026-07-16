@@ -27,7 +27,11 @@ export type { GcOptions, GcResult } from "./gc.ts";
 
 // Backends
 export { createMemoryRepoStorage, MemoryStorage } from "./memory-storage.ts";
-export { createFsRepoStorage, recoverFsRepoStorage } from "./fs-repo-storage.ts";
+export {
+	createFsRepoStorage,
+	type RecoverFsRepoStorageOptions,
+	recoverFsRepoStorage,
+} from "./fs-repo-storage.ts";
 export { createFsRepoPool, createFsSingleRepoPool, recoverFsRepoPool } from "./fs-repo-pool.ts";
 export {
 	createNodeFsRepoPool,

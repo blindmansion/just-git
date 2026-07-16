@@ -1,4 +1,4 @@
-import type { FileSystem } from "../../fs/index.ts";
+import { isDurable, type FileSystem } from "../../fs/index.ts";
 import { removeFile, replaceFile } from "../../fs/durable-io.ts";
 import {
 	parseLooseRef,
@@ -9,6 +9,11 @@ import {
 	walkLooseRefs,
 } from "../file-ref-database.ts";
 import { isPerWorktreeRef } from "./classify.ts";
+import { rawRefsEqual } from "./equality.ts";
+import {
+	createNativeRefMutation,
+	type NativeRefMutation,
+} from "./native-mutation.ts";
 import {
 	type DirectRef,
 	normalizeRef,
@@ -28,6 +33,7 @@ export const MAX_SYMREF_DEPTH = 10;
 export class FileSystemRefStore implements RefStore {
 	private casLocks = new Map<string, Promise<boolean>>();
 	private commonDir: string;
+	private nativeMutation: NativeRefMutation | null;
 
 	constructor(
 		private fs: FileSystem,
@@ -35,6 +41,9 @@ export class FileSystemRefStore implements RefStore {
 		commonDir?: string,
 	) {
 		this.commonDir = commonDir ?? gitDir;
+		this.nativeMutation = isDurable(fs)
+			? createNativeRefMutation(fs, { gitDir, commonDir: this.commonDir })
+			: null;
 	}
 
 	/** The directory a ref lives in: private gitDir or shared commonDir. */
@@ -60,11 +69,19 @@ export class FileSystemRefStore implements RefStore {
 
 	async writeRef(name: string, refOrHash: Ref | string): Promise<void> {
 		const ref = normalizeRef(refOrHash);
+		if (this.nativeMutation) {
+			await this.nativeMutation.putRef(name, ref);
+			return;
+		}
 		const path = refPath(this.dirFor(name), name);
 		await replaceFile(this.fs, path, serializeLooseRef(ref));
 	}
 
 	async deleteRef(name: string): Promise<void> {
+		if (this.nativeMutation) {
+			await this.nativeMutation.removeRef(name);
+			return;
+		}
 		const path = refPath(this.dirFor(name), name);
 		await removeFile(this.fs, path);
 		await removePackedRef(this.fs, this.commonDir, name);
@@ -116,13 +133,17 @@ export class FileSystemRefStore implements RefStore {
 
 	async compareAndSwapRef(
 		name: string,
-		expectedOldHash: string | null,
+		expectedOld: Ref | null,
 		newRef: Ref | null,
 	): Promise<boolean> {
+		if (this.nativeMutation) {
+			return this.nativeMutation.compareAndSwapRef(name, expectedOld, newRef);
+		}
+
 		const prev = this.casLocks.get(name) ?? Promise.resolve(false);
 		const result = prev.then(
-			() => this.compareAndSwapUnsafe(name, expectedOldHash, newRef),
-			() => this.compareAndSwapUnsafe(name, expectedOldHash, newRef),
+			() => this.compareAndSwapNonDurable(name, expectedOld, newRef),
+			() => this.compareAndSwapNonDurable(name, expectedOld, newRef),
 		);
 		this.casLocks.set(name, result);
 		try {
@@ -134,19 +155,13 @@ export class FileSystemRefStore implements RefStore {
 		}
 	}
 
-	private async compareAndSwapUnsafe(
+	private async compareAndSwapNonDurable(
 		name: string,
-		expectedOldHash: string | null,
+		expectedOld: Ref | null,
 		newRef: Ref | null,
 	): Promise<boolean> {
-		const currentHash = await this.resolveRefInternal(name);
-
-		if (expectedOldHash === null) {
-			const current = await this.readRef(name);
-			if (current !== null) return false;
-		} else {
-			if (currentHash !== expectedOldHash) return false;
-		}
+		const current = await this.readRef(name);
+		if (!rawRefsEqual(current, expectedOld)) return false;
 
 		if (newRef === null) {
 			await this.deleteRef(name);
