@@ -156,6 +156,56 @@ describe("native ref mutation protocol", () => {
 		expect(namedUnlock).toBeGreaterThan(packedUnlock);
 	});
 
+	test("publishes packed refs before conditionally pruning loose refs", async () => {
+		const fs = await splitFs();
+		const refPath = `${COMMON_DIR}/refs/heads/main`;
+		const packedPath = `${COMMON_DIR}/packed-refs`;
+		await fs.mkdir(`${COMMON_DIR}/refs/heads`, { recursive: true });
+		await fs.writeFile(refPath, `${HASH_A}\n`);
+		const refs = createNativeRefMutation(fs, { gitDir: GIT_DIR, commonDir: COMMON_DIR });
+		fs.checkpoint();
+
+		await refs.packRefs(async () => ({
+			content: `${HASH_A} refs/heads/main\n`,
+			pruneCandidates: [{ name: "refs/heads/main", ref: DIRECT_A }],
+		}));
+
+		expect(await fs.readFile(packedPath)).toBe(`${HASH_A} refs/heads/main\n`);
+		expect(await fs.exists(refPath)).toBe(false);
+		const packedLink = fs.events.findIndex(
+			(event) => event.operation === "link" && event.destination === `${packedPath}.lock`,
+		);
+		const packedPublish = fs.events.findIndex(
+			(event) => event.operation === "rename" && event.destination === packedPath,
+		);
+		const namedLink = fs.events.findIndex(
+			(event) => event.operation === "link" && event.destination === `${refPath}.lock`,
+		);
+		expect(packedLink).toBeGreaterThanOrEqual(0);
+		expect(packedPublish).toBeGreaterThan(packedLink);
+		expect(namedLink).toBeGreaterThan(packedPublish);
+	});
+
+	test("retains a loose ref changed after the packed snapshot", async () => {
+		const fs = await splitFs();
+		const refPath = `${COMMON_DIR}/refs/heads/main`;
+		await fs.mkdir(`${COMMON_DIR}/refs/heads`, { recursive: true });
+		await fs.writeFile(refPath, `${HASH_A}\n`);
+		const refs = createNativeRefMutation(fs, { gitDir: GIT_DIR, commonDir: COMMON_DIR });
+		fs.checkpoint();
+
+		await refs.packRefs(async () => {
+			await fs.writeFile(refPath, `${HASH_B}\n`);
+			return {
+				content: `${HASH_A} refs/heads/main\n`,
+				pruneCandidates: [{ name: "refs/heads/main", ref: DIRECT_A }],
+			};
+		});
+
+		expect(await fs.readFile(`${COMMON_DIR}/packed-refs`)).toBe(`${HASH_A} refs/heads/main\n`);
+		expect(await fs.readFile(refPath)).toBe(`${HASH_B}\n`);
+	});
+
 	test("per-worktree deletion does not depend on packed-refs locking", async () => {
 		const fs = await splitFs();
 		await fs.writeFile(`${GIT_DIR}/ORIG_HEAD`, `${HASH_A}\n`);
@@ -329,6 +379,37 @@ describe("native ref mutation protocol", () => {
 				expect(await fs.readFile(`${COMMON_DIR}/refs/heads/main`)).toBe(`${HASH_B}\n`);
 				expect(await fs.exists(`${COMMON_DIR}/refs/heads/main.lock`)).toBe(false);
 				expect((await fs.readdir(`${COMMON_DIR}/refs/heads`)).sort()).toEqual(["main"]);
+			},
+		});
+	});
+
+	test("crash cuts around packed publication expose only complete packed files", async () => {
+		const oldPacked = `${HASH_C} refs/heads/other\n`;
+		const newPacked = `${HASH_A} refs/heads/main\n${HASH_C} refs/heads/other\n`;
+		await replayCrashCuts({
+			async setup(fs) {
+				await fs.mkdir(`${COMMON_DIR}/refs/heads`, { recursive: true });
+				await fs.mkdir(GIT_DIR, { recursive: true });
+				await fs.writeFile(`${COMMON_DIR}/refs/heads/main`, `${HASH_A}\n`);
+				await fs.writeFile(`${COMMON_DIR}/packed-refs`, oldPacked);
+			},
+			async operation(fs) {
+				const refs = createNativeRefMutation(fs, {
+					gitDir: GIT_DIR,
+					commonDir: COMMON_DIR,
+				});
+				await refs.packRefs(async () => ({
+					content: newPacked,
+					pruneCandidates: [{ name: "refs/heads/main", ref: DIRECT_A }],
+				}));
+			},
+			async verifyCut({ fs }) {
+				expect([oldPacked, newPacked]).toContain(await fs.readFile(`${COMMON_DIR}/packed-refs`));
+			},
+			async verifySuccess(fs) {
+				expect(await fs.readFile(`${COMMON_DIR}/packed-refs`)).toBe(newPacked);
+				expect(await fs.exists(`${COMMON_DIR}/refs/heads/main`)).toBe(false);
+				expect(await fs.exists(`${COMMON_DIR}/packed-refs.lock`)).toBe(false);
 			},
 		});
 	});

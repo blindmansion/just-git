@@ -37,6 +37,17 @@ export interface NativeRefMutation {
 	compareAndSwapRef(name: string, expectedOld: Ref | null, newRef: Ref | null): Promise<boolean>;
 	putRef(name: string, ref: Ref): Promise<void>;
 	removeRef(name: string): Promise<void>;
+	packRefs(prepare: () => Promise<NativePackedRefsSnapshot | null>): Promise<void>;
+}
+
+export interface NativePackedRefPruneCandidate {
+	name: string;
+	ref: DirectRef;
+}
+
+export interface NativePackedRefsSnapshot {
+	content: string;
+	pruneCandidates: NativePackedRefPruneCandidate[];
 }
 
 export interface NativeRefRecoveryOptions {
@@ -113,6 +124,42 @@ export function createNativeRefMutation(
 			return withAcquiredLock(fs, paths.lockPath, lockTimeoutMs, (namedLock) =>
 				deleteWithNamedLock(fs, paths, namedLock, lockTimeoutMs),
 			);
+		},
+
+		async packRefs(prepare) {
+			const packedRefsPath = join(normalizedLayout.commonDir, "packed-refs");
+			const packedLockPath = `${packedRefsPath}.lock`;
+			const snapshot = await withAcquiredLock(
+				fs,
+				packedLockPath,
+				lockTimeoutMs,
+				async (packedLock) => {
+					const prepared = await prepare();
+					if (prepared === null) {
+						await releaseLock(fs, packedLock);
+						return null;
+					}
+					await publishLockContent(fs, packedLock, packedRefsPath, prepared.content);
+					return prepared;
+				},
+			);
+			if (snapshot === null) return;
+
+			// Native pack-refs releases packed-refs.lock before taking any named
+			// ref lock. Deletion takes the locks in the opposite direction, so
+			// retaining the packed lock here would deadlock.
+			for (const candidate of snapshot.pruneCandidates) {
+				const paths = pathsFor(candidate.name);
+				try {
+					await withAcquiredLock(fs, paths.lockPath, lockTimeoutMs, (namedLock) =>
+						pruneLooseRef(fs, paths, namedLock, candidate.ref),
+					);
+				} catch (error) {
+					// Pruning is an optimization after the packed value is
+					// published. Contention leaves a valid loose override.
+					if (!(error instanceof NativeRefLockContentionError)) throw error;
+				}
+			}
 		},
 	};
 }
@@ -217,13 +264,44 @@ async function publishRef(
 	path: string,
 	ref: Ref,
 ): Promise<void> {
-	await fs.writeFile(lock.lockPath, serializeLooseRef(ref));
+	await publishLockContent(fs, lock, path, serializeLooseRef(ref));
+}
+
+async function publishLockContent(
+	fs: DurableFileSystem,
+	lock: HeldLock,
+	path: string,
+	content: string | Uint8Array,
+): Promise<void> {
+	await fs.writeFile(lock.lockPath, content);
 	await fs.fsync(lock.lockPath);
 	await fs.rename(lock.lockPath, path);
 	lock.state = "consumed";
 	await fs.fsync(dirname(path));
 	await removeFileDurable(fs, lock.claimantPath);
 	lock.state = "released";
+}
+
+async function pruneLooseRef(
+	fs: DurableFileSystem,
+	paths: NativeRefPaths,
+	namedLock: HeldLock,
+	expected: DirectRef,
+): Promise<void> {
+	if (!(await fs.exists(paths.refPath))) {
+		await releaseLock(fs, namedLock);
+		return;
+	}
+
+	const current = parseLooseRef(await fs.readFile(paths.refPath));
+	validateRef(current, `stored ref ${JSON.stringify(paths.name)}`);
+	if (!rawRefsEqual(current, expected)) {
+		await releaseLock(fs, namedLock);
+		return;
+	}
+
+	await removeFileDurable(fs, paths.refPath);
+	await releaseLock(fs, namedLock);
 }
 
 async function deleteWithNamedLock(

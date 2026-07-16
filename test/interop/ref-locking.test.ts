@@ -7,6 +7,7 @@ import {
 	createNativeRefMutation,
 	NativeRefLockContentionError,
 } from "../../src/lib/refs/native-mutation.ts";
+import { writePackedRefsNative } from "../../src/lib/refs/packed-refs-transaction.ts";
 import { FileSystemRefStore } from "../../src/lib/refs/store.ts";
 import { isolatedGitEnv } from "../real-git.ts";
 
@@ -475,5 +476,138 @@ describe("interop: packed ref deletion locks", () => {
 			(await git(fixture.root, fixture.env, ["show-ref", "--verify", justGitRef])).exitCode,
 		).toBe(0);
 		expect(await pathExists(packedLock)).toBe(false);
+	});
+});
+
+describe("interop: bulk packed-ref transactions", () => {
+	test("respects packed-refs.lock held by a prepared native update", async () => {
+		const fixture = await repoFixture();
+		const refName = "refs/heads/native-packed-owner";
+		expect(
+			(await git(fixture.root, fixture.env, ["branch", "native-packed-owner", fixture.oldHash]))
+				.exitCode,
+		).toBe(0);
+		expect((await git(fixture.root, fixture.env, ["pack-refs", "--all", "--prune"])).exitCode).toBe(
+			0,
+		);
+		const prepared = await prepareUpdate(fixture, `delete ${refName} ${fixture.oldHash}`, [
+			join(fixture.gitDir, `${refName}.lock`),
+			join(fixture.gitDir, "packed-refs.lock"),
+		]);
+
+		try {
+			const fs = durableFileSystemFromNodeFs(nodeFs);
+			await expect(
+				writePackedRefsNative(fs, {
+					gitDir: fixture.gitDir,
+					commonDir: fixture.gitDir,
+				}),
+			).rejects.toBeInstanceOf(NativeRefLockContentionError);
+			expect(
+				(await git(fixture.root, fixture.env, ["show-ref", "--verify", refName])).exitCode,
+			).toBe(0);
+		} finally {
+			await prepared.abort();
+		}
+	});
+
+	test("blocks native pack-refs while just-git owns packed-refs.lock", async () => {
+		const fixture = await repoFixture();
+		const refName = "refs/heads/pack-me";
+		expect(
+			(await git(fixture.root, fixture.env, ["branch", "pack-me", fixture.oldHash])).exitCode,
+		).toBe(0);
+
+		const packedLockPath = join(fixture.gitDir, "packed-refs.lock");
+		const fs = durableFileSystemFromNodeFs(nodeFs);
+		const originalLink = fs.link.bind(fs);
+		let release!: () => void;
+		const mayContinue = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let reached!: () => void;
+		const lockHeld = new Promise<void>((resolve) => {
+			reached = resolve;
+		});
+		fs.link = async (existingPath, newPath) => {
+			await originalLink(existingPath, newPath);
+			if (newPath === packedLockPath) {
+				reached();
+				await mayContinue;
+			}
+		};
+
+		const packing = writePackedRefsNative(fs, {
+			gitDir: fixture.gitDir,
+			commonDir: fixture.gitDir,
+		});
+		await lockHeld;
+		try {
+			const blocked = await git(fixture.root, fixture.env, ["pack-refs", "--all", "--prune"]);
+			expect(blocked.exitCode).not.toBe(0);
+			expect(blocked.stderr).toContain("packed-refs.lock");
+		} finally {
+			release();
+		}
+		await packing;
+
+		expect(await pathExists(packedLockPath)).toBe(false);
+		expect(await pathExists(join(fixture.gitDir, refName))).toBe(false);
+		expect((await git(fixture.root, fixture.env, ["show-ref", "--verify", refName])).exitCode).toBe(
+			0,
+		);
+	});
+
+	test("keeps a loose value updated by native Git before conditional pruning", async () => {
+		const fixture = await repoFixture();
+		const refName = "refs/heads/racing-pack";
+		const refPath = join(fixture.gitDir, refName);
+		const namedLockPath = `${refPath}.lock`;
+		expect(
+			(await git(fixture.root, fixture.env, ["update-ref", refName, fixture.oldHash])).exitCode,
+		).toBe(0);
+
+		const fs = durableFileSystemFromNodeFs(nodeFs);
+		const originalLink = fs.link.bind(fs);
+		let release!: () => void;
+		const mayPrune = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let reached!: () => void;
+		const pruneReached = new Promise<void>((resolve) => {
+			reached = resolve;
+		});
+		fs.link = async (existingPath, newPath) => {
+			if (newPath === namedLockPath) {
+				reached();
+				await mayPrune;
+			}
+			await originalLink(existingPath, newPath);
+		};
+
+		const packing = writePackedRefsNative(fs, {
+			gitDir: fixture.gitDir,
+			commonDir: fixture.gitDir,
+		});
+		await pruneReached;
+		try {
+			const update = await git(fixture.root, fixture.env, [
+				"update-ref",
+				refName,
+				fixture.newHash,
+				fixture.oldHash,
+			]);
+			expect(update.exitCode).toBe(0);
+		} finally {
+			release();
+		}
+		await packing;
+
+		expect(await nodeFs.readFile(refPath, "utf8")).toBe(`${fixture.newHash}\n`);
+		const packed = await nodeFs.readFile(join(fixture.gitDir, "packed-refs"), "utf8");
+		expect(packed).toContain(`${fixture.oldHash} ${refName}\n`);
+		expect((await git(fixture.root, fixture.env, ["rev-parse", refName])).stdout.trim()).toBe(
+			fixture.newHash,
+		);
 	});
 });

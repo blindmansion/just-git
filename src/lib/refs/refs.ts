@@ -1,8 +1,10 @@
 import { ensureDirectory, removeFile, replaceFile } from "../../fs/durable-io.ts";
+import { isDurable } from "../../fs/index.ts";
 import { readObject } from "../object-db.ts";
 import { parseTag } from "../objects/tag.ts";
 import { join } from "../path.ts";
 import { isPerWorktreeRef } from "./classify.ts";
+import { writePackedRefsNative } from "./packed-refs-transaction.ts";
 import { FileSystemRefStore, MAX_SYMREF_DEPTH } from "./store.ts";
 import { applyReflogEffects, type ReflogEffect, reflogDelete } from "./reflog.ts";
 import type { GitContext, GitRepo, ObjectId, Ref, RefEntry } from "../types.ts";
@@ -153,6 +155,16 @@ export async function advanceBranchRef(ctx: GitRepo, hash: ObjectId): Promise<vo
 export async function writePackedRefs(ctx: GitContext): Promise<void> {
 	if (ctx.refStore && !(ctx.refStore instanceof FileSystemRefStore)) return;
 
+	if (isDurable(ctx.fs)) {
+		await writePackedRefsNative(ctx.fs, {
+			gitDir: ctx.gitDir,
+			commonDir: ctx.commonDir,
+			peelTag: (hash) => peelTag(ctx, hash),
+		});
+		await finishPackedRefsLayout(ctx);
+		return;
+	}
+
 	// Per-worktree refs are loose-only and live in the private dir; only the
 	// shared refs are packed, and only the common dir's packed-refs is written.
 	const refs = (await listRefs(ctx, "refs")).filter((ref) => !isPerWorktreeRef(ref.name));
@@ -169,20 +181,8 @@ export async function writePackedRefs(ctx: GitContext): Promise<void> {
 		packed.push(ref.name);
 		lines.push(`${ref.hash} ${ref.name}`);
 		if (ref.name.startsWith("refs/tags/")) {
-			try {
-				const raw = await readObject(ctx, ref.hash);
-				if (raw.type === "tag") {
-					let peeled = parseTag(raw.content).object;
-					for (let i = 0; i < 100; i++) {
-						const inner = await readObject(ctx, peeled);
-						if (inner.type !== "tag") break;
-						peeled = parseTag(inner.content).object;
-					}
-					lines.push(`^${peeled}`);
-				}
-			} catch {
-				// skip peeling if object unreadable
-			}
+			const peeled = await peelTag(ctx, ref.hash);
+			if (peeled) lines.push(`^${peeled}`);
 		}
 	}
 
@@ -193,6 +193,28 @@ export async function writePackedRefs(ctx: GitContext): Promise<void> {
 		await removeFile(ctx.fs, loosePath);
 	}
 
+	await finishPackedRefsLayout(ctx);
+}
+
+async function peelTag(ctx: GitContext, hash: ObjectId): Promise<ObjectId | null> {
+	try {
+		const raw = await readObject(ctx, hash);
+		if (raw.type !== "tag") return null;
+
+		let peeled = parseTag(raw.content).object;
+		for (let i = 0; i < 100; i++) {
+			const inner = await readObject(ctx, peeled);
+			if (inner.type !== "tag") break;
+			peeled = parseTag(inner.content).object;
+		}
+		return peeled;
+	} catch {
+		// Match pack-refs best effort when an object cannot be peeled.
+		return null;
+	}
+}
+
+async function finishPackedRefsLayout(ctx: GitContext): Promise<void> {
 	await cleanEmptyRefDirs(ctx, join(ctx.commonDir, "refs"));
 
 	const refsDir = join(ctx.commonDir, "refs");
@@ -219,6 +241,18 @@ async function cleanEmptyRefDirs(ctx: GitContext, dirPath: string): Promise<void
 
 	const remaining = await ctx.fs.readdir(dirPath);
 	if (remaining.length === 0) {
-		await ctx.fs.rm(dirPath, { recursive: true });
+		try {
+			// Use rmdir semantics: a concurrent ref writer may have populated
+			// the directory after readdir, and must never be removed recursively.
+			await ctx.fs.rm(dirPath);
+		} catch (error) {
+			if (!isMissingOrNonEmptyDirectoryError(error)) throw error;
+		}
 	}
+}
+
+function isMissingOrNonEmptyDirectoryError(error: unknown): boolean {
+	if (typeof error !== "object" || error === null || !("code" in error)) return false;
+	const code = (error as { code?: unknown }).code;
+	return code === "ENOENT" || code === "ENOTEMPTY" || code === "EEXIST";
 }
