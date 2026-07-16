@@ -3,7 +3,7 @@ import { isDurable, type DurableFileSystem, type FileSystem } from "./index.ts";
 export type FileContent = string | Uint8Array;
 
 let tempSequence = 0;
-const lockQueues = new Map<string, Promise<unknown>>();
+const pathQueues = new Map<string, Promise<unknown>>();
 
 /**
  * Create a directory hierarchy and durably publish every newly-added entry.
@@ -45,7 +45,7 @@ export async function replaceFileDurable(
 ): Promise<void> {
 	const parent = parentDir(path);
 	await ensureDirectoryDurable(fs, parent);
-	const temp = tempPath(path);
+	const temp = temporarySiblingPath(path);
 	let renamed = false;
 
 	try {
@@ -70,7 +70,7 @@ export async function createFileDurable(
 ): Promise<boolean> {
 	const parent = parentDir(path);
 	await ensureDirectoryDurable(fs, parent);
-	const temp = tempPath(path);
+	const temp = temporarySiblingPath(path);
 
 	try {
 		await fs.writeFile(temp, content);
@@ -107,14 +107,16 @@ export function withFileLock<T>(
 	lockPath: string,
 	fn: () => Promise<T>,
 ): Promise<T> {
-	const previous = lockQueues.get(lockPath) ?? Promise.resolve();
-	const result = previous.then(
-		() => withFileLockUnsafe(fs, lockPath, fn),
-		() => withFileLockUnsafe(fs, lockPath, fn),
-	);
-	lockQueues.set(lockPath, result);
+	return withPathQueue(lockPath, () => withFileLockUnsafe(fs, lockPath, fn));
+}
+
+/** Queue an operation behind earlier operations using the same canonical path. */
+export function withPathQueue<T>(path: string, fn: () => Promise<T>): Promise<T> {
+	const previous = pathQueues.get(path) ?? Promise.resolve();
+	const result = previous.then(fn, fn);
+	pathQueues.set(path, result);
 	const cleanup = () => {
-		if (lockQueues.get(lockPath) === result) lockQueues.delete(lockPath);
+		if (pathQueues.get(path) === result) pathQueues.delete(path);
 	};
 	void result.then(cleanup, cleanup);
 	return result;
@@ -208,7 +210,7 @@ async function withFileLockUnsafe<T>(
 ): Promise<T> {
 	const parent = parentDir(lockPath);
 	await ensureDirectoryDurable(fs, parent);
-	const claimant = tempPath(lockPath);
+	const claimant = temporarySiblingPath(lockPath);
 	let acquired = false;
 
 	try {
@@ -224,7 +226,8 @@ async function withFileLockUnsafe<T>(
 	}
 }
 
-function tempPath(path: string): string {
+/** Return a collision-resistant temporary path adjacent to `path`. */
+export function temporarySiblingPath(path: string): string {
 	tempSequence = (tempSequence + 1) >>> 0;
 	const nonce = `${Date.now().toString(36)}-${tempSequence.toString(36)}-${Math.random()
 		.toString(36)
@@ -253,7 +256,8 @@ async function isDirectory(fs: FileSystem, path: string): Promise<boolean> {
 	}
 }
 
-function isAlreadyExistsError(error: unknown): boolean {
+/** Return whether an error reports an exclusive-create collision. */
+export function isAlreadyExistsError(error: unknown): boolean {
 	if (typeof error !== "object" || error === null) return false;
 	if ("code" in error && (error as { code?: unknown }).code === "EEXIST") return true;
 	return "message" in error && /^EEXIST\b/.test(String((error as { message?: unknown }).message));

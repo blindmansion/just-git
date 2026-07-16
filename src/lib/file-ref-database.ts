@@ -12,6 +12,12 @@ export interface RawFileRefEntry {
 	ref: Ref;
 }
 
+export interface PackedRefRemoval {
+	changed: boolean;
+	/** Replacement contents, or null when no packed refs remain. */
+	content: string | null;
+}
+
 /** Parse a loose ref file without resolving symbolic refs. */
 export function parseLooseRef(raw: string): Ref {
 	const value = raw.trim();
@@ -82,6 +88,18 @@ export async function removePackedRef(
 	if (!(await fs.exists(packedPath))) return false;
 
 	const content = await fs.readFile(packedPath);
+	const result = removePackedRefFromContent(content, name);
+	if (!result.changed) return false;
+	if (result.content !== null) {
+		await replaceFile(fs, packedPath, result.content);
+	} else {
+		await removeFile(fs, packedPath);
+	}
+	return true;
+}
+
+/** Compute removal of one ref and its optional peeled line without performing I/O. */
+export function removePackedRefFromContent(content: string, name: string): PackedRefRemoval {
 	const filtered: string[] = [];
 	let removed = false;
 	let skipPeeled = false;
@@ -107,14 +125,12 @@ export async function removePackedRef(
 		filtered.push(line);
 	}
 
-	if (!removed) return false;
+	if (!removed) return { changed: false, content };
 	const hasRefs = filtered.some((line) => line && !line.startsWith("#") && !line.startsWith("^"));
-	if (hasRefs) {
-		await replaceFile(fs, packedPath, filtered.join("\n"));
-	} else {
-		await removeFile(fs, packedPath);
-	}
-	return true;
+	return {
+		changed: true,
+		content: hasRefs ? filtered.join("\n") : null,
+	};
 }
 
 /** Walk loose ref files under a validated prefix, returning raw values. */
