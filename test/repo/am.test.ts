@@ -115,6 +115,36 @@ describe("repo am: mailbox replay", () => {
 		expect(result.status).toBe("applied");
 		expect(await resolveRef(repo, "refs/heads/main")).toBe(base);
 	});
+
+	test("creates a commit for a plain apply whose resulting tree is unchanged", async () => {
+		const repo = await freshRepo();
+		const base = await commit(repo, {
+			files: { "a.txt": "same\n" },
+			message: "base\n",
+			author: AUTHOR,
+			branch: "main",
+		});
+		const noOpPatch =
+			"From: A <a@example.com>\n" +
+			"Date: Thu, 1 Jan 2009 00:00:00 +0000\n" +
+			"Subject: [PATCH] no-op replacement\n\n" +
+			"diff --git a/a.txt b/a.txt\n" +
+			"--- a/a.txt\n" +
+			"+++ b/a.txt\n" +
+			"@@ -1 +1 @@\n" +
+			"-same\n" +
+			"+same\n";
+
+		const result = await am(repo, {
+			mbox: noOpPatch,
+			onto: base,
+			committer: COMMITTER,
+		});
+		expect(result.status).toBe("applied");
+		if (result.status !== "applied") throw new Error("unreachable");
+		expect(result.commits).toHaveLength(1);
+		expect((await readCommit(repo, result.head)).tree).toBe((await readCommit(repo, base)).tree);
+	});
 });
 
 describe("repo am: rejected message repair", () => {

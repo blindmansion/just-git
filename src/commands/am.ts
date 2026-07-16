@@ -31,10 +31,11 @@ import {
 } from "../lib/index.ts";
 import { type ApplyMergeFailure, applyMergeResult } from "../lib/merge-ort.ts";
 import { readCommit } from "../lib/object-db.ts";
-import { buildAmMessage } from "../lib/patch/am-message.ts";
+import { fallBackThreeway } from "../lib/patch/am-threeway.ts";
+import { prepareAmMessage, shouldSkipAmCommit } from "../lib/patch/am-message.ts";
 import { type ApplyResult, applyPatches } from "../lib/patch/apply.ts";
 import { parseMail, splitMailbox } from "../lib/patch/mailinfo.ts";
-import { ApplyParseError, type ParsedPatch, parsePatch } from "../lib/patch/parse-patch.ts";
+import type { ParsedPatch } from "../lib/patch/parse-patch.ts";
 import { resolve } from "../lib/path.ts";
 import { clearAllOperationState } from "../lib/operation-state.ts";
 import { logRef } from "../lib/refs/reflog.ts";
@@ -57,7 +58,6 @@ import {
 	UnpackError,
 	unpackTrees,
 } from "../lib/worktree/unpack-trees.ts";
-import { fallBackThreeway } from "../repo/patching.ts";
 import { type CommandResult, err, fatal, isCommandError } from "./kit/command-result.ts";
 import { resolveCommandSigner } from "./kit/command-utils.ts";
 import { requireCommitter, requireGitContext } from "./kit/commit-requirements.ts";
@@ -521,13 +521,22 @@ async function runAmLoop(gitCtx: GitContext, env: Map<string, string>): Promise<
 		}
 
 		const raw = await readPatchMessage(gitCtx, state.next);
-		const mail = parseMail(raw, {
+		const patchName = patchFileName(state.next);
+
+		// Resolve the committer up front so the stored message (with signoff)
+		// is available on every stop path — including the empty-patch pause.
+		const committer = await requireCommitter(gitCtx, env);
+		if (isCommandError(committer)) return committer;
+		const signoffLine = state.sign ? `Signed-off-by: ${committer.name} <${committer.email}>` : null;
+		const prepared = prepareAmMessage(raw, {
 			keep: state.keep,
 			scissors: state.scissors,
 			keepCr: state.keepCr,
 			now: () => clockNow(gitCtx.capabilities),
+			signoffLine,
 		});
-		const patchName = patchFileName(state.next);
+		const mail = prepared.status === "ready" ? prepared.prepared.mail : prepared.mail;
+		const message = prepared.status === "ready" ? prepared.prepared.message : prepared.message;
 
 		// git's `parse_mail` writes the extracted diff to `rebase-apply/patch`
 		// for the patch it is about to apply; `git status` reads that file's
@@ -536,20 +545,13 @@ async function runAmLoop(gitCtx: GitContext, env: Map<string, string>): Promise<
 		// leaves no `patch` and so is never reported as an empty patch.
 		await writeAmPatch(gitCtx, mail.patchText);
 
-		// Resolve the committer up front so the stored message (with signoff)
-		// is available on every stop path — including the empty-patch pause.
-		const committer = await requireCommitter(gitCtx, env);
-		if (isCommandError(committer)) return committer;
-		const signoffLine = state.sign ? `Signed-off-by: ${committer.name} <${committer.email}>` : null;
-		const message = buildAmMessage(mail.subject, mail.body, signoffLine);
-
 		// An empty patch pauses the session *before* the "Applying:" line
 		// (git's parse_mail): print "Patch is empty." and stop with the
 		// empty-patch resolve hints. Persist the stop meta (`final-commit` +
 		// `author-script`) like any other stop so the session is resumable —
 		// `--continue` records the (resolved) commit under the stored author/
 		// message, and `--skip`/`--abort` unwind it.
-		if (mail.patchText.trim() === "") {
+		if (prepared.status === "empty") {
 			await writeAmStopMeta(gitCtx, message, mail.author);
 			return {
 				stdout: `${out.join("")}Patch is empty.\n`,
@@ -560,20 +562,15 @@ async function runAmLoop(gitCtx: GitContext, env: Map<string, string>): Promise<
 
 		if (!state.quiet) out.push(`Applying: ${mail.subject}\n`);
 
-		let patches;
-		try {
-			patches = parsePatch(mail.patchText);
-		} catch (e) {
-			if (e instanceof ApplyParseError) {
-				await writeAmStopMeta(gitCtx, message, mail.author);
-				return {
-					stdout: `${out.join("")}Patch failed at ${patchName} ${mail.subject}\n`,
-					stderr: `error: corrupt patch at line ${e.line}\n${RESOLVE_HINT}`,
-					exitCode: 128,
-				};
-			}
-			throw e;
+		if (prepared.status === "parse-error") {
+			await writeAmStopMeta(gitCtx, message, mail.author);
+			return {
+				stdout: `${out.join("")}Patch failed at ${patchName} ${mail.subject}\n`,
+				stderr: `error: corrupt patch at line ${prepared.line}\n${RESOLVE_HINT}`,
+				exitCode: 128,
+			};
 		}
+		const patches = prepared.prepared.patches;
 
 		// Plain apply to the index + worktree (git's initial `git apply`). Only
 		// on failure — and only under `-3` — do we fall back to the tree-level
@@ -611,7 +608,7 @@ async function runAmLoop(gitCtx: GitContext, env: Map<string, string>): Promise<
 			// When the index no longer differs from HEAD, git prints "No changes
 			// -- Patch already applied." (suppressed under `-q`) and skips the
 			// commit, advancing to the next patch via `am_next`.
-			if (await indexMatchesHead(gitCtx)) {
+			if (shouldSkipAmCommit(true, await indexMatchesHead(gitCtx))) {
 				if (!state.quiet) out.push("No changes -- Patch already applied.\n");
 				await refreshAbortSafety(gitCtx, await resolveHead(gitCtx));
 				await advanceAm(gitCtx, state.next + 1);
