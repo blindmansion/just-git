@@ -172,6 +172,55 @@ describe("native ref mutation protocol", () => {
 		expect(await fs.exists(`${COMMON_DIR}/packed-refs.lock`)).toBe(true);
 	});
 
+	test("holds an empty named lock while acquiring the packed-refs lock for deletion", async () => {
+		const fs = await splitFs();
+		await fs.mkdir(`${COMMON_DIR}/refs/heads`, { recursive: true });
+		await fs.writeFile(`${COMMON_DIR}/refs/heads/main`, `${HASH_A}\n`);
+		const originalLink = fs.link.bind(fs);
+		let reachedPackedLock!: () => void;
+		const packedLockReached = new Promise<void>((resolve) => {
+			reachedPackedLock = resolve;
+		});
+		let releasePackedLock!: () => void;
+		const packedLockMayProceed = new Promise<void>((resolve) => {
+			releasePackedLock = resolve;
+		});
+		fs.link = async (existingPath, newPath) => {
+			if (newPath === `${COMMON_DIR}/packed-refs.lock`) {
+				expect(await fs.readFile(`${COMMON_DIR}/refs/heads/main.lock`)).toBe("");
+				reachedPackedLock();
+				await packedLockMayProceed;
+			}
+			await originalLink(existingPath, newPath);
+		};
+		const refs = createNativeRefMutation(fs, { gitDir: GIT_DIR, commonDir: COMMON_DIR });
+
+		const deletion = refs.removeRef("refs/heads/main");
+		await packedLockReached;
+		expect(await fs.readFile(`${COMMON_DIR}/refs/heads/main`)).toBe(`${HASH_A}\n`);
+		releasePackedLock();
+		await deletion;
+	});
+
+	test("packed-refs lock contention preserves the ref and cleans the named lock", async () => {
+		const fs = await splitFs();
+		await fs.mkdir(`${COMMON_DIR}/refs/heads`, { recursive: true });
+		await fs.writeFile(`${COMMON_DIR}/refs/heads/main`, `${HASH_A}\n`);
+		await fs.writeFile(`${COMMON_DIR}/packed-refs`, `${HASH_A} refs/heads/main\n`);
+		await fs.writeFile(`${COMMON_DIR}/packed-refs.lock`, "native git owns this");
+		const refs = createNativeRefMutation(
+			fs,
+			{ gitDir: GIT_DIR, commonDir: COMMON_DIR },
+			{ lockTimeoutMs: 0 },
+		);
+
+		expect(refs.removeRef("refs/heads/main")).rejects.toBeInstanceOf(NativeRefLockContentionError);
+		expect(await fs.readFile(`${COMMON_DIR}/refs/heads/main`)).toBe(`${HASH_A}\n`);
+		expect(await fs.readFile(`${COMMON_DIR}/packed-refs`)).toBe(`${HASH_A} refs/heads/main\n`);
+		expect(await fs.readFile(`${COMMON_DIR}/packed-refs.lock`)).toBe("native git owns this");
+		expect((await fs.readdir(`${COMMON_DIR}/refs/heads`)).sort()).toEqual(["main"]);
+	});
+
 	test("times out on an existing lock without breaking it or leaking claimants", async () => {
 		const fs = await splitFs();
 		await fs.mkdir(`${COMMON_DIR}/refs/heads`, { recursive: true });
@@ -186,6 +235,25 @@ describe("native ref mutation protocol", () => {
 		expect(error).toBeInstanceOf(NativeRefLockContentionError);
 		expect(await fs.readFile(`${COMMON_DIR}/refs/heads/main.lock`)).toBe("native git owns this");
 		expect((await fs.readdir(`${COMMON_DIR}/refs/heads`)).sort()).toEqual(["main.lock"]);
+	});
+
+	test("ordinary publication errors preserve the old ref and clean lock artifacts", async () => {
+		const fs = await splitFs();
+		const refs = createNativeRefMutation(fs, { gitDir: GIT_DIR, commonDir: COMMON_DIR });
+		await refs.putRef("refs/heads/main", DIRECT_A);
+		const originalWriteFile = fs.writeFile.bind(fs);
+		fs.writeFile = async (path, content) => {
+			if (path === `${COMMON_DIR}/refs/heads/main.lock`) {
+				throw new Error("injected lockfile write failure");
+			}
+			await originalWriteFile(path, content);
+		};
+
+		expect(refs.putRef("refs/heads/main", DIRECT_B)).rejects.toThrow(
+			"injected lockfile write failure",
+		);
+		expect(await fs.readFile(`${COMMON_DIR}/refs/heads/main`)).toBe(`${HASH_A}\n`);
+		expect((await fs.readdir(`${COMMON_DIR}/refs/heads`)).sort()).toEqual(["main"]);
 	});
 
 	test("queues the same canonical path while allowing another ref to proceed", async () => {

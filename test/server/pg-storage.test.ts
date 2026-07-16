@@ -468,6 +468,115 @@ describe.skipIf(!canRun)("PgStorage", () => {
 			const results = [ok1, ok2].sort();
 			expect(results).toEqual([false, true]);
 		});
+
+		test("two create-only operations on an absent ref have exactly one winner", async () => {
+			await storage!.createRepo("test-repo-cas-10");
+			const repo1 = (await storage!.repo("test-repo-cas-10"))!;
+			const repo2 = (await storage!.repo("test-repo-cas-10"))!;
+
+			const outcomes = await Promise.all([
+				repo1.refStore.compareAndSwapRef("refs/heads/main", null, {
+					type: "direct",
+					hash: HASH_A,
+				}),
+				repo2.refStore.compareAndSwapRef("refs/heads/main", null, {
+					type: "direct",
+					hash: HASH_B,
+				}),
+			]);
+
+			expect(outcomes.sort()).toEqual([false, true]);
+			expect([HASH_A, HASH_B]).toContain(
+				((await repo1.refStore.readRef("refs/heads/main")) as { type: "direct"; hash: string })
+					.hash,
+			);
+		});
+
+		test("delete racing with update has exactly one winner", async () => {
+			await storage!.createRepo("test-repo-cas-11");
+			const repo1 = (await storage!.repo("test-repo-cas-11"))!;
+			const repo2 = (await storage!.repo("test-repo-cas-11"))!;
+			const old = { type: "direct" as const, hash: HASH_A };
+			await repo1.refStore.writeRef("refs/heads/main", old);
+
+			const outcomes = await Promise.all([
+				repo1.refStore.compareAndSwapRef("refs/heads/main", old, null),
+				repo2.refStore.compareAndSwapRef("refs/heads/main", old, {
+					type: "direct",
+					hash: HASH_B,
+				}),
+			]);
+
+			expect(outcomes.sort()).toEqual([false, true]);
+			const finalRef = await repo1.refStore.readRef("refs/heads/main");
+			expect(finalRef === null || (finalRef.type === "direct" && finalRef.hash === HASH_B)).toBe(
+				true,
+			);
+		});
+
+		test("direct-to-symbolic replacement race has exactly one winner", async () => {
+			await storage!.createRepo("test-repo-cas-12");
+			const repo1 = (await storage!.repo("test-repo-cas-12"))!;
+			const repo2 = (await storage!.repo("test-repo-cas-12"))!;
+			const old = { type: "direct" as const, hash: HASH_A };
+			const symbolic = { type: "symbolic" as const, target: "refs/heads/dev" };
+			await repo1.refStore.writeRef("refs/heads/main", old);
+
+			const outcomes = await Promise.all([
+				repo1.refStore.compareAndSwapRef("refs/heads/main", old, symbolic),
+				repo2.refStore.compareAndSwapRef("refs/heads/main", old, {
+					type: "direct",
+					hash: HASH_B,
+				}),
+			]);
+
+			expect(outcomes.sort()).toEqual([false, true]);
+			const finalRef = await repo1.refStore.readRef("refs/heads/main");
+			expect(
+				finalRef?.type === "symbolic"
+					? finalRef.target === symbolic.target
+					: finalRef?.hash === HASH_B,
+			).toBe(true);
+		});
+
+		test("rolls back CAS when the ref write fails", async () => {
+			const repoId = "test-repo-cas-13";
+			await storage!.createRepo(repoId);
+			const repo = (await storage!.repo(repoId))!;
+			await repo.refStore.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
+			await pool!.query(`
+				CREATE FUNCTION fail_cas_ref_write() RETURNS trigger
+				LANGUAGE plpgsql AS $$
+				BEGIN
+					RAISE EXCEPTION 'injected ref write failure';
+				END
+				$$
+			`);
+			await pool!.query(`
+				CREATE TRIGGER fail_cas_ref_write
+				BEFORE INSERT ON git_refs
+				FOR EACH ROW
+				WHEN (NEW.repo_id = '${repoId}' AND NEW.name = 'refs/heads/main')
+				EXECUTE FUNCTION fail_cas_ref_write()
+			`);
+
+			try {
+				expect(
+					repo.refStore.compareAndSwapRef(
+						"refs/heads/main",
+						{ type: "direct", hash: HASH_A },
+						{ type: "direct", hash: HASH_B },
+					),
+				).rejects.toThrow("injected ref write failure");
+				expect(await repo.refStore.readRef("refs/heads/main")).toEqual({
+					type: "direct",
+					hash: HASH_A,
+				});
+			} finally {
+				await pool!.query("DROP TRIGGER fail_cas_ref_write ON git_refs");
+				await pool!.query("DROP FUNCTION fail_cas_ref_write()");
+			}
+		});
 	});
 
 	// ── Multi-repo isolation ────────────────────────────────────

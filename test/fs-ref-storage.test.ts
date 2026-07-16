@@ -129,6 +129,24 @@ describe("FsRefStorage", () => {
 		expect(await storage.getRef("refs/heads/main")).toEqual(direct(HASH_B));
 	});
 
+	test("a loose symbolic ref shadows an older packed direct value during CAS", async () => {
+		const { fs, repoDir, storage } = await tempRepo();
+		await fs.writeFile(join(repoDir, "packed-refs"), `${HASH_A} refs/heads/main\n`);
+		await storage.putRef("refs/heads/main", symbolic("refs/heads/dev"));
+
+		expect(await storage.compareAndSwapRef("refs/heads/main", direct(HASH_A), direct(HASH_B))).toBe(
+			false,
+		);
+		expect(
+			await storage.compareAndSwapRef(
+				"refs/heads/main",
+				symbolic("refs/heads/dev"),
+				direct(HASH_B),
+			),
+		).toBe(true);
+		expect(await storage.getRef("refs/heads/main")).toEqual(direct(HASH_B));
+	});
+
 	test("serializes two handles contending for the same canonical ref lock", async () => {
 		const { fs, repoDir } = await tempRepo();
 		await new FsRefStorage(fs, repoDir).putRef("refs/heads/main", direct(HASH_A));
@@ -169,6 +187,89 @@ describe("FsRefStorage", () => {
 		expect(await Promise.all([firstUpdate, secondUpdate])).toEqual([true, false]);
 		expect(await first.getRef("refs/heads/main")).toEqual(direct(HASH_B));
 		expect(await fs.exists(join(repoDir, "refs/heads/main.lock"))).toBe(false);
+	});
+
+	test("allows a different ref to proceed while one canonical lock is blocked", async () => {
+		const { fs, repoDir } = await tempRepo();
+		const first = new FsRefStorage(fs, repoDir);
+		const second = new FsRefStorage(fs, repoDir);
+		const originalLink = fs.link.bind(fs);
+		let releaseMain!: () => void;
+		const mainMayLink = new Promise<void>((resolve) => {
+			releaseMain = resolve;
+		});
+		let mainReached!: () => void;
+		const mainReachedLock = new Promise<void>((resolve) => {
+			mainReached = resolve;
+		});
+		let blockMain = true;
+		fs.link = async (existingPath, newPath) => {
+			if (blockMain && newPath === join(repoDir, "refs/heads/main.lock")) {
+				blockMain = false;
+				mainReached();
+				await mainMayLink;
+			}
+			await originalLink(existingPath, newPath);
+		};
+
+		const mainWrite = first.putRef("refs/heads/main", direct(HASH_A));
+		await mainReachedLock;
+		await second.putRef("refs/heads/other", direct(HASH_B));
+		expect(await second.getRef("refs/heads/other")).toEqual(direct(HASH_B));
+		releaseMain();
+		await mainWrite;
+	});
+
+	test("claimant, canonical lock, and published ref retain the expected permissions", async () => {
+		const { fs, repoDir, storage } = await tempRepo();
+		const lockPath = join(repoDir, "refs/heads/main.lock");
+		const refPath = join(repoDir, "refs/heads/main");
+		const originalLink = fs.link.bind(fs);
+		let claimantPath = "";
+		let releaseLock!: () => void;
+		const lockMayPublish = new Promise<void>((resolve) => {
+			releaseLock = resolve;
+		});
+		let lockHeld!: () => void;
+		const canonicalLockHeld = new Promise<void>((resolve) => {
+			lockHeld = resolve;
+		});
+		fs.link = async (existingPath, newPath) => {
+			await originalLink(existingPath, newPath);
+			if (newPath === lockPath) {
+				claimantPath = existingPath;
+				lockHeld();
+				await lockMayPublish;
+			}
+		};
+
+		const publication = storage.putRef("refs/heads/main", direct(HASH_A));
+		await canonicalLockHeld;
+		const expectedMode = 0o666 & ~process.umask();
+		try {
+			const [claimant, lock] = await Promise.all([
+				nodeFs.stat(claimantPath),
+				nodeFs.stat(lockPath),
+			]);
+			expect(claimant.ino).toBe(lock.ino);
+			expect(claimant.mode & 0o777).toBe(expectedMode);
+			expect(lock.mode & 0o777).toBe(expectedMode);
+		} finally {
+			releaseLock();
+			await publication;
+		}
+
+		const published = await nodeFs.stat(refPath);
+		expect(published.mode & 0o777).toBe(expectedMode);
+	});
+
+	test("ordinary mutations never create the legacy repository-wide lock", async () => {
+		const { fs, repoDir, storage } = await tempRepo();
+		await storage.putRef("refs/heads/main", direct(HASH_A));
+		await storage.compareAndSwapRef("refs/heads/main", direct(HASH_A), direct(HASH_B));
+		await storage.removeRef("refs/heads/main");
+
+		expect(await fs.exists(join(repoDir, ".just-git-ref.lock"))).toBe(false);
 	});
 
 	test("rejects caller-supplied paths that can escape the repository", async () => {
