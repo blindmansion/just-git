@@ -36,79 +36,121 @@ describe("FileSystemRefStore.compareAndSwapRef", () => {
 		expect(await store.readRef("refs/heads/main")).toEqual({ type: "direct", hash: HASH_A });
 	});
 
-	test("update succeeds with matching hash", async () => {
+	test("update succeeds with matching direct ref", async () => {
 		const store = await setup();
 		await store.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 
-		const ok = await store.compareAndSwapRef("refs/heads/main", HASH_A, {
-			type: "direct",
-			hash: HASH_B,
-		});
+		const ok = await store.compareAndSwapRef(
+			"refs/heads/main",
+			{ type: "direct", hash: HASH_A },
+			{
+				type: "direct",
+				hash: HASH_B,
+			},
+		);
 		expect(ok).toBe(true);
 		expect(await store.readRef("refs/heads/main")).toEqual({ type: "direct", hash: HASH_B });
 	});
 
-	test("update fails with wrong hash", async () => {
+	test("update fails with wrong direct ref", async () => {
 		const store = await setup();
 		await store.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 
-		const ok = await store.compareAndSwapRef("refs/heads/main", HASH_C, {
-			type: "direct",
-			hash: HASH_B,
-		});
+		const ok = await store.compareAndSwapRef(
+			"refs/heads/main",
+			{ type: "direct", hash: HASH_C },
+			{
+				type: "direct",
+				hash: HASH_B,
+			},
+		);
 		expect(ok).toBe(false);
 		expect(await store.readRef("refs/heads/main")).toEqual({ type: "direct", hash: HASH_A });
 	});
 
 	test("update fails when ref does not exist", async () => {
 		const store = await setup();
-		const ok = await store.compareAndSwapRef("refs/heads/main", HASH_A, {
-			type: "direct",
-			hash: HASH_B,
-		});
+		const ok = await store.compareAndSwapRef(
+			"refs/heads/main",
+			{ type: "direct", hash: HASH_A },
+			{
+				type: "direct",
+				hash: HASH_B,
+			},
+		);
 		expect(ok).toBe(false);
 	});
 
-	test("conditional delete succeeds with matching hash", async () => {
+	test("conditional delete succeeds with matching direct ref", async () => {
 		const store = await setup();
 		await store.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 
-		const ok = await store.compareAndSwapRef("refs/heads/main", HASH_A, null);
+		const ok = await store.compareAndSwapRef(
+			"refs/heads/main",
+			{ type: "direct", hash: HASH_A },
+			null,
+		);
 		expect(ok).toBe(true);
 		expect(await store.readRef("refs/heads/main")).toBeNull();
 	});
 
-	test("conditional delete fails with wrong hash", async () => {
+	test("conditional delete fails with wrong direct ref", async () => {
 		const store = await setup();
 		await store.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 
-		const ok = await store.compareAndSwapRef("refs/heads/main", HASH_C, null);
+		const ok = await store.compareAndSwapRef(
+			"refs/heads/main",
+			{ type: "direct", hash: HASH_C },
+			null,
+		);
 		expect(ok).toBe(false);
 		expect(await store.readRef("refs/heads/main")).toEqual({ type: "direct", hash: HASH_A });
 	});
 
-	test("CAS resolves symbolic ref chain for hash comparison", async () => {
+	test("CAS compares and replaces the exact raw symbolic ref", async () => {
 		const store = await setup();
 		await store.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 		await store.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
 
-		const ok = await store.compareAndSwapRef("HEAD", HASH_A, {
-			type: "symbolic",
-			target: "refs/heads/dev",
-		});
+		const ok = await store.compareAndSwapRef(
+			"HEAD",
+			{ type: "symbolic", target: "refs/heads/main" },
+			{
+				type: "symbolic",
+				target: "refs/heads/dev",
+			},
+		);
 		expect(ok).toBe(true);
 		expect(await store.readRef("HEAD")).toEqual({ type: "symbolic", target: "refs/heads/dev" });
+		expect(await store.readRef("refs/heads/main")).toEqual({ type: "direct", hash: HASH_A });
 	});
 
-	test("CAS with symbolic ref fails on hash mismatch", async () => {
+	test("CAS rejects a direct expectation for a symbolic ref", async () => {
 		const store = await setup();
 		await store.writeRef("refs/heads/main", { type: "direct", hash: HASH_A });
 		await store.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
 
-		const ok = await store.compareAndSwapRef("HEAD", HASH_B, {
-			type: "symbolic",
-			target: "refs/heads/dev",
-		});
+		const ok = await store.compareAndSwapRef(
+			"HEAD",
+			{ type: "direct", hash: HASH_A },
+			{
+				type: "symbolic",
+				target: "refs/heads/dev",
+			},
+		);
+		expect(ok).toBe(false);
+		expect(await store.readRef("HEAD")).toEqual({ type: "symbolic", target: "refs/heads/main" });
+	});
+
+	test("CAS rejects a different raw symbolic target", async () => {
+		const store = await setup();
+		await store.writeRef("HEAD", { type: "symbolic", target: "refs/heads/main" });
+
+		const ok = await store.compareAndSwapRef(
+			"HEAD",
+			{ type: "symbolic", target: "refs/heads/other" },
+			{ type: "symbolic", target: "refs/heads/dev" },
+		);
 		expect(ok).toBe(false);
 		expect(await store.readRef("HEAD")).toEqual({ type: "symbolic", target: "refs/heads/main" });
 	});

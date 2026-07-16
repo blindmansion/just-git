@@ -34,7 +34,7 @@ describe("FsRefStorage crash durability", () => {
 					const ref = await refs(fs).getRef(scenario.name);
 					expect(ref).not.toBeNull();
 					expect([scenario.old, scenario.replacement]).toContainEqual(ref!);
-					await assertSafeLockState(fs);
+					await assertSafeLockState(fs, scenario.name);
 				},
 				verifySuccess: async (fs) => {
 					expect(await refs(fs).getRef(scenario.name)).toEqual(scenario.replacement);
@@ -53,7 +53,7 @@ describe("FsRefStorage crash durability", () => {
 				operation: (fs) => refs(fs).putRef(scenario.name, scenario.ref),
 				verifyCut: async ({ fs }) => {
 					expect([null, scenario.ref]).toContainEqual(await refs(fs).getRef(scenario.name));
-					await assertSafeLockState(fs);
+					await assertSafeLockState(fs, scenario.name);
 				},
 				verifySuccess: async (fs) => {
 					expect(await refs(fs).getRef(scenario.name)).toEqual(scenario.ref);
@@ -88,7 +88,7 @@ describe("FsRefStorage crash durability", () => {
 					if (scenario.packed && (await fs.exists("/repo/packed-refs"))) {
 						assertValidPackedRefs(await fs.readFile("/repo/packed-refs"));
 					}
-					await assertSafeLockState(fs);
+					await assertSafeLockState(fs, "refs/heads/main");
 				},
 				verifySuccess: async (fs) => {
 					expect(await refs(fs).getRef("refs/heads/main")).toBeNull();
@@ -145,21 +145,19 @@ describe("FsRefStorage crash durability", () => {
 		});
 	});
 
-	test("atomic put commits one old-or-new ref", async () => {
+	test("CAS replacement commits one old-or-new ref", async () => {
 		await replayCrashCuts({
 			setup: async (fs) => {
 				await setupRepo(fs);
 				await refs(fs).putRef("refs/heads/main", direct(HASH_A));
 			},
 			operation: (fs) =>
-				refs(fs).atomicRefUpdate(async (ops) => {
-					await ops.putRef("refs/heads/main", direct(HASH_B));
-				}),
+				refs(fs).compareAndSwapRef("refs/heads/main", direct(HASH_A), direct(HASH_B)),
 			verifyCut: async ({ fs }) => {
 				const ref = await refs(fs).getRef("refs/heads/main");
 				expect(ref).not.toBeNull();
 				expect([direct(HASH_A), direct(HASH_B)]).toContainEqual(ref!);
-				await assertSafeLockState(fs);
+				await assertSafeLockState(fs, "refs/heads/main");
 			},
 			verifySuccess: async (fs) => {
 				expect(await refs(fs).getRef("refs/heads/main")).toEqual(direct(HASH_B));
@@ -167,18 +165,16 @@ describe("FsRefStorage crash durability", () => {
 		});
 	});
 
-	test("atomic remove commits one old-or-absent ref", async () => {
+	test("CAS removal commits one old-or-absent ref", async () => {
 		await replayCrashCuts({
 			setup: async (fs) => {
 				await setupRepo(fs);
 				await refs(fs).putRef("refs/heads/main", direct(HASH_A));
 			},
-			operation: (fs) =>
-				refs(fs).atomicRefUpdate(async (ops) => {
-					await ops.removeRef("refs/heads/main");
-				}),
+			operation: (fs) => refs(fs).compareAndSwapRef("refs/heads/main", direct(HASH_A), null),
 			verifyCut: async ({ fs }) => {
 				expect([direct(HASH_A), null]).toContainEqual(await refs(fs).getRef("refs/heads/main"));
+				await assertSafeLockState(fs, "refs/heads/main");
 			},
 			verifySuccess: async (fs) => {
 				expect(await refs(fs).getRef("refs/heads/main")).toBeNull();
@@ -186,21 +182,17 @@ describe("FsRefStorage crash durability", () => {
 		});
 	});
 
-	test("a no-op CAS never changes the committed ref", async () => {
+	test("a mismatched CAS never changes the committed ref", async () => {
 		await replayCrashCuts({
 			setup: async (fs) => {
 				await setupRepo(fs);
 				await refs(fs).putRef("refs/heads/main", direct(HASH_A));
 			},
 			operation: (fs) =>
-				refs(fs).atomicRefUpdate(async (ops) => {
-					const current = await ops.getRef("refs/heads/main");
-					if (current?.type !== "direct" || current.hash !== HASH_B) return false;
-					await ops.putRef("refs/heads/main", direct(HASH_C));
-					return true;
-				}),
+				refs(fs).compareAndSwapRef("refs/heads/main", direct(HASH_B), direct(HASH_C)),
 			verifyCut: async ({ fs }) => {
 				expect(await refs(fs).getRef("refs/heads/main")).toEqual(direct(HASH_A));
+				await assertSafeLockState(fs, "refs/heads/main");
 			},
 			verifySuccess: async (fs) => {
 				expect(await refs(fs).getRef("refs/heads/main")).toEqual(direct(HASH_A));
@@ -208,58 +200,19 @@ describe("FsRefStorage crash durability", () => {
 		});
 	});
 
-	test("a crash while only the transaction overlay changed publishes nothing", async () => {
-		await replayCrashCuts({
-			setup: async (fs) => {
-				await setupRepo(fs);
-				await refs(fs).putRef("refs/heads/main", direct(HASH_A));
-			},
-			operation: (fs) =>
-				refs(fs).atomicRefUpdate(async (ops) => {
-					await ops.putRef("refs/heads/main", direct(HASH_B));
-					await fs.writeFile("/repo/callback-marker", "volatile");
-				}),
-			verifyCut: async ({ cut, fs, trace }) => {
-				const markerCut =
-					trace.findIndex(
-						(event) => event.operation === "writeFile" && event.path === "/repo/callback-marker",
-					) + 1;
-				if (cut === markerCut) {
-					expect(await refs(fs).getRef("refs/heads/main")).toEqual(direct(HASH_A));
-				} else {
-					const ref = await refs(fs).getRef("refs/heads/main");
-					expect(ref).not.toBeNull();
-					expect([direct(HASH_A), direct(HASH_B)]).toContainEqual(ref!);
-				}
-			},
-		});
-	});
-
-	test("ordinary callback rejection publishes nothing and releases the lock", async () => {
+	test("ordinary CAS mismatch publishes nothing and releases canonical lock artifacts", async () => {
 		const fs = await readyRepo();
 		await refs(fs).putRef("refs/heads/main", direct(HASH_A));
 
-		await expect(
-			refs(fs).atomicRefUpdate(async (ops) => {
-				await ops.putRef("refs/heads/main", direct(HASH_B));
-				throw new Error("abort");
-			}),
-		).rejects.toThrow("abort");
+		expect(
+			await refs(fs).compareAndSwapRef("refs/heads/main", direct(HASH_B), direct(HASH_C)),
+		).toBe(false);
 
 		expect(await refs(fs).getRef("refs/heads/main")).toEqual(direct(HASH_A));
-		expect(await fs.exists("/repo/.just-git-ref.lock")).toBe(false);
-	});
-
-	test("atomic updates continue to reject more than one distinct ref", async () => {
-		const fs = await readyRepo();
-		await expect(
-			refs(fs).atomicRefUpdate(async (ops) => {
-				await ops.putRef("refs/heads/main", direct(HASH_A));
-				await ops.putRef("refs/heads/other", direct(HASH_B));
-			}),
-		).rejects.toThrow("only one distinct ref");
-		expect(await refs(fs).getRef("refs/heads/main")).toBeNull();
-		expect(await refs(fs).getRef("refs/heads/other")).toBeNull();
+		expect(await fs.exists("/repo/refs/heads/main.lock")).toBe(false);
+		expect(
+			(await fs.readdir("/repo/refs/heads")).filter((name) => name.startsWith("main.lock.tmp-")),
+		).toEqual([]);
 	});
 });
 
@@ -321,8 +274,24 @@ function withoutTag(): string {
 	].join("\n");
 }
 
-async function assertSafeLockState(fs: CrashableDurableFileSystem): Promise<void> {
-	if (await fs.exists("/repo/.just-git-ref.lock")) {
-		expect(await fs.readFile("/repo/.just-git-ref.lock")).toBe("");
+async function assertSafeLockState(fs: CrashableDurableFileSystem, refName: string): Promise<void> {
+	expect(await fs.exists("/repo/.just-git-ref.lock")).toBe(false);
+
+	const refPath = `/repo/${refName}`;
+	const slash = refPath.lastIndexOf("/");
+	const parent = refPath.slice(0, slash);
+	const lockName = `${refPath.slice(slash + 1)}.lock`;
+	if (await fs.exists(parent)) {
+		for (const entry of await fs.readdir(parent)) {
+			if (entry !== lockName && !entry.startsWith(`${lockName}.tmp-`)) continue;
+			expect(await fs.readFile(`${parent}/${entry}`)).toMatch(
+				/^(?:|[0-9a-f]{40}\n|ref: refs\/[^\n]+\n)$/,
+			);
+		}
+	}
+
+	for (const entry of await fs.readdir("/repo")) {
+		if (entry !== "packed-refs.lock" && !entry.startsWith("packed-refs.lock.tmp-")) continue;
+		expect(await fs.readFile(`/repo/${entry}`)).toBe("");
 	}
 }

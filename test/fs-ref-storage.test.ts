@@ -100,85 +100,82 @@ describe("FsRefStorage", () => {
 		]);
 	});
 
-	test("commits one staged ref with read-your-writes and rolls back callback failures", async () => {
+	test("creates, replaces, and removes exact raw refs with CAS", async () => {
+		const { storage } = await tempRepo();
+		const symbolicMain = symbolic("refs/heads/main");
+
+		expect(await storage.compareAndSwapRef("HEAD", null, symbolicMain)).toBe(true);
+		expect(await storage.compareAndSwapRef("HEAD", symbolicMain, direct(HASH_A))).toBe(true);
+		expect(await storage.compareAndSwapRef("HEAD", direct(HASH_A), null)).toBe(true);
+		expect(await storage.getRef("HEAD")).toBeNull();
+	});
+
+	test("CAS compares the exact raw named ref and leaves mismatches unchanged", async () => {
 		const { storage } = await tempRepo();
 		await storage.putRef("refs/heads/main", direct(HASH_A));
+		await storage.putRef("HEAD", symbolic("refs/heads/main"));
 
-		const result = await storage.atomicRefUpdate(async (ops) => {
-			expect(await ops.getRef("refs/heads/main")).toEqual(direct(HASH_A));
-			await ops.putRef("refs/heads/main", direct(HASH_B));
-			expect(await ops.getRef("refs/heads/main")).toEqual(direct(HASH_B));
-			return "committed";
-		});
-		expect(result).toBe("committed");
-		expect(await storage.getRef("refs/heads/main")).toEqual(direct(HASH_B));
+		expect(await storage.compareAndSwapRef("refs/heads/main", direct(HASH_B), direct(HASH_C))).toBe(
+			false,
+		);
+		expect(await storage.getRef("refs/heads/main")).toEqual(direct(HASH_A));
 
-		expect(
-			storage.atomicRefUpdate(async (ops) => {
-				await ops.removeRef("refs/heads/main");
-				expect(await ops.getRef("refs/heads/main")).toBeNull();
-				throw new Error("abort");
-			}),
-		).rejects.toThrow("abort");
+		expect(await storage.compareAndSwapRef("HEAD", direct(HASH_A), direct(HASH_C))).toBe(false);
+		expect(await storage.getRef("HEAD")).toEqual(symbolic("refs/heads/main"));
+
+		expect(await storage.compareAndSwapRef("refs/heads/main", direct(HASH_A), direct(HASH_B))).toBe(
+			true,
+		);
 		expect(await storage.getRef("refs/heads/main")).toEqual(direct(HASH_B));
 	});
 
-	test("supports CAS decisions and rejects multi-ref transactions before commit", async () => {
-		const { storage } = await tempRepo();
-		await storage.putRef("refs/heads/main", direct(HASH_A));
-
-		expect(await compareAndSwap(storage, "refs/heads/main", HASH_B, direct(HASH_C))).toBe(false);
-		expect(await compareAndSwap(storage, "refs/heads/main", HASH_A, direct(HASH_B))).toBe(true);
-		expect(await storage.getRef("refs/heads/main")).toEqual(direct(HASH_B));
-
-		expect(
-			storage.atomicRefUpdate(async (ops) => {
-				await ops.putRef("refs/heads/main", direct(HASH_C));
-				await ops.putRef("refs/heads/other", direct(HASH_A));
-			}),
-		).rejects.toThrow("only one distinct ref");
-		expect(await storage.getRef("refs/heads/main")).toEqual(direct(HASH_B));
-		expect(await storage.getRef("refs/heads/other")).toBeNull();
-	});
-
-	test("queues two handles contending normally for the repository lock", async () => {
+	test("serializes two handles contending for the same canonical ref lock", async () => {
 		const { fs, repoDir } = await tempRepo();
+		await new FsRefStorage(fs, repoDir).putRef("refs/heads/main", direct(HASH_A));
 		const first = new FsRefStorage(fs, repoDir);
 		const second = new FsRefStorage(fs, repoDir);
-		let release!: () => void;
-		const gate = new Promise<void>((resolve) => {
-			release = resolve;
+		const originalLink = fs.link.bind(fs);
+		let releaseFirst!: () => void;
+		const firstMayLink = new Promise<void>((resolve) => {
+			releaseFirst = resolve;
 		});
-		const order: string[] = [];
+		let firstBlocked!: () => void;
+		const firstReachedLock = new Promise<void>((resolve) => {
+			firstBlocked = resolve;
+		});
+		let blockFirst = true;
+		fs.link = async (existingPath, newPath) => {
+			if (blockFirst && newPath === join(repoDir, "refs/heads/main.lock")) {
+				blockFirst = false;
+				firstBlocked();
+				await firstMayLink;
+			}
+			await originalLink(existingPath, newPath);
+		};
 
-		const firstUpdate = first.atomicRefUpdate(async (ops) => {
-			order.push("first-enter");
-			await ops.putRef("refs/heads/main", direct(HASH_A));
-			await gate;
-			order.push("first-exit");
-		});
-		await waitFor(() => order.length === 1);
-		const secondUpdate = second.atomicRefUpdate(async (ops) => {
-			order.push("second-enter");
-			expect(await ops.getRef("refs/heads/main")).toEqual(direct(HASH_A));
-			await ops.putRef("refs/heads/main", direct(HASH_B));
-		});
+		const firstUpdate = first.compareAndSwapRef("refs/heads/main", direct(HASH_A), direct(HASH_B));
+		await firstReachedLock;
+		let secondFinished = false;
+		const secondUpdate = second
+			.compareAndSwapRef("refs/heads/main", direct(HASH_A), direct(HASH_C))
+			.then((result) => {
+				secondFinished = true;
+				return result;
+			});
 
 		await Promise.resolve();
-		expect(order).toEqual(["first-enter"]);
-		release();
-		await Promise.all([firstUpdate, secondUpdate]);
-		expect(order).toEqual(["first-enter", "first-exit", "second-enter"]);
+		expect(secondFinished).toBe(false);
+		releaseFirst();
+		expect(await Promise.all([firstUpdate, secondUpdate])).toEqual([true, false]);
 		expect(await first.getRef("refs/heads/main")).toEqual(direct(HASH_B));
+		expect(await fs.exists(join(repoDir, "refs/heads/main.lock"))).toBe(false);
 	});
 
 	test("rejects caller-supplied paths that can escape the repository", async () => {
 		const { storage } = await tempRepo();
 		expect(storage.getRef("../../outside")).rejects.toThrow("invalid filesystem ref name");
-		expect(storage.putRef("/absolute", direct(HASH_A))).rejects.toThrow(
-			"invalid filesystem ref name",
-		);
-		expect(storage.removeRef("refs//heads/main")).rejects.toThrow("invalid filesystem ref name");
+		expect(storage.putRef("/absolute", direct(HASH_A))).rejects.toThrow("invalid native ref name");
+		expect(storage.removeRef("refs//heads/main")).rejects.toThrow("invalid native ref name");
 		expect(storage.listRefs("../refs")).rejects.toThrow("invalid filesystem ref name");
 		for (const prefix of ["/", "refs//", "refs/heads//", "../", "refs/../"]) {
 			expect(storage.listRefs(prefix)).rejects.toThrow("invalid filesystem ref name");
@@ -192,28 +189,4 @@ function direct(hash: string): Ref {
 
 function symbolic(target: string): Ref {
 	return { type: "symbolic", target };
-}
-
-async function compareAndSwap(
-	storage: FsRefStorage,
-	name: string,
-	expected: string | null,
-	replacement: Ref | null,
-): Promise<boolean> {
-	return storage.atomicRefUpdate(async (ops) => {
-		const current = await ops.getRef(name);
-		const currentHash = current?.type === "direct" ? current.hash : null;
-		if (currentHash !== expected) return false;
-		if (replacement) await ops.putRef(name, replacement);
-		else await ops.removeRef(name);
-		return true;
-	});
-}
-
-async function waitFor(predicate: () => boolean): Promise<void> {
-	for (let i = 0; i < 100; i++) {
-		if (predicate()) return;
-		await new Promise((resolve) => setTimeout(resolve, 1));
-	}
-	throw new Error("timed out waiting for contention test");
 }

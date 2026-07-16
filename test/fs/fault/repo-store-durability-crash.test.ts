@@ -27,11 +27,18 @@ describe("filesystem repository cross-layer crash durability", () => {
 			operation: async (fs) => {
 				const repo = await createFsRepoStorage(fs, "/repo");
 				await repo.putObjects(newGraph.objects);
-				await repo.atomicRefUpdate(async (ops) => {
-					await ops.putRef(BRANCH, { type: "direct", hash: newGraph.commit });
-				});
+				expect(
+					await repo.compareAndSwapRef(
+						BRANCH,
+						{ type: "direct", hash: oldGraph.commit },
+						{ type: "direct", hash: newGraph.commit },
+					),
+				).toBe(true);
 			},
 			verifyCut: async ({ fs }) => {
+				if (await hasLockArtifacts(fs, `/repo/${BRANCH}.lock`)) {
+					await recoverFsRepoStorage(fs, "/repo", BRANCH);
+				}
 				const repo = await createFsRepoStorage(fs, "/repo");
 				const ref = await repo.getRef(BRANCH);
 				expect(ref?.type).toBe("direct");
@@ -79,6 +86,18 @@ describe("filesystem repository cross-layer crash durability", () => {
 				await store.forkRepo("upstream", "child");
 			},
 			verifyCut: async ({ fs }) => {
+				expect(await fs.exists(`${targetPath}/.just-git-ref.lock`)).toBe(false);
+				for (const [lockPath, publishedContent] of [
+					[`${targetPath}/HEAD.lock`, "ref: refs/heads/first\n"],
+					[`${targetPath}/refs/heads/first.lock`, `${first.commit}\n`],
+					[`${targetPath}/refs/heads/second.lock`, `${second.commit}\n`],
+				] as const) {
+					if (await fs.exists(lockPath)) {
+						expect(["", publishedContent]).toContain(await fs.readFile(lockPath));
+					}
+				}
+				await recoverForkRefLocks(fs, targetPath);
+
 				const targetStorage = await createFsRepoStorage(fs, targetPath);
 				const sourceStorage = await createFsRepoStorage(fs, await poolPathFor("upstream"));
 				const sourceRefs = new Map(
@@ -96,16 +115,13 @@ describe("filesystem repository cross-layer crash durability", () => {
 						expect(await sourceStorage.hasObject(entry.ref.hash)).toBe(true);
 					}
 				}
-				if (await fs.exists(`${targetPath}/.just-git-ref.lock`)) {
-					expect(await fs.readFile(`${targetPath}/.just-git-ref.lock`)).toBe("");
-				}
 			},
 			verifySuccess: async (fs) => {
 				await assertForkRefsEqual(fs);
 			},
 			retry: async (fs) => {
 				await recoverFsRepoPool(fs, "/pool");
-				await recoverFsRepoStorage(fs, targetPath);
+				await recoverForkRefLocks(fs, targetPath);
 				const store = createRepoStore(await createFsRepoPool(fs, "/pool"));
 				await store.forkRepo("upstream", "child");
 				await assertForkRefsEqual(fs.reboot());
@@ -165,6 +181,30 @@ async function assertForkRefsEqual(fs: Parameters<typeof createFsRepoPool>[0]): 
 async function poolPathFor(repoId: string): Promise<string> {
 	const bytes = encoder.encode(repoId);
 	return `/pool/repos/${(await sha1(bytes)).slice(0, 2)}/r-${base32(bytes)}.git`;
+}
+
+async function recoverForkRefLocks(
+	fs: Parameters<typeof createFsRepoStorage>[0],
+	repoDir: string,
+): Promise<void> {
+	for (const refName of ["HEAD", "refs/heads/first", "refs/heads/second"]) {
+		const lockPath = `${repoDir}/${refName}.lock`;
+		if (await hasLockArtifacts(fs, lockPath)) {
+			await recoverFsRepoStorage(fs, repoDir, refName);
+		}
+	}
+}
+
+async function hasLockArtifacts(
+	fs: Parameters<typeof createFsRepoStorage>[0],
+	lockPath: string,
+): Promise<boolean> {
+	if (await fs.exists(lockPath)) return true;
+	const separator = lockPath.lastIndexOf("/");
+	const parent = lockPath.slice(0, separator);
+	const lockName = lockPath.slice(separator + 1);
+	if (!(await fs.exists(parent))) return false;
+	return (await fs.readdir(parent)).some((name) => name.startsWith(`${lockName}.tmp-`));
 }
 
 function base32(bytes: Uint8Array): string {

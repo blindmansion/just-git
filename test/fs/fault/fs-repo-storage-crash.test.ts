@@ -38,16 +38,17 @@ describe("filesystem bare repository crash durability", () => {
 		});
 	});
 
-	test("explicit recovery reaps abandoned ref-lock claimants without touching refs", async () => {
+	test("explicit recovery reaps targeted claimants and the legacy migration lock", async () => {
 		const { CrashableDurableFileSystem } = await import("./crashable-durable-fs.ts");
 		const fs = new CrashableDurableFileSystem();
 		const repo = await createFsRepoStorage(fs, REPO);
 		await repo.putRef("refs/heads/main", { type: "direct", hash: "a".repeat(40) });
-		await replaceFileDurable(fs, `${REPO}/.just-git-ref.lock.tmp-abandoned`, "");
+		await replaceFileDurable(fs, `${REPO}/refs/heads/main.lock.tmp-abandoned`, "");
+		await replaceFileDurable(fs, `${REPO}/.just-git-ref.lock`, "");
 		fs.checkpoint();
 
-		const reopened = await recoverFsRepoStorage(fs, REPO);
-		expect(await fs.exists(`${REPO}/.just-git-ref.lock.tmp-abandoned`)).toBe(false);
+		const reopened = await recoverFsRepoStorage(fs, REPO, "refs/heads/main");
+		expect(await fs.exists(`${REPO}/refs/heads/main.lock.tmp-abandoned`)).toBe(false);
 		expect(await fs.exists(`${REPO}/.just-git-ref.lock`)).toBe(false);
 		expect(await reopened.getRef("refs/heads/main")).toEqual({
 			type: "direct",
@@ -59,13 +60,13 @@ describe("filesystem bare repository crash durability", () => {
 		const { CrashableDurableFileSystem } = await import("./crashable-durable-fs.ts");
 		const fs = new CrashableDurableFileSystem();
 		await createFsRepoStorage(fs, REPO);
-		await replaceFileDurable(fs, `${REPO}/.just-git-ref.lock`, "");
-		await replaceFileDurable(fs, `${REPO}/.just-git-ref.lock.tmp-abandoned`, "");
+		await replaceFileDurable(fs, `${REPO}/refs/heads/main.lock`, "");
+		await replaceFileDurable(fs, `${REPO}/refs/heads/main.lock.tmp-abandoned`, "");
 		fs.checkpoint();
 
 		await createFsRepoStorage(fs, REPO);
-		expect(await fs.exists(`${REPO}/.just-git-ref.lock`)).toBe(true);
-		expect(await fs.exists(`${REPO}/.just-git-ref.lock.tmp-abandoned`)).toBe(true);
+		expect(await fs.exists(`${REPO}/refs/heads/main.lock`)).toBe(true);
+		expect(await fs.exists(`${REPO}/refs/heads/main.lock.tmp-abandoned`)).toBe(true);
 	});
 
 	test("ordinary open cannot remove a live ref-lock claimant before publication", async () => {
@@ -85,7 +86,7 @@ describe("filesystem bare repository crash durability", () => {
 
 		fs.fsync = async (path) => {
 			await originalFsync(path);
-			if (!paused && path.startsWith(`${REPO}/.just-git-ref.lock.tmp-`)) {
+			if (!paused && path.startsWith(`${REPO}/refs/heads/main.lock.tmp-`)) {
 				paused = true;
 				reportClaimant(path);
 				await claimantReleased;
@@ -114,15 +115,15 @@ describe("filesystem bare repository crash durability", () => {
 		const { CrashableDurableFileSystem } = await import("./crashable-durable-fs.ts");
 		const fs = new CrashableDurableFileSystem();
 		const repo = await createFsRepoStorage(fs, REPO);
-		await replaceFileDurable(fs, `${REPO}/.just-git-ref.lock`, "");
+		await replaceFileDurable(fs, `${REPO}/refs/heads/main.lock`, "");
 		fs.checkpoint();
 
 		await expect(
 			repo.putRef("refs/heads/main", { type: "direct", hash: "a".repeat(40) }),
 		).rejects.toThrow("EEXIST");
-		expect(await fs.exists(`${REPO}/.just-git-ref.lock`)).toBe(true);
+		expect(await fs.exists(`${REPO}/refs/heads/main.lock`)).toBe(true);
 
-		const recovered = await recoverFsRepoStorage(fs, REPO);
+		const recovered = await recoverFsRepoStorage(fs, REPO, "refs/heads/main");
 		await recovered.putRef("refs/heads/main", { type: "direct", hash: "a".repeat(40) });
 		expect(await recovered.getRef("refs/heads/main")).toEqual({
 			type: "direct",
