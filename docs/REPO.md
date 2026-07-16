@@ -238,14 +238,22 @@ Both return `{ treeHash, clean, conflicts, messages }`. Operates purely on the o
 ### Patching
 
 `applyPatch` applies unified or Git binary patches directly to a tree. It never
-touches an index or worktree and returns failed hunks as structured data:
+touches an index or worktree and returns failed hunks or three-way conflicts as
+structured data. With `threeWay: true`, a direct rejection falls back to a
+three-way merge using the patch's recorded base:
 
 ```ts
 import { applyPatch } from "just-git/repo";
 
-const result = await applyPatch(repo, { patch: diffText, onto: "main" });
+const result = await applyPatch(repo, {
+  patch: diffText,
+  onto: "main",
+  threeWay: true,
+});
 if (result.status === "applied") {
   console.log(result.treeHash);
+} else if (result.status === "conflicts") {
+  console.log(result.treeHash, result.conflicts);
 } else {
   // Each reject includes its path, current content, and unplaced raw hunks.
   console.log(result.rejects);

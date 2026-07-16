@@ -75,11 +75,21 @@ export interface ApplyPatchOptions {
 	strip?: number;
 	/** Whitespace policy for added lines (git's `--whitespace`). Default `"nowarn"`. */
 	whitespace?: WhitespaceAction;
+	/**
+	 * When direct application rejects, reconstruct the patch's recorded base
+	 * and attempt a three-way merge. Conflicts are returned as structured data.
+	 */
+	threeWay?: boolean;
 }
 
 /** Outcome of {@link applyPatch}. */
 export type ApplyPatchResult =
 	| { status: "applied"; treeHash: string }
+	| {
+			status: "conflicts";
+			treeHash: string;
+			conflicts: ConflictedPath[];
+	  }
 	| { status: "rejected"; rejects: FileReject[] };
 
 /** Options that start a fresh {@link am} replay. */
@@ -228,7 +238,27 @@ export async function applyPatch(
 	const effective = reverse ? parsed.map((p) => reversePatch(p)) : parsed;
 	const whitespace = opts.whitespace ?? "nowarn";
 	const ontoTree = await resolveOntoTree(repo, opts.onto);
-	return applyPatchesToTree(repo, effective, ontoTree, { reverse, whitespace });
+	const direct = await applyPatchesToTree(repo, effective, ontoTree, { reverse, whitespace });
+	if (direct.status === "applied" || !opts.threeWay) return direct;
+
+	const attributes = await bindAttributes(repo, "apply");
+	const fallback = await fallBackThreeway(
+		repo,
+		effective,
+		ontoTree,
+		{ a: "onto", b: "patch" },
+		attributes?.merge,
+		reverse,
+	);
+	if (fallback.status !== "merged") return direct;
+
+	const detailed = toDetailedMergeResult(fallback.merge);
+	if (detailed.clean) return { status: "applied", treeHash: detailed.treeHash };
+	return {
+		status: "conflicts",
+		treeHash: detailed.treeHash,
+		conflicts: detailed.conflicts,
+	};
 }
 
 // ── Mailbox → commits ───────────────────────────────────────────────
@@ -371,6 +401,9 @@ async function runAmReplay(
 			onto: headCommit.tree,
 			whitespace: "warn",
 		});
+		if (plain.status === "conflicts") {
+			throw new Error("am: direct patch application unexpectedly returned conflicts");
+		}
 		let treeHash: string;
 		let usedThreeWay = false;
 

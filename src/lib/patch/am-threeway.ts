@@ -99,6 +99,7 @@ export async function fallBackThreeway(
 	oursTree: string,
 	labels?: MergeLabels,
 	mergeDriver?: ContentMergeFn,
+	reverse = false,
 ): Promise<FallBackThreewayResult> {
 	const oursMap = await flattenTreeToMap(repo, oursTree);
 	const fake = await buildFakeAncestor(repo, patches, oursMap);
@@ -107,7 +108,7 @@ export async function fallBackThreeway(
 	}
 
 	const theirs = await applyPatchesToTree(repo, patches, fake.tree, {
-		reverse: false,
+		reverse,
 		whitespace: "nowarn",
 	});
 	if (theirs.status === "rejected") return { status: "apply-failed" };

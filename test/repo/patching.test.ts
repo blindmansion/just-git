@@ -160,6 +160,105 @@ describe("applyPatch — rejects as data", () => {
 	});
 });
 
+describe("applyPatch — three-way fallback", () => {
+	test("merges a drifted patch cleanly after direct application rejects", async () => {
+		const repo = await freshRepo();
+		const base = await commitOn(repo, "main", {
+			"lines.txt": "a\nb\nc\nd\ne\n",
+		});
+		const source = await commitOn(repo, "main", {
+			"lines.txt": "a\nB\nc\nd\ne\n",
+		});
+		const patch = await formatDiff(repo, base.hash, source.hash);
+		const target = await commitOn(repo, "target", {
+			"lines.txt": "a\nb\nc\nD\ne\n",
+		});
+
+		const direct = await applyPatch(repo, { patch, onto: target.hash });
+		expect(direct.status).toBe("rejected");
+
+		const result = await applyPatch(repo, {
+			patch,
+			onto: target.hash,
+			threeWay: true,
+		});
+		expect(result.status).toBe("applied");
+		if (result.status !== "applied") return;
+		expect(await fileInTree(repo, result.treeHash, "lines.txt")).toBe("a\nB\nc\nD\ne\n");
+	});
+
+	test("returns stage data when the fallback merge conflicts", async () => {
+		const repo = await freshRepo();
+		const base = await commitOn(repo, "main", { "value.txt": "base\n" });
+		const source = await commitOn(repo, "main", { "value.txt": "theirs\n" });
+		const patch = await formatDiff(repo, base.hash, source.hash);
+		const target = await commitOn(repo, "target", { "value.txt": "ours\n" });
+
+		const result = await applyPatch(repo, {
+			patch,
+			onto: target.hash,
+			threeWay: true,
+		});
+		expect(result.status).toBe("conflicts");
+		if (result.status !== "conflicts") return;
+		expect(result.conflicts).toHaveLength(1);
+		expect(result.conflicts[0]).toMatchObject({
+			path: "value.txt",
+			reason: "content",
+			base: { hash: expect.any(String), mode: "100644" },
+			ours: { hash: expect.any(String), mode: "100644" },
+			theirs: { hash: expect.any(String), mode: "100644" },
+		});
+		expect(await fileInTree(repo, result.treeHash, "value.txt")).toContain("<<<<<<< onto");
+	});
+
+	test("uses the reversed postimage as the recorded three-way base", async () => {
+		const repo = await freshRepo();
+		const base = await commitOn(repo, "main", {
+			"lines.txt": "a\nb\nc\nd\ne\n",
+		});
+		const source = await commitOn(repo, "main", {
+			"lines.txt": "a\nB\nc\nd\ne\n",
+		});
+		const patch = await formatDiff(repo, base.hash, source.hash);
+		const target = await commitOn(repo, "target", {
+			"lines.txt": "a\nB\nc\nD\ne\n",
+		});
+
+		const result = await applyPatch(repo, {
+			patch,
+			onto: target.hash,
+			reverse: true,
+			threeWay: true,
+		});
+		expect(result.status).toBe("applied");
+		if (result.status !== "applied") return;
+		expect(await fileInTree(repo, result.treeHash, "lines.txt")).toBe("a\nb\nc\nD\ne\n");
+	});
+
+	test("preserves direct rejects when the patch has no recorded base", async () => {
+		const repo = await freshRepo();
+		const target = await commitOn(repo, "main", { "a.txt": "drifted\n" });
+		const patch =
+			"diff --git a/a.txt b/a.txt\n" +
+			"--- a/a.txt\n" +
+			"+++ b/a.txt\n" +
+			"@@ -1 +1 @@\n" +
+			"-base\n" +
+			"+patched\n";
+
+		const result = await applyPatch(repo, {
+			patch,
+			onto: target.hash,
+			threeWay: true,
+		});
+		expect(result.status).toBe("rejected");
+		if (result.status !== "rejected") return;
+		expect(result.rejects[0]?.path).toBe("a.txt");
+		expect(result.rejects[0]?.currentContent).toBe("drifted\n");
+	});
+});
+
 describe("promoted pure primitives", () => {
 	test("parsePatch + reversePatch are exposed on the repo surface", async () => {
 		const repo = await freshRepo();
