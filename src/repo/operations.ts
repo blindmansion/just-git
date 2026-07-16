@@ -5,22 +5,18 @@ import { serializeTree } from "../lib/objects/tree.ts";
 import { selectRebaseCommits } from "../lib/rebase.ts";
 import type { Commit, GitRepo, Identity, ObjectId } from "../lib/types.ts";
 import {
+	applyResolutions,
 	type ConflictedPath,
 	mergeTreesDetailed,
-	type MergeTreesDetailedResult,
 	mergeTreesDetailedFromTreeHashes,
 	mergeTreesFromTreeHashes,
+	type Resolution,
 } from "./merging.ts";
 import { fetch, type FetchResult } from "./network.ts";
 import { readHead, revParse } from "./reading.ts";
+import { advanceBranchTo } from "./ref-advance.ts";
 import { createTreeAccessor, type TreeAccessor } from "./tree-accessor.ts";
-import {
-	createCommit,
-	type CommitIdentity,
-	toIdentity,
-	type TreeUpdate,
-	updateTree,
-} from "./writing.ts";
+import { createCommit, type CommitIdentity, toIdentity } from "./writing.ts";
 
 /** The well-known hash of the empty tree object. */
 const EMPTY_TREE_HASH = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -476,7 +472,7 @@ function appendCherryPickedFrom(message: string, hash: string): string {
 
 // ── Merge ────────────────────────────────────────────────────────────
 
-export type { ConflictedPath, BlobSide } from "./merging.ts";
+export type { ConflictedPath, BlobSide, Resolution } from "./merging.ts";
 
 /**
  * How to resolve a single conflicted path in {@link MergeOptions.resolutions}.
@@ -487,8 +483,6 @@ export type { ConflictedPath, BlobSide } from "./merging.ts";
  * - `{ content, mode? }` — set the path to explicit merged content. `mode`
  *   defaults to ours' mode, else theirs', else `"100644"`.
  */
-export type Resolution = "ours" | "theirs" | null | { content: string | Uint8Array; mode?: string };
-
 /** Options for {@link merge}. */
 export interface MergeOptions {
 	/** Our side — the commit being merged into (hash, branch, tag, or rev-parse expression). */
@@ -637,125 +631,6 @@ export async function merge(repo: GitRepo, options: MergeOptions): Promise<Merge
 	}
 
 	return { status: "merged", ours, theirs, hash, treeHash: finalTree };
-}
-
-/** Turn a {@link Resolution} into a tree update for the conflicted path. */
-async function resolveConflict(
-	repo: GitRepo,
-	conflict: ConflictedPath,
-	resolution: Resolution,
-): Promise<TreeUpdate> {
-	if (resolution === null) {
-		return { path: conflict.path, hash: null };
-	}
-	if (resolution === "ours") {
-		return conflict.ours
-			? { path: conflict.path, hash: conflict.ours.hash, mode: conflict.ours.mode }
-			: { path: conflict.path, hash: null };
-	}
-	if (resolution === "theirs") {
-		return conflict.theirs
-			? { path: conflict.path, hash: conflict.theirs.hash, mode: conflict.theirs.mode }
-			: { path: conflict.path, hash: null };
-	}
-	const bytes =
-		typeof resolution.content === "string"
-			? new TextEncoder().encode(resolution.content)
-			: resolution.content;
-	const hash = await writeObject(repo, "blob", bytes);
-	const mode = resolution.mode ?? conflict.ours?.mode ?? conflict.theirs?.mode ?? "100644";
-	return { path: conflict.path, hash, mode };
-}
-
-/** Outcome of applying a resolution map to a detailed merge result. */
-interface AppliedResolutions {
-	/**
-	 * Final tree hash. When every conflict is resolved (or the merge was clean),
-	 * this is the resolved tree. When some conflicts remain unresolved, this is
-	 * the conflicted result tree (with marker blobs) — i.e. `detailed.treeHash`.
-	 */
-	treeHash: string;
-	/** Conflicted paths with no resolution supplied. Empty when fully resolved. */
-	unresolved: string[];
-}
-
-/**
- * Apply a post-hoc `resolutions` map to a detailed three-way merge result.
- *
- * Shared by {@link merge} and {@link rebase}: a clean merge passes through
- * unchanged; for a conflicted merge, each resolved path is folded into the
- * result tree and any conflicted path lacking a resolution is reported in
- * `unresolved`. Throws when a resolution targets a path that isn't conflicted
- * (guards against stale/misapplied maps). `label` prefixes that error.
- */
-async function applyResolutions(
-	repo: GitRepo,
-	detailed: MergeTreesDetailedResult,
-	resolutions: Record<string, Resolution>,
-	label: string,
-): Promise<AppliedResolutions> {
-	if (detailed.clean) {
-		const stray = Object.keys(resolutions)[0];
-		if (stray !== undefined) {
-			throw new Error(
-				`${label}: resolution provided for '${stray}', which is not a conflicted path`,
-			);
-		}
-		return { treeHash: detailed.treeHash, unresolved: [] };
-	}
-
-	const conflictPaths = new Set(detailed.conflicts.map((c) => c.path));
-	for (const path of Object.keys(resolutions)) {
-		if (!conflictPaths.has(path)) {
-			throw new Error(
-				`${label}: resolution provided for '${path}', which is not a conflicted path`,
-			);
-		}
-	}
-
-	const updates: TreeUpdate[] = [];
-	const unresolved: string[] = [];
-	for (const c of detailed.conflicts) {
-		if (!Object.hasOwn(resolutions, c.path)) {
-			unresolved.push(c.path);
-			continue;
-		}
-		updates.push(await resolveConflict(repo, c, resolutions[c.path] as Resolution));
-	}
-
-	if (unresolved.length > 0) {
-		return { treeHash: detailed.treeHash, unresolved };
-	}
-
-	const finalTree = await updateTree(repo, detailed.treeHash, updates);
-	return { treeHash: finalTree, unresolved: [] };
-}
-
-/** Advance `refs/heads/<branch>` to `hash`, optionally guarded by CAS. */
-async function advanceBranchTo(
-	repo: GitRepo,
-	branch: string,
-	hash: string,
-	expectedOldHash?: string | null,
-): Promise<void> {
-	const branchRef = `refs/heads/${branch}`;
-	if (expectedOldHash !== undefined) {
-		const expectedOld =
-			expectedOldHash === null ? null : { type: "direct" as const, hash: expectedOldHash };
-		const ok = await repo.refStore.compareAndSwapRef(branchRef, expectedOld, {
-			type: "direct",
-			hash,
-		});
-		if (!ok) {
-			throw new Error(`branch '${branch}' moved during operation (CAS failed)`);
-		}
-	} else {
-		await repo.refStore.writeRef(branchRef, { type: "direct", hash });
-	}
-	const head = await repo.refStore.readRef("HEAD");
-	if (!head) {
-		await repo.refStore.writeRef("HEAD", { type: "symbolic", target: branchRef });
-	}
 }
 
 // ── Rebase ───────────────────────────────────────────────────────────

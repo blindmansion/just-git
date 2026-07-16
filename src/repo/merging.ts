@@ -2,7 +2,9 @@ import { bindAttributes } from "../lib/attributes/bound-attributes.ts";
 import { type MergeConflict } from "../lib/merge.ts";
 import { mergeOrtRecursive, mergeOrtNonRecursive } from "../lib/merge-ort.ts";
 import type { MergeDriver, MergeDriverResult } from "../lib/merge-ort.ts";
+import { writeObject } from "../lib/object-db.ts";
 import type { GitRepo, IndexEntry } from "../lib/types.ts";
+import { type TreeUpdate, updateTree } from "./writing.ts";
 
 export type { MergeConflict } from "../lib/merge.ts";
 export type { MergeDriver, MergeDriverResult } from "../lib/merge-ort.ts";
@@ -117,6 +119,14 @@ export interface ConflictedPath {
 	theirs: BlobSide | null;
 }
 
+/**
+ * How to resolve one conflicted path.
+ *
+ * Selecting a missing side deletes the path. Explicit content defaults to the
+ * ours mode, then theirs, then a regular non-executable file.
+ */
+export type Resolution = "ours" | "theirs" | null | { content: string | Uint8Array; mode?: string };
+
 /** Result of {@link mergeTreesDetailed}. */
 export interface MergeTreesDetailedResult {
 	/** Result tree, with conflict-marker blobs at any conflicted path. */
@@ -153,7 +163,7 @@ export async function mergeTreesDetailed(
 		(await bindAttributes(repo, "merge"))?.merge,
 	);
 
-	return toDetailedResult(result);
+	return toDetailedMergeResult(result);
 }
 
 /**
@@ -183,11 +193,11 @@ export async function mergeTreesDetailedFromTreeHashes(
 		(await bindAttributes(repo, "merge"))?.merge,
 	);
 
-	return toDetailedResult(result);
+	return toDetailedMergeResult(result);
 }
 
 /** Shape the raw merge-ort output into a {@link MergeTreesDetailedResult}. */
-function toDetailedResult(result: {
+export function toDetailedMergeResult(result: {
 	resultTree: string;
 	conflicts: MergeConflict[];
 	entries: IndexEntry[];
@@ -198,6 +208,92 @@ function toDetailedResult(result: {
 		clean: result.conflicts.length === 0,
 		conflicts: buildConflictedPaths(result.entries, result.conflicts),
 		messages: result.messages,
+	};
+}
+
+/** Outcome of applying a resolution map to a detailed merge result. */
+export interface AppliedResolutions {
+	/**
+	 * The resolved tree when every conflict is handled, otherwise the original
+	 * conflicted tree containing marker blobs.
+	 */
+	treeHash: string;
+	/** Conflicted paths with no supplied resolution. */
+	unresolved: string[];
+}
+
+/** Turn a {@link Resolution} into a tree update for one conflicted path. */
+async function resolveConflict(
+	repo: GitRepo,
+	conflict: ConflictedPath,
+	resolution: Resolution,
+): Promise<TreeUpdate> {
+	if (resolution === null) return { path: conflict.path, hash: null };
+	if (resolution === "ours") {
+		return conflict.ours
+			? { path: conflict.path, hash: conflict.ours.hash, mode: conflict.ours.mode }
+			: { path: conflict.path, hash: null };
+	}
+	if (resolution === "theirs") {
+		return conflict.theirs
+			? { path: conflict.path, hash: conflict.theirs.hash, mode: conflict.theirs.mode }
+			: { path: conflict.path, hash: null };
+	}
+	const bytes =
+		typeof resolution.content === "string"
+			? new TextEncoder().encode(resolution.content)
+			: resolution.content;
+	const hash = await writeObject(repo, "blob", bytes);
+	const mode = resolution.mode ?? conflict.ours?.mode ?? conflict.theirs?.mode ?? "100644";
+	return { path: conflict.path, hash, mode };
+}
+
+/**
+ * Apply post-hoc path resolutions to a detailed merge result.
+ *
+ * Unknown resolution paths are rejected so stale maps cannot silently modify
+ * an unrelated replay. Partial maps report unresolved paths and leave the
+ * conflicted marker tree unchanged.
+ */
+export async function applyResolutions(
+	repo: GitRepo,
+	detailed: MergeTreesDetailedResult,
+	resolutions: Record<string, Resolution>,
+	label: string,
+): Promise<AppliedResolutions> {
+	if (detailed.clean) {
+		const stray = Object.keys(resolutions)[0];
+		if (stray !== undefined) {
+			throw new Error(
+				`${label}: resolution provided for '${stray}', which is not a conflicted path`,
+			);
+		}
+		return { treeHash: detailed.treeHash, unresolved: [] };
+	}
+
+	const conflictPaths = new Set(detailed.conflicts.map((c) => c.path));
+	for (const path of Object.keys(resolutions)) {
+		if (!conflictPaths.has(path)) {
+			throw new Error(
+				`${label}: resolution provided for '${path}', which is not a conflicted path`,
+			);
+		}
+	}
+
+	const updates: TreeUpdate[] = [];
+	const unresolved: string[] = [];
+	for (const conflict of detailed.conflicts) {
+		if (!Object.hasOwn(resolutions, conflict.path)) {
+			unresolved.push(conflict.path);
+			continue;
+		}
+		updates.push(await resolveConflict(repo, conflict, resolutions[conflict.path] as Resolution));
+	}
+
+	if (unresolved.length > 0) return { treeHash: detailed.treeHash, unresolved };
+	return {
+		treeHash: await updateTree(repo, detailed.treeHash, updates),
+		unresolved: [],
 	};
 }
 

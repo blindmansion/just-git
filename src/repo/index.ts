@@ -189,6 +189,7 @@ export {
 // Patching — tree-level apply with rejects-as-data, plus promoted pure
 // patch primitives (parse / reverse / format-patch)
 export {
+	am,
 	applyPatch,
 	ApplyParseError,
 	FormatPatchError,
@@ -198,6 +199,12 @@ export {
 	type ApplyHunkLine,
 	type ApplyPatchOptions,
 	type ApplyPatchResult,
+	type AmContinuation,
+	type AmContinueOptions,
+	type AmOptions,
+	type AmRejection,
+	type AmResult,
+	type AmStartOptions,
 	type BlobEffect,
 	type FileReject,
 	type FormatPatchOptions,

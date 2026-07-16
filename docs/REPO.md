@@ -235,6 +235,66 @@ Both return `{ treeHash, clean, conflicts, messages }`. Operates purely on the o
 | `createWorktree`        | `(repo, fs, options?) → WorktreeResult`                 | Create a full `GitContext` backed by the repo's stores. Populates worktree, index, and `.git` on the VFS. See [GitRepo > Bridging the two](#how-you-get-a-gitrepo) |
 | `createSandboxWorktree` | `(repo, options?) → WorktreeResult`                     | Create an isolated worktree with copy-on-write overlay stores and lazy reads. Source repo is never mutated. Designed for server hooks                              |
 
+### Patching
+
+`applyPatch` applies unified or Git binary patches directly to a tree. It never
+touches an index or worktree and returns failed hunks as structured data:
+
+```ts
+import { applyPatch } from "just-git/repo";
+
+const result = await applyPatch(repo, { patch: diffText, onto: "main" });
+if (result.status === "applied") {
+  console.log(result.treeHash);
+} else {
+  // Each reject includes its path, current content, and unplaced raw hunks.
+  console.log(result.rejects);
+}
+```
+
+`am` converts a format-patch mailbox into commits. Authors come from each mail;
+the caller supplies the committer. The operation keeps no on-repo session state
+and advances `branch` only after the entire series succeeds:
+
+```ts
+import { am } from "just-git/repo";
+
+let result = await am(repo, {
+  mbox,
+  onto: "main",
+  branch: "main",
+  expectedOldHash: currentMain,
+  committer: { name: "Patch Bot", email: "patches@example.com" },
+  threeWay: true,
+});
+
+if (result.status === "conflicts") {
+  result = await am(repo, {
+    continue: result.continuation,
+    resolutions: Object.fromEntries(result.conflicts.map((conflict) => [conflict.path, "theirs"])),
+  });
+} else if (result.status === "rejected") {
+  const repairedMessage = await repairPatch(result.rejection);
+  result = await am(repo, {
+    continue: result.continuation,
+    replacementMessage: repairedMessage,
+  });
+}
+```
+
+The three result variants are:
+
+- `applied` — all messages were consumed; includes the final `head` and created
+  commit hashes.
+- `conflicts` — a three-way merge needs path resolutions. The result includes
+  stage-1/2/3 blob hashes and a serializable continuation.
+- `rejected` — the current mail is empty, malformed, does not apply, or cannot
+  use three-way fallback. Its discriminated rejection contains repair context;
+  resume by replacing that raw message.
+
+`parsePatch`, `reversePatch`, and `formatPatchSeries` are also exported for
+building patch-oriented workflows. `formatPatchSeries` accepts any `GitRepo`.
+
 ### Operations
 
 | Function     | Signature                              | Description                                                                                                                                            |

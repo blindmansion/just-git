@@ -31,8 +31,8 @@ import {
 } from "../lib/index.ts";
 import { type ApplyMergeFailure, applyMergeResult } from "../lib/merge-ort.ts";
 import { readCommit } from "../lib/object-db.ts";
+import { buildAmMessage } from "../lib/patch/am-message.ts";
 import { type ApplyResult, applyPatches } from "../lib/patch/apply.ts";
-import { appendSignoff } from "../lib/patch/mbox.ts";
 import { parseMail, splitMailbox } from "../lib/patch/mailinfo.ts";
 import { ApplyParseError, type ParsedPatch, parsePatch } from "../lib/patch/parse-patch.ts";
 import { resolve } from "../lib/path.ts";
@@ -118,12 +118,6 @@ function notResuming(): CommandResult {
  */
 function rebaseApplyDirForMessage(gitCtx: GitContext): string {
 	return gitCtx.gitDir === gitCtx.commonDir ? ".git/rebase-apply" : rebaseApplyDir(gitCtx);
-}
-
-/** Assemble the commit message from a parsed mail + signoff option. */
-function buildMessage(subject: string, body: string, signoffLine: string | null): string {
-	const finalBody = signoffLine ? appendSignoff(subject, body, signoffLine) : body;
-	return finalBody === "" ? `${subject}\n` : `${subject}\n\n${finalBody}\n`;
 }
 
 /**
@@ -547,7 +541,7 @@ async function runAmLoop(gitCtx: GitContext, env: Map<string, string>): Promise<
 		const committer = await requireCommitter(gitCtx, env);
 		if (isCommandError(committer)) return committer;
 		const signoffLine = state.sign ? `Signed-off-by: ${committer.name} <${committer.email}>` : null;
-		const message = buildMessage(mail.subject, mail.body, signoffLine);
+		const message = buildAmMessage(mail.subject, mail.body, signoffLine);
 
 		// An empty patch pauses the session *before* the "Applying:" line
 		// (git's parse_mail): print "Patch is empty." and stop with the

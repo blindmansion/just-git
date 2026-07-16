@@ -35,10 +35,10 @@ import {
 } from "../object-db.ts";
 import { parseRangeSyntax } from "../refs/range-syntax.ts";
 import { resolveHead } from "../refs/refs.ts";
-import { resolveRevision } from "../refs/rev-parse.ts";
+import { resolveRevisionRepo } from "../refs/rev-parse.ts";
 import { firstLine } from "../text-utils.ts";
 import { diffTrees } from "../tree-ops.ts";
-import type { Commit, GitContext, GitRepo, Identity, ObjectId, TreeDiffEntry } from "../types.ts";
+import type { Commit, GitRepo, Identity, ObjectId, TreeDiffEntry } from "../types.ts";
 import { GIT_EMULATED_VERSION } from "../version.ts";
 import {
 	appendSignoff,
@@ -123,7 +123,7 @@ function ambiguousArg(arg: string): string {
  * no non-merge commits.
  */
 export async function formatPatchSeries(
-	repo: GitContext,
+	repo: GitRepo,
 	opts: FormatPatchOptions,
 ): Promise<FormatPatchResult> {
 	const { startHashes, excludeHashes } = await resolveSelection(repo, opts);
@@ -204,8 +204,8 @@ export async function formatPatchSeries(
 }
 
 /** Peel a revision to its commit id, or null when it doesn't resolve to a commit. */
-async function resolveTip(repo: GitContext, rev: string): Promise<ObjectId | null> {
-	const resolved = await resolveRevision(repo, rev);
+async function resolveTip(repo: GitRepo, rev: string): Promise<ObjectId | null> {
+	const resolved = await resolveRevisionRepo(repo, rev);
 	if (!resolved) return null;
 	try {
 		return await peelToCommit(repo, resolved);
@@ -216,7 +216,7 @@ async function resolveTip(repo: GitContext, rev: string): Promise<ObjectId | nul
 
 /** Translate the revision selectors into walk start/exclude sets (git's range rules). */
 async function resolveSelection(
-	repo: GitContext,
+	repo: GitRepo,
 	opts: FormatPatchOptions,
 ): Promise<{ startHashes: ObjectId[]; excludeHashes: ObjectId[] | undefined }> {
 	const revisions = opts.revisions ?? [];
@@ -290,7 +290,7 @@ function patchFileName(
  * shortlog-rendered subject. RFC-2047 encoding of the `From:` line is a
  * separate mechanism and does not itself add the MIME block.
  */
-async function seriesNeeds8bitCte(repo: GitContext, commits: CommitEntry[]): Promise<boolean> {
+async function seriesNeeds8bitCte(repo: GitRepo, commits: CommitEntry[]): Promise<boolean> {
 	for (const { hash } of commits) {
 		const raw = await readObject(repo, hash);
 		for (const byte of raw.content) {
