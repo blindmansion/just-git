@@ -29,7 +29,7 @@ import {
 	resolveRef,
 	walkCommitHistory,
 } from "../../src/repo/index.ts";
-import { createServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/server.ts";
 import { createRepoStore, MemoryStorage } from "../../src/store/index.ts";
 
 const BASE = "http://git";

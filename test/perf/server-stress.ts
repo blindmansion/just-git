@@ -36,7 +36,7 @@ import {
 import { tmpdir } from "os";
 import { join } from "path";
 import { BunSqliteStorage } from "../../src/store/bun-sqlite-storage.ts";
-import { createServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/server.ts";
 
 const SOURCE_REPO = process.argv[2] || "https://github.com/DeabLabs/cannoli.git";
 const DB_PATH = process.env.DB_PATH ?? ":memory:";

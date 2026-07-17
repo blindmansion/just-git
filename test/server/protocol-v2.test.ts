@@ -16,7 +16,7 @@ import {
 	pktLineText,
 	responseEndPkt,
 } from "../../src/lib/transport/pkt-line.ts";
-import { createServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/server.ts";
 import { MemoryStorage } from "../../src/store/memory-storage.ts";
 import { createRepoStore } from "../../src/store/repo-store.ts";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";

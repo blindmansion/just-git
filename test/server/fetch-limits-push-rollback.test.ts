@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
-import { createServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/server.ts";
 import { MemoryStorage } from "../../src/store/memory-storage.ts";
 import { createRepoStore } from "../../src/store/repo-store.ts";
 import { encodePktLine, flushPkt, concatPktLines } from "../../src/lib/transport/pkt-line.ts";

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
-import { createServer, isValidRepoId } from "../../src/server/handler.ts";
+import { createServer, isValidRepoId } from "../../src/server/server.ts";
 import { MemoryStorage } from "../../src/store/memory-storage.ts";
 import { createRepoStore } from "../../src/store/repo-store.ts";
 import {

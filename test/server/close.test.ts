@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/server.ts";
 import { MemoryStorage } from "../../src/store/memory-storage.ts";
 import type { SshChannel } from "../../src/server/types.ts";
 

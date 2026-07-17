@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/server.ts";
 import { MemoryStorage } from "../../src/store/memory-storage.ts";
 import { buildCommit, readFileAtCommit, resolveRef, readCommit } from "../../src/repo/index.ts";
 import type { CommitIdentity } from "../../src/repo/writing.ts";

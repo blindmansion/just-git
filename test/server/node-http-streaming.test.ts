@@ -7,7 +7,7 @@ import {
 import { hashObject } from "../../src/lib/object-db.ts";
 import { writePack } from "../../src/lib/pack/packfile.ts";
 import { concatPktLines, encodePktLine, flushPkt } from "../../src/lib/transport/pkt-line.ts";
-import { createServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/server.ts";
 import type { GitServer } from "../../src/server/types.ts";
 import { MemoryStorage } from "../../src/store/memory-storage.ts";
 

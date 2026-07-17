@@ -3,7 +3,7 @@ import type { Identity } from "../../src/lib/types.ts";
 import { parsePktLineStream, pktLineText } from "../../src/lib/transport/pkt-line.ts";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { collectRefs, PackCache } from "../../src/server/operations.ts";
-import { createServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/server.ts";
 import { MemoryStorage } from "../../src/store/memory-storage.ts";
 import { createRepoStore } from "../../src/store/repo-store.ts";
 import type { NodeHttpRequest, NodeHttpResponse } from "../../src/server/types.ts";

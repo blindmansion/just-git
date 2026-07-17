@@ -3,7 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createGit } from "../../src/index.ts";
-import { createServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/server.ts";
 import { MemoryStorage } from "../../src/store/memory-storage.ts";
 import type { Auth, GitServerConfig } from "../../src/server/types.ts";
 import { isolatedGitEnv } from "../real-git.ts";

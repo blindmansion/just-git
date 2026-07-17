@@ -1,5 +1,5 @@
 import type { GitRepo } from "../../../src/lib/types.ts";
-import { createServer } from "../../../src/server/handler.ts";
+import { createServer } from "../../../src/server/server.ts";
 import { composeHooks } from "../../../src/server/policy.ts";
 import { resolveRef } from "../../../src/repo/reading.ts";
 import { BunSqliteStorage } from "../../../src/store/bun-sqlite-storage.ts";

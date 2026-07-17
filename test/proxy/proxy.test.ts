@@ -921,7 +921,7 @@ describe("e2e with just-git server as upstream", () => {
 	test("proxy can forward clone requests to a just-git server", async () => {
 		const { Bash, InMemoryFs } = await import("just-bash");
 		const { createGit } = await import("../../src/index.ts");
-		const { createServer } = await import("../../src/server/handler.ts");
+		const { createServer } = await import("../../src/server/server.ts");
 		const { MemoryStorage } = await import("../../src/store/memory-storage.ts");
 
 		// Set up a just-git server

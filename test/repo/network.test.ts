@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createServer } from "../../src/server/handler.ts";
+import { createServer } from "../../src/server/server.ts";
 import { createRepoStore, MemoryStorage } from "../../src/store/index.ts";
 import { cloneInto, fetch, listRemoteRefs, push } from "../../src/repo/network.ts";
 import { withCapabilities } from "../../src/lib/capabilities.ts";
