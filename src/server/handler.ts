@@ -33,7 +33,7 @@ import {
 	handleLsRefs,
 	handleUploadPack,
 	handleV2Fetch,
-	ingestReceivePack,
+	ingestReceivePackFromStream,
 	resolveRefUpdates,
 } from "./operations.ts";
 import { buildReportStatus, parseV2CommandRequest } from "./protocol.ts";
@@ -42,6 +42,7 @@ import { createRepoStore, type CreateRepoOptions } from "../store/repo-store.ts"
 import { MemoryStorage } from "../store/memory-storage.ts";
 import { isValidRepoId } from "../store/repo-id.ts";
 import { RequestLimitError } from "./errors.ts";
+import { readReceivePackCommands, StreamPktLineReader } from "./request-stream.ts";
 import type {
 	GitServerConfig,
 	GitServer,
@@ -332,8 +333,24 @@ export function createServer<A = Auth>(
 						if (isRejection(adv)) return forbiddenResponse(adv);
 					}
 
-					const body = await readRequestBody(req, receiveLimits);
-					const ingestResult = await ingestReceivePack(resolved.repo, body, receiveLimits);
+					const requestStream = openLimitedRequestBody(req, receiveLimits);
+					const streamReader = new StreamPktLineReader(requestStream);
+					let ingestResult;
+					try {
+						const { commands, capabilities, sawFlush } =
+							await readReceivePackCommands(streamReader);
+						ingestResult = await ingestReceivePackFromStream(
+							resolved.repo,
+							commands,
+							capabilities,
+							streamReader.streamRemaining(),
+							sawFlush,
+							receiveLimits,
+							true,
+						);
+					} finally {
+						streamReader.release();
+					}
 
 					if (!ingestResult.sawFlush && ingestResult.updates.length === 0) {
 						return new Response("Bad Request", { status: 400 });
@@ -656,6 +673,65 @@ async function readRequestBody(
 		return inflated;
 	}
 	return raw;
+}
+
+function openLimitedRequestBody(
+	req: Request,
+	limits: {
+		maxRequestBytes?: number;
+		maxInflatedBytes?: number;
+	},
+): ReadableStream<Uint8Array> {
+	const contentLength = req.headers.get("content-length");
+	if (contentLength) {
+		const parsed = Number(contentLength);
+		if (
+			Number.isFinite(parsed) &&
+			limits.maxRequestBytes !== undefined &&
+			parsed > limits.maxRequestBytes
+		) {
+			throw new RequestLimitError("Request body too large");
+		}
+	}
+
+	let stream = req.body ?? emptyByteStream();
+	stream = limitByteStream(stream, limits.maxRequestBytes, "Request body too large");
+
+	const encoding = req.headers.get("content-encoding");
+	if (encoding === "gzip" || encoding === "x-gzip") {
+		stream = stream.pipeThrough(new DecompressionStream("gzip"));
+		stream = limitByteStream(stream, limits.maxInflatedBytes, "Decompressed body too large");
+	}
+
+	return stream;
+}
+
+function limitByteStream(
+	stream: ReadableStream<Uint8Array>,
+	maxBytes: number | undefined,
+	errorMessage: string,
+): ReadableStream<Uint8Array> {
+	if (maxBytes === undefined) return stream;
+	let totalBytes = 0;
+	return stream.pipeThrough(
+		new TransformStream<Uint8Array, Uint8Array>({
+			transform(chunk, controller) {
+				totalBytes += chunk.byteLength;
+				if (totalBytes > maxBytes) {
+					throw new RequestLimitError(errorMessage);
+				}
+				controller.enqueue(chunk);
+			},
+		}),
+	);
+}
+
+function emptyByteStream(): ReadableStream<Uint8Array> {
+	return new ReadableStream({
+		start(controller) {
+			controller.close();
+		},
+	});
 }
 
 async function readStreamWithMax(

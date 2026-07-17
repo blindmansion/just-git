@@ -746,9 +746,9 @@ export async function ingestReceivePack(
  * commands and a raw pack byte stream. Uses `readPackStreaming` for
  * incremental consumption.
  *
- * The HTTP handler continues using `ingestReceivePack` (runtime buffers
- * POST bodies anyway). The SSH handler calls this directly after parsing
- * pkt-line commands.
+ * HTTP and SSH handlers call this after incrementally parsing the pkt-line
+ * command section. The pack payload is not materialized as one request-sized
+ * buffer before ingestion.
  */
 export async function ingestReceivePackFromStream(
 	repo: GitRepo,
@@ -757,34 +757,65 @@ export async function ingestReceivePackFromStream(
 	packStream: AsyncIterable<Uint8Array>,
 	sawFlush = true,
 	limits?: ReceivePackLimitOptions,
+	consumeUnexpectedPack = false,
 ): Promise<ReceivePackResult> {
 	let unpackOk = true;
 	let ingestedHashes: string[] | undefined;
 	const needsPack = commands.some((c) => c.newHash !== ZERO_HASH);
 	if (needsPack) {
 		try {
-			const externalBase = async (hash: string) => {
-				try {
-					return await repo.objectStore.read(hash);
-				} catch {
-					return null;
+			const iterator = packStream[Symbol.asyncIterator]();
+			const first = await iterator.next();
+			if (!first.done) {
+				const externalBase = async (hash: string) => {
+					try {
+						return await repo.objectStore.read(hash);
+					} catch {
+						return null;
+					}
+				};
+				const nonEmptyPackStream = prependChunk(first.value, iterator);
+				const entries = readPackStreaming(
+					limitPackStream(nonEmptyPackStream, limits),
+					externalBase,
+				);
+				if (isDeferrableObjectStore(repo.objectStore)) {
+					const batch = await repo.objectStore.preparePackStream(entries);
+					ingestedHashes = await ingestWithTracking(repo.objectStore, batch);
+				} else {
+					await repo.objectStore.ingestPackStream(entries);
 				}
-			};
-			const entries = readPackStreaming(limitPackStream(packStream, limits), externalBase);
-			if (isDeferrableObjectStore(repo.objectStore)) {
-				const batch = await repo.objectStore.preparePackStream(entries);
-				ingestedHashes = await ingestWithTracking(repo.objectStore, batch);
-			} else {
-				await repo.objectStore.ingestPackStream(entries);
 			}
 		} catch (err) {
 			if (err instanceof RequestLimitError) throw err;
 			unpackOk = false;
 		}
+	} else if (consumeUnexpectedPack) {
+		// HTTP bodies have a definite end. Drain even when no command requires
+		// a pack so whole-request and pack limits still apply to trailing data.
+		for await (const _chunk of limitPackStream(packStream, limits)) {
+			// Discard unexpected bytes, matching the successful empty-update response.
+		}
 	}
 
 	const updates = await buildRefUpdates(repo, commands, unpackOk);
 	return { updates, unpackOk, capabilities, sawFlush, ingestedHashes };
+}
+
+async function* prependChunk(
+	first: Uint8Array,
+	iterator: AsyncIterator<Uint8Array>,
+): AsyncGenerator<Uint8Array> {
+	yield first;
+	try {
+		while (true) {
+			const next = await iterator.next();
+			if (next.done) break;
+			yield next.value;
+		}
+	} finally {
+		await iterator.return?.();
+	}
 }
 
 async function buildRefUpdates(

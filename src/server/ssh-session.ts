@@ -1,8 +1,8 @@
 /**
  * SSH protocol helpers for `createServer`'s `handleSession` method.
  *
- * Provides the pkt-line stream reader, command parser, and
- * receive-pack streaming logic. Internal to the server module —
+ * Provides SSH command parsing and receive-pack streaming logic.
+ * Shared request stream framing lives in `request-stream.ts`. Internal to the server module —
  * users interact via `GitServer.handleSession`.
  */
 
@@ -26,6 +26,7 @@ import { buildReportStatus } from "./protocol.ts";
 import type { PushCommand } from "../lib/transport/smart-http.ts";
 import type { ServerHooks, Auth, RefUpdate, SshChannel, Rejection } from "./types.ts";
 import { RequestLimitError } from "./errors.ts";
+import { StreamPktLineReader } from "./request-stream.ts";
 
 // ── Command parser ──────────────────────────────────────────────────
 
@@ -147,7 +148,7 @@ export async function handleSshSession<A = Auth>(
 				if (isRejection(result)) return sendRejection(channel, result);
 				await writeResponse(writer, result);
 			} else {
-				const { commands, capabilities } = await readReceivePackCommands(streamReader);
+				const { commands, capabilities, sawFlush } = await readReceivePackCommands(streamReader);
 				const packStream = streamReader.streamRemaining();
 				await serveReceivePackStreaming({
 					writer,
@@ -155,6 +156,7 @@ export async function handleSshSession<A = Auth>(
 					repoId,
 					commands,
 					capabilities,
+					sawFlush,
 					packStream,
 					hooks,
 					receiveLimits,
@@ -192,6 +194,7 @@ interface ServeReceivePackOptions<A> {
 	repoId: string;
 	commands: PushCommand[];
 	capabilities: string[];
+	sawFlush: boolean;
 	packStream: AsyncIterable<Uint8Array>;
 	hooks?: ServerHooks<A>;
 	receiveLimits?: ReceivePackLimitOptions;
@@ -200,14 +203,24 @@ interface ServeReceivePackOptions<A> {
 }
 
 async function serveReceivePackStreaming<A>(options: ServeReceivePackOptions<A>): Promise<void> {
-	const { writer, repo, repoId, commands, capabilities, packStream, hooks, receiveLimits, auth } =
-		options;
+	const {
+		writer,
+		repo,
+		repoId,
+		commands,
+		capabilities,
+		sawFlush,
+		packStream,
+		hooks,
+		receiveLimits,
+		auth,
+	} = options;
 	const ingestResult = await ingestReceivePackFromStream(
 		repo,
 		commands,
 		capabilities,
 		packStream,
-		true,
+		sawFlush,
 		receiveLimits,
 	);
 	if (ingestResult.updates.length === 0) return;
@@ -259,94 +272,6 @@ function sendRejection(channel: SshChannel, r: Rejection): number {
 
 // ── Protocol-aware stream reading ───────────────────────────────────
 
-const decoder = new TextDecoder();
-
-/**
- * Buffered reader over a ReadableStream that supports exact-byte reads
- * and pkt-line parsing. Needed because SSH channels deliver data in
- * arbitrary chunks that don't align to pkt-line boundaries, and
- * upload-pack clients don't send EOF after their request.
- */
-interface ByteReader {
-	read(): Promise<{ value?: Uint8Array; done: boolean }>;
-	releaseLock(): void;
-}
-
-class StreamPktLineReader {
-	private buf = new Uint8Array(0);
-	private byteReader: ByteReader;
-	private eof = false;
-
-	constructor(readable: ReadableStream<Uint8Array>) {
-		this.byteReader = readable.getReader() as ByteReader;
-	}
-
-	private async fill(needed: number): Promise<boolean> {
-		while (this.buf.byteLength < needed && !this.eof) {
-			const result = await this.byteReader.read();
-			if (result.done || !result.value) {
-				this.eof = true;
-				break;
-			}
-			const value = result.value;
-			const merged = new Uint8Array(this.buf.byteLength + value.byteLength);
-			merged.set(this.buf);
-			merged.set(value, this.buf.byteLength);
-			this.buf = merged;
-		}
-		return this.buf.byteLength >= needed;
-	}
-
-	private consume(n: number): Uint8Array {
-		const result = this.buf.subarray(0, n);
-		this.buf = this.buf.subarray(n);
-		return result;
-	}
-
-	/** Read a single pkt-line. Returns null on EOF before a complete line. */
-	async readPktLine(): Promise<
-		| { type: "flush"; raw: Uint8Array }
-		| { type: "delim"; raw: Uint8Array }
-		| { type: "response-end"; raw: Uint8Array }
-		| { type: "data"; raw: Uint8Array; text: string }
-		| null
-	> {
-		if (!(await this.fill(4))) return null;
-		const lenHex = decoder.decode(this.buf.subarray(0, 4));
-		const len = parseInt(lenHex, 16);
-		if (len === 0) return { type: "flush", raw: this.consume(4) };
-		if (len === 1) return { type: "delim", raw: this.consume(4) };
-		if (len === 2) return { type: "response-end", raw: this.consume(4) };
-		if (len < 4) return null;
-		if (!(await this.fill(len))) return null;
-		const raw = new Uint8Array(this.consume(len));
-		return { type: "data", raw, text: decoder.decode(raw.subarray(4)) };
-	}
-
-	/**
-	 * Yield remaining bytes as an async iterable without buffering
-	 * everything into memory. Flushes the internal buffer first,
-	 * then forwards chunks from the underlying stream.
-	 */
-	async *streamRemaining(): AsyncGenerator<Uint8Array> {
-		if (this.buf.byteLength > 0) {
-			yield this.consume(this.buf.byteLength);
-		}
-		while (!this.eof) {
-			const result = await this.byteReader.read();
-			if (result.done || !result.value) {
-				this.eof = true;
-				break;
-			}
-			yield result.value;
-		}
-	}
-
-	release(): void {
-		this.byteReader.releaseLock();
-	}
-}
-
 /**
  * Read an upload-pack request by parsing pkt-lines until "done".
  *
@@ -380,15 +305,19 @@ async function readUploadPackRequest(
  */
 async function readReceivePackCommands(
 	reader: StreamPktLineReader,
-): Promise<{ commands: PushCommand[]; capabilities: string[] }> {
+): Promise<{ commands: PushCommand[]; capabilities: string[]; sawFlush: boolean }> {
 	const commands: PushCommand[] = [];
 	let capabilities: string[] = [];
 	let first = true;
+	let sawFlush = false;
 
 	while (true) {
 		const line = await reader.readPktLine();
 		if (!line) break;
-		if (line.type === "flush") break;
+		if (line.type === "flush") {
+			sawFlush = true;
+			break;
+		}
 		if (line.type !== "data") continue;
 
 		let text = line.text;
@@ -416,7 +345,7 @@ async function readReceivePackCommands(
 		}
 	}
 
-	return { commands, capabilities };
+	return { commands, capabilities, sawFlush };
 }
 
 // ── V2 SSH command loop ─────────────────────────────────────────────

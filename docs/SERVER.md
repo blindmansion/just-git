@@ -634,6 +634,10 @@ const server = createServer({
 
 `receiveLimits` and `fetchLimits` cap the size of incoming HTTP and SSH request bodies. Defaults are shown above.
 
+HTTP receive-pack bodies are checked and ingested incrementally, including
+gzip decompression and pack limits, so a push does not require buffering the
+entire pack in memory. Upload-pack negotiation bodies remain buffered.
+
 | Property           | Applies to      | Transport  | Purpose                                                                                                                                                                         |
 | ------------------ | --------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `maxRequestBytes`  | both            | HTTP + SSH | Maximum raw (or compressed) request body size                                                                                                                                   |

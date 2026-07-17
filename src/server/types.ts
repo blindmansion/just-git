@@ -222,8 +222,8 @@ export interface GitServerConfig<A = Auth> {
 	/**
 	 * Safety limits for incoming receive-pack requests.
 	 *
-	 * These bounds are enforced on buffered HTTP bodies and on pack ingestion
-	 * for both HTTP and SSH push paths.
+	 * These bounds are enforced while streaming HTTP bodies and during pack
+	 * ingestion for both HTTP and SSH push paths.
 	 */
 	receiveLimits?: {
 		/** Maximum compressed/raw HTTP request body size in bytes. */

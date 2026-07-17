@@ -90,7 +90,7 @@ Higher-level functions that combine protocol primitives with storage access.
 - `collectRefs` — reads refs from a repo, returns structured `RefAdvertisement[]` data (no wire encoding)
 - `buildRefAdvertisementBytes` — encodes a ref list into wire format
 - `handleUploadPack` — parses wants/haves, enumerates objects, builds packfile
-- `ingestReceivePack` — parses push commands, ingests pack, computes enriched `RefUpdate[]` with `isFF`/`isCreate`/`isDelete`. Does **not** apply ref updates — the handler does that after running hooks.
+- `ingestReceivePack` / `ingestReceivePackFromStream` — ingest buffered or streamed push packs and compute enriched `RefUpdate[]` with `isFF`/`isCreate`/`isDelete`. Neither applies ref updates — the handler does that after running hooks.
 
 These accept `GitRepo` and return structured data or response bodies. No HTTP, no framework coupling.
 
@@ -103,8 +103,12 @@ The handler owns the hook invocation lifecycle:
 ```
 info/refs:      collectRefs → advertiseRefs hook (filter) → buildRefAdvertisementBytes → Response
 upload-pack:    handleUploadPack → Response
-receive-pack:   ingestReceivePack → preReceive hook → per-ref update hook → apply refs → postReceive hook → Response
+receive-pack:   parse commands → ingestReceivePackFromStream → preReceive hook → per-ref update hook → apply refs → postReceive hook → Response
 ```
+
+The fetch handler streams receive-pack request bodies through optional gzip
+decompression, byte-limit enforcement, and pack ingestion. Upload-pack request
+bodies remain buffered because they contain only bounded want/have negotiation.
 
 **Node.js adapter** (`handler.ts` — `toNodeHandler`)
 
