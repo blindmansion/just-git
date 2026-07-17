@@ -779,6 +779,42 @@ describe("git diff", () => {
 			expect(result.exitCode).toBe(0);
 			expect(result.stdout).toContain("Binary files /dev/null and b/foo.bin differ");
 		});
+
+		test("--binary emits an appliable patch with full object IDs", async () => {
+			const binaryV1 = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02, 0x03]);
+			const binaryV2 = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe, 0xfd]);
+
+			const bash = createTestBash({ env: TEST_ENV });
+			await bash.fs.writeFile("/repo/foo.bin", binaryV1);
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "add binary"');
+			await bash.fs.writeFile("/repo/foo.bin", binaryV2);
+
+			const result = await bash.exec("git diff --binary");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("GIT binary patch\n");
+			expect(result.stdout).toMatch(/^index [0-9a-f]{40}\.\.[0-9a-f]{40} 100644$/m);
+			expect(result.stdout).not.toContain("Binary files");
+		});
+
+		test("--binary preserves stat-only output", async () => {
+			const binaryV1 = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02, 0x03]);
+			const binaryV2 = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe, 0xfd]);
+
+			const bash = createTestBash({ env: TEST_ENV });
+			await bash.fs.writeFile("/repo/foo.bin", binaryV1);
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "add binary"');
+			await bash.fs.writeFile("/repo/foo.bin", binaryV2);
+
+			const result = await bash.exec("git diff --binary --stat");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("foo.bin");
+			expect(result.stdout).toContain("Bin 8 -> 8 bytes");
+			expect(result.stdout).not.toContain("GIT binary patch");
+		});
 	});
 
 	describe("-M / -C (rename/copy detection flags)", () => {

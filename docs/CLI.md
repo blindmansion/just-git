@@ -540,6 +540,7 @@ Options:
   --name-status           Show names and status of changed files
   --shortstat             Show only the shortstat summary line
   --numstat               Machine-readable insertions/deletions per file
+  --binary                Emit binary changes as appliable patches
   -U, --unified <number>  Generate diffs with <n> lines of context
   -M, --find-renames      Detect renames (enabled by default)
   -C, --find-copies       Detect copies (accepted for compatibility)

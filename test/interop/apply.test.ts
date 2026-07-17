@@ -69,10 +69,6 @@ const SHAPES: Shape[] = [
 		base: { "blob.bin": binBlob(0) },
 		target: { "blob.bin": binBlob(7) },
 		diffArgs: ["--binary"],
-		// just-git emits binary patches via format-patch, not diff, so only the
-		// real-git producer applies here — which is exactly the cell that stresses
-		// just-git's binary *decoder*.
-		producers: ["real"],
 	},
 	{
 		name: "no trailing newline",

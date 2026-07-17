@@ -4,6 +4,7 @@ import { getCwdPrefix } from "../lib/command-utils.ts";
 import { resolveAttributes } from "../lib/attributes/bound-attributes.ts";
 import type { FileStat } from "../lib/commit-summary.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff/algorithm.ts";
+import { formatBinaryPatch } from "../lib/diff/binary-patch.ts";
 import {
 	boundDiffAttributes,
 	resolveCombinedDiffPresentation,
@@ -12,7 +13,7 @@ import {
 } from "../lib/diff/driver.ts";
 import { getStage0Entries, readIndex } from "../lib/index.ts";
 import { findAllMergeBases } from "../lib/merge.ts";
-import { hashObject, readBlobBytes, readCommit } from "../lib/object-db.ts";
+import { hashObject, isBinaryBytes, readBlobBytes, readCommit } from "../lib/object-db.ts";
 import { join, comparePaths } from "../lib/path.ts";
 import { matchPathspecs, type Pathspec, parsePathspec } from "../lib/attributes/pathspec.ts";
 import { parseRangeSyntax } from "../lib/refs/range-syntax.ts";
@@ -107,6 +108,7 @@ export function registerDiffCommand(parent: Command, ext?: GitExtensions) {
 			nameStatus: f().describe("Show names and status of changed files"),
 			shortstat: f().describe("Show only the shortstat summary line"),
 			numstat: f().describe("Machine-readable insertions/deletions per file"),
+			binary: f().describe("Emit binary changes as appliable patches"),
 			unified: o.number().alias("U").describe("Generate diffs with <n> lines of context"),
 			findRenames: f().alias("M").describe("Detect renames (enabled by default)"),
 			findCopies: f().alias("C").describe("Detect copies (accepted for compatibility)"),
@@ -173,7 +175,7 @@ export function registerDiffCommand(parent: Command, ext?: GitExtensions) {
 
 			if (isError(result)) return result;
 			const contextLines = args.unified;
-			const output = await formatOutput(gitCtx, result.items, format, contextLines);
+			const output = await formatOutput(gitCtx, result.items, format, contextLines, args.binary);
 			if (result.stderr) output.stderr = result.stderr;
 			return output;
 		},
@@ -556,6 +558,7 @@ async function formatOutput(
 	items: DiffFileResult[],
 	format: DiffOutputFormat,
 	contextLines?: number,
+	binary = false,
 ): Promise<CommandResult> {
 	let stdout: string;
 	switch (format) {
@@ -575,7 +578,7 @@ async function formatOutput(
 			stdout = formatAsNameStatus(items);
 			break;
 		default:
-			stdout = await formatAsUnified(gitCtx, items, contextLines);
+			stdout = await formatAsUnified(gitCtx, items, contextLines, binary);
 			break;
 	}
 	return { stdout, stderr: "", exitCode: 0 };
@@ -587,6 +590,7 @@ async function formatAsUnified(
 	gitCtx: GitContext,
 	items: DiffFileResult[],
 	contextLines?: number,
+	emitBinaryPatches = false,
 ): Promise<string> {
 	let output = "";
 	const combinedDiffPaths = new Set<string>();
@@ -661,17 +665,27 @@ async function formatAsUnified(
 			newBytes,
 			newOid,
 		);
+		const isBinary = pres.forceBinary
+			? true
+			: pres.forceTextual
+				? false
+				: isBinaryBytes(oldBytes) || isBinaryBytes(newBytes);
+		const binaryPatch =
+			emitBinaryPatches && isBinary ? await formatBinaryPatch(oldBytes, newBytes) : undefined;
+		const oldHash = binaryPatch ? item.oldHash : abbreviateDiffHash(item.oldHash, hashAbbrevs);
+		const newHash = binaryPatch ? item.newHash : abbreviateDiffHash(item.newHash, hashAbbrevs);
 
 		if (item.status === "R" && item.oldPath) {
 			output += formatUnifiedDiff({
 				path: item.oldPath,
 				oldMode: item.oldMode,
 				newMode: item.newMode,
-				oldHash: abbreviateDiffHash(item.oldHash, hashAbbrevs),
-				newHash: abbreviateDiffHash(item.newHash, hashAbbrevs),
+				oldHash,
+				newHash,
 				renameTo: item.path,
 				similarity: item.similarity,
 				contextLines,
+				binaryPatch,
 				...pres,
 			});
 		} else {
@@ -679,11 +693,12 @@ async function formatAsUnified(
 				path: item.path,
 				oldMode: item.oldMode,
 				newMode: item.newMode,
-				oldHash: abbreviateDiffHash(item.oldHash, hashAbbrevs),
-				newHash: abbreviateDiffHash(item.newHash, hashAbbrevs),
+				oldHash,
+				newHash,
 				isNew: item.status === "A",
 				isDeleted: item.status === "D",
 				contextLines,
+				binaryPatch,
 				...pres,
 			});
 		}
