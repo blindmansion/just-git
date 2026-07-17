@@ -16,6 +16,7 @@
  */
 
 import { isRejection } from "../hooks.ts";
+import { nodeRequestToWebRequest, pipeWebResponseToNode } from "../node-http.ts";
 import { buildCommit } from "../repo/writing.ts";
 import { httpTransport } from "../transport.ts";
 import type { GitRepo, TransportResolver } from "../lib/types.ts";
@@ -483,49 +484,7 @@ export function createServer<A = Auth>(
 		},
 
 		nodeHandler(req: NodeHttpRequest, res: NodeHttpResponse): void {
-			const chunks: Uint8Array[] = [];
-			let totalBytes = 0;
-			let tooLarge = false;
-			const parsedPathname = new URL(req.url ?? "/", "http://localhost").pathname;
-			const isUploadPack = parsedPathname.endsWith("/git-upload-pack");
-			const bodyLimit = isUploadPack ? fetchLimits.maxRequestBytes : receiveLimits.maxRequestBytes;
-			req.on("data", (chunk: Uint8Array) => {
-				if (tooLarge) return;
-				totalBytes += chunk.byteLength;
-				if (
-					req.method !== "GET" &&
-					req.method !== "HEAD" &&
-					bodyLimit !== undefined &&
-					totalBytes > bodyLimit
-				) {
-					tooLarge = true;
-					chunks.length = 0;
-					res.writeHead(413);
-					res.end("Request body too large");
-					try {
-						(req as { destroy?: () => void }).destroy?.();
-					} catch {
-						// ignore
-					}
-					return;
-				}
-				chunks.push(new Uint8Array(chunk));
-			});
-			req.on("error", () => {
-				res.writeHead(500);
-				res.end("Internal Server Error");
-			});
-			req.on("end", () => {
-				if (tooLarge) return;
-				nodeRequestToFetch(server, req, chunks, res).catch(() => {
-					try {
-						res.writeHead(500);
-						res.end("Internal Server Error");
-					} catch {
-						// headers already sent
-					}
-				});
-			});
+			void handleNodeRequest(server, req, res);
 		},
 
 		createRepo: (id, options) => storage.createRepo(id, options) as Promise<GitRepo>,
@@ -772,56 +731,52 @@ async function readStreamWithMax(
 	return result;
 }
 
-// ── Node.js adapter internals ───────────────────────────────────────
+// ── Node.js adapter orchestration ───────────────────────────────────
 
-async function nodeRequestToFetch(
+async function handleNodeRequest(
 	server: Pick<GitServer<any>, "fetch">,
 	req: NodeHttpRequest,
-	chunks: Uint8Array[],
 	res: NodeHttpResponse,
 ): Promise<void> {
-	const host = typeof req.headers.host === "string" ? req.headers.host : "localhost";
-	const url = new URL(req.url ?? "/", `http://${host}`);
-
-	const headers = new Headers();
-	for (const [key, value] of Object.entries(req.headers)) {
-		if (value === undefined) continue;
-		if (Array.isArray(value)) {
-			for (const v of value) headers.append(key, v);
-		} else {
-			headers.set(key, value);
+	let bridge: ReturnType<typeof nodeRequestToWebRequest> | undefined;
+	try {
+		bridge = nodeRequestToWebRequest(req);
+		const response = await server.fetch(bridge.request);
+		const cleanupNow = deferRequestCleanupUntilResponseFinishes(bridge.cleanup, res);
+		try {
+			await pipeWebResponseToNode(response, res);
+			if (!cleanupNow) bridge.cleanup();
+		} catch (error) {
+			cleanupNow?.();
+			throw error;
+		}
+	} catch {
+		bridge?.cleanup();
+		try {
+			res.writeHead(500);
+			res.end("Internal Server Error");
+		} catch {
+			// Headers were already sent or the socket disconnected.
 		}
 	}
+}
 
-	const method = req.method ?? "GET";
-
-	let body: Uint8Array | undefined;
-	if (method !== "GET" && method !== "HEAD") {
-		let len = 0;
-		for (const c of chunks) len += c.byteLength;
-		const buf = new Uint8Array(len);
-		let off = 0;
-		for (const c of chunks) {
-			buf.set(c, off);
-			off += c.byteLength;
-		}
-		body = buf;
-	}
-
-	const request = new Request(url.href, { method, headers, body });
-	const response = await server.fetch(request);
-
-	const responseHeaders: Record<string, string> = {};
-	response.headers.forEach((value, key) => {
-		responseHeaders[key] = value;
-	});
-	res.writeHead(response.status, responseHeaders);
-
-	const responseBody = new Uint8Array(await response.arrayBuffer());
-	if (responseBody.byteLength > 0) {
-		res.write(responseBody);
-	}
-	res.end();
+function deferRequestCleanupUntilResponseFinishes(
+	cleanupRequest: () => void,
+	res: NodeHttpResponse,
+): (() => void) | undefined {
+	if (!res.once) return undefined;
+	let cleaned = false;
+	const cleanup = (): void => {
+		if (cleaned) return;
+		cleaned = true;
+		res.off?.("finish", cleanup);
+		res.off?.("close", cleanup);
+		cleanupRequest();
+	};
+	res.once("finish", cleanup);
+	res.once("close", cleanup);
+	return cleanup;
 }
 
 // ── Policy → hooks ─────────────────────────────────────────────────

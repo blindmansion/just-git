@@ -192,12 +192,14 @@ describe("Node request bridge", () => {
 		expect(req.listenerCount()).toBe(0);
 	});
 
-	test("Web cancellation destroys the Node request and removes listeners", async () => {
+	test("Web cancellation is destroyed by bridge cleanup and removes listeners", async () => {
 		const req = new MockRequest();
 		const bridge = nodeRequestToWebRequest(req);
 		await bridge.request.body!.cancel(new Error("consumer stopped"));
+		expect(req.destroyCalls).toBe(0);
+		bridge.cleanup();
 		expect(req.destroyCalls).toBe(1);
-		expect(req.destroyError?.message).toBe("consumer stopped");
+		expect(req.destroyError).toBeUndefined();
 		expect(req.listenerCount()).toBe(0);
 	});
 

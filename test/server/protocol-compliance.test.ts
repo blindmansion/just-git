@@ -629,14 +629,14 @@ describe("nodeHandler", () => {
 	test("handles request error event", async () => {
 		const server = createServer({
 			storage: new MemoryStorage(),
-			resolve: () => null,
 			onError: false,
 		});
+		await server.createRepo("repo");
 
 		let errorListener: (() => void) | undefined;
 		const req: NodeHttpRequest = {
-			method: "GET",
-			url: "/test",
+			method: "POST",
+			url: "/repo/git-upload-pack",
 			headers: { host: "localhost" },
 			on(event: string, listener: (...args: any[]) => void) {
 				if (event === "error") errorListener = listener;
@@ -646,6 +646,7 @@ describe("nodeHandler", () => {
 
 		server.nodeHandler(req, res);
 		errorListener!();
+		await new Promise((r) => setTimeout(r, 50));
 
 		expect(res.statusCode).toBe(500);
 		expect(res.ended).toBe(true);

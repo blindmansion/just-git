@@ -68,6 +68,7 @@ export function nodeRequestToWebRequest(req: NodeHttpRequest): NodeRequestBridge
 	let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
 	let active = true;
 	let reachedEof = false;
+	let needsDestroy = false;
 
 	const onData = (chunk: unknown): void => {
 		if (!active || !controller) return;
@@ -129,11 +130,12 @@ export function nodeRequestToWebRequest(req: NodeHttpRequest): NodeRequestBridge
 		pull() {
 			if (active) req.resume?.();
 		},
-		cancel(reason) {
+		cancel() {
 			if (!active) return;
 			active = false;
+			needsDestroy = true;
 			removeRequestListeners();
-			destroyRequest(reason instanceof Error ? reason : undefined);
+			req.pause?.();
 		},
 	});
 
@@ -153,9 +155,13 @@ export function nodeRequestToWebRequest(req: NodeHttpRequest): NodeRequestBridge
 	return {
 		request,
 		cleanup() {
-			if (!active || reachedEof) return;
-			const error = new Error("Request body was not fully consumed");
-			failRequestBody(error, true);
+			if (reachedEof || (!active && !needsDestroy)) return;
+			if (active) {
+				const error = new Error("Request body was not fully consumed");
+				failRequestBody(error, false);
+			}
+			needsDestroy = false;
+			destroyRequest();
 		},
 	};
 }
