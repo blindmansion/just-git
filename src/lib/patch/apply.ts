@@ -387,8 +387,8 @@ export interface ApplyEngineOptions {
 
 /** How a file went through the `-3` path (git's try_threeway outcome). */
 export type ThreewayOutcome =
-	| { kind: "clean" }
-	| { kind: "conflict" }
+	| { kind: "clean"; performed?: boolean }
+	| { kind: "conflict"; performed?: boolean; warning?: string }
 	| { kind: "fallback"; note?: string };
 
 /** Per-file outcome of an {@link applyPatches} run. */
@@ -476,7 +476,17 @@ async function loadPreimage(
 	if (patch.kind === "new") return { content: "" };
 	const src = patch.oldName;
 	if (!src) return { error: "missing source path" };
+	return loadExistingPreimage(ctx, index, src, target, bound);
+}
 
+/** Load a path that must already exist, including `--index` verification. */
+async function loadExistingPreimage(
+	ctx: GitContext,
+	index: Index,
+	src: string,
+	target: ApplyTarget,
+	bound: BoundAttributes | undefined,
+): Promise<{ content: string; restore?: Restore } | { error: string }> {
 	if (target === "cached") {
 		const entry = findEntry(index, src);
 		if (!entry) return { error: `${src}: does not exist in index` };
@@ -592,28 +602,34 @@ async function planPatch(
 	// in the same series deleted/renamed that path away). Rename/copy
 	// destinations are checked below, after their source preimage: git reports
 	// a missing or dirty source before an occupied destination.
+	let directToThreeway = false;
 	if (patch.kind === "new" && !toBeDeleted.has(path)) {
+		const existsInIndex = findEntry(index, path) !== undefined;
+		const existsInWorktree = opts.target !== "cached" ? await worktreePathTaken(ctx, path) : false;
 		// Index half (apply `--index`/`--cached`): a creation whose path already
 		// exists in the index is rejected up front, before any hunk work, with
 		// "already exists in index" (and no "patch does not apply" trailer — it
 		// never reaches the hunk-apply stage).
-		if ((opts.target === "index" || opts.target === "cached") && findEntry(index, path)) {
+		if (!opts.threeway && (opts.target === "index" || opts.target === "cached") && existsInIndex) {
 			return { error: `${path}: already exists in index`, path };
 		}
 		// Worktree half: an occupied destination is rejected with "already
 		// exists in working directory". `--cached` touches only the index, so it
 		// skips this check; under `-3` git defers the collision to the 3-way path
 		// (`direct_to_threeway`) rather than failing.
-		if (opts.target !== "cached" && !opts.threeway && (await worktreePathTaken(ctx, path))) {
+		if (!opts.threeway && existsInWorktree) {
 			return { error: `${path}: already exists in working directory`, path };
 		}
+		directToThreeway = opts.threeway && (existsInIndex || existsInWorktree);
 	}
 
 	if (patch.isBinary) {
-		return planBinaryPatch(ctx, index, patch, opts, bound);
+		return planBinaryPatch(ctx, index, patch, opts, bound, directToThreeway);
 	}
 
-	const pre = await loadPreimage(ctx, index, patch, opts.target, bound);
+	const pre = directToThreeway
+		? await loadExistingPreimage(ctx, index, path, opts.target, bound)
+		: await loadPreimage(ctx, index, patch, opts.target, bound);
 	if ("error" in pre) return { error: pre.error, path };
 
 	const createsRenameDestination =
@@ -635,7 +651,7 @@ async function planPatch(
 	// direct application when the base blob is unavailable (git's apply_data).
 	let threewayFallback: { note?: string } | undefined;
 	if (opts.threeway) {
-		const tw = await planThreeway(ctx, index, patch, opts, pre.content, bound);
+		const tw = await planThreeway(ctx, index, patch, opts, pre.content, bound, directToThreeway);
 		if (!("fallback" in tw)) return tw;
 		threewayFallback = { note: tw.note };
 	}
@@ -735,15 +751,24 @@ async function planThreeway(
 	opts: ApplyEngineOptions,
 	oursText: string,
 	bound: BoundAttributes | undefined,
+	directToThreeway: boolean,
 ): Promise<FilePlan | { fallback: true; note?: string }> {
-	// git skips 3-way for deletions, no-fragment renames, and (for now) pure
-	// creations — the add/add `direct_to_threeway` path is deferred.
-	if (patch.kind === "delete" || patch.kind === "new") return { fallback: true };
+	// A creation only enters try_threeway when its destination is occupied
+	// (`direct_to_threeway`). An ordinary add falls back to direct application.
+	if (patch.kind === "delete" || (patch.kind === "new" && !directToThreeway)) {
+		return { fallback: true };
+	}
 	if (patch.fragments.length === 0) return { fallback: true };
 
-	const baseOid = await resolveBaseBlob(ctx, patch.oldOidPrefix);
-	if (!baseOid) return { fallback: true, note: THREEWAY_NO_BLOB };
-	const baseBytes = await readBlobBytes(ctx, baseOid);
+	const isAddAdd = patch.kind === "new";
+	const baseBytes = isAddAdd
+		? new Uint8Array(0)
+		: await (async () => {
+				const oid = await resolveBaseBlob(ctx, patch.oldOidPrefix);
+				return oid ? readBlobBytes(ctx, oid) : null;
+			})();
+	if (baseBytes === null) return { fallback: true, note: THREEWAY_NO_BLOB };
+	const baseOid = await hashObject("blob", baseBytes);
 	const baseText = decoder.decode(baseBytes);
 
 	// "theirs" — the patch applied to its own recorded preimage.
@@ -801,11 +826,14 @@ async function planThreeway(
 		rejected: [],
 		whitespace: theirs.whitespace,
 		fragmentResults: theirs.fragments,
-		threeway: { kind: conflict ? "conflict" : "clean" },
+		threeway: {
+			kind: conflict ? "conflict" : "clean",
+			performed: isAddAdd || undefined,
+		},
 	};
 	if (conflict) {
 		plan.conflictStages = [
-			{ stage: 1, oid: baseOid, content: baseBytes },
+			...(isAddAdd ? [] : [{ stage: 1 as const, oid: baseOid, content: baseBytes }]),
 			{ stage: 2, oid: oursOid, content: oursBytes },
 			{ stage: 3, oid: theirsOid, content: theirsBytes },
 		];
@@ -837,7 +865,17 @@ async function loadPreimageBytes(
 	if (patch.kind === "new") return { content: new Uint8Array(0) };
 	const src = patch.oldName;
 	if (!src) return { error: "missing source path" };
+	return loadExistingPreimageBytes(ctx, index, src, target, bound);
+}
 
+/** Raw-byte counterpart of {@link loadExistingPreimage}. */
+async function loadExistingPreimageBytes(
+	ctx: GitContext,
+	index: Index,
+	src: string,
+	target: ApplyTarget,
+	bound: BoundAttributes | undefined,
+): Promise<{ content: Uint8Array; restore?: Restore } | { error: string }> {
 	if (target === "cached") {
 		const entry = findEntry(index, src);
 		if (!entry) return { error: `${src}: does not exist in index` };
@@ -886,6 +924,7 @@ async function planBinaryPatch(
 	patch: ParsedPatch,
 	opts: ApplyEngineOptions,
 	bound: BoundAttributes | undefined,
+	directToThreeway: boolean,
 ): Promise<FilePlan | PlanError> {
 	const path = (patch.kind === "delete" ? patch.oldName : patch.newName) ?? patch.oldName ?? "";
 	const name = patch.oldName ?? patch.newName ?? path;
@@ -904,8 +943,26 @@ async function planBinaryPatch(
 		};
 	}
 
-	const pre = await loadPreimageBytes(ctx, index, patch, opts.target, bound);
+	const pre = directToThreeway
+		? await loadExistingPreimageBytes(ctx, index, path, opts.target, bound)
+		: await loadPreimageBytes(ctx, index, patch, opts.target, bound);
 	if ("error" in pre) return { error: pre.error, path };
+
+	if (opts.threeway) {
+		const tw = await planBinaryThreeway(
+			ctx,
+			index,
+			patch,
+			opts,
+			pre.content,
+			bound,
+			directToThreeway,
+		);
+		if (!("fallback" in tw)) {
+			tw.restore = pre.restore;
+			return tw;
+		}
+	}
 
 	// Verify the preimage matches what the patch expects (creation ⇒ empty).
 	if (patch.oldName) {
@@ -992,6 +1049,111 @@ async function planBinaryPatch(
 		fragmentResults: [],
 		restore: pre.restore,
 	};
+}
+
+/**
+ * Binary try_threeway: reconstruct "theirs" from the recorded base, then use
+ * the binary merge driver's default behavior (keep ours and stage all sides)
+ * when both sides changed. Add/add conflicts intentionally have no stage 1.
+ */
+async function planBinaryThreeway(
+	ctx: GitContext,
+	index: Index,
+	patch: ParsedPatch,
+	opts: ApplyEngineOptions,
+	oursBytes: Uint8Array,
+	bound: BoundAttributes | undefined,
+	directToThreeway: boolean,
+): Promise<FilePlan | { fallback: true; note?: string }> {
+	if (patch.kind === "delete" || (patch.kind === "new" && !directToThreeway)) {
+		return { fallback: true };
+	}
+	const binary = patch.binary;
+	if (!binary) return { fallback: true };
+	const path = patch.newName ?? patch.oldName ?? "";
+
+	const isAddAdd = patch.kind === "new";
+	let baseBytes: Uint8Array;
+	let baseOid: string;
+	if (isAddAdd) {
+		baseBytes = new Uint8Array(0);
+		baseOid = await hashObject("blob", baseBytes);
+	} else {
+		const oid = patch.oldOidPrefix;
+		if (!oid || !(await objectExists(ctx, oid))) {
+			return { fallback: true, note: THREEWAY_NO_BLOB };
+		}
+		baseOid = oid;
+		baseBytes = await readBlobBytes(ctx, oid);
+	}
+
+	const newOid = patch.newOidPrefix ?? "";
+	let theirsBytes: Uint8Array;
+	if (await objectExists(ctx, newOid)) {
+		theirsBytes = await readBlobBytes(ctx, newOid);
+	} else {
+		const hunk = opts.reverse ? binary.reverse : binary.forward;
+		if (!hunk) return { fallback: true };
+		try {
+			theirsBytes = await applyBinaryHunk(hunk, baseBytes);
+		} catch {
+			return { fallback: true };
+		}
+		if ((await hashObject("blob", theirsBytes)) !== newOid) return { fallback: true };
+	}
+
+	const oursOid = await hashObject("blob", oursBytes);
+	const theirsOid = await hashObject("blob", theirsBytes);
+	let content: Uint8Array;
+	let conflict = false;
+	let warning: string | undefined;
+	if (oursOid === baseOid) {
+		content = theirsBytes;
+	} else if (theirsOid === baseOid || theirsOid === oursOid) {
+		content = oursBytes;
+	} else {
+		const driven = bound?.merge
+			? await bound.merge({
+					path,
+					base: baseBytes,
+					ours: oursBytes,
+					theirs: theirsBytes,
+				})
+			: null;
+		if (driven) {
+			content = driven.content;
+			conflict = driven.conflict;
+		} else {
+			content = oursBytes;
+			conflict = true;
+			warning = `Cannot merge binary files: ${path} (ours vs. theirs)`;
+		}
+	}
+
+	const mode = resolveMode(patch, index, opts.target);
+	const plan: FilePlan = {
+		patch,
+		newPath: path,
+		oldPath: patch.kind === "modify" || patch.kind === "rename" ? patch.oldName : null,
+		content,
+		mode,
+		rejected: [],
+		whitespace: [],
+		fragmentResults: [],
+		threeway: {
+			kind: conflict ? "conflict" : "clean",
+			performed: isAddAdd || undefined,
+			...(warning ? { warning } : {}),
+		},
+	};
+	if (conflict) {
+		plan.conflictStages = [
+			...(isAddAdd ? [] : [{ stage: 1 as const, oid: baseOid, content: baseBytes }]),
+			{ stage: 2, oid: oursOid, content: oursBytes },
+			{ stage: 3, oid: theirsOid, content: theirsBytes },
+		];
+	}
+	return plan;
 }
 
 /**

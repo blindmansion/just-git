@@ -125,10 +125,15 @@ function renderApplyStderr(
 	for (const f of result.files) {
 		const tw = f.threeway;
 		if (!tw) continue;
+		if (tw.kind !== "fallback" && tw.performed) {
+			lines.push("Performing three-way merge...");
+		}
 		if (tw.kind === "clean") {
 			lines.push(`Applied patch to '${f.path}' cleanly.`);
 		} else if (tw.kind === "conflict") {
+			if (tw.warning) lines.push(`warning: ${tw.warning}`);
 			lines.push(`Applied patch to '${f.path}' with conflicts.`);
+			lines.push(`U ${f.path}`);
 		} else if (tw.kind === "fallback") {
 			if (tw.note) lines.push(`error: ${tw.note}`);
 			lines.push("Falling back to direct application...");

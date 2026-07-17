@@ -445,6 +445,14 @@ index 83db48f..aaaaaaa 100644
 -line3
 +CHANGED
 `;
+		const ADD_PATCH = `diff --git a/add.txt b/add.txt
+new file mode 100644
+index 0000000..1275430
+--- /dev/null
++++ b/add.txt
+@@ -0,0 +1 @@
++same
+`;
 
 		test("cleanly merges a divergent worktree", async () => {
 			const bash = await repoWith({ "file.txt": THREE_LINES });
@@ -468,6 +476,70 @@ index 83db48f..aaaaaaa 100644
 			const content = await readFile(bash.fs, "/repo/file.txt");
 			expect(content).toContain("<<<<<<<");
 			expect(content).toContain(">>>>>>>");
+		});
+
+		test("cleanly resolves add-add when both sides added the same content", async () => {
+			const bash = await repoWith({ "base.txt": "base\n" });
+			await bash.fs.writeFile("/repo/add.txt", "same\n");
+			await bash.exec("git add add.txt");
+
+			const result = await apply(bash, ADD_PATCH, "--3way");
+
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toBe(
+				"Performing three-way merge...\nApplied patch to 'add.txt' cleanly.\n",
+			);
+			expect(await readFile(bash.fs, "/repo/add.txt")).toBe("same\n");
+			const oid = await hashObject("blob", new TextEncoder().encode("same\n"));
+			const stages = await bash.exec("git ls-files --stage add.txt");
+			expect(stages.stdout).toBe(`100644 ${oid} 0\tadd.txt\n`);
+		});
+
+		test("records only stages 2 and 3 for an add-add conflict", async () => {
+			const bash = await repoWith({ "base.txt": "base\n" });
+			await bash.fs.writeFile("/repo/add.txt", "ours\n");
+			await bash.exec("git add add.txt");
+
+			const result = await apply(bash, ADD_PATCH, "--3way");
+
+			expect(result.exitCode).toBe(1);
+			expect(result.stderr).toBe(
+				"Performing three-way merge...\nApplied patch to 'add.txt' with conflicts.\nU add.txt\n",
+			);
+			expect(await readFile(bash.fs, "/repo/add.txt")).toBe(
+				"<<<<<<< ours\nours\n=======\nsame\n>>>>>>> theirs\n",
+			);
+			const oursOid = await hashObject("blob", new TextEncoder().encode("ours\n"));
+			const theirsOid = await hashObject("blob", new TextEncoder().encode("same\n"));
+			const stages = await bash.exec("git ls-files --stage add.txt");
+			expect(stages.stdout).toBe(`100644 ${oursOid} 2\tadd.txt\n100644 ${theirsOid} 3\tadd.txt\n`);
+		});
+
+		test("keeps ours and records all stages for a binary conflict", async () => {
+			const ours = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0x70, 0x71, 0x03]);
+			const bash = await repoWith({ "file.bin": BINARY_PREIMAGE });
+			await bash.fs.writeFile("/repo/file.bin", ours);
+			await bash.exec("git add file.bin");
+
+			const result = await apply(bash, await binaryModifyPatch(), "--3way");
+
+			expect(result.exitCode).toBe(1);
+			expect(result.stderr).toBe(
+				"warning: Cannot merge binary files: file.bin (ours vs. theirs)\n" +
+					"Applied patch to 'file.bin' with conflicts.\n" +
+					"U file.bin\n",
+			);
+			expect(await bash.fs.readFileBuffer("/repo/file.bin")).toEqual(ours);
+
+			const baseOid = await hashObject("blob", BINARY_PREIMAGE);
+			const oursOid = await hashObject("blob", ours);
+			const theirsOid = await hashObject("blob", BINARY_POSTIMAGE);
+			const stages = await bash.exec("git ls-files --stage file.bin");
+			expect(stages.stdout).toBe(
+				`100644 ${baseOid} 1\tfile.bin\n` +
+					`100644 ${oursOid} 2\tfile.bin\n` +
+					`100644 ${theirsOid} 3\tfile.bin\n`,
+			);
 		});
 
 		test("cannot be combined with --reject", async () => {
