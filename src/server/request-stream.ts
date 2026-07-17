@@ -6,6 +6,7 @@
  */
 
 import type { PushCommand } from "../lib/transport/smart-http.ts";
+import { RequestLimitError } from "./errors.ts";
 
 interface ByteReader {
 	read(): Promise<{ value?: Uint8Array; done: boolean }>;
@@ -13,6 +14,12 @@ interface ByteReader {
 }
 
 const decoder = new TextDecoder();
+const MAX_PKT_LINE_LENGTH = 65520;
+
+export interface ReceivePackCommandLimits {
+	maxCommandBytes?: number;
+	maxCommands?: number;
+}
 
 /**
  * Buffered reader over a ReadableStream that supports exact-byte reads and
@@ -59,11 +66,12 @@ export class StreamPktLineReader {
 	> {
 		if (!(await this.fill(4))) return null;
 		const lenHex = decoder.decode(this.buf.subarray(0, 4));
+		if (!/^[0-9a-fA-F]{4}$/.test(lenHex)) return null;
 		const len = parseInt(lenHex, 16);
 		if (len === 0) return { type: "flush", raw: this.consume(4) };
 		if (len === 1) return { type: "delim", raw: this.consume(4) };
 		if (len === 2) return { type: "response-end", raw: this.consume(4) };
-		if (len < 4 || Number.isNaN(len)) return null;
+		if (len < 4 || len > MAX_PKT_LINE_LENGTH) return null;
 		if (!(await this.fill(len))) return null;
 		const raw = new Uint8Array(this.consume(len));
 		return { type: "data", raw, text: decoder.decode(raw.subarray(4)) };
@@ -98,11 +106,13 @@ export class StreamPktLineReader {
  */
 export async function readReceivePackCommands(
 	reader: StreamPktLineReader,
+	limits: ReceivePackCommandLimits = {},
 ): Promise<{ commands: PushCommand[]; capabilities: string[]; sawFlush: boolean }> {
 	const commands: PushCommand[] = [];
 	let capabilities: string[] = [];
 	let first = true;
 	let sawFlush = false;
+	let commandBytes = 0;
 
 	while (true) {
 		const line = await reader.readPktLine();
@@ -112,6 +122,11 @@ export async function readReceivePackCommands(
 			break;
 		}
 		if (line.type !== "data") continue;
+
+		commandBytes += line.raw.byteLength;
+		if (limits.maxCommandBytes !== undefined && commandBytes > limits.maxCommandBytes) {
+			throw new RequestLimitError("Receive-pack command section too large");
+		}
 
 		let text = line.text;
 		if (text.endsWith("\n")) text = text.slice(0, -1);
@@ -130,6 +145,9 @@ export async function readReceivePackCommands(
 
 		const parts = text.split(" ");
 		if (parts.length >= 3) {
+			if (limits.maxCommands !== undefined && commands.length >= limits.maxCommands) {
+				throw new RequestLimitError("Too many receive-pack commands");
+			}
 			commands.push({
 				oldHash: parts[0]!,
 				newHash: parts[1]!,
