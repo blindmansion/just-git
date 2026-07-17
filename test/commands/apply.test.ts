@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { Bash } from "just-bash";
+import { formatBinaryPatch } from "../../src/lib/diff/binary-patch.ts";
+import { hashObject } from "../../src/lib/object-db.ts";
 import { EMPTY_REPO, TEST_ENV } from "../fixtures";
 import { createTestBash, readFile } from "../util";
 
 // ── Setup helpers ────────────────────────────────────────────────────
 
 /** A committed repo seeded with `files` (paths relative to /repo). */
-async function repoWith(files: Record<string, string>): Promise<Bash> {
+async function repoWith(files: Record<string, string | Uint8Array>): Promise<Bash> {
 	const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
 	await bash.exec("git init");
 	for (const [p, content] of Object.entries(files)) {
@@ -38,6 +40,17 @@ index 83db48f..d76b0c2 100644
 +line4
 `;
 const MODIFIED = "line1\nchanged\nline3\nline4\n";
+const BINARY_PREIMAGE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe, 0x01]);
+const BINARY_POSTIMAGE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0x80, 0x81, 0x02]);
+
+async function binaryModifyPatch(): Promise<string> {
+	const oldOid = await hashObject("blob", BINARY_PREIMAGE);
+	const newOid = await hashObject("blob", BINARY_POSTIMAGE);
+	const body = await formatBinaryPatch(BINARY_PREIMAGE, BINARY_POSTIMAGE);
+	return `diff --git a/file.bin b/file.bin
+index ${oldOid}..${newOid} 100644
+${body}`;
+}
 
 describe("git apply", () => {
 	describe("error cases", () => {
@@ -259,6 +272,43 @@ index 1111111..2222222 100644
 			expect(result.stderr).toContain("error: other.txt: does not match index");
 			// … but git's checkout_target side effect still restored file.txt.
 			expect(await readFile(bash.fs, "/repo/file.txt")).toBe(THREE_LINES);
+		});
+
+		test("--index applies a binary modification to the index and worktree", async () => {
+			const bash = await repoWith({ "file.bin": BINARY_PREIMAGE });
+			const result = await apply(bash, await binaryModifyPatch(), "--index");
+
+			expect(result.exitCode).toBe(0);
+			expect(await bash.fs.readFileBuffer("/repo/file.bin")).toEqual(BINARY_POSTIMAGE);
+			const status = await bash.exec("git status --porcelain");
+			expect(status.stdout).toBe("M  file.bin\n");
+		});
+
+		test("--index applies a binary patch when the worktree file is missing", async () => {
+			const bash = await repoWith({ "file.bin": BINARY_PREIMAGE });
+			await bash.fs.rm("/repo/file.bin", { force: true });
+
+			const result = await apply(bash, await binaryModifyPatch(), "--index");
+
+			expect(result.exitCode).toBe(0);
+			expect(await bash.fs.readFileBuffer("/repo/file.bin")).toEqual(BINARY_POSTIMAGE);
+			const status = await bash.exec("git status --porcelain");
+			expect(status.stdout).toBe("M  file.bin\n");
+		});
+
+		test("--index rejects binary worktree bytes that disagree with the index", async () => {
+			const bash = await repoWith({ "file.bin": BINARY_PREIMAGE });
+			const dirty = new Uint8Array([0x00, 0xde, 0xad, 0xbe, 0xef, 0xff]);
+			await bash.fs.writeFile("/repo/file.bin", dirty);
+
+			const result = await apply(bash, await binaryModifyPatch(), "--index");
+
+			expect(result.exitCode).toBe(1);
+			expect(result.stderr).toContain("error: file.bin: does not match index");
+			expect(result.stderr).not.toContain("the patch applies to");
+			expect(await bash.fs.readFileBuffer("/repo/file.bin")).toEqual(dirty);
+			const status = await bash.exec("git status --porcelain");
+			expect(status.stdout).toBe(" M file.bin\n");
 		});
 	});
 

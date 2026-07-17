@@ -833,7 +833,7 @@ async function loadPreimageBytes(
 	patch: ParsedPatch,
 	target: ApplyTarget,
 	bound: BoundAttributes | undefined,
-): Promise<{ content: Uint8Array } | { error: string }> {
+): Promise<{ content: Uint8Array; restore?: Restore } | { error: string }> {
 	if (patch.kind === "new") return { content: new Uint8Array(0) };
 	const src = patch.oldName;
 	if (!src) return { error: "missing source path" };
@@ -843,6 +843,25 @@ async function loadPreimageBytes(
 		if (!entry) return { error: `${src}: does not exist in index` };
 		return { content: await readBlobBytes(ctx, entry.hash) };
 	}
+
+	if (target === "index") {
+		const entry = findEntry(index, src);
+		if (!entry) return { error: `${src}: does not exist in index` };
+		const bytes = await readWorktreeBytes(ctx, src);
+		if (bytes === null) {
+			const indexBytes = await readBlobBytes(ctx, entry.hash);
+			return {
+				content: indexBytes,
+				restore: { path: src, content: indexBytes, mode: entry.mode },
+			};
+		}
+		const cleaned = bound ? await bound.clean(src, bytes) : bytes;
+		if ((await hashObject("blob", cleaned)) !== entry.hash) {
+			return { error: `${src}: does not match index` };
+		}
+		return { content: cleaned };
+	}
+
 	const content = await readWorktreeBytes(ctx, src);
 	if (content === null) return { error: `${src}: No such file or directory` };
 	return { content: bound ? await bound.clean(src, content) : content };
@@ -867,7 +886,7 @@ async function planBinaryPatch(
 	patch: ParsedPatch,
 	opts: ApplyEngineOptions,
 	bound: BoundAttributes | undefined,
-): Promise<FilePlan | { error: string; path: string; doesNotApply?: boolean }> {
+): Promise<FilePlan | PlanError> {
 	const path = (patch.kind === "delete" ? patch.oldName : patch.newName) ?? patch.oldName ?? "";
 	const name = patch.oldName ?? patch.newName ?? path;
 	const binary = patch.binary;
@@ -896,6 +915,7 @@ async function planBinaryPatch(
 				error: `the patch applies to '${name}' (${actual}), which does not match the current contents.`,
 				path,
 				doesNotApply: true,
+				restore: pre.restore,
 			};
 		}
 	} else if (pre.content.byteLength !== 0) {
@@ -903,6 +923,7 @@ async function planBinaryPatch(
 			error: `the patch applies to an empty '${name}' but it is not empty`,
 			path,
 			doesNotApply: true,
+			restore: pre.restore,
 		};
 	}
 
@@ -919,6 +940,7 @@ async function planBinaryPatch(
 			rejected: [],
 			whitespace: [],
 			fragmentResults: [],
+			restore: pre.restore,
 		};
 	}
 
@@ -934,12 +956,18 @@ async function planBinaryPatch(
 				error: `cannot reverse-apply a binary patch without the reverse hunk to '${name}'`,
 				path,
 				doesNotApply: true,
+				restore: pre.restore,
 			};
 		}
 		try {
 			result = await applyBinaryHunk(hunk, pre.content);
 		} catch {
-			return { error: `binary patch does not apply to '${name}'`, path, doesNotApply: true };
+			return {
+				error: `binary patch does not apply to '${name}'`,
+				path,
+				doesNotApply: true,
+				restore: pre.restore,
+			};
 		}
 		const actual = await hashObject("blob", result);
 		if (actual !== newOid) {
@@ -947,6 +975,7 @@ async function planBinaryPatch(
 				error: `binary patch to '${name}' creates incorrect result (expecting ${newOid}, got ${actual})`,
 				path,
 				doesNotApply: true,
+				restore: pre.restore,
 			};
 		}
 	}
@@ -961,6 +990,7 @@ async function planBinaryPatch(
 		rejected: [],
 		whitespace: [],
 		fragmentResults: [],
+		restore: pre.restore,
 	};
 }
 
