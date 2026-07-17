@@ -15,7 +15,6 @@
  * ```
  */
 
-import { nodeRequestToWebRequest, pipeWebResponseToNode } from "../node-http.ts";
 import { buildCommit } from "../repo/writing.ts";
 import { httpTransport } from "../transport.ts";
 import type { GitRepo, TransportResolver } from "../lib/types.ts";
@@ -23,6 +22,7 @@ import type { GitRepo, TransportResolver } from "../lib/types.ts";
 const inProcessAuth = new WeakMap<Request, unknown>();
 import { PackCache, applyCasRefUpdates, resolveRefUpdates } from "./operations.ts";
 import { createHttpHandler } from "./http-handler.ts";
+import { createNodeHandler } from "./node-handler.ts";
 import { handleSshSession } from "./ssh-session.ts";
 import { createRepoStore, type CreateRepoOptions } from "../store/repo-store.ts";
 import { MemoryStorage } from "../store/memory-storage.ts";
@@ -31,8 +31,6 @@ import { mergePolicyAndHooks } from "./policy.ts";
 import type {
 	GitServerConfig,
 	GitServer,
-	NodeHttpRequest,
-	NodeHttpResponse,
 	Auth,
 	AuthProvider,
 	RefUpdate,
@@ -237,9 +235,7 @@ export function createServer<A = Auth>(
 			}
 		},
 
-		nodeHandler(req: NodeHttpRequest, res: NodeHttpResponse): void {
-			void handleNodeRequest(server, req, res);
-		},
+		nodeHandler: createNodeHandler((request) => server.fetch(request)),
 
 		createRepo: (id, options) => storage.createRepo(id, options) as Promise<GitRepo>,
 		repo: (id, override) => storage.repo(id, override) as Promise<GitRepo | null>,
@@ -312,52 +308,4 @@ export function createServer<A = Auth>(
 		},
 	};
 	return server;
-}
-
-// ── Node.js adapter orchestration ───────────────────────────────────
-
-async function handleNodeRequest(
-	server: Pick<GitServer<any>, "fetch">,
-	req: NodeHttpRequest,
-	res: NodeHttpResponse,
-): Promise<void> {
-	let bridge: ReturnType<typeof nodeRequestToWebRequest> | undefined;
-	try {
-		bridge = nodeRequestToWebRequest(req);
-		const response = await server.fetch(bridge.request);
-		const cleanupNow = deferRequestCleanupUntilResponseFinishes(bridge.cleanup, res);
-		try {
-			await pipeWebResponseToNode(response, res);
-			if (!cleanupNow) bridge.cleanup();
-		} catch (error) {
-			cleanupNow?.();
-			throw error;
-		}
-	} catch {
-		bridge?.cleanup();
-		try {
-			res.writeHead(500);
-			res.end("Internal Server Error");
-		} catch {
-			// Headers were already sent or the socket disconnected.
-		}
-	}
-}
-
-function deferRequestCleanupUntilResponseFinishes(
-	cleanupRequest: () => void,
-	res: NodeHttpResponse,
-): (() => void) | undefined {
-	if (!res.once) return undefined;
-	let cleaned = false;
-	const cleanup = (): void => {
-		if (cleaned) return;
-		cleaned = true;
-		res.off?.("finish", cleanup);
-		res.off?.("close", cleanup);
-		cleanupRequest();
-	};
-	res.once("finish", cleanup);
-	res.once("close", cleanup);
-	return cleanup;
 }
