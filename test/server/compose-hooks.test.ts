@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { GitRepo } from "../../src/lib/types.ts";
-import { composeHooks } from "../../src/server/handler.ts";
+import { composeHooks } from "../../src/server/policy.ts";
 import type {
 	Auth,
 	AdvertiseRefsEvent,

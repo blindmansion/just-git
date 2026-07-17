@@ -43,22 +43,19 @@ import { createRepoStore, type CreateRepoOptions } from "../store/repo-store.ts"
 import { MemoryStorage } from "../store/memory-storage.ts";
 import { isValidRepoId } from "../store/repo-id.ts";
 import { RequestLimitError } from "./errors.ts";
+import { mergePolicyAndHooks } from "./policy.ts";
 import { readReceivePackCommands, StreamPktLineReader } from "./request-stream.ts";
 import type {
 	GitServerConfig,
 	GitServer,
 	NodeHttpRequest,
 	NodeHttpResponse,
-	RefAdvertisement,
 	Rejection,
-	ServerHooks,
-	ServerPolicy,
 	Auth,
 	AuthProvider,
 	RefUpdate,
 	SshChannel,
 	SshSessionInfo,
-	UpdateEvent,
 } from "./types.ts";
 
 const defaultAuthProvider: AuthProvider<Auth> = {
@@ -777,142 +774,4 @@ function deferRequestCleanupUntilResponseFinishes(
 	res.once("finish", cleanup);
 	res.once("close", cleanup);
 	return cleanup;
-}
-
-// ── Policy → hooks ─────────────────────────────────────────────────
-
-function buildPolicyHooks(policy: ServerPolicy): ServerHooks<any> {
-	const {
-		protectedBranches = [],
-		denyNonFastForward = false,
-		denyDeletes = false,
-		immutableTags = false,
-	} = policy;
-
-	const protectedSet = new Set(
-		protectedBranches.map((b) => (b.startsWith("refs/") ? b : `refs/heads/${b}`)),
-	);
-
-	const hooks: ServerHooks<any> = {};
-
-	if (protectedSet.size > 0) {
-		hooks.preReceive = async (event) => {
-			for (const update of event.updates) {
-				if (!protectedSet.has(update.ref)) continue;
-				if (update.isDelete) {
-					return { reject: true, message: `cannot delete protected branch ${update.ref}` };
-				}
-				if (!update.isCreate && !update.isFF) {
-					return {
-						reject: true,
-						message: `non-fast-forward push to protected branch ${update.ref}`,
-					};
-				}
-			}
-		};
-	}
-
-	if (denyNonFastForward || denyDeletes || immutableTags) {
-		hooks.update = async (event: UpdateEvent): Promise<void | Rejection> => {
-			if (denyDeletes && event.update.isDelete) {
-				return { reject: true, message: "ref deletion denied" };
-			}
-			if (immutableTags && event.update.ref.startsWith("refs/tags/")) {
-				if (event.update.isDelete) {
-					return { reject: true, message: "tag deletion denied" };
-				}
-				if (!event.update.isCreate) {
-					return { reject: true, message: "tag overwrite denied" };
-				}
-			}
-			if (
-				denyNonFastForward &&
-				!event.update.isCreate &&
-				!event.update.isDelete &&
-				!event.update.isFF
-			) {
-				return { reject: true, message: "non-fast-forward" };
-			}
-		};
-	}
-
-	return hooks;
-}
-
-function mergePolicyAndHooks<A>(
-	policy: ServerPolicy | undefined,
-	hooks: ServerHooks<A> | undefined,
-): ServerHooks<A> | undefined {
-	const policyHooks = policy ? buildPolicyHooks(policy) : undefined;
-	if (policyHooks && hooks) return composeHooks(policyHooks, hooks);
-	return policyHooks ?? hooks;
-}
-
-/**
- * Compose multiple hook sets into a single `ServerHooks` object.
- *
- * - **Pre-hooks** (`preReceive`, `update`): run in order, short-circuit
- *   on the first `Rejection`.
- * - **Post-hooks** (`postReceive`): run all in order. Each is individually
- *   try/caught so one failure doesn't prevent the rest from running.
- * - **Filter hooks** (`advertiseRefs`): chain — each hook receives the
- *   refs returned by the previous one. Short-circuits on `Rejection`.
- *   Returning void passes through unchanged.
- */
-export function composeHooks<A = Auth>(
-	...hookSets: (ServerHooks<A> | undefined)[]
-): ServerHooks<A> {
-	const sets = hookSets.filter((h): h is ServerHooks<A> => h != null);
-	if (sets.length === 0) return {};
-	if (sets.length === 1) return sets[0]!;
-
-	const composed: ServerHooks<A> = {};
-
-	const preReceiveHandlers = sets.filter((s) => s.preReceive).map((s) => s.preReceive!);
-	if (preReceiveHandlers.length > 0) {
-		composed.preReceive = async (event) => {
-			for (const handler of preReceiveHandlers) {
-				const result = await handler(event);
-				if (isRejection(result)) return result;
-			}
-		};
-	}
-
-	const updateHandlers = sets.filter((s) => s.update).map((s) => s.update!);
-	if (updateHandlers.length > 0) {
-		composed.update = async (event) => {
-			for (const handler of updateHandlers) {
-				const result = await handler(event);
-				if (isRejection(result)) return result;
-			}
-		};
-	}
-
-	const postReceiveHandlers = sets.filter((s) => s.postReceive).map((s) => s.postReceive!);
-	if (postReceiveHandlers.length > 0) {
-		composed.postReceive = async (event) => {
-			for (const handler of postReceiveHandlers) {
-				try {
-					await handler(event);
-				} catch {
-					// fire-and-forget: one handler failing doesn't block the rest
-				}
-			}
-		};
-	}
-
-	const advertiseRefsHandlers = sets.filter((s) => s.advertiseRefs).map((s) => s.advertiseRefs!);
-	if (advertiseRefsHandlers.length > 0) {
-		composed.advertiseRefs = async (event) => {
-			let refs: RefAdvertisement[] = event.refs;
-			for (const handler of advertiseRefsHandlers) {
-				const result = await handler({ ...event, refs });
-				if (isRejection(result)) return result;
-				if (result) refs = result;
-			}
-			return refs;
-		};
-	}
-
-	return composed;
 }
