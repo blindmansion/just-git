@@ -785,7 +785,6 @@ describe("nodeHandler", () => {
 		await waitForNodeHandler();
 		expect(res.statusCode).toBe(413);
 		expect(Buffer.concat(res.chunks).toString("utf8")).toBe("Request body too large");
-		expect(req.destroyed).toBe(true);
 	});
 
 	test("rejects oversized request bodies from content-length before reading", async () => {
@@ -799,9 +798,9 @@ describe("nodeHandler", () => {
 		const res = createMockNodeRes();
 		p.nodeHandler(req, res);
 
+		await waitForNodeHandler();
 		expect(res.statusCode).toBe(413);
-		expect(res.endData).toBe("Request body too large");
-		expect(req.destroyed).toBe(true);
+		expect(Buffer.concat(res.chunks).toString("utf8")).toBe("Request body too large");
 	});
 
 	test("streams upstream responses to the node client", async () => {

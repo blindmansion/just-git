@@ -3,7 +3,12 @@
 // requests, enabling browser-based clients to clone/fetch/push against
 // hosts like GitHub that lack CORS support.
 
-import type { NodeHttpRequest, NodeHttpResponse } from "../node-http.ts";
+import {
+	nodeRequestToWebRequest,
+	pipeWebResponseToNode,
+	type NodeHttpRequest,
+	type NodeHttpResponse,
+} from "../node-http.ts";
 import type { FetchFunction, NetworkPolicy } from "../lib/transport/transport.ts";
 
 export type { NodeHttpRequest, NodeHttpResponse } from "../node-http.ts";
@@ -510,39 +515,29 @@ export function createProxy(config: GitProxyConfig): GitProxy {
 	}
 
 	function nodeHandler(req: NodeHttpRequest, res: NodeHttpResponse): void {
-		const host = typeof req.headers.host === "string" ? req.headers.host : "localhost";
-		const method = req.method ?? "GET";
-		const url = new URL(req.url ?? "/", `http://${host}`);
-		const headers = nodeHeadersToWeb(req.headers);
+		void handleNodeRequest(req, res);
+	}
 
-		if (method === "GET" || method === "HEAD" || method === "OPTIONS") {
-			handleFetch(new Request(url.href, { method, headers })).then(
-				(response) => pipeResponseToNode(response, res),
-				(error) => nodeError(res, error),
-			);
-			return;
+	async function handleNodeRequest(req: NodeHttpRequest, res: NodeHttpResponse): Promise<void> {
+		let bridge: ReturnType<typeof nodeRequestToWebRequest> | undefined;
+		let response: Response;
+		try {
+			bridge = nodeRequestToWebRequest(req);
+			response = await handleFetch(limitNodeAdapterRequest(bridge.request, maxRequestBytes));
+		} catch (error) {
+			response = nodeErrorResponse(error);
 		}
 
-		const contentLength = readContentLength(headers);
-		if (contentLength !== null && contentLength > maxRequestBytes) {
-			res.writeHead(413, { "Content-Type": "text/plain" });
-			res.end("Request body too large");
-			destroyNodeRequest(req);
-			return;
+		const cleanupNow = bridge
+			? deferRequestCleanupUntilResponseFinishes(bridge.cleanup, res)
+			: undefined;
+		try {
+			await pipeWebResponseToNode(response, res);
+			if (bridge && !cleanupNow) bridge.cleanup();
+		} catch {
+			cleanupNow?.();
+			bridge?.cleanup();
 		}
-
-		const body = nodeRequestBodyToWebStream(req, maxRequestBytes);
-		const request = new Request(url.href, {
-			method,
-			headers,
-			body,
-			duplex: "half",
-		} as RequestInit);
-
-		handleFetch(request).then(
-			(response) => pipeResponseToNode(response, res),
-			(error) => nodeError(res, error),
-		);
 	}
 
 	return {
@@ -553,19 +548,6 @@ export function createProxy(config: GitProxyConfig): GitProxy {
 
 // ── Node helpers ────────────────────────────────────────────────────
 
-function nodeHeadersToWeb(headers: Record<string, string | string[] | undefined>): Headers {
-	const h = new Headers();
-	for (const [key, value] of Object.entries(headers)) {
-		if (value === undefined) continue;
-		if (Array.isArray(value)) {
-			for (const v of value) h.append(key, v);
-		} else {
-			h.set(key, value);
-		}
-	}
-	return h;
-}
-
 function readContentLength(headers: Headers): number | null {
 	const value = headers.get("content-length");
 	if (!value) return null;
@@ -573,90 +555,68 @@ function readContentLength(headers: Headers): number | null {
 	return Number.isFinite(parsed) ? parsed : null;
 }
 
-function nodeRequestBodyToWebStream(
-	req: NodeHttpRequest,
-	maxRequestBytes: number,
-): ReadableStream<Uint8Array> {
-	let finished = false;
+function limitNodeAdapterRequest(request: Request, maxRequestBytes: number): Request {
+	const contentLength = readContentLength(request.headers);
+	if (contentLength !== null && contentLength > maxRequestBytes) {
+		throw new RequestLimitError();
+	}
+	if (!request.body) return request;
+
+	const reader = request.body.getReader();
 	let totalBytes = 0;
-
-	return new ReadableStream<Uint8Array>({
-		start(controller) {
-			req.on("data", (chunk: Buffer | Uint8Array) => {
-				if (finished) return;
-				const data = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
-				totalBytes += data.byteLength;
-				if (totalBytes > maxRequestBytes) {
-					finished = true;
-					controller.error(new RequestLimitError());
-					destroyNodeRequest(req);
-					return;
-				}
-				controller.enqueue(data);
-			});
-
-			req.on("end", () => {
-				if (finished) return;
-				finished = true;
+	const body = new ReadableStream<Uint8Array>({
+		async pull(controller) {
+			const result = await reader.read();
+			if (result.done) {
 				controller.close();
-			});
-
-			req.on("error", (error?: unknown) => {
-				if (finished) return;
-				finished = true;
-				controller.error(error instanceof Error ? error : new Error("Bad Request"));
-			});
+				reader.releaseLock();
+				return;
+			}
+			totalBytes += result.value.byteLength;
+			if (totalBytes > maxRequestBytes) {
+				const error = new RequestLimitError();
+				await reader.cancel(error);
+				controller.error(error);
+				return;
+			}
+			controller.enqueue(result.value);
 		},
-		cancel() {
-			finished = true;
-			destroyNodeRequest(req);
+		async cancel(reason) {
+			await reader.cancel(reason);
 		},
 	});
+	return new Request(request.url, {
+		method: request.method,
+		headers: request.headers,
+		body,
+		duplex: "half",
+	} as RequestInit);
 }
 
-function destroyNodeRequest(req: NodeHttpRequest): void {
-	try {
-		(req as NodeHttpRequest & { destroy?: () => void }).destroy?.();
-	} catch {
-		// ignore
-	}
+function deferRequestCleanupUntilResponseFinishes(
+	cleanupRequest: () => void,
+	res: NodeHttpResponse,
+): (() => void) | undefined {
+	if (!res.once) return undefined;
+	let cleaned = false;
+	const cleanup = (): void => {
+		if (cleaned) return;
+		cleaned = true;
+		res.off?.("finish", cleanup);
+		res.off?.("close", cleanup);
+		cleanupRequest();
+	};
+	res.once("finish", cleanup);
+	res.once("close", cleanup);
+	return cleanup;
 }
 
-async function pipeResponseToNode(response: Response, res: NodeHttpResponse): Promise<void> {
-	const headers: Record<string, string> = {};
-	response.headers.forEach((value, key) => {
-		headers[key] = value;
+function nodeErrorResponse(error: unknown): Response {
+	const isLimit = isRequestLimitError(error);
+	return new Response(isLimit ? error.message : "Bad Gateway", {
+		status: isLimit ? 413 : 502,
+		headers: { "Content-Type": "text/plain" },
 	});
-	res.writeHead(response.status, headers);
-
-	if (!response.body) {
-		res.end();
-		return;
-	}
-
-	const reader = response.body.getReader();
-	try {
-		for (;;) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			res.write(value);
-		}
-	} catch {
-		// Client disconnect or upstream error — just end
-	} finally {
-		res.end();
-	}
-}
-
-function nodeError(res: NodeHttpResponse, error: unknown): void {
-	const status = isRequestLimitError(error) ? 413 : 502;
-	const message = isRequestLimitError(error) ? error.message : "Bad Gateway";
-	try {
-		res.writeHead(status, { "Content-Type": "text/plain" });
-		res.end(message);
-	} catch {
-		// Response already started — nothing we can do
-	}
 }
 
 // ── Client-side helper ──────────────────────────────────────────────
