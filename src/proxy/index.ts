@@ -17,7 +17,7 @@ export type { NodeHttpRequest, NodeHttpResponse } from "../node-http.ts";
 
 export interface GitProxyLimits {
 	/**
-	 * Maximum request body size accepted by the Node.js adapter.
+	 * Maximum request body size accepted by the proxy.
 	 *
 	 * Default: `512 * 1024 * 1024` (512 MiB)
 	 */
@@ -101,7 +101,7 @@ export interface GitProxyConfig {
 	 */
 	insecureHosts?: string[];
 
-	/** Limits for the Node.js adapter. */
+	/** Proxy request limits. */
 	limits?: GitProxyLimits;
 
 	/** Redirect handling policy for upstream fetches. */
@@ -459,6 +459,11 @@ export function createProxy(config: GitProxyConfig): GitProxy {
 			return new Response(null, { status: 200, headers });
 		}
 
+		const contentLength = readContentLength(req.headers);
+		if (method === "POST" && contentLength !== null && contentLength > maxRequestBytes) {
+			return textResponse(413, "Request body too large", cors);
+		}
+
 		const upstreamUrl = buildUpstreamUrl(upstream.host, upstream.path, url.search, insecureHosts);
 		const upstreamHeaders: Record<string, string> = { "User-Agent": userAgent };
 		for (const name of FORWARDED_HEADERS) {
@@ -466,7 +471,8 @@ export function createProxy(config: GitProxyConfig): GitProxy {
 			if (value) upstreamHeaders[name] = value;
 		}
 
-		const body = method === "POST" ? req.body : undefined;
+		const body =
+			method === "POST" && req.body ? limitRequestBody(req.body, maxRequestBytes) : undefined;
 
 		let redirectResult: RedirectResult;
 		try {
@@ -523,9 +529,9 @@ export function createProxy(config: GitProxyConfig): GitProxy {
 		let response: Response;
 		try {
 			bridge = nodeRequestToWebRequest(req);
-			response = await handleFetch(limitNodeAdapterRequest(bridge.request, maxRequestBytes));
-		} catch (error) {
-			response = nodeErrorResponse(error);
+			response = await handleFetch(bridge.request);
+		} catch {
+			response = nodeErrorResponse();
 		}
 
 		const cleanupNow = bridge
@@ -555,42 +561,51 @@ function readContentLength(headers: Headers): number | null {
 	return Number.isFinite(parsed) ? parsed : null;
 }
 
-function limitNodeAdapterRequest(request: Request, maxRequestBytes: number): Request {
-	const contentLength = readContentLength(request.headers);
-	if (contentLength !== null && contentLength > maxRequestBytes) {
-		throw new RequestLimitError();
-	}
-	if (!request.body) return request;
-
-	const reader = request.body.getReader();
+function limitRequestBody(
+	body: ReadableStream<Uint8Array>,
+	maxRequestBytes: number,
+): ReadableStream<Uint8Array> {
+	const reader = body.getReader();
 	let totalBytes = 0;
-	const body = new ReadableStream<Uint8Array>({
+	let released = false;
+	const releaseReader = (): void => {
+		if (released) return;
+		released = true;
+		reader.releaseLock();
+	};
+	return new ReadableStream<Uint8Array>({
 		async pull(controller) {
-			const result = await reader.read();
+			const result = await reader.read().catch((error) => {
+				releaseReader();
+				throw error;
+			});
 			if (result.done) {
 				controller.close();
-				reader.releaseLock();
+				releaseReader();
 				return;
 			}
 			totalBytes += result.value.byteLength;
 			if (totalBytes > maxRequestBytes) {
 				const error = new RequestLimitError();
-				await reader.cancel(error);
+				try {
+					await reader.cancel(error);
+				} catch {
+					// Preserve the request-limit failure.
+				}
+				releaseReader();
 				controller.error(error);
 				return;
 			}
 			controller.enqueue(result.value);
 		},
 		async cancel(reason) {
-			await reader.cancel(reason);
+			try {
+				await reader.cancel(reason);
+			} finally {
+				releaseReader();
+			}
 		},
 	});
-	return new Request(request.url, {
-		method: request.method,
-		headers: request.headers,
-		body,
-		duplex: "half",
-	} as RequestInit);
 }
 
 function deferRequestCleanupUntilResponseFinishes(
@@ -611,10 +626,9 @@ function deferRequestCleanupUntilResponseFinishes(
 	return cleanup;
 }
 
-function nodeErrorResponse(error: unknown): Response {
-	const isLimit = isRequestLimitError(error);
-	return new Response(isLimit ? error.message : "Bad Gateway", {
-		status: isLimit ? 413 : 502,
+function nodeErrorResponse(): Response {
+	return new Response("Bad Gateway", {
+		status: 502,
 		headers: { "Content-Type": "text/plain" },
 	});
 }

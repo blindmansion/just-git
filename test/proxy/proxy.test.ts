@@ -211,6 +211,72 @@ describe("request validation", () => {
 	});
 });
 
+// ── Request limits ──────────────────────────────────────────────────
+
+describe("request limits", () => {
+	test("native fetch rejects oversized content-length before forwarding", async () => {
+		const { fn, calls } = mockFetch();
+		const p = proxy({ limits: { maxRequestBytes: 4 }, fetch: fn as any });
+		const res = await p.fetch(
+			req("/github.com/user/repo.git/git-upload-pack", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/x-git-upload-pack-request",
+					"Content-Length": "5",
+				},
+				body: "hello",
+			}),
+		);
+
+		expect(res.status).toBe(413);
+		expect(await res.text()).toBe("Request body too large");
+		expect(calls).toHaveLength(0);
+	});
+
+	test("native fetch limits streaming request bodies", async () => {
+		const body = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(encoder.encode("hel"));
+				controller.enqueue(encoder.encode("lo"));
+				controller.close();
+			},
+		});
+		const p = proxy({
+			limits: { maxRequestBytes: 4 },
+			fetch: (async (_input: string | URL | Request, init?: RequestInit) => {
+				await new Response(init?.body as ReadableStream<Uint8Array>).arrayBuffer();
+				return new Response("ok");
+			}) as any,
+		});
+		const res = await p.fetch(
+			req("/github.com/user/repo.git/git-upload-pack", {
+				method: "POST",
+				headers: { "Content-Type": "application/x-git-upload-pack-request" },
+				body,
+				duplex: "half",
+			} as RequestInit),
+		);
+
+		expect(res.status).toBe(413);
+		expect(await res.text()).toBe("Request body too large");
+	});
+
+	test("native fetch forwards request bodies within the limit", async () => {
+		let received = "";
+		const p = proxy({
+			limits: { maxRequestBytes: 5 },
+			fetch: (async (_input: string | URL | Request, init?: RequestInit) => {
+				received = await new Response(init?.body as ReadableStream<Uint8Array>).text();
+				return new Response("ok");
+			}) as any,
+		});
+		const res = await p.fetch(postUploadPack());
+
+		expect(res.status).toBe(200);
+		expect(received).toBe("dummy");
+	});
+});
+
 // ── Host allowlist ──────────────────────────────────────────────────
 
 describe("host allowlist", () => {
