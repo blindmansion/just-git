@@ -220,6 +220,17 @@ export interface GitServerConfig<A = Auth> {
 	};
 
 	/**
+	 * Control receive-pack response behavior.
+	 */
+	receiveOptions?: {
+		/**
+		 * Milliseconds of hook silence before sending a sideband keepalive.
+		 * Set to `false` to disable. Default: 5000, matching Git.
+		 */
+		keepAliveMs?: number | false;
+	};
+
+	/**
 	 * Safety limits for incoming receive-pack requests.
 	 *
 	 * These bounds are enforced while streaming HTTP bodies and during pack
@@ -534,6 +545,20 @@ export interface GitServer<A = Auth> {
 
 // ── Hooks ───────────────────────────────────────────────────────────
 
+/**
+ * Client-visible output for receive-pack hooks.
+ *
+ * The server maps this transport-neutral sink to sideband channel 2 when
+ * negotiated, SSH stderr when sideband is unavailable, or a no-op sink when
+ * the transport has no safe progress channel.
+ */
+export interface HookOutput {
+	/** Write bytes exactly as provided. Strings are UTF-8 encoded. No newline is added. */
+	write(data: string | Uint8Array): Promise<void>;
+	/** Write a UTF-8 message followed by exactly one line feed. */
+	writeLine(message?: string): Promise<void>;
+}
+
 export interface ServerHooks<A = Auth> {
 	/**
 	 * Called after objects are unpacked but before any refs update.
@@ -622,6 +647,8 @@ export interface PreReceiveEvent<A = Auth> {
 	updates: readonly RefUpdate[];
 	/** Auth context from the transport's auth provider. Always present — hooks only fire from HTTP/SSH transport. */
 	auth: A;
+	/** Best-effort client-visible progress output. */
+	output: HookOutput;
 }
 
 /** Fired per-ref after preReceive passes. */
@@ -632,6 +659,8 @@ export interface UpdateEvent<A = Auth> {
 	update: RefUpdate;
 	/** Auth context from the transport's auth provider. Always present — hooks only fire from HTTP/SSH transport. */
 	auth: A;
+	/** Best-effort client-visible progress output. */
+	output: HookOutput;
 }
 
 /** Fired after all ref updates succeed. */
@@ -642,6 +671,8 @@ export interface PostReceiveEvent<A = Auth> {
 	updates: readonly RefUpdate[];
 	/** Auth context from the transport's auth provider. Always present — hooks only fire from HTTP/SSH transport. */
 	auth: A;
+	/** Best-effort client-visible progress output. */
+	output: HookOutput;
 }
 
 /**

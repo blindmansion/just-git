@@ -10,6 +10,7 @@ import {
 	encodePktLine,
 	flushPkt,
 	concatPktLines,
+	demuxSideband,
 	parsePktLineStream,
 	pktLineText,
 } from "../../src/lib/transport/pkt-line.ts";
@@ -213,6 +214,35 @@ describe("buildReportStatus", () => {
 		expect(lines[0]!.type).toBe("data");
 		const data = lines[0]!.type === "data" ? lines[0]!.data : new Uint8Array();
 		expect(data[0]).toBe(1); // band-1
+	});
+
+	test("chunks large report-status streams within the sideband-64k limit", () => {
+		const refs = Array.from({ length: 3000 }, (_, index) => ({
+			name: `refs/heads/branch-${index.toString().padStart(4, "0")}`,
+			ok: true,
+		}));
+		const result = buildReportStatus(true, refs, true);
+		const outerLines = parsePktLineStream(result);
+		const dataLines = outerLines.filter((line) => line.type === "data");
+
+		expect(dataLines.length).toBeGreaterThan(1);
+		for (const line of dataLines) {
+			if (line.type === "data") expect(line.data.byteLength).toBeLessThanOrEqual(65516);
+		}
+
+		const status = demuxSideband(outerLines).packData;
+		const statusLines = parsePktLineStream(status);
+		expect(pktLineText(statusLines[0]!)).toBe("unpack ok");
+		expect(pktLineText(statusLines.at(-2)!)).toBe("ok refs/heads/branch-2999");
+		expect(statusLines.at(-1)!.type).toBe("flush");
+	});
+
+	test("can leave the outer sideband stream open for post-receive output", () => {
+		const result = buildReportStatus(true, [{ name: "refs/heads/main", ok: true }], true, false);
+		const lines = parsePktLineStream(result);
+
+		expect(lines.every((line) => line.type === "data")).toBe(true);
+		expect(demuxSideband(lines).packData.byteLength).toBeGreaterThan(0);
 	});
 });
 

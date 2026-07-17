@@ -173,6 +173,39 @@ describe("server with real git client", () => {
 		}
 	});
 
+	test("real git displays receive hook sideband output", async () => {
+		const sandbox = await createSandbox("just-git-hook-output-");
+		const hooked = startServer({
+			storage: new MemoryStorage(),
+			hooks: {
+				preReceive: async ({ output }) => output.writeLine("running server checks"),
+				postReceive: async ({ output }) => output.writeLine("server checks complete"),
+			},
+		});
+		try {
+			await hooked.server.createRepo("repo");
+			const cloneDir = join(sandbox, "local");
+			const clone = await realGit(
+				home,
+				sandbox,
+				`clone http://localhost:${hooked.port}/repo ${cloneDir}`,
+			);
+			expect(clone.exitCode).toBe(0);
+			writeFileSync(join(cloneDir, "hooked.txt"), "from native git");
+			await realGit(home, cloneDir, "add .");
+			await realGit(home, cloneDir, 'commit -m "exercise sideband hooks"');
+
+			const push = await realGit(home, cloneDir, "push -u origin HEAD:main");
+
+			expect(push.exitCode).toBe(0);
+			expect(push.stderr).toContain("remote: running server checks");
+			expect(push.stderr).toContain("remote: server checks complete");
+		} finally {
+			hooked.stop();
+			await rm(sandbox, { recursive: true, force: true });
+		}
+	});
+
 	test("fetch from server after new server-side commit", async () => {
 		const sandbox = await createSandbox("just-git-realclient-");
 		try {

@@ -18,11 +18,13 @@ import {
 	handleUploadPack,
 	handleV2Fetch,
 	ingestReceivePackFromStream,
-	applyReceivePack,
+	applyReceivePackUpdates,
+	runPostReceiveHook,
 	type AuthorizedFetchSet,
 	type ReceivePackLimitOptions,
 } from "./operations.ts";
 import { buildReportStatus } from "./protocol.ts";
+import { ReceivePackOutput } from "./receive-output.ts";
 import type { PushCommand } from "../lib/transport/smart-http.ts";
 import type { ServerHooks, Auth, RefUpdate, SshChannel, Rejection } from "./types.ts";
 import { RequestLimitError } from "./errors.ts";
@@ -70,6 +72,7 @@ interface HandleSessionOptions<A = Auth> {
 	hooks?: ServerHooks<A>;
 	packCache?: PackCache;
 	packOptions?: { noDelta?: boolean; deltaWindow?: number };
+	receiveKeepAliveMs?: number | false;
 	receiveLimits?: ReceivePackLimitOptions;
 	fetchLimits?: FetchLimitOptions;
 	auth: A;
@@ -87,7 +90,16 @@ export async function handleSshSession<A = Auth>(
 	channel: SshChannel,
 	options: HandleSessionOptions<A>,
 ): Promise<number> {
-	const { resolveRepo, hooks, packCache, packOptions, receiveLimits, fetchLimits, auth } = options;
+	const {
+		resolveRepo,
+		hooks,
+		packCache,
+		packOptions,
+		receiveKeepAliveMs,
+		receiveLimits,
+		fetchLimits,
+		auth,
+	} = options;
 	const onRefApplied = options.onRefApplied;
 	const writer = channel.writable.getWriter();
 	try {
@@ -158,7 +170,9 @@ export async function handleSshSession<A = Auth>(
 					capabilities,
 					sawFlush,
 					packStream,
+					channel,
 					hooks,
+					receiveKeepAliveMs,
 					receiveLimits,
 					auth,
 					onRefApplied,
@@ -196,7 +210,9 @@ interface ServeReceivePackOptions<A> {
 	capabilities: string[];
 	sawFlush: boolean;
 	packStream: AsyncIterable<Uint8Array>;
+	channel: SshChannel;
 	hooks?: ServerHooks<A>;
+	receiveKeepAliveMs?: number | false;
 	receiveLimits?: ReceivePackLimitOptions;
 	auth: A;
 	onRefApplied?: (repoId: string, repo: GitRepo, applied: readonly RefUpdate[]) => void;
@@ -211,7 +227,9 @@ async function serveReceivePackStreaming<A>(options: ServeReceivePackOptions<A>)
 		capabilities,
 		sawFlush,
 		packStream,
+		channel,
 		hooks,
+		receiveKeepAliveMs,
 		receiveLimits,
 		auth,
 	} = options;
@@ -240,22 +258,43 @@ async function serveReceivePackStreaming<A>(options: ServeReceivePackOptions<A>)
 		return;
 	}
 
-	const { refResults, applied } = await applyReceivePack({
+	const output = new ReceivePackOutput({
+		write: (data) => writer.write(data),
+		useSideband,
+		writeStderr: channel.writeStderr ? (data) => channel.writeStderr!(data) : undefined,
+		keepAliveMs: receiveKeepAliveMs,
+	});
+	const applyOptions = {
 		repo,
 		repoId,
 		ingestResult,
 		hooks,
 		auth,
-	});
-	options.onRefApplied?.(repoId, repo, applied);
+		output: output.hookOutput,
+	};
 
-	if (useReportStatus) {
-		const reportResults = refResults.map((r) => ({
-			name: r.ref,
-			ok: r.ok,
-			error: r.error,
-		}));
-		await writer.write(buildReportStatus(true, reportResults, useSideband));
+	output.startKeepAlive();
+	try {
+		const { refResults, applied } = await applyReceivePackUpdates(applyOptions);
+		options.onRefApplied?.(repoId, repo, applied);
+
+		if (useReportStatus) {
+			const reportResults = refResults.map((r) => ({
+				name: r.ref,
+				ok: r.ok,
+				error: r.error,
+			}));
+			await output.writeProtocol(buildReportStatus(true, reportResults, useSideband, false));
+		}
+		await runPostReceiveHook(applyOptions, applied);
+		await output.finish();
+	} catch (error) {
+		try {
+			await output.stop();
+		} catch {
+			// Preserve the receive-pack error.
+		}
+		throw error;
 	}
 }
 

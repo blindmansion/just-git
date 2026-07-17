@@ -3,6 +3,7 @@ import type { GitRepo } from "../../src/lib/types.ts";
 import { buildPolicyHooks, mergePolicyAndHooks } from "../../src/server/policy.ts";
 import type {
 	Auth,
+	HookOutput,
 	PreReceiveEvent,
 	RefUpdate,
 	RefUpdateCreate,
@@ -11,6 +12,11 @@ import type {
 	ServerHooks,
 	UpdateEvent,
 } from "../../src/server/types.ts";
+
+const output: HookOutput = {
+	async write() {},
+	async writeLine() {},
+};
 
 function stubRepo(): GitRepo {
 	return {
@@ -59,11 +65,11 @@ function creation(ref: string): RefUpdateCreate {
 }
 
 function preReceiveEvent(update: RefUpdate): PreReceiveEvent {
-	return { repo: stubRepo(), repoId: "repo", updates: [update], auth };
+	return { repo: stubRepo(), repoId: "repo", updates: [update], auth, output };
 }
 
 function updateEvent(update: RefUpdate): UpdateEvent {
-	return { repo: stubRepo(), repoId: "repo", update, auth };
+	return { repo: stubRepo(), repoId: "repo", update, auth, output };
 }
 
 describe("server policy hooks", () => {

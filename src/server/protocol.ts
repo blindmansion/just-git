@@ -391,6 +391,7 @@ export function buildReportStatus(
 	unpackOk: boolean,
 	refResults: RefResult[],
 	useSideband: boolean,
+	finishSideband = true,
 ): Uint8Array {
 	const statusLines: Uint8Array[] = [];
 
@@ -409,10 +410,8 @@ export function buildReportStatus(
 	const statusData = concatPktLines(...statusLines);
 
 	if (useSideband) {
-		// Wrap all status data in band-1
-		const parts: Uint8Array[] = [];
-		parts.push(encodeSidebandPacket(1, statusData));
-		parts.push(flushPkt());
+		const parts = encodeSidebandPackets(1, statusData);
+		if (finishSideband) parts.push(flushPkt());
 		return concatPktLines(...parts);
 	}
 
@@ -422,8 +421,32 @@ export function buildReportStatus(
 // ── Sideband encoding ───────────────────────────────────────────────
 
 /**
- * Encode data into a sideband pkt-line: `[4-byte hex len][band byte][payload]`.
+ * Encode data into bounded sideband pkt-lines:
+ * `[4-byte hex len][band byte][payload]`.
+ *
+ * Sideband is a byte stream, so packet boundaries may split text or nested
+ * pkt-lines. Empty data intentionally produces one empty sideband packet and
+ * is used for receive-pack keepalives.
  */
+export function encodeSidebandPackets(band: number, data: Uint8Array): Uint8Array[] {
+	if (!Number.isInteger(band) || band < 1 || band > 255) {
+		throw new RangeError(`Invalid sideband channel: ${band}`);
+	}
+
+	if (data.byteLength === 0) return [encodeSidebandPacket(band, data)];
+
+	const packets: Uint8Array[] = [];
+	for (let offset = 0; offset < data.byteLength; offset += SIDEBAND_MAX_PAYLOAD) {
+		packets.push(
+			encodeSidebandPacket(
+				band,
+				data.subarray(offset, Math.min(offset + SIDEBAND_MAX_PAYLOAD, data.byteLength)),
+			),
+		);
+	}
+	return packets;
+}
+
 function encodeSidebandPacket(band: number, data: Uint8Array): Uint8Array {
 	const payload = new Uint8Array(1 + data.byteLength);
 	payload[0] = band;

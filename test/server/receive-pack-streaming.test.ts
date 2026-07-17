@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { hashObject } from "../../src/lib/object-db.ts";
 import { writePack } from "../../src/lib/pack/packfile.ts";
-import { concatPktLines, encodePktLine, flushPkt } from "../../src/lib/transport/pkt-line.ts";
+import {
+	concatPktLines,
+	encodePktLine,
+	flushPkt,
+	parsePktLineStream,
+} from "../../src/lib/transport/pkt-line.ts";
 import { createServer } from "../../src/server/server.ts";
 import { MemoryStorage } from "../../src/store/memory-storage.ts";
 
@@ -13,8 +18,9 @@ function buildPushBody(
 	newHash: string,
 	refName: string,
 	packData: Uint8Array = new Uint8Array(0),
+	capabilities = "report-status side-band-64k",
 ): Uint8Array {
-	const command = encoder.encode(`${oldHash} ${newHash} ${refName}\0report-status side-band-64k\n`);
+	const command = encoder.encode(`${oldHash} ${newHash} ${refName}\0${capabilities}\n`);
 	return concatPktLines(encodePktLine(command), flushPkt(), packData);
 }
 
@@ -76,6 +82,141 @@ function raceTimeout<T>(promise: Promise<T>, ms = 4000): Promise<T> {
 }
 
 describe("streaming HTTP receive-pack", () => {
+	test("orders receive hook output around report-status", async () => {
+		const storage = new MemoryStorage();
+		const server = createServer({
+			storage,
+			hooks: {
+				preReceive: async ({ output }) => output.writeLine("pre"),
+				update: async ({ output }) => output.writeLine("update"),
+				postReceive: async ({ output }) => {
+					await output.writeLine("post");
+					throw new Error("post-receive failures do not change push status");
+				},
+			},
+		});
+		await server.createRepo("repo");
+		const content = encoder.encode("ordered output");
+		const hash = await hashObject("blob", content);
+		const pack = await writePack([{ type: "blob", content }]);
+
+		const response = await server.fetch(
+			receivePackRequest(buildPushBody(ZERO_HASH, hash, "refs/heads/main", pack)),
+		);
+		const lines = parsePktLineStream(new Uint8Array(await response.arrayBuffer()));
+		const packets = lines
+			.filter((line) => line.type === "data")
+			.map((line) => ({
+				band: line.data[0],
+				text: new TextDecoder().decode(line.data.subarray(1)),
+			}));
+
+		expect(packets.map((packet) => packet.band)).toEqual([2, 2, 1, 2]);
+		expect(packets[0]!.text).toBe("pre\n");
+		expect(packets[1]!.text).toBe("update\n");
+		expect(packets[2]!.text).toContain("unpack ok");
+		expect(packets[3]!.text).toBe("post\n");
+		expect(lines.at(-1)!.type).toBe("flush");
+	});
+
+	test("delivers hook output before a long-running hook completes", async () => {
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const server = createServer({
+			storage: new MemoryStorage(),
+			hooks: {
+				preReceive: async ({ output }) => {
+					await output.writeLine("still working");
+					await gate;
+				},
+			},
+		});
+		await server.createRepo("repo");
+		const content = encoder.encode("live output");
+		const hash = await hashObject("blob", content);
+		const pack = await writePack([{ type: "blob", content }]);
+		const response = await server.fetch(
+			receivePackRequest(buildPushBody(ZERO_HASH, hash, "refs/heads/live", pack)),
+		);
+		const reader = response.body!.getReader();
+
+		try {
+			const first = await raceTimeout(reader.read(), 1000);
+			expect(first.done).toBe(false);
+			const line = parsePktLineStream(first.value!)[0]!;
+			expect(line.type).toBe("data");
+			if (line.type === "data") {
+				expect(line.data[0]).toBe(2);
+				expect(new TextDecoder().decode(line.data.subarray(1))).toBe("still working\n");
+			}
+		} finally {
+			release();
+		}
+
+		while (!(await reader.read()).done) {
+			// Drain the report-status and outer flush.
+		}
+	});
+
+	test("does not put hook output on smart HTTP protocol stdout without sideband", async () => {
+		const server = createServer({
+			storage: new MemoryStorage(),
+			hooks: {
+				preReceive: async ({ output }) => output.writeLine("must not corrupt status"),
+			},
+		});
+		await server.createRepo("repo");
+		const content = encoder.encode("plain status");
+		const hash = await hashObject("blob", content);
+		const pack = await writePack([{ type: "blob", content }]);
+		const body = buildPushBody(ZERO_HASH, hash, "refs/heads/plain", pack, "report-status");
+
+		const response = await server.fetch(receivePackRequest(body));
+		const bytes = new Uint8Array(await response.arrayBuffer());
+		const lines = parsePktLineStream(bytes);
+
+		expect(new TextDecoder().decode(bytes)).not.toContain("must not corrupt status");
+		expect(lines[0]!.type).toBe("data");
+		if (lines[0]!.type === "data") {
+			expect(new TextDecoder().decode(lines[0]!.data)).toBe("unpack ok\n");
+		}
+	});
+
+	test("does not start the response before request ingestion finishes", async () => {
+		const server = createServer({ storage: new MemoryStorage() });
+		await server.createRepo("repo");
+		const content = encoder.encode("half duplex");
+		const hash = await hashObject("blob", content);
+		const pack = await writePack([{ type: "blob", content }]);
+		const body = buildPushBody(ZERO_HASH, hash, "refs/heads/half-duplex", pack);
+		let requestController!: ReadableStreamDefaultController<Uint8Array>;
+		const request = new Request("http://localhost/repo/git-receive-pack", {
+			method: "POST",
+			body: new ReadableStream({
+				start(controller) {
+					requestController = controller;
+					controller.enqueue(body);
+				},
+			}),
+			duplex: "half",
+		} as RequestInit);
+		let resolved = false;
+		const responsePromise = server.fetch(request).then((response) => {
+			resolved = true;
+			return response;
+		});
+
+		await Bun.sleep(10);
+		expect(resolved).toBe(false);
+
+		requestController.close();
+		const response = await responsePromise;
+		expect(response.status).toBe(200);
+		await response.arrayBuffer();
+	});
+
 	test("ingests a pack split across pkt-line headers and pack bytes", async () => {
 		const storage = new MemoryStorage();
 		const server = createServer({ storage });

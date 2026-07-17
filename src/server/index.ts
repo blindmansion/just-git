@@ -42,6 +42,7 @@ export type {
 	AdvertiseRefsEvent,
 	GitServer,
 	GitServerConfig,
+	HookOutput,
 	NodeHttpRequest,
 	NodeHttpResponse,
 	PostReceiveEvent,

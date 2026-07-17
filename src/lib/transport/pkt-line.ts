@@ -257,6 +257,7 @@ export async function demuxSidebandStreaming(
 ): Promise<StreamingSidebandResult> {
 	const preambleLines: PktLine[] = [];
 	const packChunks: Uint8Array[] = [];
+	const progressDecoder = new TextDecoder();
 	let totalPackBytes = 0;
 	let inSideband = false;
 
@@ -289,7 +290,10 @@ export async function demuxSidebandStreaming(
 				totalPackBytes += payload.byteLength;
 				break;
 			case BAND_PROGRESS:
-				onProgress?.(decoder.decode(payload));
+				{
+					const message = progressDecoder.decode(payload, { stream: true });
+					if (message) onProgress?.(message);
+				}
 				break;
 			case BAND_ERROR:
 				throw new Error(`Remote error: ${decoder.decode(payload)}`);
@@ -297,6 +301,8 @@ export async function demuxSidebandStreaming(
 				break;
 		}
 	}
+	const finalProgress = progressDecoder.decode();
+	if (finalProgress) onProgress?.(finalProgress);
 
 	const packData = new Uint8Array(totalPackBytes);
 	let offset = 0;
@@ -314,6 +320,7 @@ export function demuxSideband(pktLines: PktLine[]): SidebandResult {
 	const packChunks: Uint8Array[] = [];
 	const progress: string[] = [];
 	const errors: string[] = [];
+	const progressDecoder = new TextDecoder();
 	let totalPackBytes = 0;
 
 	for (const line of pktLines) {
@@ -330,7 +337,10 @@ export function demuxSideband(pktLines: PktLine[]): SidebandResult {
 				totalPackBytes += payload.byteLength;
 				break;
 			case BAND_PROGRESS:
-				progress.push(decoder.decode(payload));
+				{
+					const message = progressDecoder.decode(payload, { stream: true });
+					if (message) progress.push(message);
+				}
 				break;
 			case BAND_ERROR:
 				errors.push(decoder.decode(payload));
@@ -340,6 +350,8 @@ export function demuxSideband(pktLines: PktLine[]): SidebandResult {
 				break;
 		}
 	}
+	const finalProgress = progressDecoder.decode();
+	if (finalProgress) progress.push(finalProgress);
 
 	const packData = new Uint8Array(totalPackBytes);
 	let offset = 0;
@@ -407,6 +419,7 @@ export function demuxV2FetchResponse(pktLines: PktLine[]): V2FetchSections {
 	const progress: string[] = [];
 	const errors: string[] = [];
 	const packChunks: Uint8Array[] = [];
+	const progressDecoder = new TextDecoder();
 	let totalPackBytes = 0;
 	let ready = false;
 	let section: V2Section = "none";
@@ -427,7 +440,8 @@ export function demuxV2FetchResponse(pktLines: PktLine[]): V2FetchSections {
 				packChunks.push(payload);
 				totalPackBytes += payload.byteLength;
 			} else if (band === BAND_PROGRESS) {
-				progress.push(decoder.decode(payload));
+				const message = progressDecoder.decode(payload, { stream: true });
+				if (message) progress.push(message);
 			} else if (band === BAND_ERROR) {
 				errors.push(decoder.decode(payload));
 			}
@@ -460,6 +474,8 @@ export function demuxV2FetchResponse(pktLines: PktLine[]): V2FetchSections {
 			}
 		}
 	}
+	const finalProgress = progressDecoder.decode();
+	if (finalProgress) progress.push(finalProgress);
 
 	const packData = new Uint8Array(totalPackBytes);
 	let offset = 0;

@@ -11,7 +11,7 @@ import type { GitRepo } from "../lib/types.ts";
 import {
 	PackCache,
 	advertiseRefsWithHooks,
-	applyReceivePack,
+	applyReceivePackUpdates,
 	buildAuthorizedFetchSet,
 	type AuthorizedFetchSet,
 	buildRefAdvertisementBytes,
@@ -20,8 +20,10 @@ import {
 	handleUploadPack,
 	handleV2Fetch,
 	ingestReceivePackFromStream,
+	runPostReceiveHook,
 } from "./operations.ts";
 import { buildReportStatus, parseV2CommandRequest } from "./protocol.ts";
+import { ReceivePackOutput } from "./receive-output.ts";
 import { RequestLimitError } from "./errors.ts";
 import { readReceivePackCommands, StreamPktLineReader } from "./request-stream.ts";
 import type {
@@ -44,6 +46,7 @@ export interface HttpHandlerDependencies<A = Auth> {
 	hooks?: ServerHooks<A>;
 	packCache?: PackCache;
 	packOptions?: GitServerConfig<A>["packOptions"];
+	receiveKeepAliveMs?: number | false;
 	receiveLimits: NonNullable<GitServerConfig<A>["receiveLimits"]>;
 	fetchLimits: NonNullable<GitServerConfig<A>["fetchLimits"]>;
 	auth: AuthProvider<A>;
@@ -63,6 +66,7 @@ export function createHttpHandler<A = Auth>(
 		hooks,
 		packCache,
 		packOptions,
+		receiveKeepAliveMs = 5000,
 		receiveLimits,
 		fetchLimits,
 		auth: buildAuth,
@@ -76,6 +80,7 @@ export function createHttpHandler<A = Auth>(
 	return async (request: Request): Promise<Response> => {
 		if (!enter()) return new Response("Service Unavailable", { status: 503 });
 		let auth: A | undefined;
+		let leaveDeferred = false;
 		try {
 			const embedded = getEmbeddedAuth?.(request);
 			if (embedded !== undefined) {
@@ -277,29 +282,63 @@ export function createHttpHandler<A = Auth>(
 					});
 				}
 
-				const { refResults, applied } = await applyReceivePack({
+				const stream = new TransformStream<Uint8Array, Uint8Array>();
+				const writer = stream.writable.getWriter();
+				const response = new Response(stream.readable, {
+					headers: { "Content-Type": "application/x-git-receive-pack-result" },
+				});
+				const output = new ReceivePackOutput({
+					write: (data) => writer.write(data),
+					useSideband,
+					keepAliveMs: receiveKeepAliveMs,
+				});
+				const applyOptions = {
 					repo: resolved.repo,
 					repoId: resolved.repoId,
 					ingestResult,
 					hooks,
 					auth,
-				});
-				onRefApplied?.(resolved.repoId, resolved.repo, applied, auth);
+					output: output.hookOutput,
+				};
 
-				if (useReportStatus) {
-					const reportResults = refResults.map((result) => ({
-						name: result.ref,
-						ok: result.ok,
-						error: result.error,
-					}));
-					return new Response(buildReportStatus(true, reportResults, useSideband), {
-						headers: { "Content-Type": "application/x-git-receive-pack-result" },
-					});
-				}
+				leaveDeferred = true;
+				void (async () => {
+					try {
+						output.startKeepAlive();
+						const { refResults, applied } = await applyReceivePackUpdates(applyOptions);
+						onRefApplied?.(resolved.repoId, resolved.repo, applied, auth);
 
-				return new Response(new Uint8Array(0), {
-					headers: { "Content-Type": "application/x-git-receive-pack-result" },
-				});
+						if (useReportStatus) {
+							const reportResults = refResults.map((result) => ({
+								name: result.ref,
+								ok: result.ok,
+								error: result.error,
+							}));
+							await output.writeProtocol(
+								buildReportStatus(true, reportResults, useSideband, false),
+							);
+						}
+
+						await runPostReceiveHook(applyOptions, applied);
+						await output.finish();
+						await writer.close();
+					} catch (error) {
+						try {
+							await output.stop();
+						} catch {
+							// Preserve the original producer error.
+						}
+						onError?.(error, auth);
+						try {
+							await writer.abort(error);
+						} catch {
+							// The response consumer may already have disconnected.
+						}
+					} finally {
+						leave();
+					}
+				})();
+				return response;
 			}
 
 			return new Response("Not Found", { status: 404 });
@@ -310,7 +349,7 @@ export function createHttpHandler<A = Auth>(
 			onError?.(error, auth);
 			return new Response("Internal Server Error", { status: 500 });
 		} finally {
-			leave();
+			if (!leaveDeferred) leave();
 		}
 	};
 }

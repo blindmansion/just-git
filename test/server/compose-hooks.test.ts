@@ -4,12 +4,18 @@ import { composeHooks } from "../../src/server/policy.ts";
 import type {
 	Auth,
 	AdvertiseRefsEvent,
+	HookOutput,
 	PostReceiveEvent,
 	PreReceiveEvent,
 	RefUpdate,
 	ServerHooks,
 	UpdateEvent,
 } from "../../src/server/types.ts";
+
+const output: HookOutput = {
+	async write() {},
+	async writeLine() {},
+};
 
 function stubRepo(): GitRepo {
 	return {
@@ -32,6 +38,7 @@ function preReceiveEvent(overrides?: Partial<PreReceiveEvent>): PreReceiveEvent 
 		repoId: "my-repo",
 		updates: [refUpdate()],
 		auth: stubAuth(),
+		output,
 		...overrides,
 	};
 }
@@ -42,6 +49,7 @@ function updateEvent(overrides?: Partial<UpdateEvent>): UpdateEvent {
 		repoId: "my-repo",
 		update: refUpdate(),
 		auth: stubAuth(),
+		output,
 		...overrides,
 	};
 }
@@ -52,6 +60,7 @@ function postReceiveEvent(overrides?: Partial<PostReceiveEvent>): PostReceiveEve
 		repoId: "my-repo",
 		updates: [refUpdate()],
 		auth: stubAuth(),
+		output,
 		...overrides,
 	};
 }
@@ -137,6 +146,22 @@ describe("composeHooks", () => {
 			const hooks = composeHooks({ preReceive: async () => {} }, { preReceive: async () => {} });
 			const result = await hooks.preReceive!(preReceiveEvent());
 			expect(result).toBeUndefined();
+		});
+
+		test("passes the same output sink through every composed handler", async () => {
+			const seen: HookOutput[] = [];
+			const hooks = composeHooks(
+				{ preReceive: ({ output }) => void seen.push(output) },
+				{ preReceive: ({ output }) => void seen.push(output) },
+			);
+			const customOutput: HookOutput = {
+				async write() {},
+				async writeLine() {},
+			};
+
+			await hooks.preReceive!(preReceiveEvent({ output: customOutput }));
+
+			expect(seen).toEqual([customOutput, customOutput]);
 		});
 
 		test("not set when no hook set has preReceive", () => {

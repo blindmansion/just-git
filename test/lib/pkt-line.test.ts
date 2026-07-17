@@ -238,6 +238,19 @@ describe("demuxSideband", () => {
 		const result = demuxSideband([{ type: "data", data: new Uint8Array(0) }, { type: "flush" }]);
 		expect(result.packData.byteLength).toBe(0);
 	});
+
+	test("decodes UTF-8 progress across sideband packet boundaries", () => {
+		const bytes = enc.encode("ready 🚀\n");
+		const split = bytes.indexOf(0xf0) + 2;
+		const stream = concatPktLines(
+			sidebandPkt(2, bytes.subarray(0, split)),
+			sidebandPkt(2, bytes.subarray(split)),
+			flushPkt(),
+		);
+
+		const result = demuxSideband(parsePktLineStream(stream));
+		expect(result.progress.join("")).toBe("ready 🚀\n");
+	});
 });
 
 // ── Streaming parser tests ───────────────────────────────────────────
@@ -415,6 +428,23 @@ describe("demuxSidebandStreaming", () => {
 		expect(result.packData.byteLength).toBe(6);
 		expect(result.packData[0]).toBe(0x50);
 		expect(progress).toEqual(["Counting objects: 5\n", "Compressing: 100%\n"]);
+	});
+
+	test("streams UTF-8 progress across sideband packet boundaries", async () => {
+		const bytes = enc.encode("checking café 🚀\n");
+		const split = bytes.indexOf(0xf0) + 1;
+		const data = concatPktLines(
+			sidebandPkt(2, bytes.subarray(0, split)),
+			sidebandPkt(2, bytes.subarray(split)),
+			flushPkt(),
+		);
+		const progress: string[] = [];
+
+		await demuxSidebandStreaming(parsePktLinesFromStream(streamFromChunks([data])), (message) =>
+			progress.push(message),
+		);
+
+		expect(progress.join("")).toBe("checking café 🚀\n");
 	});
 
 	test("throws immediately on band-3 error", async () => {

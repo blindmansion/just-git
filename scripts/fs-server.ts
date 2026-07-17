@@ -40,26 +40,30 @@ const server = createServer({
 		advertiseRefs: ({ repoId, service, refs }) => {
 			console.log(`[advertise] ${repoId} ${service}: ${refs.length} refs`);
 		},
-		preReceive: ({ repoId, updates }) => {
+		preReceive: async ({ repoId, updates, output }) => {
 			console.log(`[pre-receive] ${repoId}: ${updates.length} updates`);
+			await output.writeLine(`Checking ${updates.length} ref update(s)...`);
 		},
-		update: ({ repoId, update }) => {
+		update: async ({ repoId, update, output }) => {
 			console.log(
 				`[update] ${repoId} ${update.ref}: ${shortHash(update.oldHash)}..${shortHash(update.newHash)}`,
 			);
+			await output.writeLine(`Updating ${update.ref}...`);
 		},
-		postReceive: async ({ repo, repoId, updates }) => {
+		postReceive: async ({ repo, repoId, updates, output }) => {
 			for (const update of updates) {
 				if (update.isDelete || !update.ref.startsWith("refs/heads/")) {
 					console.log(
 						`[push] ${repoId} ${update.ref}: ${shortHash(update.oldHash)}..${shortHash(update.newHash)}`,
 					);
+					await output.writeLine(`Updated ${update.ref}.`);
 					continue;
 				}
 				const files = await getChangedFiles(repo, update.oldHash, update.newHash);
 				console.log(
 					`[push] ${repoId} ${update.ref}: ${shortHash(update.oldHash)}..${shortHash(update.newHash)} (${files.length} files changed)`,
 				);
+				await output.writeLine(`Updated ${update.ref} (${files.length} files changed).`);
 			}
 		},
 	},

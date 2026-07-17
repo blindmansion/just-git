@@ -50,8 +50,10 @@ import type {
 	RefUpdateRequest,
 	Rejection,
 	ServerHooks,
+	HookOutput,
 } from "./types.ts";
 import { RequestLimitError } from "./errors.ts";
+import { NOOP_HOOK_OUTPUT } from "./receive-output.ts";
 import {
 	isDeferrableObjectStore,
 	type DeferrableObjectStore,
@@ -764,7 +766,7 @@ export async function ingestReceivePackFromStream(
 	const needsPack = commands.some((c) => c.newHash !== ZERO_HASH);
 	if (needsPack) {
 		try {
-			const iterator = packStream[Symbol.asyncIterator]();
+			const iterator = limitPackStream(packStream, limits)[Symbol.asyncIterator]();
 			const first = await iterator.next();
 			if (!first.done) {
 				const externalBase = async (hash: string) => {
@@ -774,16 +776,19 @@ export async function ingestReceivePackFromStream(
 						return null;
 					}
 				};
-				const nonEmptyPackStream = prependChunk(first.value, iterator);
-				const entries = readPackStreaming(
-					limitPackStream(nonEmptyPackStream, limits),
-					externalBase,
-				);
+				const nonEmptyPackStream = prependChunk(first.value, iterator, !consumeUnexpectedPack);
+				const entries = readPackStreaming(nonEmptyPackStream, externalBase);
 				if (isDeferrableObjectStore(repo.objectStore)) {
 					const batch = await repo.objectStore.preparePackStream(entries);
 					ingestedHashes = await ingestWithTracking(repo.objectStore, batch);
 				} else {
 					await repo.objectStore.ingestPackStream(entries);
+				}
+				if (consumeUnexpectedPack) {
+					while (!(await iterator.next()).done) {
+						// Drain through the same limited iterator before responding.
+					}
+					await iterator.return?.(undefined);
 				}
 			}
 		} catch (err) {
@@ -805,6 +810,7 @@ export async function ingestReceivePackFromStream(
 async function* prependChunk(
 	first: Uint8Array,
 	iterator: AsyncIterator<Uint8Array>,
+	closeIterator = true,
 ): AsyncGenerator<Uint8Array> {
 	yield first;
 	try {
@@ -814,7 +820,7 @@ async function* prependChunk(
 			yield next.value;
 		}
 	} finally {
-		await iterator.return?.();
+		if (closeIterator) await iterator.return?.();
 	}
 }
 
@@ -936,6 +942,8 @@ export interface ApplyReceivePackOptions<A = unknown> {
 	ingestResult: ReceivePackResult;
 	hooks?: ServerHooks<A>;
 	auth: A;
+	/** Client-visible hook output supplied by the transport. Defaults to a no-op sink. */
+	output?: HookOutput;
 }
 
 /**
@@ -950,12 +958,24 @@ export interface ApplyReceivePackOptions<A = unknown> {
 export async function applyReceivePack<A = unknown>(
 	options: ApplyReceivePackOptions<A>,
 ): Promise<RefUpdateResult> {
-	const { repo, repoId, ingestResult, hooks, auth } = options;
+	const result = await applyReceivePackUpdates(options);
+	await runPostReceiveHook(options, result.applied);
+	return result;
+}
+
+/**
+ * Apply the rejecting receive-pack phases and refs, leaving postReceive to the
+ * caller so a transport can emit report-status first.
+ */
+export async function applyReceivePackUpdates<A = unknown>(
+	options: ApplyReceivePackOptions<A>,
+): Promise<RefUpdateResult> {
+	const { repo, repoId, ingestResult, hooks, auth, output = NOOP_HOOK_OUTPUT } = options;
 	const { updates } = ingestResult;
 
 	// Pre-receive hook: abort entire push on rejection
 	if (hooks?.preReceive) {
-		const result = await hooks.preReceive({ repo, repoId, updates, auth });
+		const result = await hooks.preReceive({ repo, repoId, updates, auth, output });
 		if (isRejection(result)) {
 			// Roll back ingested objects so rejected pushes leave no side effects
 			if (ingestResult.ingestedHashes?.length) {
@@ -985,7 +1005,7 @@ export async function applyReceivePack<A = unknown>(
 		}
 
 		if (hooks?.update) {
-			const result = await hooks.update({ repo, repoId, update, auth });
+			const result = await hooks.update({ repo, repoId, update, auth, output });
 			if (isRejection(result)) {
 				refResults.push({
 					ref: update.ref,
@@ -1031,16 +1051,22 @@ export async function applyReceivePack<A = unknown>(
 		await rollbackIngestedObjects(repo, ingestResult.ingestedHashes);
 	}
 
-	// Post-receive hook (fire-and-forget, only for successful updates)
+	return { refResults, applied };
+}
+
+/** Run the non-rejecting postReceive phase after report-status is emitted. */
+export async function runPostReceiveHook<A = unknown>(
+	options: ApplyReceivePackOptions<A>,
+	applied: readonly RefUpdate[],
+): Promise<void> {
+	const { repo, repoId, hooks, auth, output = NOOP_HOOK_OUTPUT } = options;
 	if (hooks?.postReceive && applied.length > 0) {
 		try {
-			await hooks.postReceive({ repo, repoId, updates: applied, auth });
+			await hooks.postReceive({ repo, repoId, updates: applied, auth, output });
 		} catch {
 			// Post-receive errors don't affect the result
 		}
 	}
-
-	return { refResults, applied };
 }
 
 // ── In-process ref updates ──────────────────────────────────────────

@@ -186,6 +186,112 @@ describe("SSH session handler", () => {
 		expect(text).toContain("HEAD");
 	});
 
+	test("receive hooks fall back to SSH stderr without sideband", async () => {
+		const testServer = createServer({
+			storage: new MemoryStorage(),
+			hooks: {
+				preReceive: async ({ output }) => output.writeLine("checking over ssh"),
+			},
+		});
+		const repo = await testServer.createRepo("hook-repo");
+		const hash = await repo.objectStore.write("blob", new TextEncoder().encode("delete me"));
+		await repo.refStore.writeRef("refs/heads/topic", { type: "direct", hash });
+		const request = concatBytes(
+			encodePktLine(`${hash} ${"0".repeat(40)} refs/heads/topic\0report-status delete-refs\n`),
+			new TextEncoder().encode("0000"),
+		);
+		const responseChunks: Uint8Array[] = [];
+		let stderr = "";
+		const channel: SshChannel = {
+			readable: new ReadableStream({
+				start(controller) {
+					controller.enqueue(request);
+					controller.close();
+				},
+			}),
+			writable: new WritableStream({
+				write(chunk) {
+					responseChunks.push(chunk);
+				},
+			}),
+			writeStderr(data) {
+				stderr += new TextDecoder().decode(data);
+			},
+		};
+
+		const exitCode = await testServer.handleSession("git-receive-pack '/hook-repo'", channel);
+
+		expect(exitCode).toBe(0);
+		expect(stderr).toBe("checking over ssh\n");
+		expect(new TextDecoder().decode(concatBytes(...responseChunks))).not.toContain(
+			"checking over ssh",
+		);
+		expect(await repo.refStore.readRef("refs/heads/topic")).toBeNull();
+	});
+
+	test("streams sideband hook output before a long SSH hook completes", async () => {
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const testServer = createServer({
+			storage: new MemoryStorage(),
+			hooks: {
+				preReceive: async ({ output }) => {
+					await output.writeLine("long ssh check");
+					await gate;
+				},
+			},
+		});
+		const repo = await testServer.createRepo("live-hook-repo");
+		const hash = await repo.objectStore.write("blob", new TextEncoder().encode("delete me"));
+		await repo.refStore.writeRef("refs/heads/topic", { type: "direct", hash });
+		const request = concatBytes(
+			encodePktLine(
+				`${hash} ${"0".repeat(40)} refs/heads/topic\0report-status side-band-64k delete-refs\n`,
+			),
+			new TextEncoder().encode("0000"),
+		);
+		let progressSeen!: () => void;
+		const progress = new Promise<void>((resolve) => {
+			progressSeen = resolve;
+		});
+		const channel: SshChannel = {
+			readable: new ReadableStream({
+				start(controller) {
+					controller.enqueue(request);
+					controller.close();
+				},
+			}),
+			writable: new WritableStream({
+				write(chunk) {
+					if (chunk[4] === 2) progressSeen();
+				},
+			}),
+		};
+		let completed = false;
+		const session = testServer
+			.handleSession("git-receive-pack '/live-hook-repo'", channel)
+			.then((code) => {
+				completed = true;
+				return code;
+			});
+
+		try {
+			await Promise.race([
+				progress,
+				Bun.sleep(1000).then(() => {
+					throw new Error("SSH hook progress was not streamed");
+				}),
+			]);
+			expect(completed).toBe(false);
+		} finally {
+			release();
+		}
+
+		expect(await session).toBe(0);
+	});
+
 	test("handleSession rejects unknown repo", async () => {
 		const testServer = createServer({
 			storage: new MemoryStorage(),

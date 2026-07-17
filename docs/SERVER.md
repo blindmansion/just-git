@@ -112,7 +112,8 @@ Server hooks fire during push and ref advertisement. All are optional.
 const server = createServer({
   storage: new BunSqliteStorage(db),
   hooks: {
-    preReceive: async ({ repo, updates, auth }) => {
+    preReceive: async ({ repo, updates, auth, output }) => {
+      await output.writeLine("Checking push policy...");
       if (!auth.canWrite) return { reject: true, message: "write access denied" };
     },
 
@@ -143,7 +144,9 @@ const server = createServer({
 | `postReceive`   | After all ref updates succeed                      | No                               |
 | `advertiseRefs` | During upload-pack / receive-pack advertisement    | Yes (denies that service access) |
 
-All hook payloads include `repo: GitRepo`, `repoId`, and `auth` (from the auth provider). Pre-hooks return `{ reject: true, message? }` to block the operation, using the same `Rejection` protocol as [client-side hooks](HOOKS.md).
+All hook payloads include `repo: GitRepo`, `repoId`, and `auth` (from the auth provider). Receive hooks also receive `output`, with async `write(data)` and `writeLine(message?)` methods for client-visible progress. The server sends this output over sideband channel 2 when negotiated, falls back to SSH stderr, and safely discards it when the transport has no progress channel. `write` preserves bytes and adds no newline; `writeLine` appends one line feed.
+
+Pre-hooks return `{ reject: true, message? }` to block the operation, using the same `Rejection` protocol as [client-side hooks](HOOKS.md). Hook output is informational and cannot replace a `Rejection`.
 
 `advertiseRefs` is best suited for hiding refs and denying coarse access to upload-pack / receive-pack. For push authorization and branch policy, prefer `preReceive` and `update`, which run on the actual receive-pack path.
 

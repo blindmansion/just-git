@@ -69,6 +69,7 @@ export function createServer<A = Auth>(
 	const resolve = config.resolve ?? ((path: string) => path);
 	const autoCreate = config.autoCreate;
 	const { basePath } = config;
+	const receiveKeepAliveMs = config.receiveOptions?.keepAliveMs ?? 5000;
 	const receiveLimits = {
 		maxRequestBytes: 128 * 1024 * 1024,
 		maxInflatedBytes: 256 * 1024 * 1024,
@@ -151,6 +152,7 @@ export function createServer<A = Auth>(
 		hooks,
 		packCache,
 		packOptions: config.packOptions,
+		receiveKeepAliveMs,
 		receiveLimits,
 		fetchLimits,
 		auth: buildAuth,
@@ -187,6 +189,7 @@ export function createServer<A = Auth>(
 					hooks,
 					packCache,
 					packOptions: config.packOptions,
+					receiveKeepAliveMs,
 					receiveLimits,
 					fetchLimits,
 					auth,
