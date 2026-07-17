@@ -15,42 +15,24 @@
  * ```
  */
 
-import { isRejection } from "../hooks.ts";
 import { nodeRequestToWebRequest, pipeWebResponseToNode } from "../node-http.ts";
 import { buildCommit } from "../repo/writing.ts";
 import { httpTransport } from "../transport.ts";
 import type { GitRepo, TransportResolver } from "../lib/types.ts";
 
 const inProcessAuth = new WeakMap<Request, unknown>();
-import {
-	PackCache,
-	advertiseRefsWithHooks,
-	applyCasRefUpdates,
-	applyReceivePack,
-	buildAuthorizedFetchSet,
-	type AuthorizedFetchSet,
-	buildRefAdvertisementBytes,
-	buildV2CapabilityAdvertisementBytes,
-	handleLsRefs,
-	handleUploadPack,
-	handleV2Fetch,
-	ingestReceivePackFromStream,
-	resolveRefUpdates,
-} from "./operations.ts";
-import { buildReportStatus, parseV2CommandRequest } from "./protocol.ts";
+import { PackCache, applyCasRefUpdates, resolveRefUpdates } from "./operations.ts";
+import { createHttpHandler } from "./http-handler.ts";
 import { handleSshSession } from "./ssh-session.ts";
 import { createRepoStore, type CreateRepoOptions } from "../store/repo-store.ts";
 import { MemoryStorage } from "../store/memory-storage.ts";
 import { isValidRepoId } from "../store/repo-id.ts";
-import { RequestLimitError } from "./errors.ts";
 import { mergePolicyAndHooks } from "./policy.ts";
-import { readReceivePackCommands, StreamPktLineReader } from "./request-stream.ts";
 import type {
 	GitServerConfig,
 	GitServer,
 	NodeHttpRequest,
 	NodeHttpResponse,
-	Rejection,
 	Auth,
 	AuthProvider,
 	RefUpdate,
@@ -165,250 +147,25 @@ export function createServer<A = Auth>(
 		}
 	}
 
+	const httpHandler = createHttpHandler({
+		basePath,
+		resolveRepo,
+		hooks,
+		packCache,
+		packOptions: config.packOptions,
+		receiveLimits,
+		fetchLimits,
+		auth: buildAuth,
+		getEmbeddedAuth: (request) => inProcessAuth.get(request) as A | undefined,
+		enter,
+		leave,
+		onRefApplied: (repoId, repo, applied, auth) =>
+			emitRefChange(repoId, repo, applied, "push", auth),
+		onError,
+	});
+
 	const server: GitServer<A> = {
-		async fetch(req: Request): Promise<Response> {
-			if (!enter()) return new Response("Service Unavailable", { status: 503 });
-			let auth: A | undefined;
-			try {
-				const embedded = inProcessAuth.get(req) as A | undefined;
-				if (embedded !== undefined) {
-					auth = embedded;
-				} else {
-					if (!buildAuth.http) {
-						return new Response("HTTP auth provider not configured", { status: 501 });
-					}
-					const authOrResponse = await buildAuth.http(req);
-					if (authOrResponse instanceof Response) return authOrResponse;
-					auth = authOrResponse;
-				}
-
-				const url = new URL(req.url);
-				let pathname = decodeURIComponent(url.pathname);
-
-				if (basePath) {
-					const normalized = basePath.replace(/\/+$/, "");
-					if (!pathname.startsWith(normalized)) {
-						return new Response("Not Found", { status: 404 });
-					}
-					pathname = pathname.slice(normalized.length);
-				}
-
-				if (!pathname.startsWith("/")) {
-					pathname = `/${pathname}`;
-				}
-
-				// ── info/refs ───────────────────────────────────────
-				if (pathname.endsWith("/info/refs") && req.method === "GET") {
-					const service = url.searchParams.get("service");
-					if (service !== "git-upload-pack" && service !== "git-receive-pack") {
-						return new Response("Unsupported service", { status: 403 });
-					}
-
-					const requestPath = extractRepoPath(pathname, "/info/refs");
-					const resolved = await resolveRepo(requestPath);
-					if (!resolved) return new Response("Not Found", { status: 404 });
-
-					// Protocol v2: return capability advertisement for upload-pack
-					const isV2 = isProtocolV2(req);
-					if (isV2 && service === "git-upload-pack") {
-						const adv = await advertiseRefsWithHooks(
-							resolved.repo,
-							resolved.repoId,
-							service,
-							hooks,
-							auth,
-						);
-						if (isRejection(adv)) return forbiddenResponse(adv);
-						const body = buildV2CapabilityAdvertisementBytes();
-						return new Response(body, {
-							headers: {
-								"Content-Type": `application/x-${service}-advertisement`,
-								"Cache-Control": "no-cache",
-							},
-						});
-					}
-
-					const adv = await advertiseRefsWithHooks(
-						resolved.repo,
-						resolved.repoId,
-						service,
-						hooks,
-						auth,
-					);
-					if (isRejection(adv)) return forbiddenResponse(adv);
-
-					const body = buildRefAdvertisementBytes(adv.refs, service, adv.headTarget);
-					return new Response(body, {
-						headers: {
-							"Content-Type": `application/x-${service}-advertisement`,
-							"Cache-Control": "no-cache",
-						},
-					});
-				}
-
-				// ── git-upload-pack ─────────────────────────────────
-				if (pathname.endsWith("/git-upload-pack") && req.method === "POST") {
-					const requestPath = extractRepoPath(pathname, "/git-upload-pack");
-					const resolved = await resolveRepo(requestPath);
-					if (!resolved) return new Response("Not Found", { status: 404 });
-
-					let authorizedFetchSet: AuthorizedFetchSet | undefined;
-					if (hooks?.advertiseRefs) {
-						const adv = await advertiseRefsWithHooks(
-							resolved.repo,
-							resolved.repoId,
-							"git-upload-pack",
-							hooks,
-							auth,
-						);
-						if (isRejection(adv)) return forbiddenResponse(adv);
-						authorizedFetchSet = buildAuthorizedFetchSet(adv);
-					}
-
-					const body = await readRequestBody(req, fetchLimits);
-
-					// Protocol v2: command-based dispatch
-					if (isProtocolV2(req)) {
-						const cmd = parseV2CommandRequest(body);
-						const contentType = "application/x-git-upload-pack-result";
-
-						if (cmd.command === "ls-refs") {
-							const result = await handleLsRefs(
-								resolved.repo,
-								resolved.repoId,
-								cmd.args,
-								hooks,
-								auth,
-							);
-							if (isRejection(result)) return forbiddenResponse(result);
-							return new Response(result, { headers: { "Content-Type": contentType } });
-						}
-
-						if (cmd.command === "fetch") {
-							const responseBody = await handleV2Fetch(resolved.repo, cmd.args, {
-								cache: packCache,
-								cacheKey: resolved.repoId,
-								noDelta: config.packOptions?.noDelta,
-								deltaWindow: config.packOptions?.deltaWindow,
-								authorizedFetchSet,
-							});
-							if (isRejection(responseBody)) return forbiddenResponse(responseBody);
-							return new Response(responseBody, {
-								headers: { "Content-Type": contentType },
-							});
-						}
-
-						return new Response(`unknown command: ${cmd.command}`, { status: 400 });
-					}
-
-					const responseBody = await handleUploadPack(resolved.repo, body, {
-						cache: packCache,
-						cacheKey: resolved.repoId,
-						noDelta: config.packOptions?.noDelta,
-						deltaWindow: config.packOptions?.deltaWindow,
-						authorizedFetchSet,
-					});
-					if (isRejection(responseBody)) return forbiddenResponse(responseBody);
-					return new Response(responseBody, {
-						headers: { "Content-Type": "application/x-git-upload-pack-result" },
-					});
-				}
-
-				// ── git-receive-pack ────────────────────────────────
-				if (pathname.endsWith("/git-receive-pack") && req.method === "POST") {
-					const requestPath = extractRepoPath(pathname, "/git-receive-pack");
-					const resolved = await resolveRepo(requestPath);
-					if (!resolved) return new Response("Not Found", { status: 404 });
-
-					if (hooks?.advertiseRefs) {
-						const adv = await advertiseRefsWithHooks(
-							resolved.repo,
-							resolved.repoId,
-							"git-receive-pack",
-							hooks,
-							auth,
-						);
-						if (isRejection(adv)) return forbiddenResponse(adv);
-					}
-
-					const requestStream = openLimitedRequestBody(req, receiveLimits);
-					const streamReader = new StreamPktLineReader(requestStream);
-					let ingestResult;
-					try {
-						const { commands, capabilities, sawFlush } =
-							await readReceivePackCommands(streamReader);
-						ingestResult = await ingestReceivePackFromStream(
-							resolved.repo,
-							commands,
-							capabilities,
-							streamReader.streamRemaining(),
-							sawFlush,
-							receiveLimits,
-							true,
-						);
-					} finally {
-						streamReader.release();
-					}
-
-					if (!ingestResult.sawFlush && ingestResult.updates.length === 0) {
-						return new Response("Bad Request", { status: 400 });
-					}
-
-					const useSideband = ingestResult.capabilities.includes("side-band-64k");
-					const useReportStatus = ingestResult.capabilities.includes("report-status");
-
-					if (!ingestResult.unpackOk) {
-						if (useReportStatus) {
-							const refResults = ingestResult.updates.map((u) => ({
-								name: u.ref,
-								ok: false,
-								error: "unpack failed",
-							}));
-							return new Response(buildReportStatus(false, refResults, useSideband), {
-								headers: { "Content-Type": "application/x-git-receive-pack-result" },
-							});
-						}
-						return new Response(new Uint8Array(0), {
-							headers: { "Content-Type": "application/x-git-receive-pack-result" },
-						});
-					}
-
-					const { refResults, applied } = await applyReceivePack({
-						repo: resolved.repo,
-						repoId: resolved.repoId,
-						ingestResult,
-						hooks,
-						auth,
-					});
-					emitRefChange(resolved.repoId, resolved.repo, applied, "push", auth);
-
-					if (useReportStatus) {
-						const reportResults = refResults.map((r) => ({
-							name: r.ref,
-							ok: r.ok,
-							error: r.error,
-						}));
-						return new Response(buildReportStatus(true, reportResults, useSideband), {
-							headers: { "Content-Type": "application/x-git-receive-pack-result" },
-						});
-					}
-
-					return new Response(new Uint8Array(0), {
-						headers: { "Content-Type": "application/x-git-receive-pack-result" },
-					});
-				}
-
-				return new Response("Not Found", { status: 404 });
-			} catch (err) {
-				if (err instanceof RequestLimitError) {
-					return new Response(err.message, { status: err.status });
-				}
-				onError?.(err, auth);
-				return new Response("Internal Server Error", { status: 500 });
-			} finally {
-				leave();
-			}
-		},
+		fetch: httpHandler,
 
 		async handleSession(
 			command: string,
@@ -555,177 +312,6 @@ export function createServer<A = Auth>(
 		},
 	};
 	return server;
-}
-
-// ── Internal helpers ────────────────────────────────────────────────
-
-function forbiddenResponse(r: Rejection): Response {
-	return new Response(r.message ?? "Forbidden", { status: 403 });
-}
-
-function isProtocolV2(req: Request): boolean {
-	const proto = req.headers.get("git-protocol");
-	return proto !== null && proto.includes("version=2");
-}
-
-function extractRepoPath(pathname: string, suffix: string): string {
-	let repoPath = pathname.slice(0, -suffix.length);
-	if (repoPath.startsWith("/")) {
-		repoPath = repoPath.slice(1);
-	}
-	return repoPath;
-}
-
-async function readRequestBody(
-	req: Request,
-	limits: {
-		maxRequestBytes?: number;
-		maxInflatedBytes?: number;
-	},
-): Promise<Uint8Array> {
-	const contentLength = req.headers.get("content-length");
-	if (contentLength) {
-		const parsed = Number(contentLength);
-		if (
-			Number.isFinite(parsed) &&
-			limits.maxRequestBytes !== undefined &&
-			parsed > limits.maxRequestBytes
-		) {
-			throw new RequestLimitError("Request body too large");
-		}
-	}
-
-	const raw = await readStreamWithMax(req.body, limits.maxRequestBytes, "Request body too large");
-	const encoding = req.headers.get("content-encoding");
-	if (encoding === "gzip" || encoding === "x-gzip") {
-		const ds = new DecompressionStream("gzip");
-		const copy = new Uint8Array(raw.byteLength);
-		copy.set(raw);
-		// Feed the compressed input WITHOUT awaiting completion before we start
-		// reading: DecompressionStream is a TransformStream with a bounded
-		// internal buffer, so for any payload that inflates past the readable
-		// side's high-water mark the writer blocks on backpressure until the
-		// readable side is drained. Awaiting writer.close() before reading
-		// therefore deadlocks (and the maxInflatedBytes guard below — which
-		// lives on the read side — would never run). Drain concurrently instead.
-		const pump = (async () => {
-			const writer = ds.writable.getWriter();
-			try {
-				await writer.write(copy);
-				await writer.close();
-			} catch {
-				// The reader may abort the stream when maxInflatedBytes is
-				// exceeded, which rejects pending writer operations. That
-				// rejection is surfaced by readStreamWithMax below; swallow it
-				// here so it doesn't become an unhandled rejection.
-			}
-		})();
-		const inflated = await readStreamWithMax(
-			ds.readable,
-			limits.maxInflatedBytes,
-			"Decompressed body too large",
-		);
-		await pump;
-		return inflated;
-	}
-	return raw;
-}
-
-function openLimitedRequestBody(
-	req: Request,
-	limits: {
-		maxRequestBytes?: number;
-		maxInflatedBytes?: number;
-	},
-): ReadableStream<Uint8Array> {
-	const contentLength = req.headers.get("content-length");
-	if (contentLength) {
-		const parsed = Number(contentLength);
-		if (
-			Number.isFinite(parsed) &&
-			limits.maxRequestBytes !== undefined &&
-			parsed > limits.maxRequestBytes
-		) {
-			throw new RequestLimitError("Request body too large");
-		}
-	}
-
-	let stream = req.body ?? emptyByteStream();
-	stream = limitByteStream(stream, limits.maxRequestBytes, "Request body too large");
-
-	const encoding = req.headers.get("content-encoding");
-	if (encoding === "gzip" || encoding === "x-gzip") {
-		stream = stream.pipeThrough(new DecompressionStream("gzip"));
-		stream = limitByteStream(stream, limits.maxInflatedBytes, "Decompressed body too large");
-	}
-
-	return stream;
-}
-
-function limitByteStream(
-	stream: ReadableStream<Uint8Array>,
-	maxBytes: number | undefined,
-	errorMessage: string,
-): ReadableStream<Uint8Array> {
-	if (maxBytes === undefined) return stream;
-	let totalBytes = 0;
-	return stream.pipeThrough(
-		new TransformStream<Uint8Array, Uint8Array>({
-			transform(chunk, controller) {
-				totalBytes += chunk.byteLength;
-				if (totalBytes > maxBytes) {
-					throw new RequestLimitError(errorMessage);
-				}
-				controller.enqueue(chunk);
-			},
-		}),
-	);
-}
-
-function emptyByteStream(): ReadableStream<Uint8Array> {
-	return new ReadableStream({
-		start(controller) {
-			controller.close();
-		},
-	});
-}
-
-async function readStreamWithMax(
-	stream: ReadableStream<Uint8Array> | null,
-	maxBytes: number | undefined,
-	errorMessage: string,
-): Promise<Uint8Array> {
-	if (!stream) return new Uint8Array(0);
-
-	const reader = stream.getReader();
-	const chunks: Uint8Array[] = [];
-	let totalBytes = 0;
-	try {
-		while (true) {
-			const { value, done } = await reader.read();
-			if (done) break;
-			if (!value) continue;
-			totalBytes += value.byteLength;
-			if (maxBytes !== undefined && totalBytes > maxBytes) {
-				// Cancel so any upstream producer blocked on backpressure (e.g. a
-				// DecompressionStream writer) is released rather than left pending.
-				await reader.cancel(new RequestLimitError(errorMessage)).catch(() => {});
-				throw new RequestLimitError(errorMessage);
-			}
-			chunks.push(value);
-		}
-	} finally {
-		reader.releaseLock();
-	}
-
-	if (chunks.length === 0) return new Uint8Array(0);
-	const result = new Uint8Array(totalBytes);
-	let offset = 0;
-	for (const chunk of chunks) {
-		result.set(chunk, offset);
-		offset += chunk.byteLength;
-	}
-	return result;
 }
 
 // ── Node.js adapter orchestration ───────────────────────────────────
