@@ -119,6 +119,108 @@ describe("parseIgnoreFile", () => {
 		expect(pl.patterns[1].pattern).toBe("important.o");
 		expect(pl.patterns[1].flags & 16).toBeTruthy(); // NEGATIVE
 	});
+
+	describe("CRLF line endings", () => {
+		test("CRLF file parses identically to LF file", () => {
+			const lines = [
+				"# comment",
+				"",
+				"*.log",
+				"node_modules/",
+				"!keep.log",
+				"/build",
+				"doc/*.txt",
+				"foo\\ ", // escaped trailing space
+			];
+			const lf = parseIgnoreFile(`${lines.join("\n")}\n`, "", ".gitignore");
+			const crlf = parseIgnoreFile(`${lines.join("\r\n")}\r\n`, "", ".gitignore");
+			expect(crlf.patterns).toEqual(lf.patterns);
+			expect(crlf.patterns.length).toBe(6);
+		});
+
+		test("suffix pattern keeps ENDSWITH and clean suffix", () => {
+			const pl = parseIgnoreFile("*.log\r\n", "", ".gitignore");
+			expect(pl.patterns.length).toBe(1);
+			expect(pl.patterns[0].pattern).toBe("*.log");
+			expect(pl.patterns[0].patternLen).toBe(5);
+			expect(pl.patterns[0].flags & 4).toBeTruthy(); // ENDSWITH
+		});
+
+		test("directory pattern keeps MUSTBEDIR and NODIR", () => {
+			const pl = parseIgnoreFile("node_modules/\r\n", "", ".gitignore");
+			expect(pl.patterns.length).toBe(1);
+			expect(pl.patterns[0].pattern).toBe("node_modules");
+			expect(pl.patterns[0].flags & 8).toBeTruthy(); // MUSTBEDIR
+			// Without the CR fix, the stray \r after the trailing slash made
+			// this a full-pathname pattern; it must stay basename-matched.
+			expect(pl.patterns[0].flags & 1).toBeTruthy(); // NODIR
+		});
+
+		test("negation prefix works with CRLF", () => {
+			const pl = parseIgnoreFile("!keep.log\r\n", "", ".gitignore");
+			expect(pl.patterns.length).toBe(1);
+			expect(pl.patterns[0].pattern).toBe("keep.log");
+			expect(pl.patterns[0].flags & 16).toBeTruthy(); // NEGATIVE
+		});
+
+		test("blank and comment CRLF lines are skipped", () => {
+			const pl = parseIgnoreFile("# comment\r\n\r\n*.o\r\n", "", ".gitignore");
+			expect(pl.patterns.length).toBe(1);
+			expect(pl.patterns[0].pattern).toBe("*.o");
+		});
+
+		test("only one CR is stripped per line (matches git)", () => {
+			// git drops exactly one CR as part of the \r\n terminator; any
+			// further CRs are pattern content.
+			const pl = parseIgnoreFile("foo\r\r\n", "", ".gitignore");
+			expect(pl.patterns.length).toBe(1);
+			expect(pl.patterns[0].pattern).toBe("foo\r");
+		});
+
+		test("CR is stripped on a final line without trailing newline", () => {
+			const pl = parseIgnoreFile("foo\r", "", ".gitignore");
+			expect(pl.patterns.length).toBe(1);
+			expect(pl.patterns[0].pattern).toBe("foo");
+		});
+
+		test("interior CR is preserved as pattern content", () => {
+			const pl = parseIgnoreFile("fo\ro\n", "", ".gitignore");
+			expect(pl.patterns.length).toBe(1);
+			expect(pl.patterns[0].pattern).toBe("fo\ro");
+		});
+
+		test("CR is stripped before trailing-space trimming", () => {
+			// "foo \r\n": the CR terminates the line, then the trailing
+			// space is trimmed — leaving "foo".
+			const pl = parseIgnoreFile("foo \r\n", "", ".gitignore");
+			expect(pl.patterns.length).toBe(1);
+			expect(pl.patterns[0].pattern).toBe("foo");
+		});
+
+		test("backslash does not escape the CR terminator", () => {
+			// git strips the terminator CR unconditionally, so "foo\<CR><LF>"
+			// yields the pattern "foo\" — the backslash survives as content.
+			const pl = parseIgnoreFile("foo\\\r\n", "", ".gitignore");
+			expect(pl.patterns.length).toBe(1);
+			expect(pl.patterns[0].pattern).toBe("foo\\");
+		});
+
+		test("escaped trailing space survives CRLF", () => {
+			const pl = parseIgnoreFile("foo\\ \r\n", "", ".gitignore");
+			expect(pl.patterns.length).toBe(1);
+			expect(pl.patterns[0].pattern).toBe("foo ");
+		});
+
+		test("mixed LF and CRLF lines in one file", () => {
+			const pl = parseIgnoreFile("*.o\r\nbuild/\n*.tmp\r\n", "", ".gitignore");
+			expect(pl.patterns.map((p) => p.pattern)).toEqual(["*.o", "build", "*.tmp"]);
+		});
+
+		test("a line containing only CR is skipped", () => {
+			const pl = parseIgnoreFile("\r\n\r", "", ".gitignore");
+			expect(pl.patterns.length).toBe(0);
+		});
+	});
 });
 
 // ── isIgnored (matching logic) ──────────────────────────────────────
@@ -266,6 +368,28 @@ describe("isIgnored", () => {
 			expect(isIgnored(stack, "foo.o", false)).toBe("ignored");
 			expect(isIgnored(stack, "lib.a", false)).toBe("ignored");
 			expect(isIgnored(stack, "foo.c", false)).toBe("undecided");
+		});
+	});
+
+	describe("CRLF ignore files", () => {
+		test("all pattern types match as with LF", () => {
+			const stack = makeStack([
+				{ content: "node_modules/\r\n*.log\r\n!keep.log\r\n/dist\r\n", base: "" },
+			]);
+			expect(isIgnored(stack, "node_modules", true)).toBe("ignored");
+			// Directory-only pattern must not match a plain file
+			expect(isIgnored(stack, "node_modules", false)).toBe("undecided");
+			expect(isIgnored(stack, "debug.log", false)).toBe("ignored");
+			expect(isIgnored(stack, "sub/debug.log", false)).toBe("ignored");
+			expect(isIgnored(stack, "keep.log", false)).toBe("not-ignored");
+			expect(isIgnored(stack, "dist", false)).toBe("ignored");
+			expect(isIgnored(stack, "sub/dist", false)).toBe("undecided");
+		});
+
+		test("CRLF subdirectory .gitignore stays directory-relative", () => {
+			const stack = makeStack([{ content: "*.generated.ts\r\n", base: "src" }]);
+			expect(isIgnored(stack, "src/types.generated.ts", false)).toBe("ignored");
+			expect(isIgnored(stack, "lib/other.generated.ts", false)).toBe("undecided");
 		});
 	});
 
@@ -431,6 +555,103 @@ describe("gitignore integration", () => {
 			const status = results[1];
 			expect(status.stdout).not.toContain("app.log");
 			expect(status.stdout).toContain("logs-file");
+		});
+	});
+
+	describe("CRLF line endings (Windows)", () => {
+		test("CRLF .gitignore ignores files exactly like LF", async () => {
+			const { results } = await runScenario(["git init", "git status --porcelain"], {
+				files: {
+					"/repo/.gitignore": "node_modules/\r\n*.log\r\n",
+					"/repo/node_modules/pkg/index.js": "x",
+					"/repo/debug.log": "x",
+				},
+				env: ENV,
+			});
+			const status = results[1];
+			expect(status.exitCode).toBe(0);
+			expect(status.stdout).toBe("?? .gitignore\n");
+		});
+
+		test("CRLF negation patterns re-include files", async () => {
+			const { results } = await runScenario(["git init", "git status -s"], {
+				files: {
+					"/repo/.gitignore": "*.html\r\n!foo.html\r\n",
+					"/repo/foo.html": "keep me",
+					"/repo/bar.html": "ignore me",
+				},
+				env: ENV,
+			});
+			const status = results[1];
+			expect(status.stdout).toContain("foo.html");
+			expect(status.stdout).not.toContain("bar.html");
+		});
+
+		test("CRLF subdirectory .gitignore applies relative to its directory", async () => {
+			const { results } = await runScenario(["git init", "git add .", "git status -s"], {
+				files: {
+					"/repo/src/.gitignore": "*.generated.ts\r\n",
+					"/repo/src/app.ts": "export {}",
+					"/repo/src/types.generated.ts": "generated",
+					"/repo/lib/other.generated.ts": "not in src",
+				},
+				env: ENV,
+			});
+			const status = results[2];
+			expect(status.exitCode).toBe(0);
+			expect(status.stdout).toContain("app.ts");
+			expect(status.stdout).not.toContain("types.generated.ts");
+			expect(status.stdout).toContain("other.generated.ts");
+		});
+
+		test("CRLF .git/info/exclude is respected", async () => {
+			const { results, bash } = await runScenario(["git init"], {
+				files: {
+					"/repo/secret.key": "super secret",
+					"/repo/app.js": "code",
+				},
+				env: ENV,
+			});
+			expect(results[0].exitCode).toBe(0);
+			await bash.fs.writeFile("/repo/.git/info/exclude", "secret.key\r\n");
+			const status = await bash.exec("git status -s");
+			expect(status.exitCode).toBe(0);
+			expect(status.stdout).toContain("app.js");
+			expect(status.stdout).not.toContain("secret.key");
+		});
+
+		test("CRLF core.excludesFile is respected", async () => {
+			const { results, bash } = await runScenario(
+				["git init", "git config core.excludesFile /global-ignore"],
+				{
+					files: {
+						"/global-ignore": "*.swp\r\n",
+						"/repo/file.swp": "swap",
+						"/repo/app.js": "code",
+					},
+					env: ENV,
+				},
+			);
+			expect(results[1].exitCode).toBe(0);
+			const status = await bash.exec("git status -s");
+			expect(status.exitCode).toBe(0);
+			expect(status.stdout).toContain("app.js");
+			expect(status.stdout).not.toContain("file.swp");
+		});
+
+		test("git add respects CRLF .gitignore", async () => {
+			const { results } = await runScenario(["git init", "git add .", "git status -s"], {
+				files: {
+					"/repo/.gitignore": "*.log\r\n",
+					"/repo/app.js": "code",
+					"/repo/debug.log": "log",
+				},
+				env: ENV,
+			});
+			const status = results[2];
+			expect(status.exitCode).toBe(0);
+			expect(status.stdout).toContain("app.js");
+			expect(status.stdout).not.toContain("debug.log");
 		});
 	});
 

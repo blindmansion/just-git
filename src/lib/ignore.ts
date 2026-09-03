@@ -147,7 +147,12 @@ export function parsePatternLine(line: string, base: string): PathPattern | null
  */
 export function parseIgnoreFile(content: string, base: string, src: string): PatternList {
 	const patterns: PathPattern[] = [];
-	for (const line of content.split("\n")) {
+	for (let line of content.split("\n")) {
+		// Strip a single trailing \r so CRLF files parse like LF files.
+		// Like real git (dir.c), the CR is dropped as part of the line
+		// terminator — before trailing-whitespace trimming, and regardless
+		// of backslash escaping.
+		if (line.endsWith("\r")) line = line.slice(0, -1);
 		const pat = parsePatternLine(line, base);
 		if (pat) patterns.push(pat);
 	}
