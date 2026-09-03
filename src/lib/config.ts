@@ -89,7 +89,11 @@ function parseValue(
 		while (pos < raw.length) {
 			const ch = raw[pos]!;
 
-			if (ch === "\r") {
+			// A CR as the last character of a line is part of a CRLF
+			// terminator (lines were split on \n) — drop it, like real git,
+			// which folds \r\n into \n while reading. Interior CRs are
+			// value content.
+			if (ch === "\r" && pos === raw.length - 1) {
 				pos++;
 				continue;
 			}
@@ -110,7 +114,11 @@ function parseValue(
 			}
 
 			if (ch === "\\") {
-				if (pos + 1 >= raw.length) {
+				// A backslash at end of line continues the value on the next
+				// line. A CRLF terminator's CR doesn't count as a next
+				// character: "\<CR><LF>" is a continuation, not an escape.
+				const atEol = pos + 1 >= raw.length || (raw[pos + 1] === "\r" && pos + 2 >= raw.length);
+				if (atEol) {
 					lineIdx++;
 					if (lineIdx < allLines.length) {
 						raw = allLines[lineIdx]!;

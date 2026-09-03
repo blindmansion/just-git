@@ -239,6 +239,63 @@ describe("parseConfig CRLF", () => {
 		const cfg = parseConfig("[s]\n\tkey = value\r\n");
 		expect(cfg.s?.key).toBe("value");
 	});
+
+	test("CRLF file parses identically to LF file", () => {
+		const lines = [
+			"# comment",
+			"[core]",
+			"\tbare = false",
+			'\tquoted = "a b"',
+			"\tflag",
+			'[remote "origin"]',
+			"\turl = https://example.com/repo.git",
+		];
+		const lf = parseConfig(`${lines.join("\n")}\n`);
+		const crlf = parseConfig(`${lines.join("\r\n")}\r\n`);
+		expect(crlf).toEqual(lf);
+	});
+
+	test("backslash continuation with CRLF", () => {
+		const cfg = parseConfig("[s]\r\n\tkey = hello \\\r\nworld\r\n");
+		expect(cfg.s?.key).toBe("hello world");
+	});
+
+	test("multi-level continuation with CRLF", () => {
+		// Regression: the CR after the continuation backslash was treated
+		// as an escaped character, corrupting the value and turning the
+		// final line into a spurious boolean key.
+		const cfg = parseConfig("[user]\r\n\tname = John \\\r\nQ. \\\r\nDoe\r\n");
+		expect(cfg.user?.name).toBe("John Q. Doe");
+		expect(cfg.user?.doe).toBeUndefined();
+	});
+
+	test("next key after CRLF continuation", () => {
+		const cfg = parseConfig("[s]\r\n\tk1 = a \\\r\nb\r\n\tk2 = c\r\n");
+		expect(cfg.s?.k1).toBe("a b");
+		expect(cfg.s?.k2).toBe("c");
+	});
+
+	test("continuation inside quotes with CRLF", () => {
+		const cfg = parseConfig('[s]\r\n\tk = "a \\\r\nb"\r\n');
+		expect(cfg.s?.k).toBe("a b");
+	});
+
+	test("interior CR is kept as value content (matches git)", () => {
+		// Real git only folds a CR that is immediately before the LF;
+		// a CR elsewhere in the value is content.
+		const cfg = parseConfig("[s]\n\tk = x\rz\n");
+		expect(cfg.s?.k).toBe("x\rz");
+	});
+
+	test("continuation line with interior CR keeps it", () => {
+		const cfg = parseConfig("[s]\n\tk = a \\\nx\rz\n");
+		expect(cfg.s?.k).toBe("a x\rz");
+	});
+
+	test("parseConfigMulti handles CRLF continuations", () => {
+		const cfg = parseConfigMulti("[s]\r\n\tk = a \\\r\nb\r\n\tk = c\r\n");
+		expect(cfg.s?.k).toEqual(["a b", "c"]);
+	});
 });
 
 // ── Real git output format ──────────────────────────────────────────
