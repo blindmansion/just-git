@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.8.1
+
+### Fixed
+
+- Accept CRLF line endings in ignore files. A `.gitignore` (or `info/exclude` / `core.excludesFile`) with Windows line endings silently lost all its patterns, so ignored files showed up as untracked and could be added or committed.
+- Handle CRLF line terminators in config-file backslash continuations, and keep interior CRs as value content, matching real git.
+
 ## 1.8.0
 
 ### Added
