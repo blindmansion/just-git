@@ -161,6 +161,10 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			// ── Fetch phase ──────────────────────────────────────────
+			// A raw-URL (anonymous) remote has no remote-tracking namespace, so
+			// like git we fetch only the merge target into FETCH_HEAD and create
+			// no refs/remotes/* entries.
+			const isAnonymous = config.anonymous === true;
 			const fetchSpec = parseRefspec(config.fetchRefspec);
 			const remoteRefs = await transport.advertiseRefs();
 
@@ -174,14 +178,24 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 				localRef: string;
 			}> = [];
 
-			for (const ref of remoteRefs) {
-				if (ref.name === "HEAD") continue;
-				const dst = mapRefspec(fetchSpec, ref.name);
-				if (dst !== null) {
-					refUpdates.push({ remote: ref, localRef: dst });
-					if (!seen.has(ref.hash)) {
-						seen.add(ref.hash);
-						wants.push(ref.hash);
+			if (isAnonymous) {
+				const target = remoteBranch
+					? remoteRefs.find((r) => r.name === `refs/heads/${remoteBranch}`)
+					: remoteRefs.find((r) => r.name === "HEAD");
+				if (target && !seen.has(target.hash)) {
+					seen.add(target.hash);
+					wants.push(target.hash);
+				}
+			} else {
+				for (const ref of remoteRefs) {
+					if (ref.name === "HEAD") continue;
+					const dst = mapRefspec(fetchSpec, ref.name);
+					if (dst !== null) {
+						refUpdates.push({ remote: ref, localRef: dst });
+						if (!seen.has(ref.hash)) {
+							seen.add(ref.hash);
+							wants.push(ref.hash);
+						}
 					}
 				}
 			}
@@ -244,7 +258,9 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 					? `From ${config.url}\n${formatTransferRefLines(fetchRefLines, 10)}`
 					: "";
 
-			await ensureRemoteHead(gitCtx, remoteName, remoteRefs, transport.headTarget);
+			if (!isAnonymous) {
+				await ensureRemoteHead(gitCtx, remoteName, remoteRefs, transport.headTarget);
+			}
 
 			// After fetch: check if we can determine the merge target
 			if (head?.type !== "symbolic" && !remoteBranch) {

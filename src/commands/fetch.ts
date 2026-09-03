@@ -279,8 +279,13 @@ async function fetchOneRemote(
 	if (isCommandError(resolved)) return resolved;
 	const { transport, config } = resolved;
 
+	const hasExplicitRefspecs = !!rawRefspecs && rawRefspecs.length > 0;
+	// A raw-URL (anonymous) remote has no remote-tracking namespace. Like git,
+	// a default fetch from one updates only FETCH_HEAD and creates no refs;
+	// explicit `src:dst` refspecs are still honoured.
+	const isAnonymousDefault = config.anonymous === true && !hasExplicitRefspecs;
 	const configSpec = parseRefspec(config.fetchRefspec);
-	const fetchSpecs = resolveFetchSpecs(rawRefspecs, configSpec);
+	const fetchSpecs = isAnonymousDefault ? [] : resolveFetchSpecs(rawRefspecs, configSpec);
 	const preFetchRej = await ext?.hooks?.preFetch?.({
 		repo: gitCtx,
 		remote: remoteName,
@@ -310,6 +315,16 @@ async function fetchOneRemote(
 	const missingRefError = validateExplicitFetchSpecs(rawRefspecs, fetchSpecs, matchedSpecs);
 	if (missingRefError) return missingRefError;
 	const seen = new Set(wants);
+
+	// For a default anonymous fetch there are no refspec-driven wants, so pull
+	// the remote HEAD explicitly to download its objects for FETCH_HEAD.
+	if (isAnonymousDefault) {
+		const headRef = remoteRefs.find((r) => r.name === "HEAD");
+		if (headRef && !seen.has(headRef.hash)) {
+			seen.add(headRef.hash);
+			wants.push(headRef.hash);
+		}
+	}
 
 	if (tags) {
 		for (const ref of remoteRefs) {
@@ -352,6 +367,10 @@ async function fetchOneRemote(
 		ident,
 		tags,
 	);
+
+	if (isAnonymousDefault && remoteRefs.some((r) => r.name === "HEAD")) {
+		refLines.push({ prefix: " * branch", from: "HEAD", to: "FETCH_HEAD" });
+	}
 
 	if (!tags) {
 		refLines.push(
@@ -396,12 +415,15 @@ async function fetchOneRemote(
 		const headBranch = remoteRefs.find(
 			(r) => r.name.startsWith("refs/heads/") && r.hash === headRef.hash,
 		);
+		// git records an anonymous fetch as just `<hash>\t\t<url>`, without the
+		// `branch '<name>' of` prefix used for a configured remote.
 		const branchDesc = headBranch
 			? `branch '${headBranch.name.slice("refs/heads/".length)}' of`
 			: "of";
-		await gitCtx.fs.writeFile(fetchHeadPath, `${headRef.hash}\t\t${branchDesc} ${config.url}\n`);
+		const fetchHeadDesc = isAnonymousDefault ? config.url : `${branchDesc} ${config.url}`;
+		await gitCtx.fs.writeFile(fetchHeadPath, `${headRef.hash}\t\t${fetchHeadDesc}\n`);
 
-		if (!rawRefspecs || rawRefspecs.length === 0) {
+		if (!config.anonymous && !hasExplicitRefspecs) {
 			await ensureRemoteHead(gitCtx, remoteName, remoteRefs, transport.headTarget);
 		}
 	}

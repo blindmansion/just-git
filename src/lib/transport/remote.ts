@@ -52,6 +52,12 @@ interface RemoteConfig {
 	name: string;
 	url: string;
 	fetchRefspec: string;
+	/**
+	 * True when this config was synthesized from a raw location (URL or path)
+	 * rather than a `[remote "<name>"]` section. Anonymous remotes have no
+	 * remote-tracking namespace, so `fetch`/`pull` update only `FETCH_HEAD`.
+	 */
+	anonymous?: boolean;
 }
 
 /**
@@ -67,6 +73,26 @@ async function getRemoteConfig(ctx: GitContext, remoteName: string): Promise<Rem
 		name: remoteName,
 		url: section.url,
 		fetchRefspec: section.fetch ?? "+refs/heads/*:refs/remotes/origin/*",
+	};
+}
+
+/**
+ * Build a synthetic remote config for an argument that is not a configured
+ * remote but names a location directly (an HTTP(S)/SSH URL or a local path).
+ * Mirrors git, which treats a non-remote argument to `fetch`/`push` as a URL.
+ *
+ * Returns null for an empty argument. The config is flagged `anonymous`: like
+ * git, a raw-URL fetch/pull writes only `FETCH_HEAD` and creates no
+ * remote-tracking refs. The refspec is retained only for explicit `src:dst`
+ * fetch refspecs, which git still honours.
+ */
+function anonymousRemoteConfig(location: string): RemoteConfig | null {
+	if (location.length === 0) return null;
+	return {
+		name: location,
+		url: location,
+		fetchRefspec: "+refs/heads/*:refs/remotes/origin/*",
+		anonymous: true,
 	};
 }
 
@@ -181,7 +207,11 @@ export async function resolveRemoteTransport(
 	remoteName: string,
 	env?: Map<string, string>,
 ): Promise<{ transport: Transport; config: RemoteConfig } | null> {
-	const remote = await getRemoteConfig(ctx, remoteName);
+	// A configured remote name takes precedence. When the argument is not a
+	// configured remote, fall back to treating it as an anonymous location
+	// (URL or local path), matching git's behaviour where `git fetch <url>` /
+	// `git push <url>` accept a raw URL in the remote position.
+	const remote = (await getRemoteConfig(ctx, remoteName)) ?? anonymousRemoteConfig(remoteName);
 	if (!remote) return null;
 
 	const cleanUrl = stripAndCacheCredentials(remote.url, ctx.credentialCache).url;

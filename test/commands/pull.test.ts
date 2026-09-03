@@ -570,4 +570,22 @@ describe("git pull", () => {
 		expect(result.exitCode).toBe(128);
 		expect(result.stderr).toContain("Not possible to fast-forward");
 	});
+
+	// `git pull <url>` treats the raw location as an anonymous remote: it merges
+	// via FETCH_HEAD without updating any remote-tracking refs (matching git).
+	test("pull from a raw url fast-forwards without touching tracking refs", async () => {
+		const bash = await setupClonePair();
+
+		const originBefore = await readFile(bash.fs, "/local/.git/refs/remotes/origin/main");
+		await bash.exec("cd /remote && echo v2 > README.md && git add . && git commit -m update");
+
+		const result = await bash.exec("git pull /remote", { cwd: "/local" });
+		expect(result.exitCode).toBe(0);
+		expect(result.stdout).toContain("Fast-forward");
+		expect(await readFile(bash.fs, "/local/README.md")).toBe("v2\n");
+
+		// The anonymous pull must not advance origin's tracking ref.
+		const originAfter = await readFile(bash.fs, "/local/.git/refs/remotes/origin/main");
+		expect(originAfter).toBe(originBefore);
+	});
 });

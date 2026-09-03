@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { Bash } from "just-bash";
 import { TEST_ENV as ENV } from "../fixtures";
 import { createTestBash, pathExists, readFile, setupClonePair } from "../util";
 
@@ -313,5 +314,94 @@ describe("git fetch", () => {
 		expect(result.stderr).toContain("[new tag]");
 		expect(result.stderr).toContain("v1.1");
 		expect(await pathExists(bash.fs, "/local/.git/refs/tags/v1.1")).toBe(true);
+	});
+
+	// `git fetch <url>` accepts a raw location (URL or path) in the remote
+	// position. Like git, this is an "anonymous" fetch: it downloads the remote
+	// HEAD into FETCH_HEAD only and creates no remote-tracking refs.
+	describe("raw URL / anonymous remote", () => {
+		async function setupRawSource(): Promise<Bash> {
+			const bash = createTestBash({
+				files: { "/remote/README.md": "# Hello" },
+				env: ENV,
+				cwd: "/remote",
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "initial"');
+			await bash.exec("git init /consumer", { cwd: "/" });
+			return bash;
+		}
+
+		test("fetches a raw path with no configured remote", async () => {
+			const bash = await setupRawSource();
+
+			const result = await bash.exec("git fetch /remote", { cwd: "/consumer" });
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toContain("From /remote");
+			expect(result.stderr).toContain("-> FETCH_HEAD");
+		});
+
+		test("writes FETCH_HEAD as '<hash>\\t\\t<url>' with no branch description", async () => {
+			const bash = await setupRawSource();
+
+			await bash.exec("git fetch /remote", { cwd: "/consumer" });
+
+			const remoteHead = (await readFile(bash.fs, "/remote/.git/refs/heads/main"))?.trim();
+			const fetchHead = await readFile(bash.fs, "/consumer/.git/FETCH_HEAD");
+			expect(fetchHead).toBe(`${remoteHead}\t\t/remote\n`);
+		});
+
+		test("creates no remote-tracking refs", async () => {
+			const bash = await setupRawSource();
+
+			await bash.exec("git fetch /remote", { cwd: "/consumer" });
+
+			expect(await pathExists(bash.fs, "/consumer/.git/refs/remotes")).toBe(false);
+		});
+
+		test("downloads objects so FETCH_HEAD is usable", async () => {
+			const bash = await setupRawSource();
+
+			await bash.exec("git fetch /remote", { cwd: "/consumer" });
+
+			const remoteHead = (await readFile(bash.fs, "/remote/.git/refs/heads/main"))?.trim();
+			const log = await bash.exec(`git log --oneline ${remoteHead}`, { cwd: "/consumer" });
+			expect(log.exitCode).toBe(0);
+			expect(log.stdout).toContain("initial");
+		});
+
+		test("does not clobber a configured remote's tracking refs", async () => {
+			// /local is a clone of /remote, so it has refs/remotes/origin/main.
+			const bash = await setupClonePair();
+			await bash.exec("git init /source2", { cwd: "/" });
+			await bash.exec("cd /source2 && echo other > o.txt && git add . && git commit -m other");
+
+			const before = await readFile(bash.fs, "/local/.git/refs/remotes/origin/main");
+			const result = await bash.exec("git fetch /source2", { cwd: "/local" });
+			expect(result.exitCode).toBe(0);
+
+			const after = await readFile(bash.fs, "/local/.git/refs/remotes/origin/main");
+			expect(after).toBe(before);
+		});
+
+		test("honors an explicit src:dst refspec for a raw url", async () => {
+			const bash = await setupRawSource();
+
+			const result = await bash.exec("git fetch /remote refs/heads/main:refs/heads/mylocal", {
+				cwd: "/consumer",
+			});
+			expect(result.exitCode).toBe(0);
+			expect(await pathExists(bash.fs, "/consumer/.git/refs/heads/mylocal")).toBe(true);
+			expect(await pathExists(bash.fs, "/consumer/.git/refs/remotes")).toBe(false);
+		});
+
+		test("still errors for a bogus non-url remote name", async () => {
+			const bash = await setupRawSource();
+
+			const result = await bash.exec("git fetch bogus-name", { cwd: "/consumer" });
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("does not appear to be a git repository");
+		});
 	});
 });
