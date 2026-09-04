@@ -3,7 +3,8 @@ import { isCommandError, requireGitContext, requireWorkTree } from "../lib/comma
 import { readIndex } from "../lib/index.ts";
 import { join } from "../lib/path.ts";
 import { matchPathspecs, parsePathspec } from "../lib/pathspec.ts";
-import { hashWorktreeEntry, lstatSafe } from "../lib/symlink.ts";
+import { hashCleanedWorktreeEntry } from "../lib/eol.ts";
+import { lstatSafe } from "../lib/symlink.ts";
 import type { GitContext, Index, IndexEntry } from "../lib/types.ts";
 import { walkWorkTree } from "../lib/worktree.ts";
 import { a, type Command, f } from "../parse/index.ts";
@@ -138,7 +139,7 @@ async function getModifiedDeleted(
 		}
 		const st = await lstatSafe(ctx.fs, fullPath);
 		if (!st.isFile && !st.isSymbolicLink) continue;
-		const wtHash = await hashWorktreeEntry(ctx.fs, fullPath);
+		const wtHash = await hashCleanedWorktreeEntry(ctx, fullPath, entry.hash);
 		if (wtHash !== entry.hash) {
 			results.push({ path: entry.path, status: "modified" });
 		}

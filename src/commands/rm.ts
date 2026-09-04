@@ -12,7 +12,8 @@ import { readCommit } from "../lib/object-db.ts";
 import { join, relative, resolve } from "../lib/path.ts";
 import { containsWildcard, matchPathspecs, parsePathspec } from "../lib/pathspec.ts";
 import { resolveHead } from "../lib/refs.ts";
-import { hashWorktreeEntry, lstatSafe } from "../lib/symlink.ts";
+import { hashCleanedWorktreeEntry } from "../lib/eol.ts";
+import { lstatSafe } from "../lib/symlink.ts";
 import { flattenTree } from "../lib/tree-ops.ts";
 import type { GitContext, Index, ObjectId } from "../lib/types.ts";
 import { a, type Command, f } from "../parse/index.ts";
@@ -198,7 +199,7 @@ async function checkSafety(
 				filePresent = false;
 			}
 			if (filePresent) {
-				const wtHash = await hashWorktreeEntry(gitCtx.fs, fullPath);
+				const wtHash = await hashCleanedWorktreeEntry(gitCtx, fullPath, entry.hash);
 				local = wtHash !== entry.hash;
 			}
 		}

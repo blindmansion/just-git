@@ -1,4 +1,5 @@
 import { comparePaths, firstLine, uniqueAbbrev } from "./command-utils.ts";
+import { cleanForCheckin, hashCleanedWorktreeEntry } from "./eol.ts";
 import { getAuthor, getCommitter } from "./identity.ts";
 import {
 	defaultStat,
@@ -8,7 +9,7 @@ import {
 	writeIndex,
 } from "./index.ts";
 import { mergeOrtNonRecursive } from "./merge-ort.ts";
-import { hashObject, readCommit, writeObject } from "./object-db.ts";
+import { readCommit, writeObject } from "./object-db.ts";
 import { serializeCommit } from "./objects/commit.ts";
 import { dirname, join } from "./path.ts";
 import {
@@ -130,8 +131,7 @@ export async function saveStash(
 		if (!indexEntry) continue; // skip untracked
 
 		const fullPath = join(workTree, filePath);
-		const content = await ctx.fs.readFileBuffer(fullPath);
-		const blobHash = await hashObject("blob", content);
+		const blobHash = await hashCleanedWorktreeEntry(ctx, fullPath, indexEntry.hash);
 		if (blobHash !== indexEntry.hash) {
 			hasWorkTreeChanges = true;
 			break;
@@ -202,7 +202,8 @@ export async function saveStash(
 		if (!indexEntry && !headEntry) continue; // truly untracked
 
 		const fullPath = join(workTree, filePath);
-		const content = await ctx.fs.readFileBuffer(fullPath);
+		const raw = await ctx.fs.readFileBuffer(fullPath);
+		const content = await cleanForCheckin(ctx, raw, indexEntry?.hash ?? headEntry?.hash);
 		const blobHash = await writeObject(ctx, "blob", content);
 
 		const mode = indexEntry ? indexEntry.mode : parseInt(headEntry?.mode ?? "100644", 8);
@@ -253,7 +254,8 @@ export async function saveStash(
 		const uEntries: IndexEntry[] = [];
 		for (const filePath of untrackedPaths) {
 			const fullPath = join(workTree, filePath);
-			const content = await ctx.fs.readFileBuffer(fullPath);
+			const raw = await ctx.fs.readFileBuffer(fullPath);
+			const content = await cleanForCheckin(ctx, raw);
 			const blobHash = await writeObject(ctx, "blob", content);
 			uEntries.push({
 				path: filePath,
@@ -538,8 +540,7 @@ export async function applyStash(
 		if (ie) {
 			if (isSubmoduleMode(ie.mode)) continue;
 			if (!(await ctx.fs.exists(fullPath))) continue;
-			const content = await ctx.fs.readFileBuffer(fullPath);
-			const blobHash = await hashObject("blob", content);
+			const blobHash = await hashCleanedWorktreeEntry(ctx, fullPath, ie.hash);
 			if (blobHash !== ie.hash) {
 				dirtyOverwritten.push(op.path);
 			}

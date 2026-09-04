@@ -10,8 +10,9 @@ import {
 } from "./command-utils.ts";
 import { findOrphanedCommits } from "./commit-walk.ts";
 import { getConfigValue, readConfig, writeConfig } from "./config.ts";
+import { hashCleanedWorktreeEntry } from "./eol.ts";
 import { addEntry, defaultStat, readIndex, writeIndex } from "./index.ts";
-import { hashObject, readCommit } from "./object-db.ts";
+import { readCommit } from "./object-db.ts";
 import { clearAllOperationState, clearDetachPoint, writeDetachPoint } from "./operation-state.ts";
 import { join } from "./path.ts";
 import { matchPathspecs, parsePathspec } from "./pathspec.ts";
@@ -318,8 +319,7 @@ export async function formatCheckoutSummary(
 		if (await ctx.fs.exists(fullPath)) {
 			const stat = await ctx.fs.stat(fullPath);
 			if (stat.isFile) {
-				const content = await ctx.fs.readFileBuffer(fullPath);
-				wtHashMap.set(path, await hashObject("blob", content));
+				wtHashMap.set(path, await hashCleanedWorktreeEntry(ctx, fullPath, indexMap.get(path)));
 			}
 		} else {
 			wtHashMap.set(path, null);

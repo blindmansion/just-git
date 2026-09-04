@@ -1,5 +1,4 @@
 import type { FileSystem, FileStat } from "../fs.ts";
-import { hashObject } from "./object-db.ts";
 
 const encoder = new TextEncoder();
 
@@ -32,13 +31,4 @@ export async function readWorktreeContent(fs: FileSystem, fullPath: string): Pro
 		return encoder.encode(target);
 	}
 	return fs.readFileBuffer(fullPath);
-}
-
-/**
- * Hash the worktree content of a file or symlink as a git blob.
- * Returns the object hash.
- */
-export async function hashWorktreeEntry(fs: FileSystem, fullPath: string): Promise<string> {
-	const content = await readWorktreeContent(fs, fullPath);
-	return hashObject("blob", content);
 }

@@ -1,10 +1,11 @@
 import { comparePaths } from "./command-utils.ts";
+import { cleanForCheckin, getEolPolicy, hashCleanedWorktreeEntry, lfToCrlf } from "./eol.ts";
 import { type IgnoreStack, isIgnored, loadBaseIgnore, pushDirIgnore } from "./ignore.ts";
-import { addEntry, defaultStat } from "./index.ts";
+import { addEntry, defaultStat, findEntry } from "./index.ts";
 import { readObject, writeObject } from "./object-db.ts";
 import { isInsideWorkTree, verifyPath, verifySymlinkTarget } from "./path-safety.ts";
 import { dirname, join } from "./path.ts";
-import { hashWorktreeEntry, isSubmoduleMode, isSymlinkMode, lstatSafe } from "./symlink.ts";
+import { isSubmoduleMode, isSymlinkMode, lstatSafe } from "./symlink.ts";
 import { flattenTree } from "./tree-ops.ts";
 import type { GitContext, Index, IndexEntry, ObjectId, WorkTreeDiff } from "./types.ts";
 
@@ -58,7 +59,7 @@ export async function diffIndexToWorkTree(ctx: GitContext, index: Index): Promis
 			continue;
 		}
 
-		const workTreeHash = await hashWorktreeEntry(ctx.fs, fullPath);
+		const workTreeHash = await hashCleanedWorktreeEntry(ctx, fullPath, entry.hash);
 
 		if (workTreeHash !== entry.hash) {
 			results.push({
@@ -153,7 +154,11 @@ export async function checkoutEntry(
 				// Path doesn't exist — fine
 			}
 		}
-		await ctx.fs.writeFile(fullPath, raw.content);
+		// Smudge: with core.autocrlf=true, checkout writes CRLF line endings
+		// (lfToCrlf declines for binary or already-CR content).
+		const policy = await getEolPolicy(ctx);
+		const content = policy.smudgeCrlf ? lfToCrlf(raw.content) : raw.content;
+		await ctx.fs.writeFile(fullPath, content);
 	}
 }
 
@@ -212,7 +217,8 @@ export async function stageFile(
 	}
 
 	const content = await ctx.fs.readFileBuffer(fullPath);
-	const hash = await writeObject(ctx, "blob", content);
+	const blobContent = await cleanForCheckin(ctx, content, findEntry(index, path)?.hash);
+	const hash = await writeObject(ctx, "blob", blobContent);
 
 	const mode = st.mode != null ? toGitMode(st.mode) : 0o100644;
 	const entry: IndexEntry = {
@@ -222,6 +228,7 @@ export async function stageFile(
 		stage: 0,
 		stat: {
 			...defaultStat(),
+			// Index stat data describes the worktree file, not the cleaned blob.
 			size: content.byteLength,
 		},
 	};

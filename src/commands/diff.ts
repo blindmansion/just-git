@@ -16,7 +16,6 @@ import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algo
 import { getStage0Entries, readIndex } from "../lib/index.ts";
 import { findAllMergeBases } from "../lib/merge.ts";
 import {
-	hashObject,
 	isBinaryBytes,
 	isBinaryStr,
 	readBlobBytes,
@@ -26,6 +25,7 @@ import {
 import { join } from "../lib/path.ts";
 import { matchPathspecs, type Pathspec, parsePathspec } from "../lib/pathspec.ts";
 import { parseRangeSyntax } from "../lib/range-syntax.ts";
+import { cleanedWorktreeHash, worktreeBytesForHash } from "../lib/eol.ts";
 import { readWorktreeContent } from "../lib/symlink.ts";
 import { resolveHead } from "../lib/refs.ts";
 import { detectRenames, formatRenamePath, type RenamePair } from "../lib/rename-detection.ts";
@@ -228,7 +228,7 @@ async function collectUnstaged(
 		if (diff.status === "modified" && gitCtx.workTree) {
 			const fullPath = join(gitCtx.workTree, diff.path);
 			const bytes = await gitCtx.fs.readFileBuffer(fullPath);
-			newHash = await hashObject("blob", bytes);
+			newHash = await cleanedWorktreeHash(gitCtx, bytes, indexEntry.hash);
 		}
 
 		items.push({
@@ -276,7 +276,12 @@ async function collectUnmergedItems(
 	if (workTree && s2 && s3) {
 		const mode2 = fmtMode(s2.mode);
 		const mode3 = fmtMode(s3.mode);
-		const { exists: wtExists, hash: wtHash } = await hashWorkTreeFile(gitCtx.fs, workTree, path);
+		const { exists: wtExists, hash: wtHash } = await hashWorkTreeFile(
+			gitCtx,
+			workTree,
+			path,
+			s2.hash,
+		);
 
 		items.push({
 			path,
@@ -296,20 +301,26 @@ async function collectUnmergedItems(
 
 	if (workTree && s2) {
 		const mode = fmtMode(s2.mode);
-		const { exists: wtExists, hash: wtHash } = await hashWorkTreeFile(gitCtx.fs, workTree, path);
+		const { exists: wtExists, hash: wtHash } = await hashWorkTreeFile(
+			gitCtx,
+			workTree,
+			path,
+			s2.hash,
+		);
 		appendWorkTreeDelta(items, path, s2.hash, mode, wtExists, wtHash);
 	}
 }
 
 async function hashWorkTreeFile(
-	fs: GitContext["fs"],
+	gitCtx: GitContext,
 	workTree: string,
 	relPath: string,
+	referenceHash?: string,
 ): Promise<{ exists: boolean; hash?: string }> {
 	const fullPath = join(workTree, relPath);
-	if (!(await fs.exists(fullPath))) return { exists: false };
-	const bytes = await readWorktreeContent(fs, fullPath);
-	return { exists: true, hash: await hashObject("blob", bytes) };
+	if (!(await gitCtx.fs.exists(fullPath))) return { exists: false };
+	const bytes = await readWorktreeContent(gitCtx.fs, fullPath);
+	return { exists: true, hash: await cleanedWorktreeHash(gitCtx, bytes, referenceHash) };
 }
 
 function appendWorkTreeDelta(
@@ -517,7 +528,7 @@ async function collectCommitToWorkTree(
 		}
 
 		const content = await gitCtx.fs.readFileBuffer(fullPath);
-		const workTreeHash = await hashObject("blob", content);
+		const workTreeHash = await cleanedWorktreeHash(gitCtx, content, entry.hash);
 
 		if (workTreeHash !== entry.hash) {
 			items.push({
@@ -539,7 +550,7 @@ async function collectCommitToWorkTree(
 		if (!(await gitCtx.fs.exists(fullPath))) continue;
 
 		const content = await gitCtx.fs.readFileBuffer(fullPath);
-		const newHash = await hashObject("blob", content);
+		const newHash = await cleanedWorktreeHash(gitCtx, content, entry.hash);
 
 		items.push({
 			path,
@@ -814,20 +825,17 @@ async function formatAsShortstat(gitCtx: GitContext, items: DiffFileResult[]): P
 // ── Helpers ─────────────────────────────────────────────────────────
 
 async function readNewContentStr(gitCtx: GitContext, item: DiffFileResult): Promise<string> {
-	if (!item.newHash) return "";
-	if (item.newFromWorkTree && gitCtx.workTree) {
-		const fullPath = join(gitCtx.workTree, item.path);
-		const bytes = await readWorktreeContent(gitCtx.fs, fullPath);
-		return decoder.decode(bytes);
-	}
-	return readBlobContent(gitCtx, item.newHash);
+	return decoder.decode(await readNewContentBytes(gitCtx, item));
 }
 
 async function readNewContentBytes(gitCtx: GitContext, item: DiffFileResult): Promise<Uint8Array> {
 	if (!item.newHash) return new Uint8Array(0);
 	if (item.newFromWorkTree && gitCtx.workTree) {
 		const fullPath = join(gitCtx.workTree, item.path);
-		return readWorktreeContent(gitCtx.fs, fullPath);
+		const bytes = await readWorktreeContent(gitCtx.fs, fullPath);
+		// Render the content matching the hash the delta was selected with:
+		// when item.newHash is the raw hash, conversion didn't apply.
+		return worktreeBytesForHash(gitCtx, bytes, item.newHash);
 	}
 	return readBlobBytes(gitCtx, item.newHash);
 }
