@@ -17,7 +17,7 @@ import { findRepo as findRepoOnFs } from "./lib/repo.ts";
 import type { CredentialCache } from "./lib/transport/remote.ts";
 import type { GitContext, ObjectStore, RefStore, RemoteResolver } from "./lib/types.ts";
 
-export const VERSION = "1.8.1";
+export const VERSION = "1.8.2";
 
 /** Options for subcommand execution (mirrors just-bash's CommandExecOptions). */
 export interface CommandExecOptions {
