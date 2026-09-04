@@ -4,6 +4,7 @@
 
 ### Added
 
+- `git status` now supports `--untracked-files` / `-u` with modes `no`, `normal` (default), and `all`, including git's attached-value forms (`-uno`, `-uall`) and the bare form (`-u` / `--untracked-files` means `all`). Long-format output matches real git's `-uno` wording ("Untracked files not listed…" / "nothing to commit (use -u to show untracked files)").
 - The argument parser supports git-style optional-value options (`impliedValue`, git's `PARSE_OPT_OPTARG`): a bare optional-value option (`-u`, `--foo`) takes its implied value and never consumes the next token, while attached values (`-uno`, `--foo=no`) still win.
 
 ### Fixed

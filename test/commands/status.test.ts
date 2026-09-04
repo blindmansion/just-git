@@ -60,6 +60,79 @@ describe("git status", () => {
 		});
 	});
 
+	describe("--untracked-files / -u modes", () => {
+		/** One commit, one loose untracked file, one fully-untracked dir. */
+		async function setupUntracked() {
+			const bash = createTestBash({ files: {}, cwd: "/repo", env: TEST_ENV });
+			await bash.exec("git init");
+			await bash.fs.writeFile("/repo/tracked.txt", "a\n");
+			await bash.exec("git add tracked.txt");
+			await bash.exec('git commit -m "init"');
+			await bash.fs.writeFile("/repo/loose.txt", "z\n");
+			await bash.fs.writeFile("/repo/newdir/one.txt", "x\n");
+			await bash.fs.writeFile("/repo/newdir/two.txt", "y\n");
+			return bash;
+		}
+
+		test("-uno hides untracked files in short format", async () => {
+			const bash = await setupUntracked();
+			expect((await bash.exec("git status --short -uno")).stdout).toBe("");
+		});
+
+		test("--untracked-files=no is equivalent to -uno", async () => {
+			const bash = await setupUntracked();
+			expect((await bash.exec("git status --short --untracked-files=no")).stdout).toBe("");
+		});
+
+		test("-uno long format notes the omission in the footer", async () => {
+			const bash = await setupUntracked();
+			const out = (await bash.exec("git status -uno")).stdout;
+			expect(out).not.toContain("Untracked files:");
+			expect(out).toContain("nothing to commit (use -u to show untracked files)");
+		});
+
+		test("-uno long format with staged changes notes unlisted untracked", async () => {
+			const bash = await setupUntracked();
+			await bash.exec("git add loose.txt");
+			const out = (await bash.exec("git status -uno")).stdout;
+			expect(out).toContain("Changes to be committed:");
+			expect(out).toContain("Untracked files not listed (use -u option to show untracked files)");
+			expect(out).not.toContain("Untracked files:\n");
+		});
+
+		test("normal mode collapses untracked directories (default)", async () => {
+			const bash = await setupUntracked();
+			const out = (await bash.exec("git status --short")).stdout;
+			expect(out).toBe("?? loose.txt\n?? newdir/\n");
+		});
+
+		test("-uall lists files inside untracked directories", async () => {
+			const bash = await setupUntracked();
+			const out = (await bash.exec("git status --short -uall")).stdout;
+			expect(out).toBe("?? loose.txt\n?? newdir/one.txt\n?? newdir/two.txt\n");
+		});
+
+		test("bare -u implies all and does not consume the next token", async () => {
+			const bash = await setupUntracked();
+			// -u must not swallow --short as its value
+			const out = (await bash.exec("git status -u --short")).stdout;
+			expect(out).toBe("?? loose.txt\n?? newdir/one.txt\n?? newdir/two.txt\n");
+		});
+
+		test("bare --untracked-files implies all", async () => {
+			const bash = await setupUntracked();
+			const out = (await bash.exec("git status --short --untracked-files")).stdout;
+			expect(out).toBe("?? loose.txt\n?? newdir/one.txt\n?? newdir/two.txt\n");
+		});
+
+		test("invalid mode fails like real git", async () => {
+			const bash = await setupUntracked();
+			const result = await bash.exec("git status -ufoo");
+			expect(result.exitCode).toBe(128);
+			expect(result.stderr).toContain("fatal: Invalid untracked files mode 'foo'");
+		});
+	});
+
 	describe("staged changes (new files)", () => {
 		test("shows new file after git add", async () => {
 			const { results } = await runScenario(["git init", "git add README.md", "git status"], {

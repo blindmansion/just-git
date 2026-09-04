@@ -1,5 +1,5 @@
 import type { GitExtensions } from "../git.ts";
-import { comparePaths, isCommandError, requireGitContext } from "../lib/command-utils.ts";
+import { comparePaths, err, isCommandError, requireGitContext } from "../lib/command-utils.ts";
 import { readConfig } from "../lib/config.ts";
 import { readIndex } from "../lib/index.ts";
 import { branchNameFromRef, readHead, resolveHead } from "../lib/refs.ts";
@@ -12,9 +12,10 @@ import {
 	getUnmergedPaths,
 	type StatusEntry,
 	type TrackingInfo,
+	type UntrackedMode,
 } from "../lib/status-format.ts";
 import { diffIndexToWorkTree } from "../lib/worktree.ts";
-import { type Command, f } from "../parse/index.ts";
+import { type Command, f, o } from "../parse/index.ts";
 
 export function registerStatusCommand(parent: Command, ext?: GitExtensions) {
 	parent.command("status", {
@@ -23,14 +24,24 @@ export function registerStatusCommand(parent: Command, ext?: GitExtensions) {
 			short: f().alias("s").describe("Give the output in the short-format"),
 			porcelain: f().describe("Give the output in a machine-parseable format"),
 			branch: f().alias("b").describe("Show the branch in short-format output"),
+			untrackedFiles: o
+				.string()
+				.alias("u")
+				.impliedValue("all")
+				.describe("Show untracked files: no, normal (default), or all (bare -u means all)"),
 		},
 		handler: async (args, ctx) => {
+			const untrackedMode = (args.untrackedFiles ?? "normal") as UntrackedMode;
+			if (untrackedMode !== "no" && untrackedMode !== "normal" && untrackedMode !== "all") {
+				return err(`fatal: Invalid untracked files mode '${args.untrackedFiles}'\n`, 128);
+			}
+
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
 			const gitCtx = gitCtxOrError;
 
 			if (!args.short && !args.porcelain) {
-				const stdout = await generateLongFormStatus(gitCtx);
+				const stdout = await generateLongFormStatus(gitCtx, { untrackedMode });
 				return { stdout, stderr: "", exitCode: 0 };
 			}
 
@@ -69,7 +80,12 @@ export function registerStatusCommand(parent: Command, ext?: GitExtensions) {
 			unstaged.sort((a, b) => comparePaths(a.path, b.path));
 
 			const trackedPaths = new Set(index.entries.map((e) => e.path));
-			const collapsedUntracked = collapseUntrackedDirs(untracked, trackedPaths);
+			const collapsedUntracked =
+				untrackedMode === "no"
+					? []
+					: untrackedMode === "all"
+						? [...untracked].sort(comparePaths)
+						: collapseUntrackedDirs(untracked, trackedPaths);
 
 			const stdout = formatShortStatus(
 				branchHeader,

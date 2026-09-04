@@ -22,6 +22,13 @@ export interface StatusEntry {
 }
 
 /**
+ * `--untracked-files` mode: `no` hides untracked files, `normal`
+ * (default) collapses fully-untracked directories to `dir/`, `all`
+ * lists every untracked file individually.
+ */
+export type UntrackedMode = "no" | "normal" | "all";
+
+/**
  * Generate the full long-form `git status` output.
  * Used by the status command handler and also by commit/cherry-pick
  * failure paths, which output `git status` to stdout on failure.
@@ -37,6 +44,8 @@ export interface StatusEntry {
  *   can then append its own footer (e.g., "No changes" for amend).
  * @param opts.index - Pre-loaded index to use instead of reading from
  *   disk. Used by `commit -a` to show status after auto-staging.
+ * @param opts.untrackedMode - `--untracked-files` handling; defaults
+ *   to "normal" (collapse untracked directories).
  */
 export async function generateLongFormStatus(
 	gitCtx: GitContext,
@@ -45,6 +54,7 @@ export async function generateLongFormStatus(
 		compareHash?: ObjectId | null;
 		noWarn?: boolean;
 		index?: Index;
+		untrackedMode?: UntrackedMode;
 	},
 ): Promise<string> {
 	const head = await readHead(gitCtx);
@@ -73,8 +83,14 @@ export async function generateLongFormStatus(
 		}
 	}
 	unstaged.sort((a, b) => comparePaths(a.path, b.path));
+	const untrackedMode = opts?.untrackedMode ?? "normal";
 	const trackedPaths = new Set(index.entries.map((e) => e.path));
-	const collapsedUntracked = collapseUntrackedDirs(untracked, trackedPaths);
+	const collapsedUntracked =
+		untrackedMode === "no"
+			? []
+			: untrackedMode === "all"
+				? [...untracked].sort(comparePaths)
+				: collapseUntrackedDirs(untracked, trackedPaths);
 
 	return formatLongStatus(
 		gitCtx,
@@ -86,7 +102,7 @@ export async function generateLongFormStatus(
 		unstaged,
 		unmerged,
 		collapsedUntracked,
-		{ fromCommit: opts?.fromCommit, noWarn: opts?.noWarn, isInitial },
+		{ fromCommit: opts?.fromCommit, noWarn: opts?.noWarn, isInitial, untrackedMode },
 	);
 }
 
@@ -136,7 +152,12 @@ async function formatLongStatus(
 	unstaged: StatusEntry[],
 	unmerged: StatusEntry[],
 	collapsedUntracked: string[],
-	opts?: { fromCommit?: boolean; noWarn?: boolean; isInitial?: boolean },
+	opts?: {
+		fromCommit?: boolean;
+		noWarn?: boolean;
+		isInitial?: boolean;
+		untrackedMode?: UntrackedMode;
+	},
 ): Promise<string> {
 	const lines: string[] = [];
 
@@ -346,7 +367,16 @@ async function formatLongStatus(
 		hasSections = true;
 	}
 
-	if (collapsedUntracked.length > 0) {
+	const commitable = staged.length > 0 || (!!mergeHeadRef && unmerged.length === 0);
+
+	if (opts?.untrackedMode === "no") {
+		// Real git skips the untracked scan and, when there is something to
+		// commit, notes the omission where the section would have been.
+		if (commitable) {
+			if (!hasSections && hasIntermediateState) lines.push("");
+			lines.push("Untracked files not listed (use -u option to show untracked files)");
+		}
+	} else if (collapsedUntracked.length > 0) {
 		if (!hasSections && hasIntermediateState) lines.push("");
 		lines.push("Untracked files:");
 		lines.push('  (use "git add <file>..." to include in what will be committed)');
@@ -356,8 +386,6 @@ async function formatLongStatus(
 		lines.push("");
 		hasSections = true;
 	}
-
-	const commitable = staged.length > 0 || (!!mergeHeadRef && unmerged.length === 0);
 	if (!hasSections && hasIntermediateState && (opts?.noWarn || commitable)) {
 		lines.push("");
 	}
@@ -377,6 +405,9 @@ async function formatLongStatus(
 			lines.push('nothing added to commit but untracked files present (use "git add" to track)');
 		} else if (showInitial) {
 			lines.push('nothing to commit (create/copy files and use "git add" to track)');
+		} else if (opts?.untrackedMode === "no") {
+			// Untracked files weren't scanned, so git can't claim "clean"
+			lines.push("nothing to commit (use -u to show untracked files)");
 		} else {
 			lines.push("nothing to commit, working tree clean");
 		}

@@ -1113,9 +1113,10 @@ Usage:
   git status [options]
 
 Options:
-  -s, --short   Give the output in the short-format
-  --porcelain   Give the output in a machine-parseable format
-  -b, --branch  Show the branch in short-format output
+  -s, --short                     Give the output in the short-format
+  --porcelain                     Give the output in a machine-parseable format
+  -b, --branch                    Show the branch in short-format output
+  -u, --untracked-files <string>  Show untracked files: no, normal (default), or all (bare -u means all)
 ```
 
 ## git switch
