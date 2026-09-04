@@ -33,6 +33,18 @@ export class OptionBuilder<TOut, THasDefault extends boolean = false> {
 		return new OptionBuilder({ ...this._def, env: name }) as OptionBuilder<TOut, THasDefault>;
 	}
 
+	/**
+	 * Make the value optional, git-style: when the option appears bare
+	 * (`-u`, `--foo`) it takes this value instead of consuming the next
+	 * token. An attached value (`-uno`, `--foo=no`) still wins.
+	 */
+	impliedValue(value: string): OptionBuilder<TOut, THasDefault> {
+		return new OptionBuilder({ ...this._def, impliedValue: value }) as OptionBuilder<
+			TOut,
+			THasDefault
+		>;
+	}
+
 	/** Mark as required — removes undefined from TOut */
 	required(): OptionBuilder<Exclude<TOut, undefined>> {
 		return new OptionBuilder({

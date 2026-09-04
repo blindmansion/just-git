@@ -30,6 +30,13 @@ export interface OptionDef<TOut = unknown> {
 	readonly env?: string;
 	readonly required?: boolean;
 	readonly repeatable?: boolean;
+	/**
+	 * Value used when the option appears with no attached value
+	 * (`-u` / `--untracked-files` vs `-uno` / `--untracked-files=no`).
+	 * When set, the option never consumes the next token as its value —
+	 * git's optional-argument style (PARSE_OPT_OPTARG).
+	 */
+	readonly impliedValue?: string;
 }
 
 export interface FlagDef {

@@ -109,8 +109,9 @@ export function parseArgs(
 				continue;
 			}
 
-			// Option with value
-			const rawValue = inlineValue ?? tokens[++i];
+			// Option with value. Optional-value options (impliedValue) never
+			// consume the next token: `--foo` means `--foo=<implied>`.
+			const rawValue = inlineValue ?? (entry.def as OptionDef<any>).impliedValue ?? tokens[++i];
 			if (rawValue === undefined) {
 				errors.push({ type: "missing_value", name: entry.key });
 				i++;
@@ -161,9 +162,13 @@ export function parseArgs(
 					continue;
 				}
 
-				// Short option with value: rest of string or next token
+				// Short option with value: rest of string, or (for
+				// optional-value options) the implied value, or next token
 				const restOfString = chars.slice(j + 1);
-				const rawValue = restOfString.length > 0 ? restOfString : tokens[++i];
+				const rawValue =
+					restOfString.length > 0
+						? restOfString
+						: ((entry.def as OptionDef<any>).impliedValue ?? tokens[++i]);
 				if (rawValue === undefined) {
 					errors.push({ type: "missing_value", name: entry.key });
 					break;

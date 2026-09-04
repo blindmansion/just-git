@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- The argument parser supports git-style optional-value options (`impliedValue`, git's `PARSE_OPT_OPTARG`): a bare optional-value option (`-u`, `--foo`) takes its implied value and never consumes the next token, while attached values (`-uno`, `--foo=no`) still win.
+
 ### Fixed
 
 - Honor `core.autocrlf` line-ending conversion. Previously the setting was stored but never acted on: on a Windows-style checkout (CRLF worktree, LF blobs) every text file showed as perpetually modified, `git diff` reported whole-file rewrites, and `git add` committed spurious full-file changes. Now `true`/`input` normalize CRLF → LF on checkin and worktree comparison (status, diff, add, stash, rm, ls-files, checkout safety), and `true` converts LF → CRLF on checkout. Includes git's renormalization guard: files whose repo blob deliberately contains CRLF are left untouched. Binary content is never converted. `.gitattributes` (`text`/`eol`) is still not consulted.
