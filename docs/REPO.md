@@ -10,7 +10,7 @@ For command-execution configuration, see [CLIENT.md](CLIENT.md). For the embedda
 
 ## GitRepo
 
-Everything in this module operates on `GitRepo`, a minimal interface representing a git repository as an object store and a ref store:
+Most operations in this module accept `GitRepo`, a minimal interface representing a git repository as an object store and a ref store:
 
 ```ts
 interface GitRepo {
@@ -20,6 +20,8 @@ interface GitRepo {
 ```
 
 This is the type that unifies the client and server sides of just-git. Any function that accepts `GitRepo` works identically regardless of what's behind it: an in-memory VFS, a SQLite database, Postgres, or a custom implementation.
+
+`fetchObjects(ctx, objectIds, options?)` requires a `GitContext` from `git.findRepo()` because it uses configured remotes, credentials and network policy. It retrieves missing objects in batches without changing refs or shallow boundaries; a storage-backed `GitRepo` alone is insufficient. See [Partial clone](CLIENT.md#partial-clone).
 
 ### How you get a GitRepo
 

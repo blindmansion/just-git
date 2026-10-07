@@ -1,4 +1,5 @@
 import type { FileSystem } from "../fs.ts";
+import { requireCompleteRepository } from "./partial-clone.ts";
 import { findBestDeltas } from "./pack/delta.ts";
 import { buildPackIndexFromMeta, PackIndex } from "./pack/pack-index.ts";
 import { type DeltaPackInput, writePackDeltified } from "./pack/packfile.ts";
@@ -62,6 +63,7 @@ interface RepackResult {
  */
 export async function repackFromTips(options: RepackOptions): Promise<RepackResult | null> {
 	const { gitCtx, fs, tips, cleanup } = options;
+	await requireCompleteRepository(gitCtx);
 	const window = options.window ?? 10;
 	const depth = options.depth ?? 50;
 
