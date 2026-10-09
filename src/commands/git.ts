@@ -19,6 +19,7 @@ import { registerGrepCommand } from "./grep.ts";
 import { registerInitCommand } from "./init.ts";
 import { registerLogCommand } from "./log.ts";
 import { registerLsFilesCommand } from "./ls-files.ts";
+import { registerLsTreeCommand } from "./ls-tree.ts";
 import { registerMergeCommand } from "./merge.ts";
 import { registerMvCommand } from "./mv.ts";
 import { registerPullCommand } from "./pull.ts";
@@ -77,7 +78,6 @@ export const KNOWN_UNIMPLEMENTED_COMMANDS = new Set([
 	"interpret-trailers",
 	"log--hierarchical",
 	"ls-remote",
-	"ls-tree",
 	"maintenance",
 	"merge-base",
 	"merge-tree",
@@ -147,6 +147,7 @@ const COMMAND_REGISTRY: Record<GitCommandName, (git: Command, ext?: GitExtension
 	stash: (g, e) => registerStashCommand(g, e),
 	"rev-parse": (g, e) => registerRevParseCommand(g, e),
 	"ls-files": (g, e) => registerLsFilesCommand(g, e),
+	"ls-tree": (g, e) => registerLsTreeCommand(g, e),
 	clean: (g, e) => registerCleanCommand(g, e),
 	switch: (g, e) => registerSwitchCommand(g, e),
 	restore: (g, e) => registerRestoreCommand(g, e),

@@ -82,6 +82,7 @@ export type GitCommandName =
 	| "stash"
 	| "rev-parse"
 	| "ls-files"
+	| "ls-tree"
 	| "clean"
 	| "switch"
 	| "restore"

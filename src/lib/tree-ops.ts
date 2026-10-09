@@ -154,7 +154,7 @@ export async function diffTrees(
 	return results.sort((a, b) => comparePaths(a.path, b.path));
 }
 
-async function readTreeEntries(ctx: GitRepo, treeHash: ObjectId): Promise<TreeEntry[]> {
+export async function readTreeEntries(ctx: GitRepo, treeHash: ObjectId): Promise<TreeEntry[]> {
 	const raw = await readObject(ctx, treeHash);
 	if (raw.type !== "tree") throw new Error(`Expected tree object, got ${raw.type}`);
 	return parseTree(raw.content).entries;

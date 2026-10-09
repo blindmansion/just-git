@@ -40,6 +40,7 @@ Commands:
   stash        Stash the changes in a dirty working directory away
   rev-parse    Pick out and massage parameters
   ls-files     Show information about files in the index and the working tree
+  ls-tree      List the contents of a tree object
   clean        Remove untracked files from the working tree
   switch       Switch branches
   restore      Restore working tree files
@@ -637,6 +638,29 @@ Options:
   --exclude-standard   Add standard git exclusions (.gitignore, info/exclude, core.excludesFile)
   -z, --nul-terminate  Use \0 as line terminator instead of \n
   -t, --show-tags      Show status tags
+```
+
+## git ls-tree
+
+```
+git ls-tree - List the contents of a tree object
+
+Usage:
+  git ls-tree [options] [tree-ish] [path...]
+
+Arguments:
+  tree-ish  Tree, commit or tag to list
+  path...
+
+Options:
+  -d, --trees-only     Only show trees
+  -r, --recursive      Recurse into subtrees
+  -t, --show-trees     Show trees when recursing
+  -z, --nul-terminate  Terminate entries with NUL byte
+  --name-only          List only filenames
+  --name-status        List only filenames
+  --full-tree          List entire tree; not just current directory
+  --abbrev <number>    Use <n> digits to display object names
 ```
 
 ## git merge
