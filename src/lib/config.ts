@@ -513,7 +513,8 @@ export async function getConfigValue(
 	dottedKey: string,
 ): Promise<string | undefined> {
 	const overrides = ctx.configOverrides;
-	const locked = overrides?.locked?.[dottedKey];
+	const canonical = canonicalConfigKey(dottedKey);
+	const locked = overrides?.locked?.[canonical];
 	if (locked !== undefined) return locked;
 
 	const config = await readConfig(ctx);
@@ -521,7 +522,22 @@ export async function getConfigValue(
 	const fromFile = config[section]?.[key];
 	if (fromFile !== undefined) return fromFile;
 
-	return overrides?.defaults?.[dottedKey];
+	return overrides?.defaults?.[canonical];
+}
+
+/**
+ * Lowercase the section and variable name of a dotted key, leaving any
+ * subsection as typed, the way git compares config keys.
+ */
+export function canonicalConfigKey(dottedKey: string): string {
+	const first = dottedKey.indexOf(".");
+	if (first === -1) return dottedKey.toLowerCase();
+	const last = dottedKey.lastIndexOf(".");
+	return (
+		dottedKey.slice(0, first).toLowerCase() +
+		dottedKey.slice(first, last) +
+		dottedKey.slice(last).toLowerCase()
+	);
 }
 
 /**
@@ -550,7 +566,8 @@ export async function setConfigValue(
  */
 export async function getConfigValueAll(ctx: GitContext, dottedKey: string): Promise<string[]> {
 	const overrides = ctx.configOverrides;
-	const locked = overrides?.locked?.[dottedKey];
+	const canonical = canonicalConfigKey(dottedKey);
+	const locked = overrides?.locked?.[canonical];
 	if (locked !== undefined) return [locked];
 
 	const raw = await readConfigRaw(ctx);
@@ -561,7 +578,7 @@ export async function getConfigValueAll(ctx: GitContext, dottedKey: string): Pro
 		if (fromFile && fromFile.length > 0) return fromFile;
 	}
 
-	const def = overrides?.defaults?.[dottedKey];
+	const def = overrides?.defaults?.[canonical];
 	if (def !== undefined) return [def];
 	return [];
 }

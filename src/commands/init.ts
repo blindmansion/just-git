@@ -17,8 +17,8 @@ export function registerInitCommand(parent: Command, ext?: GitExtensions) {
 		handler: async (args, ctx) => {
 			const initialBranch =
 				args.initialBranch ??
-				ext?.configOverrides?.locked?.["init.defaultBranch"] ??
-				ext?.configOverrides?.defaults?.["init.defaultBranch"];
+				ext?.configOverrides?.locked?.["init.defaultbranch"] ??
+				ext?.configOverrides?.defaults?.["init.defaultbranch"];
 			const targetDir = args.directory ? resolve(ctx.cwd, args.directory) : ctx.cwd;
 
 			if (args.directory) {
