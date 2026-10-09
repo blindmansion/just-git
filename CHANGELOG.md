@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.9.1
+
+### Fixed
+
+- `git -c <name>=<value> <cmd>` and `git -C <path> <cmd>` now run the command instead of printing help and exiting 0 ([#11](https://github.com/blindmansion/just-git/issues/11)). `-c` applies to that invocation only, above `.git/config` and below operator-locked values, and malformed keys fail with git's errors (exit 128). `-C` is repeatable, with each path resolved from the previous one. `-p` / `--paginate` / `-P` / `--no-pager` are accepted and ignored, `-v` / `-h` work as `--version` / `--help`, and any other leading option exits 129 with `unknown option`. Settings read directly from `.git/config` (such as `remote.<name>.url`, `branch.<name>.*`, and `push.default`) don't honor `-c` yet. Contributed by [Harry Nguyen (@Hazzng)](https://github.com/Hazzng) in [#13](https://github.com/blindmansion/just-git/pull/13).
+- Operator config override keys (`createGit({ config })`) now match case-insensitively on the section and variable name, as in git, so `merge.conflictStyle` and `merge.conflictstyle` are the same key. `git config --list` prints operator keys in lowercase, like keys from `.git/config`.
+
 ## 1.9.0
 
 ### Added
