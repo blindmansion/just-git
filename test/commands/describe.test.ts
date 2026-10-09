@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { EMPTY_REPO, envAt, TEST_ENV } from "../fixtures";
-import { createTestBash, quickExec, runScenario } from "../util";
+import { createTestBash, quickExec, runScenario, setupExecBitRepo } from "../util";
 
 describe("git describe", () => {
 	describe("basic", () => {
@@ -210,6 +210,14 @@ describe("git describe", () => {
 			await bash.exec("git add .");
 			const result = await bash.exec("git describe --dirty");
 			expect(result.stdout.trim()).toBe("v1.0.0-dirty");
+		});
+
+		test("appends -dirty when only a mode change is staged", async () => {
+			const bash = await setupExecBitRepo();
+			await bash.exec('git tag -a v1.0.0 -m "r1"');
+			await bash.exec("chmod 644 run.sh && git add run.sh");
+			const result = await bash.exec("git describe --dirty");
+			expect(result.stdout).toBe("v1.0.0-dirty\n");
 		});
 
 		test("no -dirty when worktree is clean", async () => {

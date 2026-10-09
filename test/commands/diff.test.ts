@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BASIC_REPO, EMPTY_REPO, TEST_ENV_NAMED as TEST_ENV } from "../fixtures";
-import { createTestBash, observeFsCalls, quickExec } from "../util";
+import { createTestBash, observeFsCalls, quickExec, setupExecBitRepo } from "../util";
 
 describe("git diff", () => {
 	describe("outside a git repo", () => {
@@ -1193,5 +1193,55 @@ describe("git diff", () => {
 			expect(result.exitCode).toBe(128);
 			expect(result.stderr).toContain("too many arguments");
 		});
+	});
+});
+
+describe("git diff: executable bit", () => {
+	const MODE_ONLY = "diff --git a/run.sh b/run.sh\nold mode 100755\nnew mode 100644\n";
+
+	test("mode-only change prints old and new mode", async () => {
+		const bash = await setupExecBitRepo();
+		await bash.exec("chmod 644 run.sh");
+		expect((await bash.exec("git diff")).stdout).toBe(MODE_ONLY);
+		expect((await bash.exec("git diff HEAD")).stdout).toBe(MODE_ONLY);
+		expect((await bash.exec("git diff --stat")).stdout).toBe(
+			" run.sh | 0\n 1 file changed, 0 insertions(+), 0 deletions(-)\n",
+		);
+		await bash.exec("git add run.sh");
+		expect((await bash.exec("git diff --cached")).stdout).toBe(MODE_ONLY);
+		expect((await bash.exec("git diff")).stdout).toBe("");
+	});
+
+	test("content and mode change prints mode lines then an index line without mode", async () => {
+		const bash = await setupExecBitRepo();
+		await bash.exec("chmod 644 run.sh && printf '#!/bin/sh\\necho bye\\n' > run.sh");
+		expect((await bash.exec("git diff")).stdout).toBe(
+			[
+				"diff --git a/run.sh b/run.sh",
+				"old mode 100755",
+				"new mode 100644",
+				"index 4163036..ac23810",
+				"--- a/run.sh",
+				"+++ b/run.sh",
+				"@@ -1,2 +1,2 @@",
+				" #!/bin/sh",
+				"-echo hi",
+				"+echo bye",
+				"",
+			].join("\n"),
+		);
+	});
+});
+
+describe("git diff: mode-only change on a binary file", () => {
+	test("prints the mode lines and no binary notice", async () => {
+		const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+		await bash.fs.writeFile("/repo/tool.bin", new Uint8Array([0x00, 0x01, 0x02]));
+		await bash.exec("git init && chmod 755 tool.bin && git add tool.bin && git commit -m bin");
+		await bash.exec("chmod 644 tool.bin");
+
+		expect((await bash.exec("git diff")).stdout).toBe(
+			"diff --git a/tool.bin b/tool.bin\nold mode 100755\nnew mode 100644\n",
+		);
 	});
 });

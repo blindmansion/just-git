@@ -38,7 +38,9 @@ export interface FileStat {
  *
  * The three optional symlink methods (`lstat`, `readlink`, `symlink`) enable
  * symlink support. When omitted, symlinks degrade to plain files containing
- * the target path as content (`core.symlinks=false` behavior).
+ * the target path as content (`core.symlinks=false` behavior). The optional
+ * `chmod` lets checkout apply the executable bit of `100755` entries; when
+ * omitted, every file is checked out non-executable.
  *
  * See {@link MemoryFileSystem} for a ready-made in-memory implementation.
  */
@@ -98,6 +100,13 @@ export interface FileSystem {
 	 * @throws Error if `path` already exists.
 	 */
 	symlink?(target: string, path: string): Promise<void>;
+	/**
+	 * Set the permission bits of a file (e.g. `0o755`), following symlinks.
+	 * Checkout uses this to apply or clear the executable bit; without it,
+	 * a `100755` blob is checked out as `100644`.
+	 * @throws Error if the path doesn't exist.
+	 */
+	chmod?(path: string, mode: number): Promise<void>;
 	/**
 	 * Move/rename a file or directory from `src` to `dest`.
 	 *

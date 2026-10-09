@@ -18,12 +18,13 @@
  */
 
 import { comparePaths, err } from "./command-utils.ts";
-import { defaultStat, getStage0Entries } from "./index.ts";
+import { defaultStat, getStage0Entries, worktreeMode } from "./index.ts";
 import { isInsideWorkTree, verifyPath } from "./path-safety.ts";
 import { dirname, join } from "./path.ts";
 import { hashCleanedWorktreeEntry } from "./eol.ts";
 import { lstatSafe } from "./symlink.ts";
 import { flattenTreeToMap } from "./tree-ops.ts";
+import type { FileStat } from "../fs.ts";
 import type { GitContext, Index, IndexEntry, ObjectId } from "./types.ts";
 import { checkoutEntry, cleanEmptyDirs, walkWorkTree } from "./worktree.ts";
 
@@ -81,6 +82,8 @@ interface PathState {
 	/** Hash currently in the index (stage 0), or null if not in index. */
 	indexHash: ObjectId | null;
 
+	indexMode: number | null;
+
 	/** Stage of the current index entry (0 for normal, >0 for conflict). */
 	indexStage: number;
 
@@ -99,6 +102,8 @@ interface PathState {
 	 * Memoized: first call hashes, subsequent calls return cached result.
 	 */
 	getWorktreeHash: () => Promise<ObjectId | null>;
+
+	getWorktreeMode: () => Promise<number | null>;
 
 	/** Mode from the head tree (for entry creation). */
 	headMode: string | null;
@@ -364,6 +369,7 @@ async function buildPathStates(
 
 		const indexEntry = stage0Map.get(path);
 		const indexHash = indexEntry?.hash ?? null;
+		const indexMode = indexEntry?.mode ?? null;
 		const indexStage = conflictPaths.has(path) ? 1 : 0;
 		const existsOnDisk = worktreeFiles.has(path);
 
@@ -380,20 +386,36 @@ async function buildPathStates(
 			return cachedIgnored;
 		};
 
+		let cachedStat: FileStat | null | undefined;
+		const getWorktreeStat = async (): Promise<FileStat | null> => {
+			if (cachedStat !== undefined) return cachedStat;
+			cachedStat =
+				existsOnDisk && ctx.workTree
+					? await lstatSafe(ctx.fs, join(ctx.workTree, path)).catch(() => null)
+					: null;
+			return cachedStat;
+		};
+
 		let cachedHash: ObjectId | null | undefined;
 		const getWorktreeHash = async (): Promise<ObjectId | null> => {
 			if (cachedHash !== undefined) return cachedHash;
-			if (!existsOnDisk || !ctx.workTree) {
+			const st = await getWorktreeStat();
+			if (!st || !ctx.workTree) {
 				cachedHash = null;
 				return null;
 			}
 			const fullPath = join(ctx.workTree, path);
 			try {
-				cachedHash = await hashCleanedWorktreeEntry(ctx, fullPath, indexHash ?? undefined);
+				cachedHash = await hashCleanedWorktreeEntry(ctx, fullPath, indexHash ?? undefined, st);
 			} catch {
 				cachedHash = null;
 			}
 			return cachedHash;
+		};
+
+		const getWorktreeMode = async (): Promise<number | null> => {
+			const st = await getWorktreeStat();
+			return st ? worktreeMode(ctx.fs, indexEntry, st) : null;
 		};
 
 		states.push({
@@ -402,10 +424,12 @@ async function buildPathStates(
 			headHash,
 			remoteHash,
 			indexHash,
+			indexMode,
 			indexStage,
 			existsOnDisk,
 			isIgnoredOnDisk,
 			getWorktreeHash,
+			getWorktreeMode,
 			headMode,
 			remoteMode,
 		});
@@ -417,6 +441,21 @@ async function buildPathStates(
 // =====================================================================
 // SECTION 7: One-Way Merge
 // =====================================================================
+
+function same(
+	hashA: ObjectId | null,
+	modeA: string | number | null,
+	hashB: ObjectId | null,
+	modeB: string | number | null,
+): boolean {
+	if (hashA !== hashB) return false;
+	if (hashA === null) return true;
+	return modeNumber(modeA) === modeNumber(modeB);
+}
+
+function modeNumber(mode: string | number | null): number | null {
+	return typeof mode === "string" ? Number.parseInt(mode, 8) : mode;
+}
 
 /**
  * One-way merge: replace the index with a target tree.
@@ -447,7 +486,7 @@ export function onewayMerge(state: PathState, opts: UnpackOptions): MergeDecisio
 	}
 
 	// Target present, index matches: keep (preserves stat info)
-	if (state.indexHash === target) {
+	if (same(state.indexHash, state.indexMode, target, state.remoteMode)) {
 		return {
 			action: MergeAction.KEEP,
 			requirements: [],
@@ -497,10 +536,14 @@ export function onewayMerge(state: PathState, opts: UnpackOptions): MergeDecisio
  */
 export function twowayMerge(state: PathState, opts: UnpackOptions): MergeDecision {
 	const { headHash: old, remoteHash: nu, indexHash: idx } = state;
+	const { headMode: oldMode, remoteMode: nuMode, indexMode: idxMode } = state;
+	const sameOldNew = same(old, oldMode, nu, nuMode);
+	const sameIdxOld = same(idx, idxMode, old, oldMode);
+	const sameIdxNew = same(idx, idxMode, nu, nuMode);
 
 	// Handle conflicted index entry (stages > 0)
 	if (state.indexStage > 0) {
-		if (old === nu) {
+		if (sameOldNew) {
 			// Trees agree — resolve conflict
 			if (nu === null) {
 				return { action: MergeAction.DELETE, requirements: [] };
@@ -542,7 +585,7 @@ export function twowayMerge(state: PathState, opts: UnpackOptions): MergeDecisio
 		if (old !== null) {
 			// Staged deletion: file was in old tree but removed from index.
 			// git: if (oldtree && !o->initial_checkout) { ... }
-			if (old === nu) {
+			if (sameOldNew) {
 				// Old == new: trees unchanged, preserve staged deletion
 				return {
 					action: MergeAction.SKIP,
@@ -584,12 +627,12 @@ export function twowayMerge(state: PathState, opts: UnpackOptions): MergeDecisio
 	}
 
 	// Cases 6/7: old absent, new matches index → keep index
-	if (old === null && nu === idx) {
+	if (old === null && sameIdxNew) {
 		return { action: MergeAction.KEEP, caseNumber: 6, requirements: [] };
 	}
 
 	// Case 10: old matches index, new absent → delete
-	if (old === idx && nu === null) {
+	if (sameIdxOld && nu === null) {
 		return {
 			action: MergeAction.DELETE,
 			caseNumber: 10,
@@ -598,17 +641,17 @@ export function twowayMerge(state: PathState, opts: UnpackOptions): MergeDecisio
 	}
 
 	// Cases 14/15: old==new (trees unchanged) → keep index
-	if (old !== null && old === nu) {
+	if (old !== null && sameOldNew) {
 		return { action: MergeAction.KEEP, caseNumber: 14, requirements: [] };
 	}
 
 	// Cases 18/19: index already matches new → keep index
-	if (old !== null && nu !== null && idx === nu) {
+	if (old !== null && nu !== null && sameIdxNew) {
 		return { action: MergeAction.KEEP, caseNumber: 18, requirements: [] };
 	}
 
 	// Case 20: index matches old, new differs → take new
-	if (old !== null && nu !== null && idx === old && idx !== nu) {
+	if (old !== null && nu !== null && sameIdxOld && !sameIdxNew) {
 		return {
 			action: MergeAction.TAKE,
 			takeFrom: "remote",
@@ -757,6 +800,9 @@ export async function checkSingleRequirement(
 					// Escape hatch: worktree deleted and result also deletes
 					if (wtHash === null && resultHash === null) return null;
 				}
+				return UnpackError.NOT_UPTODATE_FILE;
+			}
+			if (wtHash !== null && (await state.getWorktreeMode()) !== state.indexMode) {
 				return UnpackError.NOT_UPTODATE_FILE;
 			}
 			return null;

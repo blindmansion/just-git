@@ -214,14 +214,18 @@ export async function requireAuthor(
  * Compares stage-0 index entries against the tree map for modifications,
  * additions, and deletions.
  */
-export function hasStagedChanges(index: Index, headMap: Map<string, { hash: string }>): boolean {
-	const stage0 = new Map<string, { hash: string }>();
+export function hasStagedChanges(
+	index: Index,
+	headMap: Map<string, { hash: string; mode: string }>,
+): boolean {
+	const stage0 = new Map<string, { hash: string; mode: number }>();
 	for (const e of index.entries) {
 		if (e.stage === 0) stage0.set(e.path, e);
 	}
 	for (const [path, entry] of stage0) {
 		const headEntry = headMap.get(path);
 		if (!headEntry || headEntry.hash !== entry.hash) return true;
+		if (Number.parseInt(headEntry.mode, 8) !== entry.mode) return true;
 	}
 	for (const [path] of headMap) {
 		if (!stage0.has(path)) return true;

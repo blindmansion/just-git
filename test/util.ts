@@ -104,3 +104,20 @@ export async function isFile(fs: IFileSystem, path: string): Promise<boolean> {
 	const stat = await fs.stat(path);
 	return stat.isFile;
 }
+
+export async function setupExecBitRepo(): Promise<Bash> {
+	const bash = createTestBash({
+		files: { "/repo/run.sh": "#!/bin/sh\necho hi\n" },
+		env: TEST_ENV,
+	});
+	await bash.exec("git init && chmod 755 run.sh && git add run.sh && git commit -m exec");
+	await bash.exec(
+		"git switch -c plain && chmod 644 run.sh && git add run.sh && git commit -m plain",
+	);
+	await bash.exec("git switch main");
+	return bash;
+}
+
+export async function permissionBits(fs: IFileSystem, path: string): Promise<number> {
+	return (await fs.stat(path)).mode & 0o777;
+}

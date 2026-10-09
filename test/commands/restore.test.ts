@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { EMPTY_REPO, TEST_ENV_NAMED as TEST_ENV } from "../fixtures";
-import { createTestBash, quickExec, readFile, runScenario } from "../util";
+import {
+	createTestBash,
+	permissionBits,
+	quickExec,
+	readFile,
+	runScenario,
+	setupExecBitRepo,
+} from "../util";
 
 describe("git restore", () => {
 	describe("errors", () => {
@@ -323,5 +330,24 @@ describe("git restore", () => {
 			expect(noPaths.exitCode).toBe(128);
 			expect(noPaths.stderr).toBe("fatal: you must specify path(s) to restore\n");
 		});
+	});
+});
+
+describe("git restore: executable bit", () => {
+	test("restore sets the executable bit from the index", async () => {
+		const bash = await setupExecBitRepo();
+		await bash.exec("chmod 644 run.sh");
+		const result = await bash.exec("git restore run.sh");
+		expect(result.exitCode).toBe(0);
+		expect(await permissionBits(bash.fs, "/repo/run.sh")).toBe(0o755);
+		expect((await bash.exec("git status --short")).stdout).toBe("");
+	});
+
+	test("restore --source writes the source tree's mode", async () => {
+		const bash = await setupExecBitRepo();
+		const result = await bash.exec("git restore --source plain run.sh");
+		expect(result.exitCode).toBe(0);
+		expect(await permissionBits(bash.fs, "/repo/run.sh")).toBe(0o644);
+		expect((await bash.exec("git status --short")).stdout).toBe(" M run.sh\n");
 	});
 });

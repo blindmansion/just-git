@@ -200,7 +200,9 @@ export function registerMvCommand(parent: Command, ext?: GitExtensions) {
 				}
 
 				const content = await ctx.fs.readFileBuffer(move.srcAbs);
+				const srcMode = (await ctx.fs.stat(move.srcAbs)).mode;
 				await ctx.fs.writeFile(move.dstAbs, content);
+				if (ctx.fs.chmod) await ctx.fs.chmod(move.dstAbs, srcMode & 0o7777);
 				await ctx.fs.rm(move.srcAbs);
 
 				// 2. Update the index: remove old entry, add new entry

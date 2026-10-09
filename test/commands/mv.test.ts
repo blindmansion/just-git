@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { BASIC_REPO, EMPTY_REPO, NESTED_REPO } from "../fixtures";
-import { createTestBash, pathExists, readFile, runScenario } from "../util";
+import {
+	createTestBash,
+	pathExists,
+	permissionBits,
+	readFile,
+	runScenario,
+	setupExecBitRepo,
+} from "../util";
 
 const TEST_ENV = {
 	GIT_AUTHOR_NAME: "Test",
@@ -312,5 +319,16 @@ describe("git mv", () => {
 			expect(await pathExists(bash.fs, "/repo/a/b")).toBe(false);
 			expect(await pathExists(bash.fs, "/repo/a")).toBe(false);
 		});
+	});
+});
+
+describe("git mv: executable bit", () => {
+	test("keeps the executable bit and commits as a pure rename", async () => {
+		const bash = await setupExecBitRepo();
+		await bash.exec("rm run.sh && git checkout -- run.sh");
+		await bash.exec("git mv run.sh bin.sh");
+		expect(await permissionBits(bash.fs, "/repo/bin.sh")).toBe(0o755);
+		const status = await bash.exec("git status --short");
+		expect(status.stdout).toBe("R  run.sh -> bin.sh\n");
 	});
 });

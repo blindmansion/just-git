@@ -358,3 +358,27 @@ describe("MemoryFileSystem", () => {
 		expect(await fs.readFile("/repo/feature.txt")).toBe("new feature");
 	});
 });
+
+describe("MemoryFileSystem chmod", () => {
+	test("chmod sets permission bits and keeps the file type", async () => {
+		const fs = new MemoryFileSystem({ "/run.sh": "#!/bin/sh\n" });
+		await fs.chmod("/run.sh", 0o755);
+		expect((await fs.stat("/run.sh")).mode).toBe(0o100755);
+		await fs.chmod("/run.sh", 0o644);
+		expect((await fs.stat("/run.sh")).mode).toBe(0o100644);
+		expect(await fs.readFile("/run.sh")).toBe("#!/bin/sh\n");
+	});
+
+	test("chmod follows symlinks", async () => {
+		const fs = new MemoryFileSystem({ "/target": "x" });
+		await fs.symlink("target", "/link");
+		await fs.chmod("/link", 0o755);
+		expect((await fs.stat("/target")).mode).toBe(0o100755);
+		expect((await fs.lstat("/link")).mode).toBe(0o120000);
+	});
+
+	test("chmod throws ENOENT for a missing path", async () => {
+		const fs = new MemoryFileSystem();
+		await expect(fs.chmod("/missing", 0o755)).rejects.toThrow("ENOENT");
+	});
+});

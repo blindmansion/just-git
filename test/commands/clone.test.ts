@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { TEST_ENV as ENV } from "../fixtures";
-import { createTestBash, isDirectory, pathExists, readFile } from "../util";
+import {
+	createTestBash,
+	isDirectory,
+	pathExists,
+	permissionBits,
+	readFile,
+	setupExecBitRepo,
+} from "../util";
 
 async function setupSource(files: Record<string, string> = {}) {
 	const bash = createTestBash({
@@ -446,5 +453,15 @@ describe("git clone", () => {
 			expect(result.stderr).toBe("Cloning into '/clone'...\n");
 			expect(result.exitCode).toBe(0);
 		});
+	});
+});
+
+describe("git clone: executable bit", () => {
+	test("cloned executable files are executable", async () => {
+		const bash = await setupExecBitRepo();
+		const result = await bash.exec("git clone /repo /clone", { cwd: "/" });
+		expect(result.exitCode).toBe(0);
+		expect(await permissionBits(bash.fs, "/clone/run.sh")).toBe(0o755);
+		expect((await bash.exec("git status --short", { cwd: "/clone" })).stdout).toBe("");
 	});
 });

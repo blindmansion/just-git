@@ -7,6 +7,9 @@ import {
 	indexStatMatchesFile,
 } from "../../src/lib/index";
 import type { IndexEntry } from "../../src/lib/types";
+import { MemoryFileSystem } from "../../src/memory-fs";
+
+const fs = new MemoryFileSystem();
 
 function regularStat(overrides: Partial<FileStat> = {}): FileStat {
 	return {
@@ -35,14 +38,14 @@ describe("index stat cache", () => {
 		const stat = regularStat();
 		const entry = entryFor(stat);
 
-		expect(indexStatMatchesFile(entry, stat, new Date("2026-09-04T12:00:01Z"))).toBe(true);
+		expect(indexStatMatchesFile(fs, entry, stat, new Date("2026-09-04T12:00:01Z"))).toBe(true);
 	});
 
 	test("rejects zero/default stat data", () => {
 		const stat = regularStat();
 		const entry = { ...entryFor(stat), stat: defaultStat() };
 
-		expect(indexStatMatchesFile(entry, stat, new Date("2026-09-04T12:00:01Z"))).toBe(false);
+		expect(indexStatMatchesFile(fs, entry, stat, new Date("2026-09-04T12:00:01Z"))).toBe(false);
 	});
 
 	test("missing runtime timestamps degrade to hashing", () => {
@@ -51,7 +54,9 @@ describe("index stat cache", () => {
 		const withoutMtime = { ...stat, mtime: undefined } as unknown as FileStat;
 
 		expect(indexStatFromFileStat(withoutMtime).mtimeSeconds).toBe(0);
-		expect(indexStatMatchesFile(entry, withoutMtime, new Date("2026-09-04T12:00:01Z"))).toBe(false);
+		expect(indexStatMatchesFile(fs, entry, withoutMtime, new Date("2026-09-04T12:00:01Z"))).toBe(
+			false,
+		);
 	});
 
 	test("rejects size and mode changes", () => {
@@ -60,13 +65,19 @@ describe("index stat cache", () => {
 
 		expect(
 			indexStatMatchesFile(
+				fs,
 				entry,
 				{ ...stat, size: stat.size + 1 },
 				new Date("2026-09-04T12:00:01Z"),
 			),
 		).toBe(false);
 		expect(
-			indexStatMatchesFile(entry, { ...stat, mode: 0o100755 }, new Date("2026-09-04T12:00:01Z")),
+			indexStatMatchesFile(
+				fs,
+				entry,
+				{ ...stat, mode: 0o100755 },
+				new Date("2026-09-04T12:00:01Z"),
+			),
 		).toBe(false);
 	});
 
@@ -74,7 +85,7 @@ describe("index stat cache", () => {
 		const stat = regularStat();
 		const entry = entryFor(stat);
 
-		expect(indexStatMatchesFile(entry, stat, stat.mtime)).toBe(false);
+		expect(indexStatMatchesFile(fs, entry, stat, stat.mtime)).toBe(false);
 	});
 
 	test("rejects symlinks even when their metadata matches", () => {
@@ -85,7 +96,7 @@ describe("index stat cache", () => {
 		});
 		const entry = entryFor(stat);
 
-		expect(indexStatMatchesFile(entry, stat, new Date("2026-09-04T12:00:01Z"))).toBe(false);
+		expect(indexStatMatchesFile(fs, entry, stat, new Date("2026-09-04T12:00:01Z"))).toBe(false);
 	});
 
 	test("uses optional ctime and identity fields when available", () => {
@@ -99,10 +110,11 @@ describe("index stat cache", () => {
 		const entry = entryFor(stat);
 		const indexTimestamp = new Date("2026-09-04T12:00:01Z");
 
-		expect(indexStatMatchesFile(entry, stat, indexTimestamp)).toBe(true);
-		expect(indexStatMatchesFile(entry, { ...stat, ino: 12 }, indexTimestamp)).toBe(false);
+		expect(indexStatMatchesFile(fs, entry, stat, indexTimestamp)).toBe(true);
+		expect(indexStatMatchesFile(fs, entry, { ...stat, ino: 12 }, indexTimestamp)).toBe(false);
 		expect(
 			indexStatMatchesFile(
+				fs,
 				entry,
 				{ ...stat, ctime: new Date("2026-09-04T11:59:58Z") },
 				indexTimestamp,
