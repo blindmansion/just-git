@@ -154,6 +154,7 @@ const WANTED_FETCH_CAPS = [
 	"ofs-delta",
 	"include-tag",
 	"shallow",
+	"filter",
 ];
 
 interface FetchPackResult {
@@ -176,6 +177,12 @@ export async function fetchPack(
 	if (wants.length === 0) {
 		throw new Error("fetchPack requires at least one want");
 	}
+	if (shallow?.filter && !serverCaps.includes("filter")) {
+		throw new Error("Remote does not support filtered fetch (filter capability missing)");
+	}
+	if (shallow?.filter && shallow.filter !== "blob:none") {
+		throw new Error("Only the blob:none object filter is supported");
+	}
 
 	const clientCaps = negotiateCapabilities(serverCaps, WANTED_FETCH_CAPS);
 
@@ -194,6 +201,9 @@ export async function fetchPack(
 
 	if (shallow?.depth !== undefined) {
 		lines.push(encodePktLine(`deepen ${shallow.depth}\n`));
+	}
+	if (shallow?.filter) {
+		lines.push(encodePktLine(`filter ${shallow.filter}\n`));
 	}
 
 	lines.push(flushPkt());

@@ -378,6 +378,7 @@ Options:
   --bare                 Create a bare clone
   -b, --branch <string>  Checkout this branch instead of HEAD
   --depth <number>       Create a shallow clone with history truncated to N commits
+  --filter <string>      Omit blob contents (requires --no-checkout or --bare)
   --single-branch        Clone only the history of the specified or default branch
   --no-single-branch     Clone all branches even with --depth
   --no-tags              Don't clone any tags
@@ -485,12 +486,14 @@ Arguments:
   refspec...  Refspec(s) to fetch
 
 Options:
-  --all             Fetch from all remotes
-  -p, --prune       Remove stale remote-tracking refs
-  --tags            Also fetch tags
-  --depth <number>  Limit fetching to the specified number of commits
-  --unshallow       Convert a shallow repository to a complete one
-  -q, --quiet       be more quiet
+  --all              Fetch from all remotes
+  -p, --prune        Remove stale remote-tracking refs
+  --tags             Also fetch tags
+  --no-tags          Do not fetch tags
+  --filter <string>  Omit blob contents (blob:none)
+  --depth <number>   Limit fetching to the specified number of commits
+  --unshallow        Convert a shallow repository to a complete one
+  -q, --quiet        be more quiet
 ```
 
 ## git gc

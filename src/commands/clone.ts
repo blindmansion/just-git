@@ -2,6 +2,7 @@ import type { GitExtensions } from "../git.ts";
 import { isRejection } from "../hooks.ts";
 import { err, fatal, quietFlag } from "../lib/command-utils.ts";
 import { readConfig, writeConfig } from "../lib/config.ts";
+import { validateObjectFilter } from "../lib/partial-clone.ts";
 import {
 	buildIndex,
 	defaultStat,
@@ -32,6 +33,7 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			bare: f().describe("Create a bare clone"),
 			branch: o.string().alias("b").describe("Checkout this branch instead of HEAD"),
 			depth: o.number().describe("Create a shallow clone with history truncated to N commits"),
+			filter: o.string().describe("Omit blob contents (requires --no-checkout or --bare)"),
 			singleBranch: f().describe("Clone only the history of the specified or default branch"),
 			noSingleBranch: f().describe("Clone all branches even with --depth"),
 			noTags: f().describe("Don't clone any tags"),
@@ -39,6 +41,9 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			quiet: quietFlag("be more quiet"),
 		},
 		handler: async (args, ctx) => {
+			const filter = args.filter === undefined ? undefined : validateObjectFilter(args.filter);
+			if (filter && !args.noCheckout && !args.bare)
+				return fatal("Filtered clone requires --no-checkout or --bare; hydrate objects explicitly");
 			const repository = args.repository;
 			if (!repository) {
 				return fatal("You must specify a repository to clone.");
@@ -145,6 +150,12 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 					url: sourcePath,
 					fetch: "+refs/heads/*:refs/remotes/origin/*",
 				};
+				if (filter) {
+					config['remote "origin"']!.promisor = "true";
+					config['remote "origin"']!.partialclonefilter = filter;
+					config.core = { ...config.core, repositoryformatversion: "1" };
+					config.extensions = { ...config.extensions, partialclone: "origin" };
+				}
 				await writeConfig(newCtx, config);
 				await ext?.hooks?.postClone?.({
 					repo: newCtx,
@@ -220,6 +231,12 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 				remoteSection.tagOpt = "--no-tags";
 			}
 			config['remote "origin"'] = remoteSection;
+			if (filter) {
+				remoteSection.promisor = "true";
+				remoteSection.partialclonefilter = filter;
+				config.core = { ...config.core, repositoryformatversion: "1" };
+				config.extensions = { ...config.extensions, partialclone: "origin" };
+			}
 
 			// Build wants list — single-branch limits to target branch only
 			const wants: ObjectId[] = [];
@@ -244,7 +261,9 @@ export function registerCloneCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			const shallowOpts: ShallowFetchOptions | undefined =
-				depthOpt !== undefined && depthOpt > 0 ? { depth: depthOpt } : undefined;
+				(depthOpt !== undefined && depthOpt > 0) || filter
+					? { depth: depthOpt, filter }
+					: undefined;
 
 			if (wants.length > 0) {
 				const fetchResult = await transport.fetch(wants, [], shallowOpts);

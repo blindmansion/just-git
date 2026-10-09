@@ -29,6 +29,8 @@ export interface RemoteRef {
 
 /** Options for shallow/depth-limited fetches. */
 export interface ShallowFetchOptions {
+	/** Omit blob contents; callers explicitly hydrate the blobs they need. */
+	filter?: "blob:none";
 	/** Maximum commit depth from the wanted refs. */
 	depth?: number;
 	/** Commits currently in the client's `.git/shallow` file. */
@@ -183,6 +185,7 @@ export class LocalTransport implements Transport {
 			haves,
 			shallowBoundary,
 			clientShallowBoundary,
+			shallow?.filter,
 		);
 		if (!packData) {
 			return { remoteRefs, objectCount: 0, shallowUpdates };
@@ -474,6 +477,7 @@ async function buildDeltifiedPack(
 	haves: ObjectId[],
 	shallowBoundary?: Set<ObjectId>,
 	clientShallowBoundary?: Set<ObjectId>,
+	filter?: "blob:none",
 ): Promise<Uint8Array | undefined> {
 	const enumResult = await enumerateObjectsWithContent(
 		ctx,
@@ -484,7 +488,10 @@ async function buildDeltifiedPack(
 	);
 	if (enumResult.count === 0) return undefined;
 
-	const objects = await collectEnumeration(enumResult);
+	const objects = (await collectEnumeration(enumResult)).filter(
+		(object) => filter !== "blob:none" || object.type !== "blob",
+	);
+	if (objects.length === 0) return undefined;
 	const deltas = findBestDeltas(objects);
 	const inputs: DeltaPackInput[] = deltas.map((r) => ({
 		hash: r.hash,

@@ -1,4 +1,5 @@
 import type { GitExtensions } from "../git.ts";
+import { requireCompleteRepository } from "../lib/partial-clone.ts";
 import { isCommandError, quietFlag, requireGitContext } from "../lib/command-utils.ts";
 import { type GitConfig, readConfig } from "../lib/config.ts";
 import { collectAllRoots } from "../lib/gc-roots.ts";
@@ -22,6 +23,7 @@ export function registerGcCommand(parent: Command, ext?: GitExtensions) {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
 			const gitCtx = gitCtxOrError;
+			await requireCompleteRepository(gitCtx);
 
 			// Step 1: Pack refs
 			await writePackedRefs(gitCtx);
