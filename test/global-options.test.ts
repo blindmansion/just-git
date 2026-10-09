@@ -112,6 +112,87 @@ describe("git -c <name>=<value>", () => {
 		expect(r.exitCode).toBe(128);
 	});
 
+	test("rejects malformed keys with git's messages", async () => {
+		const bash = shell();
+		await initRepo(bash);
+		for (const [spec, message] of [
+			["''", "empty config key"],
+			["x.=1", "key does not contain variable name: x."],
+			["x.y.=1", "key does not contain variable name: x.y."],
+			[".y=1", "key does not contain a section: .y"],
+			["'a b.c=1'", "invalid key: a b.c"],
+			["x.1y=1", "invalid key: x.1y"],
+			["x.y_z=1", "invalid key: x.y_z"],
+			["'x.y z=1'", "invalid key: x.y z"],
+		]) {
+			const r = await bash.exec(`git -c ${spec} status --short`, { cwd: "/r" });
+			expect(r.stdout).toBe("");
+			expect(r.stderr).toBe(`error: ${message}\nfatal: unable to parse command-line config\n`);
+			expect(r.exitCode).toBe(128);
+		}
+	});
+
+	test("a newline in the subsection gets its own message", async () => {
+		const git = createGit();
+		const ctx = { fs: new InMemoryFs(), cwd: "/", env: new Map<string, string>(), stdin: "" };
+		for (const [key, message] of [
+			["a.\n.b", "invalid key (newline): a.\n.b"],
+			["a.x\ny.b_", "invalid key (newline): a.x\ny.b_"],
+			["a\n.b", "invalid key: a\n.b"],
+		]) {
+			const r = await git.execute(["-c", `${key}=1`, "status"], ctx);
+			expect(r.stderr).toBe(`error: ${message}\nfatal: unable to parse command-line config\n`);
+			expect(r.exitCode).toBe(128);
+		}
+	});
+
+	test("a bad key is only reported when the command reads config", async () => {
+		const bash = shell();
+		await initRepo(bash);
+		const version = await bash.exec("git -c x.=1 --version");
+		expect(version.stderr).toBe("");
+		expect(version.exitCode).toBe(0);
+		for (const cmd of ["-v", "version", "-h", "--help", "help"]) {
+			const r = await bash.exec(`git -c x.=1 ${cmd}`);
+			expect(r.stderr).toBe("");
+			expect(r.exitCode).toBe(0);
+		}
+		const usage = await bash.exec("git -c x.=1 --bogus status");
+		expect(usage.stderr).toBe(`unknown option: --bogus\n${USAGE}`);
+		expect(usage.exitCode).toBe(129);
+		const chdir = await bash.exec("git -c x.=1 -C nope status");
+		expect(chdir.stderr).toBe("fatal: cannot change to 'nope': No such file or directory\n");
+		expect(chdir.exitCode).toBe(128);
+		for (const cmd of ["status", "help commit"]) {
+			const r = await bash.exec(`git -c x.=1 ${cmd}`, { cwd: "/r" });
+			expect(r.stdout).toBe("");
+			expect(r.stderr).toBe(
+				"error: key does not contain variable name: x.\nfatal: unable to parse command-line config\n",
+			);
+			expect(r.exitCode).toBe(128);
+		}
+	});
+
+	test("accepts keys git accepts", async () => {
+		const bash = shell();
+		await initRepo(bash);
+		for (const key of [
+			"x..y",
+			"x.with space.y",
+			"a-1.b",
+			"x.y-z",
+			"x.Y9",
+			"9a.b",
+			"x.a.b.c",
+			"url.https://x/.insteadOf",
+		]) {
+			const r = await bash.exec(`git -c '${key}=1' status --short`, { cwd: "/r" });
+			expect(r.stdout).toBe("A  f\n");
+			expect(r.stderr).toBe("");
+			expect(r.exitCode).toBe(0);
+		}
+	});
+
 	test("rejects -c with no argument", async () => {
 		const r = await shell().exec("git -c");
 		expect(r.stdout).toBe("");
@@ -143,7 +224,7 @@ describe("git -C <path>", () => {
 	test("rejects -C with no argument", async () => {
 		const r = await shell().exec("git -C");
 		expect(r.stdout).toBe("");
-		expect(r.stderr).toBe(`no directory given for -C\n${USAGE}`);
+		expect(r.stderr).toBe(`no directory given for '-C' option\n${USAGE}`);
 		expect(r.exitCode).toBe(129);
 	});
 });
@@ -180,6 +261,21 @@ describe("other leading options", () => {
 		expect(version.exitCode).toBe(0);
 		expect(version.stdout.startsWith("just-git version ")).toBe(true);
 		const help = await bash.exec("git --help");
+		expect(help.exitCode).toBe(0);
+		expect(help.stdout).toContain("Commands:");
+	});
+
+	test("-v and -h are short for --version and --help", async () => {
+		const bash = shell();
+		const version = await bash.exec("git -v");
+		expect(version.stderr).toBe("");
+		expect(version.exitCode).toBe(0);
+		expect(version.stdout.startsWith("just-git version ")).toBe(true);
+		const afterGlobal = await bash.exec("git -c x.y=1 -v");
+		expect(afterGlobal.stdout).toBe(version.stdout);
+		expect(afterGlobal.exitCode).toBe(0);
+		const help = await bash.exec("git -h");
+		expect(help.stderr).toBe("");
 		expect(help.exitCode).toBe(0);
 		expect(help.stdout).toContain("Commands:");
 	});

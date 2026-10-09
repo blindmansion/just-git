@@ -262,6 +262,7 @@ const GLOBAL_USAGE =
 interface GlobalOptions {
 	chdirs: string[];
 	config: Record<string, string> | undefined;
+	configError: string | undefined;
 	args: string[];
 }
 
@@ -277,13 +278,47 @@ function configParseError(message: string): ExecResult {
 	};
 }
 
+const CONFIG_KEY_CHAR = /^[A-Za-z0-9-]$/;
+const ALPHA = /^[A-Za-z]$/;
+
+/** Validate a dotted config key the way git's `git_config_parse_key` does. */
+function configKeyError(key: string): string | null {
+	if (key === "") return "empty config key";
+	const last = key.lastIndexOf(".");
+	if (last <= 0) return `key does not contain a section: ${key}`;
+	if (last === key.length - 1) return `key does not contain variable name: ${key}`;
+	let dot = false;
+	for (let i = 0; i < key.length; i++) {
+		const c = key[i]!;
+		if (c === ".") dot = true;
+		if (!dot || i > last) {
+			if (!CONFIG_KEY_CHAR.test(c) || (i === last + 1 && !ALPHA.test(c))) {
+				return `invalid key: ${key}`;
+			}
+		} else if (c === "\n") {
+			return `invalid key (newline): ${key}`;
+		}
+	}
+	return null;
+}
+
+const PASSTHROUGH_OPTIONS = new Set(["-", "-h", "--help", "-v", "--version"]);
+
+/** Invocations git answers without reading config, so a bad `-c` key goes unreported. */
+const CONFIG_FREE_COMMANDS = new Set(["", "-v", "--version", "version", "-h", "--help", "help"]);
+
+function readsConfig(args: string[]): boolean {
+	return args.length > 1 || !CONFIG_FREE_COMMANDS.has(args[0] ?? "");
+}
+
 function parseGlobalOptions(args: string[]): GlobalOptions | ExecResult {
 	const chdirs: string[] = [];
 	let config: Record<string, string> | undefined;
+	let configError: string | undefined;
 	let i = 0;
 	while (i < args.length) {
 		const arg = args[i]!;
-		if (!arg.startsWith("-") || arg === "-" || arg === "--help" || arg === "--version") break;
+		if (!arg.startsWith("-") || PASSTHROUGH_OPTIONS.has(arg)) break;
 		i++;
 		switch (arg) {
 			case "-c": {
@@ -291,15 +326,18 @@ function parseGlobalOptions(args: string[]): GlobalOptions | ExecResult {
 				if (spec === undefined) return usageError("-c expects a configuration string");
 				const eq = spec.indexOf("=");
 				const key = eq === -1 ? spec : spec.slice(0, eq);
-				if (key === "") return configParseError("empty config key");
-				if (!key.includes(".")) return configParseError(`key does not contain a section: ${key}`);
+				const keyError = configKeyError(key);
+				if (keyError) {
+					configError ??= keyError;
+					break;
+				}
 				config ??= {};
 				config[canonicalConfigKey(key)] = eq === -1 ? "true" : spec.slice(eq + 1);
 				break;
 			}
 			case "-C": {
 				const dir = args[i++];
-				if (dir === undefined) return usageError("no directory given for -C");
+				if (dir === undefined) return usageError("no directory given for '-C' option");
 				chdirs.push(dir);
 				break;
 			}
@@ -312,7 +350,7 @@ function parseGlobalOptions(args: string[]): GlobalOptions | ExecResult {
 				return usageError(`unknown option: ${arg}`);
 		}
 	}
-	return { chdirs, config, args: args.slice(i) };
+	return { chdirs, config, configError, args: args.slice(i) };
 }
 
 function withCommandLineConfig(
@@ -466,7 +504,7 @@ export class Git {
 		return this.withLock(ctx.fs, async () => {
 			const global = parseGlobalOptions(rawArgs);
 			if ("exitCode" in global) return global;
-			const { args, config, chdirs } = global;
+			const { args, config, configError, chdirs } = global;
 			const command = args[0] ?? "";
 
 			let cwd = ctx.cwd;
@@ -482,7 +520,9 @@ export class Git {
 			}
 			if (cwd !== ctx.cwd) ctx = { ...ctx, cwd };
 
-			if (command === "--version" || command === "version") {
+			if (configError && readsConfig(args)) return configParseError(configError);
+
+			if (command === "--version" || command === "-v" || command === "version") {
 				return {
 					stdout: `just-git version ${VERSION} (virtual git implementation)\n`,
 					stderr: "",
