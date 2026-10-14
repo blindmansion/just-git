@@ -7,7 +7,9 @@ const GITLINK = "1111111111111111111111111111111111111111";
 
 const lines = (n: number) => Array.from({ length: n }, (_, i) => `${i + 1}\n`).join("");
 
-// Newest first: content only, typechange, gitlink, more, modes, sum, init.
+// Newest first: content, typechange, gitlink, more, modes, sum, init. The
+// "merged" branch merges "side", which branches from typechange, into
+// content.
 const CASES = [
 	"show --summary HEAD~5",
 	"show --summary --format=%s HEAD~5",
@@ -25,7 +27,14 @@ const CASES = [
 	"show --summary HEAD~1",
 	"show --summary HEAD",
 	"show --summary --format=%s HEAD",
+	"show --summary merged",
+	"show --stat --summary merged",
+	"show -p --summary --format=%s merged",
+	"show --stat merged",
+	"show --shortstat merged",
+	"show --numstat merged",
 	"log --summary",
+	"log --summary -3 merged",
 	"log --oneline --summary",
 	"log --format=%s --summary",
 	"log --summary --reverse",
@@ -96,6 +105,16 @@ describe("interop: --summary matches real git", () => {
 
 		writeToSandbox(sandbox, "keep", "keep\nmore\n");
 		await git("commit -am content");
+
+		// A merge on its own branch, so HEAD stays at "content".
+		await git("checkout -q -b side HEAD~1");
+		writeToSandbox(sandbox, "s", "s\n");
+		await git("add s");
+		await git("commit -m side");
+		await git("checkout -q -");
+		await git("checkout -q -b merged");
+		await git("merge -q --no-ff -m merge side");
+		await git("checkout -q -");
 	});
 	afterAll(() => removeSandbox(sandbox));
 

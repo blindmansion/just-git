@@ -121,6 +121,22 @@ describe("git show", () => {
 			// Merge commits should NOT include diff output
 			expect(show.stdout).not.toContain("diff --git");
 		});
+
+		test("stat formats compare a merge with its first parent", async () => {
+			const bash = await setupSummaryHistory();
+			const cases: [string, string][] = [
+				["--stat", " s | 1 +\n 1 file changed, 1 insertion(+)\n"],
+				["--shortstat", " 1 file changed, 1 insertion(+)\n"],
+				["--numstat", "1\t0\ts\n"],
+			];
+			for (const [opts, diff] of cases) {
+				expect(await bash.exec(`git show ${opts} --format=%s HEAD`)).toMatchObject({
+					stdout: `merge side\n\n${diff}`,
+					stderr: "",
+					exitCode: 0,
+				});
+			}
+		});
 	});
 
 	describe("show annotated tag", () => {
@@ -580,6 +596,17 @@ describe("git show", () => {
 					ok(plain.stdout),
 				);
 			}
+		});
+
+		test("compares a merge with its first parent", async () => {
+			const bash = await setupSummaryHistory();
+			const header = (await bash.exec("git show --no-patch HEAD")).stdout;
+			expect(await bash.exec("git show --summary HEAD")).toMatchObject(
+				ok(`${header}\n create mode 100644 s\n`),
+			);
+			expect(await bash.exec("git show --stat --summary --format=%s HEAD")).toMatchObject(
+				ok("merge side\n\n s | 1 +\n 1 file changed, 1 insertion(+)\n create mode 100644 s\n"),
+			);
 		});
 
 		test("applies to the commit an annotated tag points at", async () => {

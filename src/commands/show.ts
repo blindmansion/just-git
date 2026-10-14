@@ -295,23 +295,11 @@ async function formatCommitShow(
 			commit.parents.length === 1
 				? (await readCommit(ctx, commit.parents[0] as ObjectId)).tree
 				: null;
-
-		const rawDiffs = await diffTrees(ctx, parentTree, commit.tree);
-		const {
-			remaining: diffs,
-			renames,
-			neededRenameLimit,
-		} = await detectRenames(ctx, rawDiffs, {
-			limit: renameState.limit,
-		});
-		renameState.needed = Math.max(renameState.needed ?? 0, neededRenameLimit ?? 0) || undefined;
+		const { diffs, renames } = await diffWithRenames(ctx, parentTree, commit.tree, renameState);
 		hasChanges = diffs.length > 0 || renames.length > 0;
 		body = await formatShowDiff(ctx, diffs, renames, diffOutput);
 	} else {
-		if (diffOutput.format === "patch") {
-			body = (await formatCombinedDiff(ctx, commit)) ?? "";
-		}
-		// For non-patch formats on merge commits, no output (matches real git)
+		body = await formatMergeShowDiff(ctx, commit, renameState, diffOutput);
 	}
 
 	if (body) {
@@ -323,6 +311,48 @@ async function formatCommitShow(
 		return `${header}\n\n`;
 	}
 	return `${header}\n`;
+}
+
+async function diffWithRenames(
+	ctx: GitRepo,
+	parentTree: ObjectId | null,
+	tree: ObjectId,
+	renameState: RenameWarningState,
+): Promise<{ diffs: TreeDiffEntry[]; renames: RenamePair[] }> {
+	const rawDiffs = await diffTrees(ctx, parentTree, tree);
+	const { remaining, renames, neededRenameLimit } = await detectRenames(ctx, rawDiffs, {
+		limit: renameState.limit,
+	});
+	renameState.needed = Math.max(renameState.needed ?? 0, neededRenameLimit ?? 0) || undefined;
+	return { diffs: remaining, renames };
+}
+
+/**
+ * Git shows a merge's patch as a combined diff, but its stat formats and
+ * --summary compare the merge with its first parent. The name formats
+ * print nothing here.
+ */
+async function formatMergeShowDiff(
+	ctx: GitRepo,
+	commit: Commit,
+	renameState: RenameWarningState,
+	output: ShowDiffOutput,
+): Promise<string> {
+	const statFormat =
+		output.format === "stat" || output.format === "shortstat" || output.format === "numstat"
+			? output.format
+			: null;
+	let firstParent = "";
+	if (statFormat || output.summary) {
+		const parentTree = (await readCommit(ctx, commit.parents[0] as ObjectId)).tree;
+		const { diffs, renames } = await diffWithRenames(ctx, parentTree, commit.tree, renameState);
+		firstParent = await formatShowDiff(ctx, diffs, renames, {
+			format: statFormat,
+			summary: output.summary,
+		});
+	}
+	const combined = output.format === "patch" ? await formatCombinedDiff(ctx, commit) : "";
+	return withSummary(combined, firstParent, combined !== "");
 }
 
 // ── Tag display ─────────────────────────────────────────────────────
