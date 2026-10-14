@@ -151,7 +151,7 @@ function ensureDbDir(path: string): void {
 // ── Git version check ────────────────────────────────────────────
 
 const TARGET_GIT_MAJOR = 2;
-const TARGET_GIT_MINOR = 53;
+const TARGET_GIT_MINOR = 55;
 
 async function getGitVersion(): Promise<{
 	major: number;
@@ -180,7 +180,9 @@ async function warnIfGitVersionMismatch(): Promise<void> {
 	const version = await getGitVersion();
 	if (!version) {
 		console.warn(
-			color.yellow("Warning: could not determine git version. Oracle traces target git 2.53.x.\n"),
+			color.yellow(
+				`Warning: could not determine git version. Oracle traces target git ${TARGET_GIT_MAJOR}.${TARGET_GIT_MINOR}.x.\n`,
+			),
 		);
 		return;
 	}

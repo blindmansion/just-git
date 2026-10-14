@@ -1,0 +1,39 @@
+name: Set up git
+description: >
+  Build the git version just-git targets (cached) and put it first on PATH, so
+  interop tests compare against a fixed git rather than whatever the runner image ships.
+
+inputs:
+  version:
+    description: git version to build
+    default: "2.55.0"
+  sha256:
+    description: sha256 of git-<version>.tar.xz
+    default: "457fdb04dc8728e007d4688695e6912e6f680727920f2a40bf11eacc17505357"
+
+runs:
+  using: composite
+  steps:
+    - id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.local/git-${{ inputs.version }}
+        key: git-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
+
+    - if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q libcurl4-openssl-dev libexpat1-dev zlib1g-dev libssl-dev
+        cd "$RUNNER_TEMP"
+        curl -fsSLO "https://mirrors.edge.kernel.org/pub/software/scm/git/git-${{ inputs.version }}.tar.xz"
+        echo "${{ inputs.sha256 }}  git-${{ inputs.version }}.tar.xz" | sha256sum -c -
+        tar -xf "git-${{ inputs.version }}.tar.xz"
+        cd "git-${{ inputs.version }}"
+        make -j"$(nproc)" prefix="$HOME/.local/git-${{ inputs.version }}" \
+          NO_GETTEXT=1 NO_TCLTK=1 NO_PERL=1 NO_PYTHON=1 install
+
+    - shell: bash
+      run: |
+        echo "$HOME/.local/git-${{ inputs.version }}/bin" >> "$GITHUB_PATH"
+        "$HOME/.local/git-${{ inputs.version }}/bin/git" --version

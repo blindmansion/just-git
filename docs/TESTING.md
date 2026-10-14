@@ -36,7 +36,7 @@ bun oracle generate kitchen --seeds 1-20 --steps 300
 bun oracle test kitchen
 ```
 
-Oracle trace generation requires git 2.53.x (the version just-git targets). The generator warns if your git version doesn't match, since version differences in output or behavior will cause false test failures.
+Oracle trace generation requires git 2.55.x (the version just-git targets). The generator warns if your git version doesn't match, since version differences in output or behavior will cause false test failures.
 
 ### What the results look like
 

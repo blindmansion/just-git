@@ -23,7 +23,7 @@ All operations go through `cli.ts`. The first argument after the subcommand is a
 
 ### `validate` — quick confidence check
 
-Generates and tests a representative set of oracle traces in one step. Runs the `core` and `kitchen` presets with a small seed count. Warns if the local git version doesn't match 2.53.x.
+Generates and tests a representative set of oracle traces in one step. Runs the `core` and `kitchen` presets with a small seed count. Warns if the local git version doesn't match 2.55.x.
 
 ```
 bun oracle validate [options]
