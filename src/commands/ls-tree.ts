@@ -1,26 +1,18 @@
 import type { GitExtensions } from "../git.ts";
 import {
+	buildAbbrevResolver,
 	DEFAULT_ABBREV,
+	err,
 	fatal,
 	getCwdPrefix,
 	isCommandError,
 	requireGitContext,
-	uniqueAbbrev,
 } from "../lib/command-utils.ts";
-import { readObject } from "../lib/object-db.ts";
-import { parseCommit } from "../lib/objects/commit.ts";
-import { parseTag } from "../lib/objects/tag.ts";
-import { parseTree } from "../lib/objects/tree.ts";
 import { join, relative } from "../lib/path.ts";
-import { resolveRevision } from "../lib/rev-parse.ts";
+import { quoteCPath } from "../lib/quote.ts";
+import { peelToTree, resolveRevision, resolveRevPath } from "../lib/rev-parse.ts";
 import { readTreeEntries } from "../lib/tree-ops.ts";
-import {
-	FileMode,
-	type GitContext,
-	type GitRepo,
-	type ObjectId,
-	type TreeEntry,
-} from "../lib/types.ts";
+import { FileMode, type GitRepo, type ObjectId, type TreeEntry } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 
 const USAGE = "usage: git ls-tree [<options>] <tree-ish> [<path>...]\n";
@@ -66,6 +58,15 @@ export function registerLsTreeCommand(parent: Command, ext?: GitExtensions): voi
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
 			const gitCtx = gitCtxOrError;
 
+			// git's OPT_CMDMODE: the error names the later option first. The parser
+			// adds flags to `args` in the order they appear on the command line.
+			if (args.nameOnly && args.nameStatus) {
+				const modes = Object.keys(args)
+					.filter((k) => k === "nameOnly" || k === "nameStatus")
+					.map((k) => (k === "nameOnly" ? "--name-only" : "--name-status"));
+				return err(`error: options '${modes[1]}' and '${modes[0]}' cannot be used together\n`, 129);
+			}
+
 			const [treeIsh, ...rawPaths] =
 				args["tree-ish"] === undefined
 					? meta.passthrough
@@ -73,8 +74,10 @@ export function registerLsTreeCommand(parent: Command, ext?: GitExtensions): voi
 			if (treeIsh === undefined) return { stdout: "", stderr: USAGE, exitCode: 129 };
 
 			const cwdPrefix = getCwdPrefix(gitCtx, ctx.cwd);
-			const resolved = await resolveTreeIsh(gitCtx, treeIsh, cwdPrefix);
-			if (typeof resolved !== "string") return fatal(resolved.error);
+			const revPath = await resolveRevPath(gitCtx, treeIsh, cwdPrefix);
+			const resolved = revPath ?? (await resolveRevision(gitCtx, treeIsh));
+			if (!resolved) return fatal(`Not a valid object name ${treeIsh}`);
+			if (typeof resolved !== "string" && "error" in resolved) return fatal(resolved.error);
 			if (rawPaths.includes("")) {
 				return fatal(
 					"empty string is not a valid pathspec. please use . instead if you meant to match all paths",
@@ -94,7 +97,14 @@ export function registerLsTreeCommand(parent: Command, ext?: GitExtensions): voi
 			}
 			if (filters.length === 0 && prefix !== "") filters.push({ path: prefix, listContents: true });
 
-			const treeHash = await peelToTree(gitCtx, resolved);
+			// A <rev>:<path> naming a blob or gitlink is not a tree; check the mode
+			// so a gitlink's (usually missing) commit is never read.
+			const treeHash =
+				typeof resolved === "string"
+					? await peelToTree(gitCtx, resolved)
+					: resolved.mode === undefined || resolved.mode === FileMode.DIRECTORY
+						? resolved.hash
+						: null;
 			if (!treeHash) return fatal("not a tree object");
 
 			const entries: ListedEntry[] = [];
@@ -107,75 +117,29 @@ export function registerLsTreeCommand(parent: Command, ext?: GitExtensions): voi
 
 			const nameOnly = args.nameOnly || args.nameStatus;
 			const terminator = args.nulTerminate ? "\0" : "\n";
+			const minAbbrev = args.abbrev;
+			const abbrev =
+				minAbbrev && !nameOnly
+					? await buildAbbrevResolver(
+							gitCtx,
+							entries.map((e) => e.hash),
+							minAbbrev,
+						)
+					: null;
 			let stdout = "";
 			for (const entry of entries) {
 				const shown = displayPath(prefix, entry.path);
-				const name = args.nulTerminate ? shown : quotePath(shown);
+				const name = args.nulTerminate ? shown : quoteCPath(shown);
 				if (nameOnly) {
 					stdout += name + terminator;
 					continue;
 				}
-				const oid = args.abbrev ? await uniqueAbbrev(gitCtx, entry.hash, args.abbrev) : entry.hash;
+				const oid = abbrev ? abbrev(entry.hash) : entry.hash;
 				stdout += `${entry.mode} ${objectType(entry.mode)} ${oid}\t${name}${terminator}`;
 			}
 			return { stdout, stderr: "", exitCode: 0 };
 		},
 	});
-}
-
-/**
- * Resolve the tree-ish argument, including git's `<rev>:<path>` form. The path is relative to the
- * repository root unless it starts with `./` or `../`, which are relative to the cwd. One trailing
- * slash is allowed; empty, `.` and `..` components elsewhere are not, as in git.
- */
-async function resolveTreeIsh(
-	ctx: GitContext,
-	treeIsh: string,
-	cwdPrefix: string,
-): Promise<ObjectId | { error: string }> {
-	const invalid = { error: `Not a valid object name ${treeIsh}` };
-	const colon = treeIsh.indexOf(":");
-	if (colon < 0) return (await resolveRevision(ctx, treeIsh)) ?? invalid;
-	const rev = treeIsh.slice(0, colon);
-	// `:<path>` names an index entry, and the index holds no trees.
-	if (rev === "") return invalid;
-	const revHash = await resolveRevision(ctx, rev);
-	if (!revHash) return invalid;
-	let hash = await peelToTree(ctx, revHash);
-	if (!hash) return invalid;
-
-	const rawPath = treeIsh.slice(colon + 1);
-	let path = rawPath;
-	if (path.startsWith("./") || path.startsWith("../")) {
-		path = join(cwdPrefix, path);
-		if (path === ".") path = "";
-		if (path === ".." || path.startsWith("../")) {
-			return { error: `'${rawPath}' is outside repository at '${ctx.workTree ?? ctx.gitDir}'` };
-		}
-	}
-	if (path.endsWith("/")) path = path.slice(0, -1);
-	if (path === "") return hash;
-
-	for (const name of path.split("/")) {
-		if (name === "" || name === "." || name === "..") return invalid;
-		const raw = await readObject(ctx, hash);
-		if (raw.type !== "tree") return invalid;
-		const entry = parseTree(raw.content).entries.find((e) => e.name === name);
-		if (!entry) return invalid;
-		hash = entry.hash;
-	}
-	return hash;
-}
-
-async function peelToTree(ctx: GitRepo, hash: ObjectId): Promise<ObjectId | null> {
-	let current = hash;
-	for (;;) {
-		const raw = await readObject(ctx, current);
-		if (raw.type === "tree") return current;
-		if (raw.type === "commit") return parseCommit(raw.content).tree;
-		if (raw.type !== "tag") return null;
-		current = parseTag(raw.content).object;
-	}
 }
 
 function resolvePathFilter(
@@ -242,35 +206,4 @@ function objectType(mode: string): "tree" | "commit" | "blob" {
 	if (mode === FileMode.DIRECTORY) return "tree";
 	if (mode === FileMode.SUBMODULE) return "commit";
 	return "blob";
-}
-
-const C_ESCAPES: Record<number, string> = {
-	0x07: "\\a",
-	0x08: "\\b",
-	0x09: "\\t",
-	0x0a: "\\n",
-	0x0b: "\\v",
-	0x0c: "\\f",
-	0x0d: "\\r",
-	0x22: '\\"',
-	0x5c: "\\\\",
-};
-
-function quotePath(path: string): string {
-	const bytes = new TextEncoder().encode(path);
-	let out = "";
-	let quoted = false;
-	for (const byte of bytes) {
-		const escape = C_ESCAPES[byte];
-		if (escape) {
-			out += escape;
-			quoted = true;
-		} else if (byte < 0x20 || byte >= 0x7f) {
-			out += `\\${byte.toString(8).padStart(3, "0")}`;
-			quoted = true;
-		} else {
-			out += String.fromCharCode(byte);
-		}
-	}
-	return quoted ? `"${out}"` : path;
 }

@@ -3,6 +3,7 @@ import { formatCombinedDiffEntry } from "../lib/combined-diff.ts";
 import {
 	buildAbbrevResolver,
 	fatal,
+	getCwdPrefix,
 	isCommandError,
 	quietFlag,
 	requireCommit,
@@ -36,6 +37,7 @@ import {
 import { parseRevPath } from "../lib/rev-parse.ts";
 import { parseTree } from "../lib/objects/tree.ts";
 import { join } from "../lib/path.ts";
+import { matchPathspecs, type Pathspec, parsePathspec } from "../lib/pathspec.ts";
 import { diffTrees, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type {
 	Commit,
@@ -85,10 +87,18 @@ export function registerShowCommand(parent: Command, ext?: GitExtensions) {
 			format: o.string().describe("Pretty-print format string"),
 			pretty: o.string().describe("Pretty-print format or preset name"),
 		},
-		handler: async (args, ctx) => {
+		handler: async (args, ctx, meta) => {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
 			const gitCtx = gitCtxOrError;
+
+			// Paths after `--` limit the diff, and a commit that doesn't touch
+			// them is not shown at all.
+			const cwdPrefix = getCwdPrefix(gitCtx, ctx.cwd);
+			const pathSpecs =
+				meta.passthrough.length > 0
+					? meta.passthrough.map((p) => parsePathspec(p, cwdPrefix))
+					: null;
 
 			const objectArgs = args.object;
 			const rev = objectArgs[0] ?? "HEAD";
@@ -163,6 +173,7 @@ export function registerShowCommand(parent: Command, ext?: GitExtensions) {
 						diffOutput,
 						customFormat,
 						presetName,
+						pathSpecs,
 					);
 					return {
 						stdout: output,
@@ -179,6 +190,7 @@ export function registerShowCommand(parent: Command, ext?: GitExtensions) {
 						diffOutput,
 						customFormat,
 						presetName,
+						pathSpecs,
 					);
 					return {
 						stdout: output,
@@ -256,7 +268,10 @@ async function formatCommitShow(
 	diffOutput: ShowDiffOutput | null,
 	customFormat: string | null = null,
 	presetName: string | null = null,
+	pathSpecs: Pathspec[] | null = null,
 ): Promise<string> {
+	if (pathSpecs && !(await commitTouchesPaths(ctx, commit, pathSpecs))) return "";
+
 	// ── Header ──────────────────────────────────────────────────
 	const abbrev = await buildAbbrevResolver(ctx, [hash, commit.tree, ...commit.parents]);
 	let header: string;
@@ -295,11 +310,17 @@ async function formatCommitShow(
 			commit.parents.length === 1
 				? (await readCommit(ctx, commit.parents[0] as ObjectId)).tree
 				: null;
-		const { diffs, renames } = await diffWithRenames(ctx, parentTree, commit.tree, renameState);
+		const { diffs, renames } = await diffWithRenames(
+			ctx,
+			parentTree,
+			commit.tree,
+			renameState,
+			pathSpecs,
+		);
 		hasChanges = diffs.length > 0 || renames.length > 0;
 		body = await formatShowDiff(ctx, diffs, renames, diffOutput);
 	} else {
-		body = await formatMergeShowDiff(ctx, commit, renameState, diffOutput);
+		body = await formatMergeShowDiff(ctx, commit, renameState, diffOutput, pathSpecs);
 	}
 
 	if (body) {
@@ -313,13 +334,36 @@ async function formatCommitShow(
 	return `${header}\n`;
 }
 
+/**
+ * Whether a commit is shown for a pathspec: git prunes a commit that is
+ * TREESAME to any parent (or, for a root commit, adds nothing) in those paths.
+ */
+async function commitTouchesPaths(
+	ctx: GitRepo,
+	commit: Commit,
+	pathSpecs: Pathspec[],
+): Promise<boolean> {
+	const parentTrees =
+		commit.parents.length === 0
+			? [null]
+			: await Promise.all(commit.parents.map(async (p) => (await readCommit(ctx, p)).tree));
+	for (const parentTree of parentTrees) {
+		const diffs = await diffTrees(ctx, parentTree, commit.tree);
+		if (!diffs.some((d) => matchPathspecs(pathSpecs, d.path))) return false;
+	}
+	return true;
+}
+
 async function diffWithRenames(
 	ctx: GitRepo,
 	parentTree: ObjectId | null,
 	tree: ObjectId,
 	renameState: RenameWarningState,
+	pathSpecs: Pathspec[] | null,
 ): Promise<{ diffs: TreeDiffEntry[]; renames: RenamePair[] }> {
-	const rawDiffs = await diffTrees(ctx, parentTree, tree);
+	// Like git, the pathspec limits the diff before rename detection.
+	let rawDiffs = await diffTrees(ctx, parentTree, tree);
+	if (pathSpecs) rawDiffs = rawDiffs.filter((d) => matchPathspecs(pathSpecs, d.path));
 	const { remaining, renames, neededRenameLimit } = await detectRenames(ctx, rawDiffs, {
 		limit: renameState.limit,
 	});
@@ -337,6 +381,7 @@ async function formatMergeShowDiff(
 	commit: Commit,
 	renameState: RenameWarningState,
 	output: ShowDiffOutput,
+	pathSpecs: Pathspec[] | null,
 ): Promise<string> {
 	const statFormat =
 		output.format === "stat" || output.format === "shortstat" || output.format === "numstat"
@@ -345,13 +390,20 @@ async function formatMergeShowDiff(
 	let firstParent = "";
 	if (statFormat || output.summary) {
 		const parentTree = (await readCommit(ctx, commit.parents[0] as ObjectId)).tree;
-		const { diffs, renames } = await diffWithRenames(ctx, parentTree, commit.tree, renameState);
+		const { diffs, renames } = await diffWithRenames(
+			ctx,
+			parentTree,
+			commit.tree,
+			renameState,
+			pathSpecs,
+		);
 		firstParent = await formatShowDiff(ctx, diffs, renames, {
 			format: statFormat,
 			summary: output.summary,
 		});
 	}
-	const combined = output.format === "patch" ? await formatCombinedDiff(ctx, commit) : "";
+	const combined =
+		output.format === "patch" ? await formatCombinedDiff(ctx, commit, pathSpecs) : "";
 	return withSummary(combined, firstParent, combined !== "");
 }
 
@@ -364,6 +416,7 @@ async function formatTagShow(
 	diffOutput: ShowDiffOutput | null,
 	customFormat: string | null = null,
 	presetName: string | null = null,
+	pathSpecs: Pathspec[] | null = null,
 ): Promise<string> {
 	const lines: string[] = [];
 
@@ -386,9 +439,12 @@ async function formatTagShow(
 			diffOutput,
 			customFormat,
 			presetName,
+			pathSpecs,
 		);
-		lines.push("");
-		lines.push(commitOutput.replace(/\n$/, ""));
+		if (commitOutput) {
+			lines.push("");
+			lines.push(commitOutput.replace(/\n$/, ""));
+		}
 	}
 
 	return `${lines.join("\n")}\n`;
@@ -600,7 +656,11 @@ interface FlatEntry {
 	hash: string;
 }
 
-async function formatCombinedDiff(ctx: GitRepo, commit: Commit): Promise<string> {
+async function formatCombinedDiff(
+	ctx: GitRepo,
+	commit: Commit,
+	pathSpecs: Pathspec[] | null,
+): Promise<string> {
 	if (commit.parents.length < 2) return "";
 
 	// Get flat tree entries for each parent and the result
@@ -620,6 +680,7 @@ async function formatCombinedDiff(ctx: GitRepo, commit: Commit): Promise<string>
 	// Find "interesting" paths: those where the result differs from ALL parents
 	const interestingPaths: string[] = [];
 	for (const path of allPaths) {
+		if (pathSpecs && !matchPathspecs(pathSpecs, path)) continue;
 		const resultEntry = resultMap.get(path);
 		const resultHash = resultEntry?.hash ?? null;
 		const differsFromAll = parentMaps.every((pm) => {

@@ -12,6 +12,7 @@ import {
 	type RenamePair,
 	resolveRenameLimit,
 } from "./rename-detection.ts";
+import { quoteCPath } from "./quote.ts";
 import { diffTrees } from "./tree-ops.ts";
 import type { GitRepo, Identity, ObjectId, TreeDiffEntry } from "./types.ts";
 
@@ -163,37 +164,6 @@ export async function computeDiffStats(
 	}
 
 	return fileStats;
-}
-
-const C_QUOTE_ESCAPES: Record<number, string> = {
-	0x07: "\\a",
-	0x08: "\\b",
-	0x09: "\\t",
-	0x0a: "\\n",
-	0x0b: "\\v",
-	0x0c: "\\f",
-	0x0d: "\\r",
-	0x22: '\\"',
-	0x5c: "\\\\",
-};
-
-/** Quote a path the way git's `quote_c_style` does with `core.quotePath` on. */
-function quoteCPath(path: string): string {
-	let out = "";
-	let quoted = false;
-	for (const byte of new TextEncoder().encode(path)) {
-		const escape = C_QUOTE_ESCAPES[byte];
-		if (escape) {
-			out += escape;
-			quoted = true;
-		} else if (byte < 0x20 || byte >= 0x7f) {
-			out += `\\${byte.toString(8).padStart(3, "0")}`;
-			quoted = true;
-		} else {
-			out += String.fromCharCode(byte);
-		}
-	}
-	return quoted ? `"${out}"` : path;
 }
 
 /** The parts of a rename that `--summary` prints. */

@@ -1632,5 +1632,38 @@ describe("git log", () => {
 				);
 			}
 		});
+
+		test("respects pathspecs, which limit the paths before rename detection", async () => {
+			const bash = await setupSummaryHistory();
+			const expected = ok(
+				"typechange\n\n" +
+					" delete mode 100644 dir/sub/b\n" +
+					"more\n\n" +
+					" rename dir/sub/{a => b} (100%)\n" +
+					"init\n\n" +
+					" create mode 100644 dir/sub/a\n",
+			);
+			expect(await bash.exec("git log --summary --format=%s -- dir")).toMatchObject(expected);
+			// Relative to the cwd, like git.
+			expect(
+				await bash.exec("mkdir dir && cd dir && git log --summary --format=%s -- ."),
+			).toMatchObject(expected);
+		});
+
+		test("pathspecs limit --stat, --numstat, --name-only and -p too", async () => {
+			const bash = await setupSummaryHistory();
+			expect(await bash.exec("git log --stat --format=%s -- z2")).toMatchObject(
+				ok("sum\n\n z2 | 1 +\n 1 file changed, 1 insertion(+)\n"),
+			);
+			expect(await bash.exec("git log --numstat --format=%s -- z z2")).toMatchObject(
+				ok("sum\n\n0\t0\tz => z2\ninit\n\n1\t0\tz\n"),
+			);
+			expect(await bash.exec("git log --name-only --format=%s -- dir")).toMatchObject(
+				ok("typechange\n\ndir/sub/b\nmore\n\ndir/sub/b\ninit\n\ndir/sub/a\n"),
+			);
+			const patch = await bash.exec("git log -p --format=%s -1 HEAD~1 -- keep");
+			expect(patch.stdout).toStartWith("content only\n\ndiff --git a/keep b/keep\n");
+			expect(patch.stdout).not.toContain("diff --git a/s b/s");
+		});
 	});
 });

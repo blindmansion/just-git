@@ -277,6 +277,19 @@ describe("git ls-tree", () => {
 		expect(r.exitCode).toBe(0);
 	});
 
+	test("--name-only and --name-status together exit 129, naming the later option first", async () => {
+		expect(await lsTree("git ls-tree --name-only --name-status HEAD")).toMatchObject({
+			stdout: "",
+			stderr: "error: options '--name-status' and '--name-only' cannot be used together\n",
+			exitCode: 129,
+		});
+		expect(await lsTree("git ls-tree --name-status -r --name-only bogus")).toMatchObject({
+			stdout: "",
+			stderr: "error: options '--name-only' and '--name-status' cannot be used together\n",
+			exitCode: 129,
+		});
+	});
+
 	test("no tree-ish prints usage and exits 129", async () => {
 		for (const command of ["git ls-tree", "git ls-tree -r --"]) {
 			const r = await lsTree(command);
@@ -337,6 +350,51 @@ describe("git ls-tree", () => {
 		test("a path to a blob is not a tree object", async () => {
 			const r = await lsTree("git ls-tree HEAD:README.md");
 			expect(r).toMatchObject({ stdout: "", stderr: "fatal: not a tree object\n", exitCode: 128 });
+		});
+
+		test("a trailing slash needs a directory, and a bare / is not the root", async () => {
+			for (const spec of ["HEAD:/", "HEAD:README.md/", "HEAD:src/lib/./"]) {
+				const r = await lsTree(`git ls-tree ${spec}`);
+				expect(r).toMatchObject({
+					stdout: "",
+					stderr: `fatal: Not a valid object name ${spec}\n`,
+					exitCode: 128,
+				});
+			}
+			expect((await lsTree("git ls-tree HEAD:src/lib/")).stdout).toBe(
+				lines(`100644 blob ${MATH}\tmath.ts`),
+			);
+		});
+
+		test(":<path> and :<n>:<path> name index entries, which are not trees", async () => {
+			for (const [spec, cwd] of [
+				[":README.md", "/repo"],
+				[":0:README.md", "/repo"],
+				[":./main.ts", "/repo/src"],
+				[":../README.md", "/repo/src"],
+			] as const) {
+				const r = await lsTree(`git ls-tree ${spec}`, cwd);
+				expect(r).toMatchObject({
+					stdout: "",
+					stderr: "fatal: not a tree object\n",
+					exitCode: 128,
+				});
+			}
+			for (const spec of [":2:README.md", ":00:README.md", ":README.md/", ":src/lib", ":"]) {
+				const r = await lsTree(`git ls-tree ${spec}`);
+				expect(r).toMatchObject({
+					stdout: "",
+					stderr: `fatal: Not a valid object name ${spec}\n`,
+					exitCode: 128,
+				});
+			}
+		});
+
+		test("from a subdirectory, the cwd still filters the subtree's listing", async () => {
+			expect((await lsTree("git ls-tree HEAD:src", "/repo/src")).stdout).toBe("");
+			expect((await lsTree("git ls-tree HEAD:", "/repo/src")).stdout).toBe(
+				lines(`040000 tree ${SRC_LIB}\tlib`, `100644 blob ${MAIN}\tmain.ts`),
+			);
 		});
 
 		test("a ../ path that leaves the repository is fatal", async () => {

@@ -327,16 +327,18 @@ export async function uniqueAbbrev(
  * Pre-resolve unique abbreviations for a set of hashes and return a synchronous
  * lookup. Lets sync formatters (log/status output) emit disambiguated short
  * hashes without threading async object-DB access through every call site.
- * Unknown hashes fall back to the fixed-length abbreviation.
+ * Unknown hashes fall back to the fixed-length abbreviation. `minLen` is
+ * passed to {@link uniqueAbbrev}; each distinct hash is resolved once.
  */
 export async function buildAbbrevResolver(
 	ctx: GitRepo,
 	hashes: Iterable<ObjectId>,
+	minLen: number = DEFAULT_ABBREV,
 ): Promise<(hash: ObjectId) => string> {
 	const map = new Map<ObjectId, string>();
 	await Promise.all(
 		[...new Set(hashes)].map(async (h) => {
-			map.set(h, await uniqueAbbrev(ctx, h));
+			map.set(h, await uniqueAbbrev(ctx, h, minLen));
 		}),
 	);
 	return (h) => map.get(h) ?? abbreviateHash(h);

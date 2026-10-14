@@ -619,6 +619,35 @@ describe("git show", () => {
 				"    sum\n\n delete mode 100755 m\n create mode 100644 n\n rename z => z2 (100%)\n",
 			);
 		});
+
+		test("respects pathspecs, and a commit that doesn't touch them prints nothing", async () => {
+			const bash = await setupSummaryHistory();
+			expect(await bash.exec("git show --summary --format=%s HEAD~2 -- dir")).toMatchObject(
+				ok("typechange\n\n delete mode 100644 dir/sub/b\n"),
+			);
+			expect(await bash.exec("git show --summary --format=%s HEAD~5 -- z2")).toMatchObject(
+				ok("sum\n\n create mode 100644 z2\n"),
+			);
+			expect(
+				await bash.exec("mkdir dir && cd dir && git show --summary --format=%s HEAD~2 -- ."),
+			).toMatchObject(ok("typechange\n\n delete mode 100644 dir/sub/b\n"));
+			for (const opts of ["--summary", "--stat", "-p", "--no-patch"]) {
+				expect(await bash.exec(`git show ${opts} HEAD~1 -- dir`)).toMatchObject(ok(""));
+			}
+			// A merge that matches one of its parents in the paths is not shown either.
+			expect(await bash.exec("git show --stat HEAD -- s")).toMatchObject(ok(""));
+			expect(await bash.exec("git show HEAD -- keep")).toMatchObject(ok(""));
+		});
+
+		test("a tag whose commit doesn't touch the pathspec shows only the tag", async () => {
+			const bash = await setupSummaryHistory();
+			await bash.exec("git tag -a v1 -m release HEAD~1");
+			const result = await bash.exec("git show --summary v1 -- dir");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toStartWith("tag v1\n");
+			expect(result.stdout).toEndWith("release\n");
+			expect(result.stdout).not.toContain("commit ");
+		});
 	});
 });
 

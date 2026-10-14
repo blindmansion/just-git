@@ -1278,6 +1278,34 @@ describe("git diff", () => {
 			expect(await bash.exec("git diff --summary HEAD~2 HEAD~1")).toMatchObject(ok(""));
 		});
 
+		test("-U<n> implies the patch, which follows the summary after a blank line", async () => {
+			const bash = await setupSummaryHistory();
+			const patch = (await bash.exec("git diff -U1 HEAD~6 HEAD~5 -- m n")).stdout;
+			expect(patch).toStartWith("diff --git a/m b/m\n");
+			expect(await bash.exec("git diff -U1 --summary HEAD~6 HEAD~5 -- m n")).toMatchObject(
+				ok(` delete mode 100755 m\n create mode 100644 n\n\n${patch}`),
+			);
+			// No summary lines: just the patch, without the blank line.
+			const contentOnly = (await bash.exec("git diff -U2 HEAD~2 HEAD~1")).stdout;
+			expect(contentOnly).toStartWith("diff --git a/keep b/keep\n");
+			expect(await bash.exec("git diff --summary -U2 HEAD~2 HEAD~1")).toMatchObject(
+				ok(contentOnly),
+			);
+		});
+
+		test("respects pathspecs, which limit the paths before rename detection", async () => {
+			const bash = await setupSummaryHistory();
+			expect(await bash.exec("git diff --summary HEAD~6 HEAD~5 -- z2")).toMatchObject(
+				ok(" create mode 100644 z2\n"),
+			);
+			expect(await bash.exec("git diff --summary HEAD~6 HEAD~5 -- z z2")).toMatchObject(
+				ok(" rename z => z2 (100%)\n"),
+			);
+			expect(
+				await bash.exec("mkdir dir && cd dir && git diff --summary HEAD~3 HEAD~2 -- ."),
+			).toMatchObject(ok(" delete mode 100644 dir/sub/b\n"));
+		});
+
 		test("is dropped by --name-only and --name-status", async () => {
 			const bash = await setupStaged();
 			for (const opts of ["--name-only", "--name-status"]) {

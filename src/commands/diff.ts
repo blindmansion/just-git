@@ -17,6 +17,7 @@ import {
 	formatSummaryLines,
 	renderStatLines,
 	type SummaryRename,
+	withSummary,
 } from "../lib/commit-summary.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algorithm.ts";
 import { getStage0Entries, readIndex } from "../lib/index.ts";
@@ -192,14 +193,21 @@ export function registerDiffCommand(parent: Command, ext?: GitExtensions) {
 
 			if (isError(result)) return result;
 			const contextLines = args.unified;
-			// Git drops --summary under the name formats, and --summary on its
-			// own replaces the patch.
+			// Git drops --summary under the name formats. --summary on its own
+			// replaces the patch, but -U<n> asks for the patch (it implies -p),
+			// which then follows the summary after a blank line.
 			const summary = args.summary && format !== "name-only" && format !== "name-status";
 			const output =
-				summary && format === "unified"
+				summary && format === "unified" && contextLines === undefined
 					? { stdout: "", stderr: "", exitCode: 0 }
 					: await formatOutput(gitCtx, result.items, format, contextLines);
-			if (summary) output.stdout += formatAsSummary(result.items);
+			if (summary) {
+				output.stdout = withSummary(
+					output.stdout,
+					formatAsSummary(result.items),
+					format === "unified" && contextLines !== undefined,
+				);
+			}
 			if (result.stderr) output.stderr = result.stderr;
 			return output;
 		},
@@ -426,24 +434,22 @@ async function collectCached(
 		}
 	}
 
+	// Like git, the pathspec limits the paths before rename detection, so a
+	// rename whose source is outside it shows as an addition.
+	const matches = (path: string) => !pathFilter || matchPathspecs(pathFilter, path);
 	const renameLimit = await resolveRenameLimit(gitCtx, "diff");
-	const { remaining, renames, neededRenameLimit } = await detectRenames(gitCtx, diffs, {
-		limit: renameLimit,
-	});
+	const { remaining, renames, neededRenameLimit } = await detectRenames(
+		gitCtx,
+		diffs.filter((d) => matches(d.path)),
+		{ limit: renameLimit },
+	);
 	const items = renameResultToItems(remaining, renames);
 
 	for (const p of unmergedPaths) {
-		items.push({ path: p, status: "U" });
+		if (matches(p)) items.push({ path: p, status: "U" });
 	}
 
 	items.sort((a, b) => comparePaths(a.path, b.path));
-
-	if (pathFilter) {
-		return {
-			items: items.filter((item) => matchPathspecs(pathFilter, item.path)),
-			stderr: formatRenameLimitWarning("diff", neededRenameLimit),
-		};
-	}
 
 	return { items, stderr: formatRenameLimitWarning("diff", neededRenameLimit) };
 }
@@ -501,19 +507,14 @@ async function applyRenameDetectionAndFilter(
 	diffs: TreeDiffEntry[],
 	pathFilter: Pathspec[] | null,
 ): Promise<DiffCollectResult> {
+	// Like git, the pathspec limits the paths before rename detection.
+	const filtered = pathFilter ? diffs.filter((d) => matchPathspecs(pathFilter, d.path)) : diffs;
 	const renameLimit = await resolveRenameLimit(gitCtx, "diff");
-	const { remaining, renames, neededRenameLimit } = await detectRenames(gitCtx, diffs, {
+	const { remaining, renames, neededRenameLimit } = await detectRenames(gitCtx, filtered, {
 		limit: renameLimit,
 	});
 	const items = renameResultToItems(remaining, renames);
 	items.sort((a, b) => comparePaths(a.path, b.path));
-
-	if (pathFilter) {
-		return {
-			items: items.filter((item) => matchPathspecs(pathFilter, item.path)),
-			stderr: formatRenameLimitWarning("diff", neededRenameLimit),
-		};
-	}
 
 	return { items, stderr: formatRenameLimitWarning("diff", neededRenameLimit) };
 }

@@ -3,6 +3,7 @@ import {
 	ambiguousArgError,
 	buildAbbrevResolver,
 	fatal,
+	getCwdPrefix,
 	isCommandError,
 	quietFlag,
 	requireGitContext,
@@ -196,8 +197,11 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 			}
 
 			// ── Path filter ─────────────────────────────────────────
+			const cwdPrefix = getCwdPrefix(gitCtx, ctx.cwd);
 			const pathSpecs =
-				meta.passthrough.length > 0 ? meta.passthrough.map((p) => parsePathspec(p, "")) : null;
+				meta.passthrough.length > 0
+					? meta.passthrough.map((p) => parsePathspec(p, cwdPrefix))
+					: null;
 
 			// ── Author/grep filters ─────────────────────────────────
 			const authorPattern = args.author ? buildMatcher(args.author) : null;
@@ -347,6 +351,7 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 					decoFn,
 					decoRawFn,
 					renameState,
+					pathSpecs,
 					dateMode,
 				);
 			}
@@ -367,7 +372,13 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 						]),
 					};
 					let line = expandFormat(customFormat, fctx);
-					const diffText = await formatCommitDiff(gitCtx, entry.commit, diffOutput, renameState);
+					const diffText = await formatCommitDiff(
+						gitCtx,
+						entry.commit,
+						diffOutput,
+						renameState,
+						pathSpecs,
+					);
 					if (diffText !== null) {
 						line += `\n\n${diffText}`.replace(/\n$/, "");
 					}
@@ -398,7 +409,13 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 					]),
 				};
 				let line = formatPreset(effectivePreset, fctx, idx === 0, abbrevCommit);
-				const diffText = await formatCommitDiff(gitCtx, entry.commit, diffOutput, renameState);
+				const diffText = await formatCommitDiff(
+					gitCtx,
+					entry.commit,
+					diffOutput,
+					renameState,
+					pathSpecs,
+				);
 				if (diffText !== null) {
 					const sep = isOneline ? "\n" : "\n\n";
 					line += `${sep}${diffText}`.replace(/\n$/, "");
@@ -627,6 +644,7 @@ async function formatWithGraph(
 	decoFn: ((h: ObjectId) => string) | undefined,
 	decoRawFn: ((h: ObjectId) => string) | undefined,
 	renameState: RenameWarningState,
+	pathSpecs: Pathspec[] | null,
 	dateMode?: DateMode,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
 	const graph = new CommitGraph();
@@ -698,6 +716,7 @@ async function formatWithGraph(
 			entry.commit,
 			diffOutput,
 			renameState,
+			pathSpecs,
 			statWidth,
 		);
 
@@ -739,6 +758,7 @@ async function formatCommitDiff(
 	commit: Commit,
 	output: LogDiffOutput | null,
 	renameState: RenameWarningState,
+	pathSpecs: Pathspec[] | null,
 	statWidth?: number,
 ): Promise<string | null> {
 	if (!output) return null;
@@ -749,7 +769,9 @@ async function formatCommitDiff(
 			? (await readCommit(ctx, commit.parents[0] as ObjectId)).tree
 			: null;
 
-	const rawDiffs = await diffTrees(ctx, parentTree, commit.tree);
+	// Like git, the pathspec limits the diff before rename detection.
+	let rawDiffs = await diffTrees(ctx, parentTree, commit.tree);
+	if (pathSpecs) rawDiffs = rawDiffs.filter((d) => matchPathspecs(pathSpecs, d.path));
 	const { remaining, renames, neededRenameLimit } = await detectRenames(ctx, rawDiffs, {
 		limit: renameState.limit,
 	});

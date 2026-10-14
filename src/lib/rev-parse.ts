@@ -5,9 +5,14 @@ import {
 	readCommit,
 	readObject,
 } from "./object-db.ts";
+import { readIndex } from "./index.ts";
+import { parseCommit } from "./objects/commit.ts";
+import { parseTag } from "./objects/tag.ts";
+import { parseTree } from "./objects/tree.ts";
+import { join } from "./path.ts";
 import { readReflog } from "./reflog.ts";
 import { resolveRef } from "./refs.ts";
-import type { GitContext, GitRepo, ObjectId } from "./types.ts";
+import { FileMode, type GitContext, type GitRepo, type ObjectId } from "./types.ts";
 
 // ── Suffix types ─────────────────────────────────────────────────
 
@@ -333,4 +338,108 @@ export function parseRevPath(spec: string): { rev: string; path: string } | null
 		rev: spec.slice(0, colonIdx) || "HEAD",
 		path: spec.slice(colonIdx + 1),
 	};
+}
+
+/**
+ * What a `<rev>:<path>` or `:[<stage>:]<path>` object name points at: the
+ * object, and its mode in the tree or index (`undefined` for a revision's
+ * root tree, `<rev>:`).
+ */
+export type RevPathTarget = { hash: ObjectId; mode?: string } | { error: string };
+
+/**
+ * Resolve git's `<rev>:<path>` and `:[<stage>:]<path>` object names, as
+ * `get_oid_with_context` does. Returns null when `spec` has no colon.
+ *
+ * - `<rev>:<path>` looks the path up in the revision's tree. The path is
+ *   relative to the repository root unless it starts with `./` or `../`,
+ *   which are relative to `cwdPrefix`. Empty, `.` and `..` components are
+ *   not allowed elsewhere, and a trailing slash only after a directory.
+ *   An empty path is the root tree.
+ * - `:<path>` and `:<n>:<path>` (n = 0..3) look the path up in the index
+ *   at that stage (0 when omitted), with the same `./` and `../` rule.
+ *
+ * `:/<text>` (commit message search) is not supported and is reported as
+ * an invalid name.
+ */
+export async function resolveRevPath(
+	ctx: GitContext,
+	spec: string,
+	cwdPrefix: string,
+): Promise<RevPathTarget | null> {
+	const colon = spec.indexOf(":");
+	if (colon < 0) return null;
+	const invalid = { error: `Not a valid object name ${spec}` };
+
+	if (colon === 0) {
+		let rest = spec.slice(1);
+		let stage = 0;
+		if (/^[0-3]:/.test(rest)) {
+			stage = Number(rest[0]);
+			rest = rest.slice(2);
+		}
+		if (rest.startsWith("/")) return invalid;
+		const path = resolveCwdRelative(ctx, rest, cwdPrefix);
+		if (typeof path !== "string") return path;
+		const entry = (await readIndex(ctx)).entries.find((e) => e.path === path && e.stage === stage);
+		if (!entry) return invalid;
+		return { hash: entry.hash, mode: entry.mode.toString(8).padStart(6, "0") };
+	}
+
+	const revHash = await resolveRevision(ctx, spec.slice(0, colon));
+	if (!revHash) return invalid;
+	const rootTree = await peelToTree(ctx, revHash);
+	if (!rootTree) return invalid;
+
+	let path = resolveCwdRelative(ctx, spec.slice(colon + 1), cwdPrefix);
+	if (typeof path !== "string") return path;
+	if (path === "") return { hash: rootTree };
+	const trailingSlash = path.endsWith("/");
+	if (trailingSlash) path = path.slice(0, -1);
+
+	let hash = rootTree;
+	let mode: string = FileMode.DIRECTORY;
+	for (const name of path.split("/")) {
+		if (name === "" || name === "." || name === "..") return invalid;
+		if (mode !== FileMode.DIRECTORY) return invalid;
+		const raw = await readObject(ctx, hash);
+		if (raw.type !== "tree") return invalid;
+		const entry = parseTree(raw.content).entries.find((e) => e.name === name);
+		if (!entry) return invalid;
+		hash = entry.hash;
+		mode = entry.mode;
+	}
+	if (trailingSlash && mode !== FileMode.DIRECTORY) return invalid;
+	return { hash, mode };
+}
+
+/**
+ * Apply git's rule for the path part of `<rev>:<path>`: `./` and `../`
+ * paths are joined to the cwd prefix (and normalized), others are kept.
+ */
+function resolveCwdRelative(
+	ctx: GitContext,
+	rawPath: string,
+	cwdPrefix: string,
+): string | { error: string } {
+	if (!rawPath.startsWith("./") && !rawPath.startsWith("../")) return rawPath;
+	let path = join(cwdPrefix, rawPath).replace(/\/$/, "");
+	if (path === ".") path = "";
+	if (path === ".." || path.startsWith("../")) {
+		return { error: `'${rawPath}' is outside repository at '${ctx.workTree ?? ctx.gitDir}'` };
+	}
+	// git keeps one trailing slash, e.g. `HEAD:./` from a subdirectory.
+	return rawPath.endsWith("/") && path !== "" ? `${path}/` : path;
+}
+
+/** Peel a commit or tag to its tree. Returns null for blobs (or tags of blobs). */
+export async function peelToTree(ctx: GitRepo, hash: ObjectId): Promise<ObjectId | null> {
+	let current = hash;
+	for (;;) {
+		const raw = await readObject(ctx, current);
+		if (raw.type === "tree") return current;
+		if (raw.type === "commit") return parseCommit(raw.content).tree;
+		if (raw.type !== "tag") return null;
+		current = parseTag(raw.content).object;
+	}
 }
