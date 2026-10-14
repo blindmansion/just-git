@@ -64,6 +64,7 @@ export async function computeDiffStats(
 	const fileStats: FileStat[] = [];
 	const createModes: { path: string; mode: string }[] = [];
 	const deleteModes: { path: string; mode: string }[] = [];
+	const modeChanges: { path: string; oldMode: string; newMode: string }[] = [];
 
 	for (const diff of diffs) {
 		if (diff.status === "added" && diff.newHash && diff.newMode) {
@@ -139,8 +140,7 @@ export async function computeDiffStats(
 				});
 			}
 			if (diff.oldMode && diff.newMode && diff.oldMode !== diff.newMode) {
-				deleteModes.push({ path: diff.path, mode: diff.oldMode });
-				createModes.push({ path: diff.path, mode: diff.newMode });
+				modeChanges.push({ path: diff.path, oldMode: diff.oldMode, newMode: diff.newMode });
 			}
 		}
 	}
@@ -177,12 +177,21 @@ export async function computeDiffStats(
 	for (const { path, mode } of deleteModes) {
 		modeLines.push({ sortKey: path, text: ` delete mode ${mode} ${path}` });
 	}
+	for (const { path, oldMode, newMode } of modeChanges) {
+		modeLines.push({ sortKey: path, text: ` mode change ${oldMode} => ${newMode} ${path}` });
+	}
 	for (const rename of renames) {
 		const d = formatRenamePath(rename.oldPath, rename.newPath);
 		modeLines.push({
 			sortKey: rename.newPath,
 			text: ` rename ${d} (${rename.similarity}%)`,
 		});
+		if (rename.oldMode && rename.newMode && rename.oldMode !== rename.newMode) {
+			modeLines.push({
+				sortKey: rename.newPath,
+				text: ` mode change ${rename.oldMode} => ${rename.newMode}`,
+			});
+		}
 	}
 	modeLines.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
 

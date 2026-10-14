@@ -287,14 +287,11 @@ async function collectMergeInfo(
 
 		const filemask = (base ? 1 : 0) | (ours ? 2 : 0) | (theirs ? 4 : 0);
 
-		// Compute match mask (which stages have identical hash)
-		const bh = base?.hash ?? null;
-		const oh = ours?.hash ?? null;
-		const th = theirs?.hash ?? null;
+		// Compute match mask (which stages have identical hash and mode)
 		let matchMask = 0;
-		if (bh !== null && bh === oh) matchMask |= 3; // base == ours
-		if (bh !== null && bh === th) matchMask |= 5; // base == theirs
-		if (oh !== null && oh === th) matchMask |= 6; // ours == theirs
+		if (base && sameVersion(baseV, oursV)) matchMask |= 3; // base == ours
+		if (base && sameVersion(baseV, theirsV)) matchMask |= 5; // base == theirs
+		if (ours && sameVersion(oursV, theirsV)) matchMask |= 6; // ours == theirs
 
 		// Trivial resolution check
 		const ci: ConflictInfo = {
@@ -325,14 +322,13 @@ async function collectMergeInfo(
  */
 function triviallyResolve(ci: ConflictInfo): boolean {
 	const [base, ours, theirs] = ci.stages;
-	const bh = base?.hash ?? null;
-	const oh = ours?.hash ?? null;
-	const th = theirs?.hash ?? null;
+	const oursIsBase = sameVersion(ours, base);
+	const theirsIsBase = sameVersion(theirs, base);
 
 	// All three match or both sides match base (no changes)
-	if (oh === bh && th === bh) {
+	if (oursIsBase && theirsIsBase) {
 		if (ours) {
-			ci.merged = { result: { hash: oh, mode: ours.mode }, clean: true };
+			ci.merged = { result: { hash: ours.hash, mode: ours.mode }, clean: true };
 		} else {
 			ci.merged = { result: null, clean: true }; // all absent or all deleted
 		}
@@ -340,21 +336,21 @@ function triviallyResolve(ci: ConflictInfo): boolean {
 	}
 
 	// Both sides made identical changes
-	if (oh === th && oh !== null) {
-		ci.merged = { result: { hash: oh, mode: ours!.mode }, clean: true };
+	if (ours && sameVersion(ours, theirs)) {
+		ci.merged = { result: { hash: ours.hash, mode: ours.mode }, clean: true };
 		return true;
 	}
 
 	// Both deleted
-	if (oh === null && th === null) {
+	if (!ours && !theirs) {
 		ci.merged = { result: null, clean: true };
 		return true;
 	}
 
 	// Only ours changed (theirs matches base)
-	if (th === bh && oh !== bh) {
+	if (theirsIsBase) {
 		if (ours) {
-			ci.merged = { result: { hash: oh, mode: ours.mode }, clean: true };
+			ci.merged = { result: { hash: ours.hash, mode: ours.mode }, clean: true };
 		} else {
 			ci.merged = { result: null, clean: true }; // ours deleted
 		}
@@ -362,9 +358,9 @@ function triviallyResolve(ci: ConflictInfo): boolean {
 	}
 
 	// Only theirs changed (ours matches base)
-	if (oh === bh && th !== bh) {
+	if (oursIsBase) {
 		if (theirs) {
-			ci.merged = { result: { hash: th, mode: theirs.mode }, clean: true };
+			ci.merged = { result: { hash: theirs.hash, mode: theirs.mode }, clean: true };
 		} else {
 			ci.merged = { result: null, clean: true }; // theirs deleted
 		}
@@ -372,6 +368,24 @@ function triviallyResolve(ci: ConflictInfo): boolean {
 	}
 
 	return false; // needs content merge or is a conflict
+}
+
+/** Same blob and same mode, as git's match mask compares them. Two absent sides match. */
+function sameVersion(a: VersionInfo | null, b: VersionInfo | null): boolean {
+	if (!a || !b) return a === b;
+	return a.hash === b.hash && a.mode === b.mode;
+}
+
+const REGULAR_FILE_MODES = new Set(["100644", "100755"]);
+
+/**
+ * Mode of a merged regular file, as in git's handle_content_merge: the
+ * result keeps whichever side changed the mode. Null when any side is not
+ * a regular file (symlink, gitlink), which callers handle on their own.
+ */
+function mergeFileMode(base: string, ours: string, theirs: string): string | null {
+	if (![base, ours, theirs].every((mode) => REGULAR_FILE_MODES.has(mode))) return null;
+	return ours === base ? theirs : ours;
 }
 
 // ── Phase 2: Rename detection ───────────────────────────────────────
@@ -501,7 +515,10 @@ async function detectAndProcessRenames(
 				const theirsEntry = theirsMap.get(theirRename.newPath)!;
 
 				if (oursEntry.hash === theirsEntry.hash) {
-					output.entries.push(makeFlatEntry(ourRename.newPath, oursEntry));
+					const mode = mergeFileMode(base.mode, oursEntry.mode, theirsEntry.mode);
+					output.entries.push(
+						makeEntryFromHash(ourRename.newPath, mode ?? oursEntry.mode, oursEntry.hash),
+					);
 				} else {
 					// Set up for content merge via ConflictInfo
 					const ci = getOrCreate(paths, ourRename.newPath);
@@ -545,19 +562,15 @@ async function detectAndProcessRenames(
 					basePath,
 					`CONFLICT (rename/rename): ${basePath} renamed to ${ourRename.newPath} in ${oursLabel} and to ${theirRename.newPath} in ${theirsLabel}.`,
 				);
+				// Both new paths get the merged content and, for regular files, the merged mode.
+				const mode = mergeFileMode(base.mode, oursEntry.mode, theirsEntry.mode);
+				const oursMode = mode ?? oursEntry.mode;
+				const theirsMode = mode ?? theirsEntry.mode;
 				output.entries.push(makeFlatEntry(basePath, base, 1));
-				output.entries.push(makeEntryFromHash(ourRename.newPath, oursEntry.mode, merged.hash, 2));
-				output.entries.push(
-					makeEntryFromHash(theirRename.newPath, theirsEntry.mode, merged.hash, 3),
-				);
-				output.worktreeBlobs.set(ourRename.newPath, {
-					hash: merged.hash,
-					mode: oursEntry.mode,
-				});
-				output.worktreeBlobs.set(theirRename.newPath, {
-					hash: merged.hash,
-					mode: theirsEntry.mode,
-				});
+				output.entries.push(makeEntryFromHash(ourRename.newPath, oursMode, merged.hash, 2));
+				output.entries.push(makeEntryFromHash(theirRename.newPath, theirsMode, merged.hash, 3));
+				output.worktreeBlobs.set(ourRename.newPath, { hash: merged.hash, mode: oursMode });
+				output.worktreeBlobs.set(theirRename.newPath, { hash: merged.hash, mode: theirsMode });
 			}
 		} else if (ourRename) {
 			handledPaths.add(ourRename.newPath);
@@ -636,17 +649,14 @@ async function detectAndProcessRenames(
 				);
 			} else {
 				// Normal rename — content merge at new path
-				if (theirsEntry.hash === base.hash && oursEntry.hash === base.hash) {
-					output.entries.push(makeFlatEntry(ourRename.newPath, oursEntry));
-				} else if (theirsEntry.hash === base.hash) {
-					output.entries.push(makeFlatEntry(ourRename.newPath, oursEntry));
+				const mode = mergeFileMode(base.mode, oursEntry.mode, theirsEntry.mode) ?? oursEntry.mode;
+				if (theirsEntry.hash === base.hash) {
+					output.entries.push(makeEntryFromHash(ourRename.newPath, mode, oursEntry.hash));
 				} else if (oursEntry.hash === base.hash) {
 					// Ours only renamed (no content change), theirs modified.
 					// Trivial resolution: take theirs' content at ours' new path.
 					// Git does NOT emit "Auto-merging" for this case.
-					output.entries.push(
-						makeEntryFromHash(ourRename.newPath, oursEntry.mode, theirsEntry.hash),
-					);
+					output.entries.push(makeEntryFromHash(ourRename.newPath, mode, theirsEntry.hash));
 				} else {
 					// Content merge needed — set up ConflictInfo
 					const ci = getOrCreate(paths, ourRename.newPath);
@@ -739,17 +749,14 @@ async function detectAndProcessRenames(
 				);
 			} else {
 				// Normal rename — content merge at new path
-				if (oursEntry.hash === base.hash && theirsEntry.hash === base.hash) {
-					output.entries.push(makeFlatEntry(theirRename.newPath, theirsEntry));
-				} else if (oursEntry.hash === base.hash) {
-					output.entries.push(makeFlatEntry(theirRename.newPath, theirsEntry));
+				const mode = mergeFileMode(base.mode, oursEntry.mode, theirsEntry.mode) ?? theirsEntry.mode;
+				if (oursEntry.hash === base.hash) {
+					output.entries.push(makeEntryFromHash(theirRename.newPath, mode, theirsEntry.hash));
 				} else if (theirsEntry.hash === base.hash) {
 					// Theirs only renamed (no content change), ours modified.
 					// Trivial resolution: take ours' content at theirs' new path.
 					// Git does NOT emit "Auto-merging" for this case.
-					output.entries.push(
-						makeEntryFromHash(theirRename.newPath, theirsEntry.mode, oursEntry.hash),
-					);
+					output.entries.push(makeEntryFromHash(theirRename.newPath, mode, oursEntry.hash));
 				} else {
 					// Content merge needed — set up ConflictInfo
 					const ci = getOrCreate(paths, theirRename.newPath);
@@ -1541,8 +1548,23 @@ async function processEntry(
 
 	// ── Add/add (no base) — attempt three-way merge with empty base ──
 	if (bh === null && oh !== null && th !== null) {
+		// Git keeps ours' mode but reports a conflict when the two sides add
+		// a regular file with different modes, even if the content merges.
+		const modeConflict =
+			ours!.mode !== theirs!.mode &&
+			REGULAR_FILE_MODES.has(ours!.mode) &&
+			REGULAR_FILE_MODES.has(theirs!.mode);
+		const addAddConflict = (worktreeHash: ObjectId) => {
+			conflicts.push({ path, reason: "add-add" });
+			pushMsg(path, `CONFLICT (add/add): Merge conflict in ${path}`, 1);
+			entries.push(makeEntry(path, oh, ours!.mode, 2));
+			entries.push(makeEntry(path, th, theirs!.mode, 3));
+			worktreeBlobs.set(path, { hash: worktreeHash, mode: ours!.mode });
+		};
+
 		if (oh === th) {
-			entries.push(makeEntry(path, oh!, ours!.mode));
+			if (modeConflict) addAddConflict(oh);
+			else entries.push(makeEntry(path, oh, ours!.mode));
 			return;
 		}
 
@@ -1552,16 +1574,12 @@ async function processEntry(
 		const theirsText = await readBlobContent(ctx, th);
 
 		if (isBinaryStr(oursText) || isBinaryStr(theirsText)) {
-			conflicts.push({ path, reason: "add-add" });
 			pushMsg(
 				path,
 				`warning: Cannot merge binary files: ${path} (${labels?.a ?? "HEAD"} vs. ${labels?.b ?? "theirs"})`,
 				-1,
 			);
-			pushMsg(path, `CONFLICT (add/add): Merge conflict in ${path}`, 1);
-			entries.push(makeEntry(path, oh!, ours!.mode, 2));
-			entries.push(makeEntry(path, th!, theirs!.mode, 3));
-			worktreeBlobs.set(path, { hash: oh!, mode: ours!.mode });
+			addAddConflict(oh);
 			return;
 		}
 
@@ -1574,15 +1592,8 @@ async function processEntry(
 			});
 			if (driverResult !== null) {
 				const driverHash = await writeObject(ctx, "blob", encoder.encode(driverResult.content));
-				if (!driverResult.conflict) {
-					entries.push(makeEntry(path, driverHash, ours!.mode));
-					return;
-				}
-				conflicts.push({ path, reason: "add-add" });
-				pushMsg(path, `CONFLICT (add/add): Merge conflict in ${path}`, 1);
-				entries.push(makeEntry(path, oh!, ours!.mode, 2));
-				entries.push(makeEntry(path, th!, theirs!.mode, 3));
-				worktreeBlobs.set(path, { hash: driverHash, mode: ours!.mode });
+				if (driverResult.conflict || modeConflict) addAddConflict(driverHash);
+				else entries.push(makeEntry(path, driverHash, ours!.mode));
 				return;
 			}
 		}
@@ -1596,21 +1607,17 @@ async function processEntry(
 
 		if (!mergeResult.conflict) {
 			const mergedHash = await writeCleanMergeBlob(ctx, mergeResult.result);
-			entries.push(makeEntry(path, mergedHash, ours!.mode));
+			if (modeConflict) addAddConflict(mergedHash);
+			else entries.push(makeEntry(path, mergedHash, ours!.mode));
 			return;
 		}
 
-		conflicts.push({ path, reason: "add-add" });
-		pushMsg(path, `CONFLICT (add/add): Merge conflict in ${path}`, 1);
-		entries.push(makeEntry(path, oh!, ours!.mode, 2));
-		entries.push(makeEntry(path, th!, theirs!.mode, 3));
 		const markerContent = renderConflictMarkers(oursText, "", theirsText, {
 			a: labels?.a ?? "HEAD",
 			b: labels?.b ?? "theirs",
 			conflictStyle: labels?.conflictStyle,
 		});
-		const markerHash = await writeObject(ctx, "blob", encoder.encode(markerContent));
-		worktreeBlobs.set(path, { hash: markerHash, mode: ours!.mode });
+		addAddConflict(await writeObject(ctx, "blob", encoder.encode(markerContent)));
 		return;
 	}
 
@@ -1618,20 +1625,22 @@ async function processEntry(
 	if (bh !== null && oh !== null && th !== null) {
 		// Trivial cases — resolve without "Auto-merging" message.
 		// These can occur when rename detection pushes a path through Phase 3
-		// even though only one side actually modified the file content.
+		// even though only one side actually modified the file content, or
+		// when one side changed only the mode.
+		const fileMode = mergeFileMode(base!.mode, ours!.mode, theirs!.mode);
 		if (oh === bh) {
 			// Only theirs modified — take theirs
-			entries.push(makeEntry(path, th!, theirs!.mode));
+			entries.push(makeEntry(path, th!, fileMode ?? theirs!.mode));
 			return;
 		}
 		if (th === bh) {
 			// Only ours modified — take ours
-			entries.push(makeEntry(path, oh!, ours!.mode));
+			entries.push(makeEntry(path, oh!, fileMode ?? ours!.mode));
 			return;
 		}
 		if (oh === th) {
 			// Both made identical changes — take either
-			entries.push(makeEntry(path, oh!, ours!.mode));
+			entries.push(makeEntry(path, oh!, fileMode ?? ours!.mode));
 			return;
 		}
 
@@ -1650,6 +1659,7 @@ async function processEntry(
 			return;
 		}
 
+		const resultMode = fileMode ?? ours!.mode;
 		const baseText = await readBlobContent(ctx, bh);
 		const oursText = await readBlobContent(ctx, oh);
 		const theirsText = await readBlobContent(ctx, th);
@@ -1669,7 +1679,7 @@ async function processEntry(
 			entries.push(makeEntry(path, bh, base!.mode, 1));
 			entries.push(makeEntry(path, oh, ours!.mode, 2));
 			entries.push(makeEntry(path, th, theirs!.mode, 3));
-			worktreeBlobs.set(path, { hash: oh, mode: ours!.mode });
+			worktreeBlobs.set(path, { hash: oh, mode: resultMode });
 			return;
 		}
 
@@ -1683,7 +1693,7 @@ async function processEntry(
 			if (driverResult !== null) {
 				const driverHash = await writeObject(ctx, "blob", encoder.encode(driverResult.content));
 				if (!driverResult.conflict) {
-					entries.push(makeEntry(path, driverHash, ours!.mode));
+					entries.push(makeEntry(path, driverHash, resultMode));
 					return;
 				}
 				const oursOrigPath = ci.pathnames[1];
@@ -1699,7 +1709,7 @@ async function processEntry(
 				entries.push(makeEntry(path, bh, base!.mode, 1));
 				entries.push(makeEntry(path, oh, ours!.mode, 2));
 				entries.push(makeEntry(path, th, theirs!.mode, 3));
-				worktreeBlobs.set(path, { hash: driverHash, mode: ours!.mode });
+				worktreeBlobs.set(path, { hash: driverHash, mode: resultMode });
 				return;
 			}
 		}
@@ -1715,7 +1725,7 @@ async function processEntry(
 
 		if (!mergeResult.conflict) {
 			const mergedHash = await writeCleanMergeBlob(ctx, mergeResult.result);
-			entries.push(makeEntry(path, mergedHash, ours!.mode));
+			entries.push(makeEntry(path, mergedHash, resultMode));
 		} else {
 			// Conflict — write stages 1-3 for the index
 			const oursOrigPath = ci.pathnames[1];
@@ -1747,7 +1757,7 @@ async function processEntry(
 				conflictStyle: labels?.conflictStyle,
 			});
 			const markerHash = await writeObject(ctx, "blob", encoder.encode(markerContent));
-			worktreeBlobs.set(path, { hash: markerHash, mode: ours!.mode });
+			worktreeBlobs.set(path, { hash: markerHash, mode: resultMode });
 		}
 		return;
 	}
