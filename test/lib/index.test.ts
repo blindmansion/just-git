@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { FileStat } from "../../src/fs";
+import { createGit } from "../../src/git";
 import {
 	defaultStat,
 	gitModeFromFileStat,
 	indexStatFromFileStat,
 	indexStatMatchesFile,
+	readIndex,
 } from "../../src/lib/index";
+import { findRepo } from "../../src/lib/repo";
 import type { IndexEntry } from "../../src/lib/types";
 import { MemoryFileSystem } from "../../src/memory-fs";
 
@@ -120,5 +123,53 @@ describe("index stat cache", () => {
 				indexTimestamp,
 			),
 		).toBe(false);
+	});
+
+	test("accepts bigint dev/ino and keeps the low 32 bits", () => {
+		const stat = regularStat({ dev: 7n, ino: 0x1_0000_000bn });
+		const entry = entryFor(stat);
+		const indexTimestamp = new Date("2026-09-04T12:00:01Z");
+
+		expect(entry.stat.dev).toBe(7);
+		expect(entry.stat.ino).toBe(11);
+		expect(indexStatMatchesFile(fs, entry, stat, indexTimestamp)).toBe(true);
+		// Same truncated value given as a number still matches.
+		expect(indexStatMatchesFile(fs, entry, { ...stat, dev: 7, ino: 11 }, indexTimestamp)).toBe(
+			true,
+		);
+		expect(indexStatMatchesFile(fs, entry, { ...stat, ino: 12n }, indexTimestamp)).toBe(false);
+		expect(indexStatMatchesFile(fs, entry, { ...stat, dev: 8n }, indexTimestamp)).toBe(false);
+	});
+
+	test("negative bigint dev/ino are stored as zero and disable the shortcut", () => {
+		const stat = regularStat({ dev: -1n, ino: 11n });
+		const entry = entryFor(stat);
+
+		expect(entry.stat.dev).toBe(0);
+		expect(indexStatMatchesFile(fs, entry, stat, new Date("2026-09-04T12:00:01Z"))).toBe(false);
+	});
+
+	test("bigint dev/ino round-trip through the on-disk index", async () => {
+		class BigintStatFs extends MemoryFileSystem {
+			override async stat(path: string): Promise<FileStat> {
+				return { ...(await super.stat(path)), dev: 0x2_0000_0003n, ino: 0xffff_ffff_ffffn };
+			}
+			override async lstat(path: string): Promise<FileStat> {
+				return { ...(await super.lstat(path)), dev: 0x2_0000_0003n, ino: 0xffff_ffff_ffffn };
+			}
+		}
+		const bigFs = new BigintStatFs();
+		const git = createGit({ fs: bigFs, cwd: "/repo" });
+		await git.exec("init");
+		await bigFs.writeFile("/repo/file.txt", "hello\n");
+		expect((await git.exec("add file.txt")).exitCode).toBe(0);
+
+		const ctx = await findRepo(bigFs, "/repo");
+		const index = await readIndex(ctx!);
+		const entry = index.entries.find((e) => e.path === "file.txt")!;
+		expect(entry.stat.dev).toBe(3);
+		expect(entry.stat.ino).toBe(0xffff_ffff);
+		const current = await bigFs.lstat("/repo/file.txt");
+		expect(indexStatMatchesFile(bigFs, entry, current, new Date(Date.now() + 60_000))).toBe(true);
 	});
 });

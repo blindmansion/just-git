@@ -501,12 +501,14 @@ function timestampMilliseconds(date: Date | undefined): number | null {
 	return Number.isFinite(milliseconds) ? milliseconds : null;
 }
 
-function toUint32(value: number | undefined): number {
+/** Truncate a stat field to the 32 bits the index stores (as git does); invalid values become 0. */
+function toUint32(value: number | bigint | undefined): number {
+	if (typeof value === "bigint") return value < 0n ? 0 : Number(BigInt.asUintN(32, value));
 	if (value === undefined || !Number.isFinite(value) || value < 0) return 0;
 	return Math.trunc(value) >>> 0;
 }
 
-function optionalStatFieldMatches(value: number | undefined, indexed: number): boolean {
+function optionalStatFieldMatches(value: number | bigint | undefined, indexed: number): boolean {
 	if (value === undefined) return true;
 	return indexed !== 0 && toUint32(value) === indexed;
 }

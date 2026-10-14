@@ -19,10 +19,14 @@ export interface FileStat {
 	mtime: Date;
 	/** Last metadata-change time, when exposed by the filesystem. */
 	ctime?: Date;
-	/** Device identifier, when exposed by the filesystem. */
-	dev?: number;
-	/** Inode number, when exposed by the filesystem. */
-	ino?: number;
+	/**
+	 * Device identifier, when exposed by the filesystem. A `bigint` (as from
+	 * Node's `stat(path, { bigint: true })` or just-bash) is accepted; like
+	 * git, only the low 32 bits are stored in the index.
+	 */
+	dev?: number | bigint;
+	/** Inode number, when exposed by the filesystem. `bigint` accepted, as for `dev`. */
+	ino?: number | bigint;
 	/** Owning user identifier, when exposed by the filesystem. */
 	uid?: number;
 	/** Owning group identifier, when exposed by the filesystem. */
