@@ -8,7 +8,13 @@ import {
 	requireGitContext,
 	requireHead,
 } from "../lib/command-utils.ts";
-import { computeDiffStats, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
+import {
+	computeDiffStats,
+	formatShortstatParts,
+	formatSummaryLines,
+	renderStatLines,
+	withSummary,
+} from "../lib/commit-summary.ts";
 import { CommitHeap, walkCommits } from "../lib/commit-walk.ts";
 import { parseDate } from "../lib/date.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algorithm.ts";
@@ -38,6 +44,12 @@ import { diffTrees } from "../lib/tree-ops.ts";
 import type { Commit, GitRepo, ObjectId, TreeDiffEntry } from "../lib/types.ts";
 import { worktreeHeadCommits } from "../lib/worktree-admin.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
+
+/** The diff each commit is shown with: a main format and/or the --summary lines. */
+interface LogDiffOutput {
+	format: LogDiffFormat;
+	summary: boolean;
+}
 
 type LogDiffFormat =
 	| "name-status"
@@ -73,6 +85,7 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 			nameOnly: f().describe("Show only names of changed files"),
 			shortstat: f().describe("Show only the shortstat summary line"),
 			numstat: f().describe("Machine-readable insertions/deletions per file"),
+			summary: f().describe("Show creations, deletions, renames and mode changes"),
 			quiet: quietFlag("suppress diff output"),
 			graph: f().describe("Draw text-based graph of the commit history"),
 			firstParent: f().describe("Follow only the first parent of merge commits"),
@@ -241,6 +254,10 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 								: args.numstat
 									? "numstat"
 									: null;
+			// Git drops --summary when a name format is in effect.
+			const summary = args.summary && diffFormat !== "name-only" && diffFormat !== "name-status";
+			const diffOutput: LogDiffOutput | null =
+				diffFormat || summary ? { format: diffFormat, summary } : null;
 
 			// ── Graph / reverse conflict ────────────────────────────
 			const useGraph = args.graph;
@@ -326,7 +343,7 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 					customFormat,
 					presetName,
 					abbrevCommit,
-					diffFormat,
+					diffOutput,
 					decoFn,
 					decoRawFn,
 					renameState,
@@ -350,9 +367,9 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 						]),
 					};
 					let line = expandFormat(customFormat, fctx);
-					const diffText = await formatCommitDiff(gitCtx, entry.commit, diffFormat, renameState);
-					if (diffText) {
-						line += `\n\n${diffText.replace(/\n$/, "")}`;
+					const diffText = await formatCommitDiff(gitCtx, entry.commit, diffOutput, renameState);
+					if (diffText !== null) {
+						line += `\n\n${diffText}`.replace(/\n$/, "");
 					}
 					lines.push(line);
 				}
@@ -381,10 +398,10 @@ export function registerLogCommand(parent: Command, ext?: GitExtensions) {
 					]),
 				};
 				let line = formatPreset(effectivePreset, fctx, idx === 0, abbrevCommit);
-				const diffText = await formatCommitDiff(gitCtx, entry.commit, diffFormat, renameState);
-				if (diffText) {
+				const diffText = await formatCommitDiff(gitCtx, entry.commit, diffOutput, renameState);
+				if (diffText !== null) {
 					const sep = isOneline ? "\n" : "\n\n";
-					line += `${sep}${diffText.replace(/\n$/, "")}`;
+					line += `${sep}${diffText}`.replace(/\n$/, "");
 				}
 				lines.push(line);
 			}
@@ -606,7 +623,7 @@ async function formatWithGraph(
 	customFormat: string | null,
 	presetName: string | null,
 	abbrevCommit: boolean,
-	diffFormat: LogDiffFormat,
+	diffOutput: LogDiffOutput | null,
 	decoFn: ((h: ObjectId) => string) | undefined,
 	decoRawFn: ((h: ObjectId) => string) | undefined,
 	renameState: RenameWarningState,
@@ -679,14 +696,14 @@ async function formatWithGraph(
 		const diffText = await formatCommitDiff(
 			gitCtx,
 			entry.commit,
-			diffFormat,
+			diffOutput,
 			renameState,
 			statWidth,
 		);
 
 		// Diff/stat output gets padding prefixes (columns already settled)
-		if (diffText) {
-			const diffLines = diffText.replace(/\n$/, "").split("\n");
+		if (diffText !== null) {
+			const diffLines = diffText ? diffText.replace(/\n$/, "").split("\n") : [];
 			if (isOneline) {
 				for (const dl of diffLines) {
 					output.push(graph.paddingPrefix() + dl);
@@ -710,15 +727,22 @@ async function formatWithGraph(
 
 // ── Diff output for log ─────────────────────────────────────────────
 
+/**
+ * The diff text shown under a commit, or null when nothing is shown at
+ * all: no diff output requested, a merge commit, or an empty diff. An
+ * empty string means the commit has changes but the requested output is
+ * empty (e.g. --summary on a content-only change); git still prints the
+ * separator line for it.
+ */
 async function formatCommitDiff(
 	ctx: GitRepo,
 	commit: Commit,
-	format: LogDiffFormat,
+	output: LogDiffOutput | null,
 	renameState: RenameWarningState,
 	statWidth?: number,
-): Promise<string> {
-	if (!format) return "";
-	if (commit.parents.length >= 2) return "";
+): Promise<string | null> {
+	if (!output) return null;
+	if (commit.parents.length >= 2) return null;
 
 	const parentTree =
 		commit.parents.length === 1
@@ -730,7 +754,20 @@ async function formatCommitDiff(
 		limit: renameState.limit,
 	});
 	renameState.needed = Math.max(renameState.needed ?? 0, neededRenameLimit ?? 0) || undefined;
+	if (remaining.length === 0 && renames.length === 0) return null;
 
+	const main = await formatLogDiffFormat(ctx, remaining, renames, output.format, statWidth);
+	if (!output.summary) return main;
+	return withSummary(main, formatSummaryLines(remaining, renames), output.format === "patch");
+}
+
+async function formatLogDiffFormat(
+	ctx: GitRepo,
+	remaining: TreeDiffEntry[],
+	renames: RenamePair[],
+	format: LogDiffFormat,
+	statWidth?: number,
+): Promise<string> {
 	switch (format) {
 		case "name-only":
 			return logNameOnly(remaining, renames);
@@ -744,6 +781,8 @@ async function formatCommitDiff(
 			return logNumstat(ctx, remaining, renames);
 		case "patch":
 			return logPatch(ctx, remaining, renames);
+		case null:
+			return "";
 	}
 }
 
@@ -775,7 +814,7 @@ async function logStat(
 	renames: RenamePair[],
 	statWidth?: number,
 ): Promise<string> {
-	const { fileStats } = await computeDiffStats(ctx, remaining, renames);
+	const fileStats = await computeDiffStats(ctx, remaining, renames);
 	fileStats.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
 	return renderStatLines(fileStats, statWidth);
 }
@@ -785,7 +824,7 @@ async function logShortstat(
 	remaining: TreeDiffEntry[],
 	renames: RenamePair[],
 ): Promise<string> {
-	const { fileStats } = await computeDiffStats(ctx, remaining, renames);
+	const fileStats = await computeDiffStats(ctx, remaining, renames);
 	let totalIns = 0;
 	let totalDel = 0;
 	for (const s of fileStats) {

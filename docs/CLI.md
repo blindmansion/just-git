@@ -465,6 +465,7 @@ Options:
   --name-status           Show names and status of changed files
   --shortstat             Show only the shortstat summary line
   --numstat               Machine-readable insertions/deletions per file
+  --summary               Show creations, deletions, renames and mode changes
   -U, --unified <number>  Generate diffs with <n> lines of context
   -M, --find-renames      Detect renames (enabled by default)
   -C, --find-copies       Detect copies (accepted for compatibility)
@@ -609,6 +610,7 @@ Options:
   --name-only               Show only names of changed files
   --shortstat               Show only the shortstat summary line
   --numstat                 Machine-readable insertions/deletions per file
+  --summary                 Show creations, deletions, renames and mode changes
   -q, --quiet               suppress diff output
   --graph                   Draw text-based graph of the commit history
   --first-parent            Follow only the first parent of merge commits
@@ -1015,6 +1017,7 @@ Options:
   --name-status      Show names and status of changed files
   --shortstat        Show only the shortstat summary line
   --numstat          Machine-readable insertions/deletions per file
+  --summary          Show creations, deletions, renames and mode changes
   --format <string>  Pretty-print format string
   --pretty <string>  Pretty-print format or preset name
 ```

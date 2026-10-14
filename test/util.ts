@@ -75,6 +75,62 @@ export async function setupClonePair(): Promise<Bash> {
 	return bash;
 }
 
+/**
+ * Build a history whose commits exercise every `--summary` line, newest
+ * first:
+ *
+ * - `merge side`: a merge that brings in `s`
+ * - `content only`: modifies `keep`, so it has no summary lines
+ * - `typechange`: `n` becomes a symlink, `dir/sub/b` moves to `x/y/b`
+ * - `more`: renames `dir/sub/a`, adds a symlink and oddly named files
+ * - `modes`: renames and shrinks `big` while making it executable, and
+ *   makes `n` executable
+ * - `sum`: deletes executable `m`, adds `n`, renames `z` to `z2`
+ * - `init`
+ *
+ * `side` branches from `typechange` and adds `s`.
+ */
+export async function setupSummaryHistory(): Promise<Bash> {
+	const lines = (n: number) => Array.from({ length: n }, (_, i) => `${i + 1}\n`).join("");
+	const bash = createTestBash({
+		files: {
+			"/repo/m": "m\n",
+			"/repo/z": "z\n",
+			"/repo/big": lines(20),
+			"/repo/keep": "keep\n",
+			"/repo/dir/sub/a": "a\n",
+		},
+		env: TEST_ENV,
+	});
+	const run = async (...commands: string[]) => {
+		for (const command of commands) {
+			const result = await bash.exec(command);
+			if (result.exitCode !== 0) throw new Error(`${command}: ${result.stderr}`);
+		}
+	};
+	await run("git init -q", "chmod +x m", "git add .", "git commit -qm init");
+	await bash.fs.writeFile("/repo/n", "n\n");
+	await run("git rm -q m", "git add n", "git mv z z2", "git commit -qm sum");
+	await bash.fs.writeFile("/repo/big", lines(15));
+	await run("git mv big big2", "chmod +x big2 n", "git add -A", "git commit -qm modes");
+	for (const name of ["sp ace", 'q"uote', "ta\tb", "é.txt"]) {
+		await bash.fs.writeFile(`/repo/${name}`, "x\n");
+	}
+	await run("git mv dir/sub/a dir/sub/b", "ln -s n link", "git add -A", "git commit -qm more");
+	await run(
+		"rm n",
+		"ln -s keep n",
+		"mkdir -p x/y",
+		"git mv dir/sub/b x/y/b",
+		"git add -A",
+		"git commit -qm typechange",
+	);
+	await run("git checkout -qb side", "echo s > s", "git add s", "git commit -qm side");
+	await run("git checkout -q main", "echo more >> keep", "git commit -qam 'content only'");
+	await run("git merge -q --no-ff -m 'merge side' side");
+	return bash;
+}
+
 // ── Filesystem query helpers (for use with expect()) ─────────────────
 
 /** Check if a path exists in the virtual filesystem. */

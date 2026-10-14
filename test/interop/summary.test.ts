@@ -1,0 +1,111 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { chmodSync, mkdirSync, rmSync, symlinkSync } from "fs";
+import { join } from "path";
+import { createSandbox, jg, justBash, realGit, removeSandbox, writeToSandbox } from "./util";
+
+const GITLINK = "1111111111111111111111111111111111111111";
+
+const lines = (n: number) => Array.from({ length: n }, (_, i) => `${i + 1}\n`).join("");
+
+// Newest first: content only, typechange, gitlink, more, modes, sum, init.
+const CASES = [
+	"show --summary HEAD~5",
+	"show --summary --format=%s HEAD~5",
+	"show --stat --summary HEAD~5",
+	"show --shortstat --summary HEAD~5",
+	"show --numstat --summary HEAD~5",
+	"show -p --summary HEAD~5",
+	"show --name-status --summary HEAD~5",
+	"show --name-only --summary HEAD~5",
+	"show --summary HEAD~4",
+	"show --stat --summary HEAD~4",
+	"show -p --summary --format=%s HEAD~6",
+	"show --summary HEAD~3",
+	"show --summary HEAD~2",
+	"show --summary HEAD~1",
+	"show --summary HEAD",
+	"show --summary --format=%s HEAD",
+	"log --summary",
+	"log --oneline --summary",
+	"log --format=%s --summary",
+	"log --summary --reverse",
+	"log --stat --summary -2 HEAD~4",
+	"log -p --summary -1 HEAD~5",
+	"log --graph --summary",
+	"log --graph --oneline --summary",
+	"log --name-status --summary -2 HEAD~4",
+	"diff --summary HEAD~6 HEAD",
+	"diff --summary HEAD~5 HEAD~3",
+	"diff --stat --summary HEAD~5 HEAD~4",
+	"diff --shortstat --summary HEAD~5 HEAD~4",
+	"diff --numstat --summary HEAD~5 HEAD~4",
+	"diff --name-status --summary HEAD~5 HEAD~4",
+	"diff --summary HEAD~1 HEAD",
+];
+
+describe("interop: --summary matches real git", () => {
+	let sandbox: string;
+	const git = async (cmd: string) => {
+		const r = await realGit(sandbox, cmd);
+		expect(r.exitCode).toBe(0);
+	};
+
+	beforeAll(async () => {
+		sandbox = createSandbox();
+		writeToSandbox(sandbox, "m", "m\n");
+		chmodSync(join(sandbox, "m"), 0o755);
+		writeToSandbox(sandbox, "z", "z\n");
+		writeToSandbox(sandbox, "big", lines(20));
+		writeToSandbox(sandbox, "keep", "keep\n");
+		writeToSandbox(sandbox, "dir/sub/a", "a\n");
+		await git("init");
+		await git("add -A");
+		await git("commit -m init");
+
+		writeToSandbox(sandbox, "n", "n\n");
+		await git("rm -q m");
+		await git("mv z z2");
+		await git("add n");
+		await git("commit -m sum");
+
+		writeToSandbox(sandbox, "big", lines(15));
+		await git("mv big big2");
+		chmodSync(join(sandbox, "big2"), 0o755);
+		chmodSync(join(sandbox, "n"), 0o755);
+		await git("add -A");
+		await git("commit -m modes");
+
+		await git("mv dir/sub/a dir/sub/b");
+		symlinkSync("n", join(sandbox, "link"));
+		writeToSandbox(sandbox, "sp ace", "1\n");
+		writeToSandbox(sandbox, 'q"uote', "2\n");
+		writeToSandbox(sandbox, "ta\tb", "3\n");
+		writeToSandbox(sandbox, "é.txt", "4\n");
+		await git("add -A");
+		await git("commit -m more");
+
+		await git(`update-index --add --cacheinfo 160000,${GITLINK},gm`);
+		await git("commit -m gitlink");
+
+		rmSync(join(sandbox, "n"));
+		symlinkSync("keep", join(sandbox, "n"));
+		mkdirSync(join(sandbox, "x/y"), { recursive: true });
+		await git("mv dir/sub/b x/y/b");
+		await git("add n");
+		await git("commit -m typechange");
+
+		writeToSandbox(sandbox, "keep", "keep\nmore\n");
+		await git("commit -am content");
+	});
+	afterAll(() => removeSandbox(sandbox));
+
+	for (const args of CASES) {
+		test(`git ${args}`, async () => {
+			const expected = await realGit(sandbox, args);
+			const actual = await jg(justBash(sandbox), `git ${args}`);
+			expect({ stdout: actual.stdout, stderr: actual.stderr, exitCode: actual.exitCode }).toEqual(
+				expected,
+			);
+		});
+	}
+});

@@ -1,6 +1,7 @@
 /**
- * Shared commit summary formatting (shortstat + mode lines).
- * Used by git commit, git cherry-pick, and git merge.
+ * Shared commit summary formatting (shortstat, diffstat and --summary
+ * lines). Used by git commit, cherry-pick and merge, and by the --stat
+ * and --summary output of show, log and diff.
  */
 import { formatDate } from "./date.ts";
 import { myersDiff, splitLinesWithNL } from "./diff-algorithm.ts";
@@ -52,18 +53,15 @@ export function formatShortstatParts(
 }
 
 /**
- * Compute per-file diff stats (insertions/deletions/binary info) and
- * mode lines for a set of tree diffs and renames. Shared by
- * formatCommitSummary and formatDiffStat.
+ * Compute per-file diff stats (insertions/deletions/binary info) for a
+ * set of tree diffs and renames.
  */
 export async function computeDiffStats(
 	ctx: GitRepo,
 	diffs: TreeDiffEntry[],
 	renames: RenamePair[],
-): Promise<{ fileStats: FileStat[]; modeLines: string[] }> {
+): Promise<FileStat[]> {
 	const fileStats: FileStat[] = [];
-	const createModes: { path: string; mode: string }[] = [];
-	const deleteModes: { path: string; mode: string }[] = [];
 
 	for (const diff of diffs) {
 		if (diff.status === "added" && diff.newHash && diff.newMode) {
@@ -86,7 +84,6 @@ export async function computeDiffStats(
 					deletions: 0,
 				});
 			}
-			createModes.push({ path: diff.path, mode: diff.newMode });
 		} else if (diff.status === "deleted" && diff.oldHash && diff.oldMode) {
 			const bytes = await readBlobBytes(ctx, diff.oldHash);
 			if (isBinaryBytes(bytes)) {
@@ -107,7 +104,6 @@ export async function computeDiffStats(
 					deletions: countLines(textDecoder.decode(bytes)),
 				});
 			}
-			deleteModes.push({ path: diff.path, mode: diff.oldMode });
 		} else if (diff.status === "modified" && diff.oldHash && diff.newHash) {
 			const oldBytes = await readBlobBytes(ctx, diff.oldHash);
 			const newBytes = await readBlobBytes(ctx, diff.newHash);
@@ -138,10 +134,6 @@ export async function computeDiffStats(
 					deletions: del,
 				});
 			}
-			if (diff.oldMode && diff.newMode && diff.oldMode !== diff.newMode) {
-				deleteModes.push({ path: diff.path, mode: diff.oldMode });
-				createModes.push({ path: diff.path, mode: diff.newMode });
-			}
 		}
 	}
 
@@ -170,23 +162,99 @@ export async function computeDiffStats(
 		});
 	}
 
-	const modeLines: { sortKey: string; text: string }[] = [];
-	for (const { path, mode } of createModes) {
-		modeLines.push({ sortKey: path, text: ` create mode ${mode} ${path}` });
+	return fileStats;
+}
+
+const C_QUOTE_ESCAPES: Record<number, string> = {
+	0x07: "\\a",
+	0x08: "\\b",
+	0x09: "\\t",
+	0x0a: "\\n",
+	0x0b: "\\v",
+	0x0c: "\\f",
+	0x0d: "\\r",
+	0x22: '\\"',
+	0x5c: "\\\\",
+};
+
+/** Quote a path the way git's `quote_c_style` does with `core.quotePath` on. */
+function quoteCPath(path: string): string {
+	let out = "";
+	let quoted = false;
+	for (const byte of new TextEncoder().encode(path)) {
+		const escape = C_QUOTE_ESCAPES[byte];
+		if (escape) {
+			out += escape;
+			quoted = true;
+		} else if (byte < 0x20 || byte >= 0x7f) {
+			out += `\\${byte.toString(8).padStart(3, "0")}`;
+			quoted = true;
+		} else {
+			out += String.fromCharCode(byte);
+		}
 	}
-	for (const { path, mode } of deleteModes) {
-		modeLines.push({ sortKey: path, text: ` delete mode ${mode} ${path}` });
+	return quoted ? `"${out}"` : path;
+}
+
+/** The parts of a rename that `--summary` prints. */
+export type SummaryRename = Pick<
+	RenamePair,
+	"oldPath" | "newPath" | "similarity" | "oldMode" | "newMode"
+>;
+
+/**
+ * Format git's `--summary` lines: one line per created, deleted or
+ * mode-changed path, and a rename line (followed by a pathless mode
+ * line when the mode changed too) per rename. Sorted by path, with
+ * renames at their new path. Shared by `show`, `log`, `diff` and the
+ * summaries printed after `commit` and `merge`.
+ */
+export function formatSummaryLines(
+	diffs: readonly TreeDiffEntry[],
+	renames: readonly SummaryRename[],
+): string {
+	const modeChange = (oldMode?: string, newMode?: string) =>
+		oldMode && newMode && oldMode !== newMode ? ` mode change ${oldMode} => ${newMode}` : null;
+
+	const entries: { sortKey: string; text: string }[] = [];
+	for (const diff of diffs) {
+		const path = quoteCPath(diff.path);
+		let text: string | null = null;
+		if (diff.status === "added") {
+			text = ` create mode ${diff.newMode} ${path}\n`;
+		} else if (diff.status === "deleted") {
+			text = ` delete mode ${diff.oldMode} ${path}\n`;
+		} else {
+			const line = modeChange(diff.oldMode, diff.newMode);
+			if (line) text = `${line} ${path}\n`;
+		}
+		if (text) entries.push({ sortKey: diff.path, text });
 	}
 	for (const rename of renames) {
-		const d = formatRenamePath(rename.oldPath, rename.newPath);
-		modeLines.push({
+		const oldQuoted = quoteCPath(rename.oldPath);
+		const newQuoted = quoteCPath(rename.newPath);
+		const display =
+			oldQuoted !== rename.oldPath || newQuoted !== rename.newPath
+				? `${oldQuoted} => ${newQuoted}`
+				: formatRenamePath(rename.oldPath, rename.newPath);
+		const line = modeChange(rename.oldMode, rename.newMode);
+		entries.push({
 			sortKey: rename.newPath,
-			text: ` rename ${d} (${rename.similarity}%)`,
+			text: ` rename ${display} (${rename.similarity}%)\n${line ? `${line}\n` : ""}`,
 		});
 	}
-	modeLines.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
+	entries.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
+	return entries.map((e) => e.text).join("");
+}
 
-	return { fileStats, modeLines: modeLines.map((m) => m.text) };
+/**
+ * Combine a diff's main output with its `--summary` lines in git's
+ * order: the summary follows the stat formats, and comes before a patch
+ * with a blank line between them.
+ */
+export function withSummary(main: string, summary: string, mainIsPatch: boolean): string {
+	if (mainIsPatch && summary) return `${summary}\n${main}`;
+	return main + summary;
 }
 
 /**
@@ -223,7 +291,7 @@ export async function formatCommitSummary(
 	const { remaining: diffs, renames } = await detectRenames(ctx, rawDiffs, {
 		limit: renameLimit,
 	});
-	const { fileStats, modeLines } = await computeDiffStats(ctx, diffs, renames);
+	const fileStats = await computeDiffStats(ctx, diffs, renames);
 
 	let totalInsertions = 0;
 	let totalDeletions = 0;
@@ -234,9 +302,9 @@ export async function formatCommitSummary(
 
 	const shortstat = formatShortstatParts(fileStats.length, totalInsertions, totalDeletions);
 	if (shortstat) lines.push(shortstat);
-	for (const ml of modeLines) lines.push(ml);
 
-	return lines.join("\n") + (lines.length > 0 ? "\n" : "");
+	const head = lines.join("\n") + (lines.length > 0 ? "\n" : "");
+	return head + formatSummaryLines(diffs, renames);
 }
 
 // ── Diffstat formatting (for merge/FF output) ───────────────────
@@ -407,14 +475,9 @@ export async function formatDiffStat(
 	});
 	if (diffs.length === 0 && renames.length === 0) return "";
 
-	const { fileStats, modeLines } = await computeDiffStats(ctx, diffs, renames);
+	const fileStats = await computeDiffStats(ctx, diffs, renames);
 
 	fileStats.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
 
-	let output = renderStatLines(fileStats);
-	for (const ml of modeLines) {
-		output += `${ml}\n`;
-	}
-
-	return output;
+	return renderStatLines(fileStats) + formatSummaryLines(diffs, renames);
 }

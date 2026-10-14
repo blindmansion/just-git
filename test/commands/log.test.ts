@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BASIC_REPO, EMPTY_REPO, NESTED_REPO, TEST_ENV_NAMED as TEST_ENV } from "../fixtures";
-import { createTestBash, quickExec, runScenario } from "../util";
+import { createTestBash, quickExec, runScenario, setupSummaryHistory } from "../util";
 
 describe("git log", () => {
 	describe("outside a git repo", () => {
@@ -1512,6 +1512,125 @@ describe("git log", () => {
 			const result = await bash.exec("git log -q --name-only nope");
 			expect(result.exitCode).toBe(128);
 			expect(result.stderr).toContain("fatal: ambiguous argument 'nope'");
+		});
+	});
+	describe("--summary", () => {
+		const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
+
+		test("prints the summary under each commit and nothing for merges", async () => {
+			const bash = await setupSummaryHistory();
+			expect(await bash.exec("git log --summary --format=%s -6")).toMatchObject(
+				ok(
+					"merge side\n" +
+						"content only\n" +
+						"\n" +
+						"side\n" +
+						"\n" +
+						" create mode 100644 s\n" +
+						"typechange\n" +
+						"\n" +
+						" mode change 100755 => 120000 n\n" +
+						" rename {dir/sub => x/y}/b (100%)\n" +
+						"more\n" +
+						"\n" +
+						" rename dir/sub/{a => b} (100%)\n" +
+						" create mode 120000 link\n" +
+						' create mode 100644 "q\\"uote"\n' +
+						" create mode 100644 sp ace\n" +
+						' create mode 100644 "ta\\tb"\n' +
+						' create mode 100644 "\\303\\251.txt"\n' +
+						"modes\n" +
+						"\n" +
+						" rename big => big2 (70%)\n" +
+						" mode change 100644 => 100755\n" +
+						" mode change 100644 => 100755 n\n",
+				),
+			);
+		});
+
+		test("keeps the blank line for a commit with no summary lines", async () => {
+			const bash = await setupSummaryHistory();
+			const header = async (rev: string) => (await bash.exec(`git show --no-patch ${rev}`)).stdout;
+			expect(await bash.exec("git log --summary -3")).toMatchObject(
+				ok(
+					`${await header("HEAD")}\n` +
+						`${await header("HEAD~1")}\n\n` +
+						`${await header("side")}\n` +
+						" create mode 100644 s\n",
+				),
+			);
+		});
+
+		test("--oneline puts the summary right under each line", async () => {
+			const bash = await setupSummaryHistory();
+			const oneline = (await bash.exec("git log --oneline -5")).stdout.split("\n");
+			expect(await bash.exec("git log --oneline --summary -5")).toMatchObject(
+				ok(
+					`${oneline[0]}\n` +
+						`${oneline[1]}\n` +
+						`${oneline[2]}\n` +
+						" create mode 100644 s\n" +
+						`${oneline[3]}\n` +
+						" mode change 100755 => 120000 n\n" +
+						" rename {dir/sub => x/y}/b (100%)\n" +
+						`${oneline[4]}\n` +
+						" rename dir/sub/{a => b} (100%)\n" +
+						" create mode 120000 link\n" +
+						' create mode 100644 "q\\"uote"\n' +
+						" create mode 100644 sp ace\n" +
+						' create mode 100644 "ta\\tb"\n' +
+						' create mode 100644 "\\303\\251.txt"\n',
+				),
+			);
+		});
+
+		test("follows --stat", async () => {
+			const bash = await setupSummaryHistory();
+			expect(await bash.exec("git log --stat --summary --format=%s -2 HEAD~4")).toMatchObject(
+				ok(
+					"modes\n\n" +
+						" big => big2 | 5 -----\n" +
+						" n           | 0\n" +
+						" 2 files changed, 5 deletions(-)\n" +
+						" rename big => big2 (70%)\n" +
+						" mode change 100644 => 100755\n" +
+						" mode change 100644 => 100755 n\n" +
+						"sum\n\n" +
+						" m       | 1 -\n" +
+						" n       | 1 +\n" +
+						" z => z2 | 0\n" +
+						" 3 files changed, 1 insertion(+), 1 deletion(-)\n" +
+						" delete mode 100755 m\n" +
+						" create mode 100644 n\n" +
+						" rename z => z2 (100%)\n",
+				),
+			);
+		});
+
+		test("comes before the patch with -p, separated by a blank line", async () => {
+			const bash = await setupSummaryHistory();
+			const patch = (await bash.exec("git log -p --format=%s -1 HEAD~5")).stdout;
+			expect(patch).toStartWith("sum\n\ndiff --git a/m b/m\n");
+			expect(await bash.exec("git log -p --summary --format=%s -1 HEAD~5")).toMatchObject(
+				ok(
+					"sum\n\n" +
+						" delete mode 100755 m\n" +
+						" create mode 100644 n\n" +
+						" rename z => z2 (100%)\n" +
+						"\n" +
+						patch.slice("sum\n\n".length),
+				),
+			);
+		});
+
+		test("is dropped by --name-only and --name-status", async () => {
+			const bash = await setupSummaryHistory();
+			for (const opts of ["--name-only", "--name-status"]) {
+				const plain = await bash.exec(`git log ${opts} -3 HEAD~3`);
+				expect(await bash.exec(`git log ${opts} --summary -3 HEAD~3`)).toMatchObject(
+					ok(plain.stdout),
+				);
+			}
 		});
 	});
 });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BASIC_REPO, EMPTY_REPO, TEST_ENV_NAMED as TEST_ENV } from "../fixtures";
-import { createTestBash, quickExec, runScenario } from "../util";
+import { createTestBash, quickExec, runScenario, setupSummaryHistory } from "../util";
 
 describe("git show", () => {
 	describe("outside a git repo", () => {
@@ -476,6 +476,121 @@ describe("git show", () => {
 			expect(tag.stdout).toStartWith("tag v1\n");
 			expect(tag.stdout).toEndWith("    initial\n");
 			expect(tag.stdout).not.toContain("diff --git");
+		});
+	});
+
+	describe("--summary", () => {
+		const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
+
+		test("replaces the patch with the summary lines", async () => {
+			const bash = await setupSummaryHistory();
+			const header = (await bash.exec("git show --no-patch HEAD~5")).stdout;
+			expect(await bash.exec("git show --summary HEAD~5")).toMatchObject(
+				ok(
+					`${header}\n` +
+						" delete mode 100755 m\n" +
+						" create mode 100644 n\n" +
+						" rename z => z2 (100%)\n",
+				),
+			);
+		});
+
+		test("follows --stat", async () => {
+			const bash = await setupSummaryHistory();
+			expect(await bash.exec("git show --stat --summary --format=%s HEAD~4")).toMatchObject(
+				ok(
+					"modes\n\n" +
+						" big => big2 | 5 -----\n" +
+						" n           | 0\n" +
+						" 2 files changed, 5 deletions(-)\n" +
+						" rename big => big2 (70%)\n" +
+						" mode change 100644 => 100755\n" +
+						" mode change 100644 => 100755 n\n",
+				),
+			);
+		});
+
+		test("follows --shortstat and --numstat", async () => {
+			const bash = await setupSummaryHistory();
+			const summary = " delete mode 100755 m\n create mode 100644 n\n rename z => z2 (100%)\n";
+			expect(await bash.exec("git show --shortstat --summary --format=%s HEAD~5")).toMatchObject(
+				ok(`sum\n\n 3 files changed, 1 insertion(+), 1 deletion(-)\n${summary}`),
+			);
+			expect(await bash.exec("git show --numstat --summary --format=%s HEAD~5")).toMatchObject(
+				ok(`sum\n\n0\t1\tm\n1\t0\tn\n0\t0\tz => z2\n${summary}`),
+			);
+		});
+
+		test("comes before the patch with -p, separated by a blank line", async () => {
+			const bash = await setupSummaryHistory();
+			const patch = (await bash.exec("git show -p --format=%s HEAD~5")).stdout;
+			expect(patch).toStartWith("sum\n\ndiff --git a/m b/m\n");
+			expect(await bash.exec("git show -p --summary --format=%s HEAD~5")).toMatchObject(
+				ok(
+					"sum\n\n" +
+						" delete mode 100755 m\n" +
+						" create mode 100644 n\n" +
+						" rename z => z2 (100%)\n" +
+						"\n" +
+						patch.slice("sum\n\n".length),
+				),
+			);
+		});
+
+		test("prints symlinks, quoted names and renames with a common prefix", async () => {
+			const bash = await setupSummaryHistory();
+			expect(await bash.exec("git show --summary --format=%s HEAD~3")).toMatchObject(
+				ok(
+					"more\n\n" +
+						" rename dir/sub/{a => b} (100%)\n" +
+						" create mode 120000 link\n" +
+						' create mode 100644 "q\\"uote"\n' +
+						" create mode 100644 sp ace\n" +
+						' create mode 100644 "ta\\tb"\n' +
+						' create mode 100644 "\\303\\251.txt"\n',
+				),
+			);
+		});
+
+		test("prints a type change as a mode change", async () => {
+			const bash = await setupSummaryHistory();
+			expect(await bash.exec("git show --summary --format=%s HEAD~2")).toMatchObject(
+				ok(
+					"typechange\n\n" +
+						" mode change 100755 => 120000 n\n" +
+						" rename {dir/sub => x/y}/b (100%)\n",
+				),
+			);
+		});
+
+		test("keeps the blank line when a commit has no summary lines", async () => {
+			const bash = await setupSummaryHistory();
+			const header = (await bash.exec("git show --no-patch HEAD~1")).stdout;
+			expect(await bash.exec("git show --summary HEAD~1")).toMatchObject(ok(`${header}\n`));
+			expect(await bash.exec("git show --summary --format=%s HEAD~1")).toMatchObject(
+				ok("content only\n\n"),
+			);
+		});
+
+		test("is dropped by --name-only, --name-status and --no-patch", async () => {
+			const bash = await setupSummaryHistory();
+			for (const opts of ["--name-only", "--name-status", "--no-patch"]) {
+				const plain = await bash.exec(`git show ${opts} HEAD~5`);
+				expect(await bash.exec(`git show ${opts} --summary HEAD~5`)).toMatchObject(
+					ok(plain.stdout),
+				);
+			}
+		});
+
+		test("applies to the commit an annotated tag points at", async () => {
+			const bash = await setupSummaryHistory();
+			await bash.exec("git tag -a v1 -m release HEAD~5");
+			const result = await bash.exec("git show --summary v1");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toStartWith("tag v1\n");
+			expect(result.stdout).toEndWith(
+				"    sum\n\n delete mode 100755 m\n create mode 100644 n\n rename z => z2 (100%)\n",
+			);
 		});
 	});
 });

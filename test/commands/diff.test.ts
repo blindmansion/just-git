@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BASIC_REPO, EMPTY_REPO, TEST_ENV_NAMED as TEST_ENV } from "../fixtures";
-import { createTestBash, observeFsCalls, quickExec } from "../util";
+import { createTestBash, observeFsCalls, quickExec, setupSummaryHistory } from "../util";
 
 describe("git diff", () => {
 	describe("outside a git repo", () => {
@@ -1192,6 +1192,94 @@ describe("git diff", () => {
 			const result = await bash.exec("git diff a b c");
 			expect(result.exitCode).toBe(128);
 			expect(result.stderr).toContain("too many arguments");
+		});
+	});
+	describe("--summary", () => {
+		const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
+
+		async function setupStaged() {
+			const bash = await setupSummaryHistory();
+			await bash.exec("git mv keep keep2");
+			await bash.exec("echo new > newf");
+			await bash.exec("git add newf");
+			await bash.exec("rm x/y/b");
+			return bash;
+		}
+
+		test("prints only the summary lines between two commits", async () => {
+			const bash = await setupSummaryHistory();
+			expect(await bash.exec("git diff --summary HEAD~5 HEAD~3")).toMatchObject(
+				ok(
+					" rename big => big2 (70%)\n" +
+						" mode change 100644 => 100755\n" +
+						" rename dir/sub/{a => b} (100%)\n" +
+						" create mode 120000 link\n" +
+						" mode change 100644 => 100755 n\n" +
+						' create mode 100644 "q\\"uote"\n' +
+						" create mode 100644 sp ace\n" +
+						' create mode 100644 "ta\\tb"\n' +
+						' create mode 100644 "\\303\\251.txt"\n',
+				),
+			);
+		});
+
+		test("follows --stat", async () => {
+			const bash = await setupSummaryHistory();
+			expect(await bash.exec("git diff --stat --summary HEAD~5 HEAD~4")).toMatchObject(
+				ok(
+					" big => big2 | 5 -----\n" +
+						" n           | 0\n" +
+						" 2 files changed, 5 deletions(-)\n" +
+						" rename big => big2 (70%)\n" +
+						" mode change 100644 => 100755\n" +
+						" mode change 100644 => 100755 n\n",
+				),
+			);
+		});
+
+		test("--cached summarizes staged renames and additions", async () => {
+			const bash = await setupStaged();
+			const summary = " rename keep => keep2 (100%)\n create mode 100644 newf\n";
+			expect(await bash.exec("git diff --cached --summary")).toMatchObject(ok(summary));
+			expect(await bash.exec("git diff --cached --stat --summary")).toMatchObject(
+				ok(
+					" keep => keep2 | 0\n" +
+						" newf          | 1 +\n" +
+						" 2 files changed, 1 insertion(+)\n" +
+						summary,
+				),
+			);
+			expect(await bash.exec("git diff --cached --shortstat --summary")).toMatchObject(
+				ok(` 2 files changed, 1 insertion(+)\n${summary}`),
+			);
+			expect(await bash.exec("git diff --cached --numstat --summary")).toMatchObject(
+				ok(`0\t0\tkeep => keep2\n1\t0\tnewf\n${summary}`),
+			);
+		});
+
+		test("summarizes unstaged deletions", async () => {
+			const bash = await setupStaged();
+			expect(await bash.exec("git diff --summary")).toMatchObject(
+				ok(" delete mode 100644 x/y/b\n"),
+			);
+			expect(await bash.exec("git diff --stat --summary")).toMatchObject(
+				ok(" x/y/b | 1 -\n 1 file changed, 1 deletion(-)\n delete mode 100644 x/y/b\n"),
+			);
+		});
+
+		test("prints nothing for content-only changes", async () => {
+			const bash = await setupSummaryHistory();
+			expect(await bash.exec("git diff --summary HEAD~2 HEAD~1")).toMatchObject(ok(""));
+		});
+
+		test("is dropped by --name-only and --name-status", async () => {
+			const bash = await setupStaged();
+			for (const opts of ["--name-only", "--name-status"]) {
+				const plain = await bash.exec(`git diff --cached ${opts}`);
+				expect(await bash.exec(`git diff --cached ${opts} --summary`)).toMatchObject(
+					ok(plain.stdout),
+				);
+			}
 		});
 	});
 });
