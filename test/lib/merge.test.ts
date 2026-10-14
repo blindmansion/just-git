@@ -4,6 +4,7 @@ import { mergeOrtNonRecursive } from "../../src/lib/merge-ort";
 import { readCommit } from "../../src/lib/object-db";
 import { resolveRef } from "../../src/lib/refs";
 import { findRepo } from "../../src/lib/repo";
+import { flattenTreeToMap } from "../../src/lib/tree-ops";
 import type { GitContext, ObjectId } from "../../src/lib/types";
 import { EMPTY_REPO, envAt } from "../fixtures";
 import { createTestBash } from "../util";
@@ -319,4 +320,49 @@ describe("mergeOrtNonRecursive", () => {
 		expect(fileEntry).toBeDefined();
 		expect(fileEntry!.stage).toBe(0);
 	});
+});
+
+// ── File modes ──────────────────────────────────────────────────────
+
+describe("mergeOrtNonRecursive file modes", () => {
+	// The result tree is what checkout writes, so its entry for a conflicted
+	// path carries the mode the worktree file gets.
+	for (const { side, oursMode, theirsMode } of [
+		{ side: "theirs", oursMode: "644", theirsMode: "755" },
+		{ side: "ours", oursMode: "755", theirsMode: "644" },
+	]) {
+		test(`conflicted content merge keeps ${side}' mode change in the result tree`, async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			const setup = await bash.exec(`
+c() { git add -A && git commit -qm "$1"; }
+git init -q -b main
+printf "1\\n2\\n" > f; chmod 644 f; c base
+git checkout -q -b theirs; printf "T\\n2\\n" > f; chmod ${theirsMode} f; c theirs
+git checkout -q main; printf "O\\n2\\n" > f; chmod ${oursMode} f; c ours`);
+			expect(setup.exitCode).toBe(0);
+
+			const gitCtx = (await findRepo(bash.fs, "/repo"))!;
+			const mainHash = (await resolveRef(gitCtx, "refs/heads/main"))!;
+			const theirsHash = (await resolveRef(gitCtx, "refs/heads/theirs"))!;
+			const baseHash = (await findMergeBase(gitCtx, mainHash, theirsHash))!;
+			const result = await mergeOrtNonRecursive(
+				gitCtx,
+				(await readCommit(gitCtx, baseHash)).tree,
+				(await readCommit(gitCtx, mainHash)).tree,
+				(await readCommit(gitCtx, theirsHash)).tree,
+			);
+
+			expect(result.conflicts).toEqual([{ path: "f", reason: "content" }]);
+			const stages = result.entries
+				.filter((e) => e.path === "f")
+				.map((e) => [e.stage, e.mode.toString(8)]);
+			expect(stages).toEqual([
+				[1, "100644"],
+				[2, `100${oursMode}`],
+				[3, `100${theirsMode}`],
+			]);
+			const resultTree = await flattenTreeToMap(gitCtx, result.resultTree);
+			expect(resultTree.get("f")?.mode).toBe("100755");
+		});
+	}
 });

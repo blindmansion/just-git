@@ -833,4 +833,28 @@ describe("git commit", () => {
 			);
 		});
 	});
+
+	describe("file modes", () => {
+		test("summary prints a mode change line", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
+			const setup = await bash.exec(`
+git init -q -b main
+printf "a\\n" > f; chmod 644 f; git add -A; git commit -qm base`);
+			expect(setup.exitCode).toBe(0);
+
+			await bash.exec("chmod 755 f && git add f");
+			const modeOnly = await bash.exec("git commit -m mode");
+			expect(modeOnly.exitCode).toBe(0);
+			expect(modeOnly.stdout).toEndWith(
+				" 1 file changed, 0 insertions(+), 0 deletions(-)\n mode change 100644 => 100755 f\n",
+			);
+
+			await bash.exec('printf "a\\nb\\n" > f && chmod 644 f && git add f');
+			const withContent = await bash.exec("git commit -m both");
+			expect(withContent.exitCode).toBe(0);
+			expect(withContent.stdout).toEndWith(
+				" 1 file changed, 1 insertion(+)\n mode change 100755 => 100644 f\n",
+			);
+		});
+	});
 });
