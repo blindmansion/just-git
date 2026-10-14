@@ -85,6 +85,8 @@ const CASES = [
 	"show --summary --format=%s HEAD~6 merged -- s keep",
 	"show tagged -- nothere",
 	"show --stat tagged -- dir",
+	"diff -U-3 HEAD~1 HEAD",
+	"diff --unified=-1 HEAD~1 HEAD",
 ];
 
 describe("interop: --summary matches real git", () => {

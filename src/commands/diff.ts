@@ -134,6 +134,14 @@ export function registerDiffCommand(parent: Command, ext?: GitExtensions) {
 			noColor: f().describe("Turn off colored diff (accepted for compatibility)"),
 		},
 		handler: async (args, ctx, meta) => {
+			if (args.unified !== undefined && args.unified < 0) {
+				return {
+					stdout: "",
+					stderr: "error: --unified expects a non-negative integer\n",
+					exitCode: 129,
+				};
+			}
+
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
 			const gitCtx = gitCtxOrError;
