@@ -9,8 +9,9 @@ import { join as joinPath } from "./path.ts";
 import { isRebaseInProgress, readRebaseState } from "./rebase.ts";
 import { branchNameFromRef, readHead, resolveHead, resolveRef } from "./refs.ts";
 import { detectRenames, resolveRenameLimit } from "./rename-detection.ts";
+import { isTypeChange } from "./symlink.ts";
 import { flattenTreeToMap } from "./tree-ops.ts";
-import type { GitContext, GitRepo, Index, ObjectId, TreeDiffEntry } from "./types.ts";
+import type { GitContext, GitRepo, Index, ObjectId, TreeDiffEntry, WorkTreeDiff } from "./types.ts";
 import { diffIndexToWorkTree } from "./worktree.ts";
 
 export interface StatusEntry {
@@ -27,6 +28,18 @@ export interface StatusEntry {
  * lists every untracked file individually.
  */
 export type UntrackedMode = "no" | "normal" | "all";
+
+/**
+ * Status of a tracked worktree change: `"typechange"` when the worktree
+ * entry's type (file, symlink) differs from the index entry's, otherwise
+ * the diff status (`"modified"` / `"deleted"`).
+ */
+export function workTreeStatus(diff: WorkTreeDiff): string {
+	if (diff.status === "modified" && isTypeChange(diff.indexMode, diff.worktreeMode)) {
+		return "typechange";
+	}
+	return diff.status;
+}
 
 /**
  * Generate the full long-form `git status` output.
@@ -82,7 +95,7 @@ export async function generateLongFormStatus(
 		if (diff.status === "untracked") {
 			untracked.push(diff.path);
 		} else {
-			unstaged.push({ path: diff.path, status: diff.status });
+			unstaged.push({ path: diff.path, status: workTreeStatus(diff) });
 		}
 	}
 	unstaged.sort((a, b) => comparePaths(a.path, b.path));
@@ -487,7 +500,10 @@ export async function getStagedChanges(
 	const staged: StatusEntry[] = [];
 
 	for (const diff of remaining) {
-		const s = stagedStatusMap[diff.status];
+		const s =
+			diff.status === "modified" && isTypeChange(diff.oldMode, diff.newMode)
+				? "typechange"
+				: stagedStatusMap[diff.status];
 		if (s) staged.push({ path: diff.path, status: s });
 	}
 

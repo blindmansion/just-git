@@ -303,4 +303,6 @@ export interface WorkTreeDiff {
 	/** Hash computed from modified worktree content during comparison. */
 	worktreeHash?: ObjectId;
 	worktreeMode?: number;
+	/** Index mode (set with `worktreeMode` for modified entries). */
+	indexMode?: number;
 }

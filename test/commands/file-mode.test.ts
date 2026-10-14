@@ -800,3 +800,198 @@ describe("init records whether the FileSystem tracks the exec bit", () => {
 		expect((await run("config core.filemode", "/clone")).stdout).toBe("false\n");
 	});
 });
+
+describe("typechange (file <-> symlink) shows as T like git", () => {
+	// Expected output from real git 2.53 with TEST_ENV.
+	const PATCH = [
+		"diff --git a/f b/f",
+		"deleted file mode 100644",
+		"index ce01362..0000000",
+		"--- a/f",
+		"+++ /dev/null",
+		"@@ -1 +0,0 @@",
+		"-hello",
+		"diff --git a/f b/f",
+		"new file mode 120000",
+		"index 0000000..c7e58fc",
+		"--- /dev/null",
+		"+++ b/f",
+		"@@ -0,0 +1 @@",
+		"+tgt",
+		"\\ No newline at end of file",
+		"diff --git a/l b/l",
+		"deleted file mode 120000",
+		"index c7e58fc..0000000",
+		"--- a/l",
+		"+++ /dev/null",
+		"@@ -1 +0,0 @@",
+		"-tgt",
+		"\\ No newline at end of file",
+		"diff --git a/l b/l",
+		"new file mode 100644",
+		"index 0000000..d95f3ad",
+		"--- /dev/null",
+		"+++ b/l",
+		"@@ -0,0 +1 @@",
+		"+content",
+		"",
+	].join("\n");
+	const F_PATCH = `${PATCH.slice(0, PATCH.indexOf("diff --git a/l"))}`;
+
+	/** f: regular file -> symlink; l: symlink -> regular file (unstaged). */
+	async function setup() {
+		const fs = new MemoryFileSystem();
+		const git = createGit({ fs });
+		const run = async (cmd: string) => {
+			const r = await git.exec(cmd, { cwd: "/repo", env: TEST_ENV });
+			if (r.exitCode !== 0) throw new Error(`${cmd}: ${r.stderr}`);
+			return r.stdout;
+		};
+		await fs.mkdir("/repo", { recursive: true });
+		await fs.writeFile("/repo/f", "hello\n");
+		await fs.writeFile("/repo/tgt", "x\n");
+		await fs.symlink("tgt", "/repo/l");
+		await run("init -q -b main");
+		await run("add .");
+		await run("commit -q -m init");
+		await run("branch other");
+		await fs.rm("/repo/f");
+		await fs.symlink("tgt", "/repo/f");
+		await fs.rm("/repo/l");
+		await fs.writeFile("/repo/l", "content\n");
+		return { fs, git, run };
+	}
+
+	test("unstaged: status and diff", async () => {
+		const { run } = await setup();
+		expect(await run("status --short")).toBe(" T f\n T l\n");
+		expect(await run("status --porcelain")).toBe(" T f\n T l\n");
+		expect(await run("status")).toBe(
+			[
+				"On branch main",
+				"Changes not staged for commit:",
+				'  (use "git add <file>..." to update what will be committed)',
+				'  (use "git restore <file>..." to discard changes in working directory)',
+				"\ttypechange: f",
+				"\ttypechange: l",
+				"",
+				'no changes added to commit (use "git add" and/or "git commit -a")',
+				"",
+			].join("\n"),
+		);
+		expect(await run("diff")).toBe(PATCH);
+		expect(await run("diff HEAD")).toBe(PATCH);
+		expect(await run("diff --name-status")).toBe("T\tf\nT\tl\n");
+		expect(await run("diff HEAD --name-status")).toBe("T\tf\nT\tl\n");
+		expect(await run("diff --stat")).toBe(
+			" f | 2 +-\n l | 2 +-\n 2 files changed, 2 insertions(+), 2 deletions(-)\n",
+		);
+		expect(await run("diff --numstat")).toBe("1\t1\tf\n1\t1\tl\n");
+		expect(await run("diff --summary")).toBe(
+			" mode change 100644 => 120000 f\n mode change 120000 => 100644 l\n",
+		);
+	});
+
+	test("staged: status and diff --cached, and TM with an unstaged retarget", async () => {
+		const { fs, run } = await setup();
+		await run("add -A");
+		expect(await run("status --short")).toBe("T  f\nT  l\n");
+		expect(await run("status")).toBe(
+			[
+				"On branch main",
+				"Changes to be committed:",
+				'  (use "git restore --staged <file>..." to unstage)',
+				"\ttypechange: f",
+				"\ttypechange: l",
+				"",
+				"",
+			].join("\n"),
+		);
+		expect(await run("diff --cached")).toBe(PATCH);
+		expect(await run("diff --cached --name-status")).toBe("T\tf\nT\tl\n");
+
+		await fs.rm("/repo/f");
+		await fs.symlink("other", "/repo/f");
+		expect(await run("status --short")).toBe("TM f\nT  l\n");
+		expect(await run("diff --name-status")).toBe("M\tf\n");
+		expect(await run("diff")).toBe(
+			[
+				"diff --git a/f b/f",
+				"index c7e58fc..27fa349 120000",
+				"--- a/f",
+				"+++ b/f",
+				"@@ -1 +1 @@",
+				"-tgt",
+				"\\ No newline at end of file",
+				"+other",
+				"\\ No newline at end of file",
+				"",
+			].join("\n"),
+		);
+	});
+
+	test("committed: commit summary, show, log and diff between commits", async () => {
+		const { run } = await setup();
+		await run("add -A");
+		expect(await run("commit -m tc")).toBe(
+			[
+				"[main a1255e9] tc",
+				" 2 files changed, 2 insertions(+), 2 deletions(-)",
+				" mode change 100644 => 120000 f",
+				" mode change 120000 => 100644 l",
+				"",
+			].join("\n"),
+		);
+		expect(await run("diff HEAD~1 HEAD")).toBe(PATCH);
+		expect(await run("diff --name-status HEAD~1 HEAD")).toBe("T\tf\nT\tl\n");
+		expect(await run("show --format=%h")).toBe(`a1255e9\n\n${PATCH}`);
+		expect(await run("show --name-status --format=%h")).toBe("a1255e9\n\nT\tf\nT\tl\n");
+		expect(await run("show --stat --format=%h")).toBe(
+			"a1255e9\n\n f | 2 +-\n l | 2 +-\n 2 files changed, 2 insertions(+), 2 deletions(-)\n",
+		);
+		expect(await run("log --format=%h --name-status")).toBe(
+			"a1255e9\n\nT\tf\nT\tl\nbcbc95a\n\nA\tf\nA\tl\nA\ttgt\n",
+		);
+		expect(await run("log -p --format=%s -1 -- f")).toBe(`tc\n\n${F_PATCH}`);
+	});
+
+	test("reset and switch list typechanges as T", async () => {
+		const { run } = await setup();
+		expect(await run("reset")).toBe("Unstaged changes after reset:\nT\tf\nT\tl\n");
+		const sw = await run("switch other");
+		expect(sw).toBe("T\tf\nT\tl\n");
+	});
+
+	test("a plain file standing in for a symlink (no symlink support) is M, not T", async () => {
+		const fs = new MemoryFileSystem();
+		const git = createGit({ fs });
+		const run = (cmd: string, cwd: string) => git.exec(cmd, { cwd, env: TEST_ENV });
+		await fs.mkdir("/repo", { recursive: true });
+		await fs.writeFile("/repo/tgt", "x\n");
+		await fs.symlink("tgt", "/repo/l");
+		await run("init", "/repo");
+		await run("add .", "/repo");
+		await run("commit -m link", "/repo");
+		for (const method of ["symlink", "readlink", "lstat"]) {
+			Object.defineProperty(fs, method, { value: undefined });
+		}
+		await run("clone /repo /clone", "/");
+		await fs.writeFile("/clone/l", "tgt2");
+		expect((await run("status --short", "/clone")).stdout).toBe(" M l\n");
+		expect((await run("diff --name-status", "/clone")).stdout).toBe("M\tl\n");
+		expect((await run("diff", "/clone")).stdout).toBe(
+			[
+				"diff --git a/l b/l",
+				"index c7e58fc..91e4cef 120000",
+				"--- a/l",
+				"+++ b/l",
+				"@@ -1 +1 @@",
+				"-tgt",
+				"\\ No newline at end of file",
+				"+tgt2",
+				"\\ No newline at end of file",
+				"",
+			].join("\n"),
+		);
+	});
+});

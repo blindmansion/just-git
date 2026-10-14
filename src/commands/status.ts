@@ -13,6 +13,7 @@ import {
 	type StatusEntry,
 	type TrackingInfo,
 	type UntrackedMode,
+	workTreeStatus,
 } from "../lib/status-format.ts";
 import { diffIndexToWorkTree } from "../lib/worktree.ts";
 import { type Command, f, o } from "../parse/index.ts";
@@ -76,7 +77,7 @@ export function registerStatusCommand(parent: Command, ext?: GitExtensions) {
 				if (diff.status === "untracked") {
 					untracked.push(diff.path);
 				} else {
-					unstaged.push({ path: diff.path, status: diff.status });
+					unstaged.push({ path: diff.path, status: workTreeStatus(diff) });
 				}
 			}
 			unstaged.sort((a, b) => comparePaths(a.path, b.path));
@@ -120,6 +121,8 @@ function stagedCode(status: string): string {
 			return "A";
 		case "modified":
 			return "M";
+		case "typechange":
+			return "T";
 		case "deleted":
 			return "D";
 		case "renamed":
@@ -133,6 +136,8 @@ function unstagedCode(status: string): string {
 	switch (status) {
 		case "modified":
 			return "M";
+		case "typechange":
+			return "T";
 		case "deleted":
 			return "D";
 		default:

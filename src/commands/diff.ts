@@ -33,7 +33,7 @@ import { join } from "../lib/path.ts";
 import { matchPathspecs, type Pathspec, parsePathspec } from "../lib/pathspec.ts";
 import { parseRangeSyntax } from "../lib/range-syntax.ts";
 import { hashCleanedWorktreeEntry, worktreeBytesForHash } from "../lib/eol.ts";
-import { isSubmoduleMode, lstatSafe, readWorktreeContent } from "../lib/symlink.ts";
+import { isSubmoduleMode, isTypeChange, lstatSafe, readWorktreeContent } from "../lib/symlink.ts";
 import { resolveHead } from "../lib/refs.ts";
 import {
 	detectRenames,
@@ -838,7 +838,9 @@ function formatAsNameStatus(items: DiffFileResult[]): string {
 			const score = String(item.similarity ?? 100).padStart(3, "0");
 			output += `R${score}\t${item.oldPath}\t${item.path}\n`;
 		} else {
-			output += `${item.status}\t${item.path}\n`;
+			const status =
+				item.status === "M" && isTypeChange(item.oldMode, item.newMode) ? "T" : item.status;
+			output += `${status}\t${item.path}\n`;
 		}
 	}
 	return output;

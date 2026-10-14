@@ -2,6 +2,7 @@
 //
 import { abbreviateHash } from "./command-utils.ts";
 import { isBinaryStr } from "./object-db.ts";
+import { isTypeChange } from "./symlink.ts";
 // Implements the core diff algorithm from:
 //   Eugene W. Myers, "An O(ND) Difference Algorithm and Its Variations"
 //
@@ -1161,6 +1162,12 @@ interface FormatOptions {
 	isDeleted?: boolean;
 	/** Number of context lines around each change (default 3). */
 	contextLines?: number;
+	/**
+	 * Emit a typechange (file <-> symlink) as a deletion followed by an
+	 * addition, like git's patch output (default true). Patch-id hashing
+	 * passes false: git hashes a typechange as one pair with mode lines.
+	 */
+	splitTypeChange?: boolean;
 }
 
 function formatHashForIndexLine(hash?: string): string {
@@ -1240,6 +1247,34 @@ function formatBinaryDiff(opts: FormatOptions, oldIsBinary: boolean, newIsBinary
 export function formatUnifiedDiff(opts: FormatOptions): string {
 	const { path, oldContent, newContent, oldMode, newMode, oldHash, newHash } = opts;
 	const isRename = opts.renameTo !== undefined;
+
+	// git can't express a type change as one patch (it couldn't be applied),
+	// so it prints the old entry's deletion, then the new entry's creation.
+	if (
+		!isRename &&
+		!opts.isNew &&
+		!opts.isDeleted &&
+		opts.splitTypeChange !== false &&
+		isTypeChange(oldMode, newMode)
+	) {
+		const deletion = formatUnifiedDiff({
+			...opts,
+			newContent: "",
+			newMode: undefined,
+			newHash: undefined,
+			isNew: false,
+			isDeleted: true,
+		});
+		const addition = formatUnifiedDiff({
+			...opts,
+			oldContent: "",
+			oldMode: undefined,
+			oldHash: undefined,
+			isNew: true,
+			isDeleted: false,
+		});
+		return deletion + addition;
+	}
 	const newPath = opts.renameTo ?? path;
 
 	const oldIsBinary = isBinaryStr(oldContent);

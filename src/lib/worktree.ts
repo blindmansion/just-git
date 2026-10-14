@@ -100,6 +100,7 @@ export async function diffIndexToWorkTree(
 				indexHash: entry.hash,
 				worktreeHash: workTreeHash,
 				worktreeMode: workTreeMode,
+				indexMode: entry.mode,
 			});
 			if (stopAfterFirst) return results;
 		}

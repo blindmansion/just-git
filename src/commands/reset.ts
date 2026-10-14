@@ -29,6 +29,7 @@ import { containsWildcard, matchPathspecs, parsePathspec } from "../lib/pathspec
 import { logRef } from "../lib/reflog.ts";
 import { readHead, resolveHead, resolveRef, updateRef } from "../lib/refs.ts";
 import { resolveRevision } from "../lib/rev-parse.ts";
+import { isTypeChange } from "../lib/symlink.ts";
 import { flattenTree, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type { GitContext, ObjectId } from "../lib/types.ts";
 import { applyWorktreeOps, resetHard } from "../lib/unpack-trees.ts";
@@ -237,7 +238,8 @@ async function formatUnstagedAfterReset(
 
 	const lines = ["Unstaged changes after reset:"];
 	for (const d of unstaged) {
-		const tag = d.status === "modified" ? "M" : "D";
+		const tag =
+			d.status === "deleted" ? "D" : isTypeChange(d.indexMode, d.worktreeMode) ? "T" : "M";
 		lines.push(`${tag}\t${d.path}`);
 	}
 	for (const p of [...unmergedPaths].sort()) {

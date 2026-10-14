@@ -30,6 +30,21 @@ export function isSubmoduleMode(mode: number | string): boolean {
 }
 
 /**
+ * Whether a change from `oldMode` to `newMode` changes the object type
+ * (regular file, symlink, gitlink), which git reports as a typechange (`T`)
+ * rather than a modification. Missing modes are never a typechange.
+ */
+export function isTypeChange(
+	oldMode: number | string | undefined,
+	newMode: number | string | undefined,
+): boolean {
+	if (!oldMode || !newMode) return false;
+	const o = typeof oldMode === "string" ? Number.parseInt(oldMode, 8) : oldMode;
+	const n = typeof newMode === "string" ? Number.parseInt(newMode, 8) : newMode;
+	return (o & 0o170000) !== (n & 0o170000);
+}
+
+/**
  * Read the "content" of a worktree entry for hashing/diffing purposes.
  * For symlinks, returns the link target encoded as bytes.
  * For regular files, returns the file content bytes.

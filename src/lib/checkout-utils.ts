@@ -34,7 +34,7 @@ import {
 	updateRef,
 } from "./refs.ts";
 import { formatLongTrackingInfo, getTrackingInfo } from "./status-format.ts";
-import { isSubmoduleMode, lstatSafe } from "./symlink.ts";
+import { isSubmoduleMode, isTypeChange, lstatSafe } from "./symlink.ts";
 import { flattenTree, flattenTreeToMap } from "./tree-ops.ts";
 import type { GitContext, GitRepo, ObjectId } from "./types.ts";
 import { applyWorktreeOps, checkoutTrees } from "./unpack-trees.ts";
@@ -359,7 +359,8 @@ export async function formatCheckoutSummary(
 		if (wt === null) {
 			lines.push(`D\t${path}`);
 		} else if (differs(indexEntry, treeEntry) || (wt !== undefined && differs(wt, treeEntry))) {
-			lines.push(`M\t${path}`);
+			const tag = isTypeChange(treeEntry.mode, (wt ?? indexEntry).mode) ? "T" : "M";
+			lines.push(`${tag}\t${path}`);
 		}
 	}
 

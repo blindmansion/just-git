@@ -41,6 +41,7 @@ import {
 	resolveRenameLimit,
 } from "../lib/rename-detection.ts";
 import { resolveRevision } from "../lib/rev-parse.ts";
+import { isTypeChange } from "../lib/symlink.ts";
 import { diffTrees } from "../lib/tree-ops.ts";
 import type { Commit, GitRepo, ObjectId, TreeDiffEntry } from "../lib/types.ts";
 import { worktreeHeadCommits } from "../lib/worktree-admin.ts";
@@ -819,7 +820,14 @@ function logNameOnly(remaining: TreeDiffEntry[], renames: RenamePair[]): string 
 function logNameStatus(remaining: TreeDiffEntry[], renames: RenamePair[]): string {
 	const items: { key: string; line: string }[] = [];
 	for (const d of remaining) {
-		const s = d.status === "added" ? "A" : d.status === "deleted" ? "D" : "M";
+		const s =
+			d.status === "added"
+				? "A"
+				: d.status === "deleted"
+					? "D"
+					: isTypeChange(d.oldMode, d.newMode)
+						? "T"
+						: "M";
 		items.push({ key: d.path, line: `${s}\t${d.path}` });
 	}
 	for (const r of renames) {

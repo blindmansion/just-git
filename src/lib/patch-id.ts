@@ -89,6 +89,7 @@ export async function computePatchId(ctx: GitRepo, commitHash: ObjectId): Promis
 			newContent,
 			oldMode: diff.oldMode,
 			newMode: diff.newMode,
+			splitTypeChange: false,
 		});
 		if (!patch) continue;
 

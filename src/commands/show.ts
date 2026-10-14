@@ -38,6 +38,7 @@ import { parseRevPath } from "../lib/rev-parse.ts";
 import { parseTree } from "../lib/objects/tree.ts";
 import { join } from "../lib/path.ts";
 import { matchPathspecs, type Pathspec, parsePathspec } from "../lib/pathspec.ts";
+import { isTypeChange } from "../lib/symlink.ts";
 import { diffTrees, flattenTreeToMap } from "../lib/tree-ops.ts";
 import type {
 	Commit,
@@ -509,7 +510,14 @@ function showNameOnly(diffs: TreeDiffEntry[], renames: RenamePair[]): string {
 function showNameStatus(diffs: TreeDiffEntry[], renames: RenamePair[]): string {
 	const items: { key: string; line: string }[] = [];
 	for (const d of diffs) {
-		const s = d.status === "added" ? "A" : d.status === "deleted" ? "D" : "M";
+		const s =
+			d.status === "added"
+				? "A"
+				: d.status === "deleted"
+					? "D"
+					: isTypeChange(d.oldMode, d.newMode)
+						? "T"
+						: "M";
 		items.push({ key: d.path, line: `${s}\t${d.path}` });
 	}
 	for (const r of renames) {
