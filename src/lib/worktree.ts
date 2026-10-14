@@ -5,14 +5,14 @@ import {
 	addEntry,
 	findEntry,
 	getIndexTimestamp,
-	gitModeFromFileStat,
 	indexStatFromFileStat,
 	indexStatMatchesFile,
+	worktreeMode,
 } from "./index.ts";
 import { readObject, writeObject } from "./object-db.ts";
 import { isInsideWorkTree, verifyPath, verifySymlinkTarget } from "./path-safety.ts";
 import { dirname, join } from "./path.ts";
-import { isSubmoduleMode, isSymlinkMode, lstatSafe } from "./symlink.ts";
+import { isExecutableMode, isSubmoduleMode, isSymlinkMode, lstatSafe } from "./symlink.ts";
 import { flattenTree } from "./tree-ops.ts";
 import type { GitContext, Index, IndexEntry, ObjectId, WorkTreeDiff } from "./types.ts";
 
@@ -86,16 +86,18 @@ export async function diffIndexToWorkTree(
 			continue;
 		}
 
-		if (indexStatMatchesFile(entry, st, indexTimestamp)) continue;
+		if (indexStatMatchesFile(ctx.fs, entry, st, indexTimestamp)) continue;
 
+		const workTreeMode = worktreeMode(ctx.fs, entry, st);
 		const workTreeHash = await hashCleanedWorktreeEntry(ctx, fullPath, entry.hash, st);
 
-		if (workTreeHash !== entry.hash) {
+		if (workTreeHash !== entry.hash || workTreeMode !== entry.mode) {
 			results.push({
 				path: entry.path,
 				status: "modified",
 				indexHash: entry.hash,
 				worktreeHash: workTreeHash,
+				worktreeMode: workTreeMode,
 			});
 			if (stopAfterFirst) return results;
 		}
@@ -179,23 +181,31 @@ export async function checkoutEntry(
 		}
 		await ctx.fs.symlink(target, fullPath);
 	} else {
-		// For regular files, also remove stale symlinks at the same path
-		// so that writeFile doesn't follow the old symlink.
-		if (ctx.fs.lstat) {
-			try {
-				const st = await ctx.fs.lstat(fullPath);
-				if (st.isSymbolicLink) {
-					await ctx.fs.rm(fullPath, { force: true });
-				}
-			} catch {
-				// Path doesn't exist — fine
+		// For regular files, remove a stale symlink at the same path so that
+		// writeFile doesn't follow it. Otherwise remember the existing mode:
+		// writeFile keeps it on real filesystems, so a 100644 entry over an
+		// executable file must clear the bit explicitly.
+		let existingMode: number | null = null;
+		try {
+			const st = await lstatSafe(ctx.fs, fullPath);
+			if (st.isSymbolicLink) {
+				await ctx.fs.rm(fullPath, { force: true });
+			} else {
+				existingMode = st.mode;
 			}
-		}
+		} catch {}
 		// Smudge: with core.autocrlf=true, checkout writes CRLF line endings
 		// (lfToCrlf declines for binary or already-CR content).
 		const policy = await getEolPolicy(ctx);
 		const content = policy.smudgeCrlf ? lfToCrlf(raw.content) : raw.content;
 		await ctx.fs.writeFile(fullPath, content);
+		if (ctx.fs.chmod) {
+			if (entry.mode != null && isExecutableMode(entry.mode)) {
+				await ctx.fs.chmod(fullPath, 0o755);
+			} else if (existingMode !== null && existingMode & 0o111) {
+				await ctx.fs.chmod(fullPath, 0o644);
+			}
+		}
 	}
 }
 
@@ -253,14 +263,14 @@ export async function stageFile(
 		return { index: addEntry(index, entry), hash };
 	}
 
+	const existing = findEntry(index, path);
 	const content = await ctx.fs.readFileBuffer(fullPath);
-	const blobContent = await cleanForCheckin(ctx, content, findEntry(index, path)?.hash);
+	const blobContent = await cleanForCheckin(ctx, content, existing?.hash);
 	const hash = await writeObject(ctx, "blob", blobContent);
 
-	const mode = gitModeFromFileStat(st);
 	const entry: IndexEntry = {
 		path,
-		mode,
+		mode: worktreeMode(ctx.fs, existing, st),
 		hash,
 		stage: 0,
 		// Index stat data describes the worktree file, not the cleaned blob.

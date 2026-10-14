@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { EMPTY_REPO, TEST_ENV_NAMED as TEST_ENV } from "../fixtures";
-import { createTestBash, readFile } from "../util";
+import { createTestBash, permissionBits, readFile, setupExecBitRepo } from "../util";
 
 describe("git reset", () => {
 	describe("--quiet", () => {
@@ -110,5 +110,22 @@ describe("git reset", () => {
 					"'git <command> [<revision>...] -- [<file>...]'\n",
 			);
 		});
+	});
+});
+
+describe("git reset: executable bit", () => {
+	test("reset --hard restores the executable bit", async () => {
+		const bash = await setupExecBitRepo();
+		await bash.exec("chmod 644 run.sh");
+		expect((await bash.exec("git reset --hard")).exitCode).toBe(0);
+		expect(await permissionBits(bash.fs, "/repo/run.sh")).toBe(0o755);
+		expect((await bash.exec("git status --short")).stdout).toBe("");
+	});
+
+	test("reset --hard <branch> clears the executable bit", async () => {
+		const bash = await setupExecBitRepo();
+		expect((await bash.exec("git reset --hard plain")).exitCode).toBe(0);
+		expect(await permissionBits(bash.fs, "/repo/run.sh")).toBe(0o644);
+		expect((await bash.exec("git status --short")).stdout).toBe("");
 	});
 });

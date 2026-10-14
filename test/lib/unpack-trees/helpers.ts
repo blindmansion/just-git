@@ -33,10 +33,12 @@ interface PathStateInput {
 	headHash?: ObjectId | null;
 	remoteHash?: ObjectId | null;
 	indexHash?: ObjectId | null;
+	indexMode?: number | null;
 	indexStage?: number;
 	existsOnDisk?: boolean;
 	ignoredOnDisk?: boolean;
 	worktreeHash?: ObjectId | null;
+	worktreeMode?: number | null;
 	headMode?: string | null;
 	remoteMode?: string | null;
 }
@@ -54,6 +56,8 @@ export function makeState(input: PathStateInput = {}): PathState {
 	const existsOnDisk = input.existsOnDisk ?? indexHash !== null;
 	// Default: worktree matches index (clean worktree)
 	const worktreeHash = input.worktreeHash !== undefined ? input.worktreeHash : indexHash;
+	const indexMode = input.indexMode ?? (indexHash ? 0o100644 : null);
+	const worktreeMode = input.worktreeMode !== undefined ? input.worktreeMode : indexMode;
 
 	const ignoredOnDisk = input.ignoredOnDisk ?? false;
 
@@ -63,10 +67,12 @@ export function makeState(input: PathStateInput = {}): PathState {
 		headHash: input.headHash ?? null,
 		remoteHash: input.remoteHash ?? null,
 		indexHash,
+		indexMode,
 		indexStage: input.indexStage ?? 0,
 		existsOnDisk,
 		isIgnoredOnDisk: async () => ignoredOnDisk,
 		getWorktreeHash: async () => worktreeHash,
+		getWorktreeMode: async () => worktreeMode,
 		headMode: input.headMode ?? (input.headHash ? "100644" : null),
 		remoteMode: input.remoteMode ?? (input.remoteHash ? "100644" : null),
 	};

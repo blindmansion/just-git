@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { BASIC_REPO, EMPTY_REPO, TEST_ENV_NAMED as TEST_ENV } from "../fixtures";
-import { createTestBash, quickExec, readFile, runScenario, setupClonePair } from "../util";
+import {
+	createTestBash,
+	permissionBits,
+	quickExec,
+	readFile,
+	runScenario,
+	setupClonePair,
+	setupExecBitRepo,
+} from "../util";
 
 describe("git switch", () => {
 	describe("errors", () => {
@@ -476,5 +484,34 @@ describe("git switch", () => {
 			expect(exists.exitCode).toBe(128);
 			expect(exists.stderr).toBe("fatal: a branch named 'main' already exists\n");
 		});
+	});
+});
+
+describe("git switch: executable bit", () => {
+	test("switch flips the bit to match the branch", async () => {
+		const bash = await setupExecBitRepo();
+		expect((await bash.exec("git switch plain")).exitCode).toBe(0);
+		expect(await permissionBits(bash.fs, "/repo/run.sh")).toBe(0o644);
+		expect((await bash.exec("git status --short")).stdout).toBe("");
+		expect((await bash.exec("git switch main")).exitCode).toBe(0);
+		expect(await permissionBits(bash.fs, "/repo/run.sh")).toBe(0o755);
+		expect((await bash.exec("git status --short")).stdout).toBe("");
+	});
+
+	test("switch refuses to overwrite a local mode-only change", async () => {
+		const bash = await setupExecBitRepo();
+		await bash.exec("git switch -c content && echo more >> run.sh && git commit -qam content");
+		await bash.exec("git switch -q main && chmod 644 run.sh");
+		const refused =
+			"error: Your local changes to the following files would be overwritten by checkout:\n\trun.sh\nPlease commit your changes or stash them before you switch branches.\nAborting\n";
+
+		for (const target of ["plain", "content"]) {
+			const result = await bash.exec(`git switch ${target}`);
+			expect(result.exitCode).toBe(1);
+			expect(result.stderr).toBe(refused);
+			expect(await permissionBits(bash.fs, "/repo/run.sh")).toBe(0o644);
+			expect((await bash.exec("git status --short")).stdout).toBe(" M run.sh\n");
+			expect((await bash.exec("git branch --show-current")).stdout).toBe("main\n");
+		}
 	});
 });

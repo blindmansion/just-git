@@ -1169,6 +1169,10 @@ function formatHashForIndexLine(hash?: string): string {
 	return abbreviateHash(hash);
 }
 
+function hasModeChange(opts: FormatOptions): boolean {
+	return !!opts.oldMode && !!opts.newMode && opts.oldMode !== opts.newMode;
+}
+
 function pushDiffGitHeader(
 	out: string[],
 	opts: FormatOptions,
@@ -1199,7 +1203,7 @@ function formatBinaryDiff(opts: FormatOptions, oldIsBinary: boolean, newIsBinary
 	const newPath = opts.renameTo ?? path;
 	const isNew = opts.isNew ?? oldContent === "";
 	const isDeleted = opts.isDeleted ?? newContent === "";
-	if (oldContent === newContent && !isRename) return "";
+	if (oldContent === newContent && !isRename && !hasModeChange(opts)) return "";
 
 	const out: string[] = [];
 	pushDiffGitHeader(out, opts, newPath, isNew, isDeleted, isRename);
@@ -1281,7 +1285,7 @@ export function formatUnifiedDiff(opts: FormatOptions): string {
 	}
 	const hunks = buildHunks(edits, opts.contextLines);
 
-	if (hunks.length === 0 && !isRename) return "";
+	if (hunks.length === 0 && !isRename && !hasModeChange(opts)) return "";
 
 	const isNew = opts.isNew ?? oldContent === "";
 	const isDeleted = opts.isDeleted ?? newContent === "";
@@ -1289,7 +1293,6 @@ export function formatUnifiedDiff(opts: FormatOptions): string {
 	const out: string[] = [];
 	pushDiffGitHeader(out, opts, newPath, isNew, isDeleted, isRename);
 
-	// For exact renames with no content change, stop here
 	if (hunks.length === 0) {
 		return `${out.join("\n")}\n`;
 	}

@@ -1,9 +1,9 @@
-import type { FileStat } from "../fs.ts";
+import type { FileStat, FileSystem } from "../fs.ts";
 import { bytesToHex, hexToBytes } from "./hex.ts";
 import { verifyPath } from "./path-safety.ts";
 import { join } from "./path.ts";
 import { sha1 } from "./sha1.ts";
-import { isSubmoduleMode, lstatSafe } from "./symlink.ts";
+import { isRegularFileMode, isSubmoduleMode, isSymlinkMode, lstatSafe } from "./symlink.ts";
 import type { GitContext, Index, IndexEntry, IndexStat } from "./types.ts";
 
 // ── Constants ───────────────────────────────────────────────────────
@@ -192,13 +192,14 @@ export function indexStatFromFileStat(stat: FileStat, size: number = stat.size):
  * and must still be hashed.
  */
 export function indexStatMatchesFile(
+	fs: FileSystem,
 	entry: IndexEntry,
 	stat: FileStat,
 	indexTimestamp: Date | undefined,
 ): boolean {
 	if (!indexTimestamp || !stat.isFile || stat.isSymbolicLink) return false;
 	if (entry.stat.mtimeSeconds === 0 || stat.size < 0 || stat.size > 0xffffffff) return false;
-	if (gitModeFromFileStat(stat) !== entry.mode || stat.size !== entry.stat.size) return false;
+	if (worktreeMode(fs, entry, stat) !== entry.mode || stat.size !== entry.stat.size) return false;
 
 	const fileMtimeMs = timestampMilliseconds(stat.mtime);
 	const indexMtimeMs = timestampMilliseconds(indexTimestamp);
@@ -231,6 +232,30 @@ export function gitModeFromFileStat(stat: FileStat): number {
 	return stat.mode & 0o111 ? 0o100755 : 0o100644;
 }
 
+function fileStandsInForSymlink(
+	fs: FileSystem,
+	entry: Pick<IndexEntry, "mode">,
+	stat: FileStat,
+): boolean {
+	return stat.isFile && isSymlinkMode(entry.mode) && !fs.symlink;
+}
+
+function fsTracksExecutableBit(fs: FileSystem): boolean {
+	return fs.chmod !== undefined;
+}
+
+export function worktreeMode(
+	fs: FileSystem,
+	entry: Pick<IndexEntry, "mode"> | undefined,
+	stat: FileStat,
+): number {
+	if (entry && fileStandsInForSymlink(fs, entry, stat)) return entry.mode;
+	if (stat.isFile && !fsTracksExecutableBit(fs)) {
+		return entry && isRegularFileMode(entry.mode) ? entry.mode : 0o100644;
+	}
+	return gitModeFromFileStat(stat);
+}
+
 /**
  * Refresh stat metadata for index entries whose content a caller has just
  * materialized in the worktree. Paths that cannot be verified by type/mode
@@ -256,7 +281,7 @@ export async function refreshIndexStatsAfterCheckout(
 		}
 
 		const stat = await lstatSafe(ctx.fs, join(ctx.workTree, entry.path)).catch(() => null);
-		if (!stat || gitModeFromFileStat(stat) !== entry.mode) {
+		if (!stat || worktreeMode(ctx.fs, entry, stat) !== entry.mode) {
 			entries.push(entry);
 			continue;
 		}

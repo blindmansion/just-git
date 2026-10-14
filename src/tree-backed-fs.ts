@@ -45,6 +45,14 @@ function dirname(path: string): string {
 	return i <= 0 ? "/" : path.slice(0, i);
 }
 
+function withPermissionBits(current: number, mode: number): number {
+	return (current & ~0o7777) | (mode & 0o7777);
+}
+
+function resolveLinkTarget(linkPath: string, target: string): string {
+	return normalize(target.startsWith("/") ? target : `${dirname(linkPath)}/${target}`);
+}
+
 function treeModeToStatMode(mode: string): number {
 	switch (mode) {
 		case FM.EXECUTABLE:
@@ -510,6 +518,37 @@ export class TreeBackedFs implements FileSystem {
 				await this.markTreeChildrenRemoved(childRel, childNorm);
 			}
 		}
+	}
+
+	async chmod(path: string, mode: number): Promise<void> {
+		const norm = normalize(path);
+		const overlayEntry = this.overlay.get(norm);
+		if (overlayEntry?.type === "symlink") {
+			return this.chmod(resolveLinkTarget(norm, overlayEntry.target), mode);
+		}
+		if (overlayEntry) {
+			overlayEntry.mode = withPermissionBits(overlayEntry.mode, mode);
+			return;
+		}
+		if (this.removals.has(norm) || !(await this.exists(norm))) {
+			throw new Error(`ENOENT: no such file or directory, chmod '${path}'`);
+		}
+		const st = await this.lstat(norm);
+		if (st.isSymbolicLink) {
+			return this.chmod(resolveLinkTarget(norm, await this.readlink(norm)), mode);
+		}
+		this.ensureOverlayParents(norm);
+		this.overlay.set(
+			norm,
+			st.isDirectory
+				? { type: "directory", mode: withPermissionBits(st.mode, mode), mtime: this.epoch }
+				: {
+						type: "file",
+						content: await this.readFileBuffer(norm),
+						mode: withPermissionBits(st.mode, mode),
+						mtime: this.epoch,
+					},
+		);
 	}
 
 	async readlink(path: string): Promise<string> {

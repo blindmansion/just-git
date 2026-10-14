@@ -211,6 +211,21 @@ describe("checkSingleRequirement", () => {
 			expect(result).toBe(UnpackError.NOT_UPTODATE_FILE);
 		});
 
+		test("fails with NOT_UPTODATE_FILE when only the worktree mode differs", async () => {
+			const state = makeState({
+				indexHash: HASH_A,
+				indexMode: 0o100755,
+				existsOnDisk: true,
+				worktreeMode: 0o100644,
+			});
+			const result = await checkSingleRequirement(
+				PreconditionRequirement.WORKTREE_MUST_BE_UPTODATE,
+				state,
+				HASH_C,
+			);
+			expect(result).toBe(UnpackError.NOT_UPTODATE_FILE);
+		});
+
 		test("escape hatch: passes when worktree matches result (three-way)", async () => {
 			const state = makeState({
 				indexHash: HASH_A,

@@ -262,6 +262,12 @@ export class MemoryFileSystem implements FileSystem {
 		}
 	}
 
+	async chmod(path: string, mode: number): Promise<void> {
+		const entry = this.data.get(this.resolve(path));
+		if (!entry) throw new Error(`ENOENT: no such file or directory, chmod '${path}'`);
+		entry.mode = (entry.mode & ~0o7777) | (mode & 0o7777);
+	}
+
 	async readlink(path: string): Promise<string> {
 		const resolved = this.resolveParent(path);
 		const entry = this.data.get(resolved);

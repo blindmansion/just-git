@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BASIC_REPO, EMPTY_REPO, NESTED_REPO, TEST_ENV } from "../fixtures";
-import { createTestBash, quickExec, runScenario } from "../util";
+import { createTestBash, quickExec, runScenario, setupExecBitRepo } from "../util";
 
 describe("git add", () => {
 	describe("outside a git repo", () => {
@@ -591,5 +591,15 @@ describe("git add", () => {
 			const add = await bash.exec("git add 日本語.txt");
 			expect(add.exitCode).toBe(0);
 		});
+	});
+});
+
+describe("git add: executable bit", () => {
+	test("add stages a mode-only change", async () => {
+		const bash = await setupExecBitRepo();
+		await bash.exec("chmod 644 run.sh && git add run.sh");
+		expect((await bash.exec("git ls-files -s")).stdout).toBe(
+			"100644 4163036efa65bd4a469e752267498f01ea36a55c 0\trun.sh\n",
+		);
 	});
 });

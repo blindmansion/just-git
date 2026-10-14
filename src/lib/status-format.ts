@@ -452,7 +452,7 @@ export async function getStagedChanges(
 				newHash: entry.hash,
 				newMode: entry.mode.toString(8).padStart(6, "0"),
 			});
-		} else if (headEntry.hash !== entry.hash) {
+		} else if (headEntry.hash !== entry.hash || Number.parseInt(headEntry.mode, 8) !== entry.mode) {
 			rawDiffs.push({
 				path,
 				status: "modified",

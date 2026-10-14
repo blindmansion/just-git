@@ -229,15 +229,13 @@ async function collectUnstaged(
 		const indexEntry = stage0.get(diff.path);
 		if (!indexEntry) continue;
 
-		const oldMode = fmtMode(indexEntry.mode);
-
 		items.push({
 			path: diff.path,
 			status: diff.status === "deleted" ? "D" : "M",
 			oldHash: indexEntry.hash,
 			newHash: diff.worktreeHash,
-			oldMode,
-			newMode: oldMode,
+			oldMode: fmtMode(indexEntry.mode),
+			newMode: fmtMode(diff.worktreeMode ?? indexEntry.mode),
 			newFromWorkTree: diff.status === "modified",
 		});
 	}
@@ -390,7 +388,7 @@ async function collectCached(
 				newHash: entry.hash,
 				newMode: fmtMode(entry.mode),
 			});
-		} else if (baseEntry.hash !== entry.hash) {
+		} else if (baseEntry.hash !== entry.hash || Number.parseInt(baseEntry.mode, 8) !== entry.mode) {
 			diffs.push({
 				path,
 				status: "modified",
@@ -585,7 +583,7 @@ async function collectCommitToWorkTree(
 
 		const effectiveHash =
 			workTreeDiff?.status === "modified" ? workTreeDiff.worktreeHash : indexEntry.hash;
-		const effectiveMode = fmtMode(indexEntry.mode);
+		const effectiveMode = fmtMode(workTreeDiff?.worktreeMode ?? indexEntry.mode);
 		if (effectiveHash !== entry.hash || effectiveMode !== entry.mode) {
 			items.push({
 				path,

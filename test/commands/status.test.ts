@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import { BASIC_REPO, EMPTY_REPO, NESTED_REPO, TEST_ENV } from "../fixtures";
-import { createTestBash, observeFsCalls, quickExec, runScenario } from "../util";
+import { createTestBash, observeFsCalls, quickExec, runScenario, setupExecBitRepo } from "../util";
 
 describe("git status", () => {
 	describe("outside a git repo", () => {
@@ -765,5 +765,27 @@ describe("git status", () => {
 			// g.txt was staged in the same tick the index was written, so it was smudged.
 			expect(calls.readFileBufferPaths).toContain("/repo/g.txt");
 		});
+	});
+});
+
+describe("git status: executable bit", () => {
+	test("chmod -x on a tracked executable shows as modified", async () => {
+		const bash = await setupExecBitRepo();
+		await bash.exec("chmod 644 run.sh");
+		expect((await bash.exec("git status --short")).stdout).toBe(" M run.sh\n");
+		expect((await bash.exec("git status")).stdout).toBe(
+			[
+				"On branch main",
+				"Changes not staged for commit:",
+				'  (use "git add <file>..." to update what will be committed)',
+				'  (use "git restore <file>..." to discard changes in working directory)',
+				"\tmodified:   run.sh",
+				"",
+				'no changes added to commit (use "git add" and/or "git commit -a")',
+				"",
+			].join("\n"),
+		);
+		await bash.exec("git add run.sh");
+		expect((await bash.exec("git status --short")).stdout).toBe("M  run.sh\n");
 	});
 });
