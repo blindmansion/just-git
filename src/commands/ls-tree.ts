@@ -10,10 +10,17 @@ import {
 import { readObject } from "../lib/object-db.ts";
 import { parseCommit } from "../lib/objects/commit.ts";
 import { parseTag } from "../lib/objects/tag.ts";
+import { parseTree } from "../lib/objects/tree.ts";
 import { join, relative } from "../lib/path.ts";
 import { resolveRevision } from "../lib/rev-parse.ts";
 import { readTreeEntries } from "../lib/tree-ops.ts";
-import { FileMode, type GitRepo, type ObjectId, type TreeEntry } from "../lib/types.ts";
+import {
+	FileMode,
+	type GitContext,
+	type GitRepo,
+	type ObjectId,
+	type TreeEntry,
+} from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 
 const USAGE = "usage: git ls-tree [<options>] <tree-ish> [<path>...]\n";
@@ -65,15 +72,16 @@ export function registerLsTreeCommand(parent: Command, ext?: GitExtensions): voi
 					: [args["tree-ish"], ...(args.path ?? []), ...meta.passthrough];
 			if (treeIsh === undefined) return { stdout: "", stderr: USAGE, exitCode: 129 };
 
-			const resolved = await resolveRevision(gitCtx, treeIsh);
-			if (!resolved) return fatal(`Not a valid object name ${treeIsh}`);
+			const cwdPrefix = getCwdPrefix(gitCtx, ctx.cwd);
+			const resolved = await resolveTreeIsh(gitCtx, treeIsh, cwdPrefix);
+			if (typeof resolved !== "string") return fatal(resolved.error);
 			if (rawPaths.includes("")) {
 				return fatal(
 					"empty string is not a valid pathspec. please use . instead if you meant to match all paths",
 				);
 			}
 
-			const prefix = args.fullTree ? "" : getCwdPrefix(gitCtx, ctx.cwd);
+			const prefix = args.fullTree ? "" : cwdPrefix;
 			const filters: PathFilter[] = [];
 			for (const raw of rawPaths) {
 				const filter = resolvePathFilter(raw, prefix, gitCtx.workTree);
@@ -113,6 +121,50 @@ export function registerLsTreeCommand(parent: Command, ext?: GitExtensions): voi
 			return { stdout, stderr: "", exitCode: 0 };
 		},
 	});
+}
+
+/**
+ * Resolve the tree-ish argument, including git's `<rev>:<path>` form. The path is relative to the
+ * repository root unless it starts with `./` or `../`, which are relative to the cwd. One trailing
+ * slash is allowed; empty, `.` and `..` components elsewhere are not, as in git.
+ */
+async function resolveTreeIsh(
+	ctx: GitContext,
+	treeIsh: string,
+	cwdPrefix: string,
+): Promise<ObjectId | { error: string }> {
+	const invalid = { error: `Not a valid object name ${treeIsh}` };
+	const colon = treeIsh.indexOf(":");
+	if (colon < 0) return (await resolveRevision(ctx, treeIsh)) ?? invalid;
+	const rev = treeIsh.slice(0, colon);
+	// `:<path>` names an index entry, and the index holds no trees.
+	if (rev === "") return invalid;
+	const revHash = await resolveRevision(ctx, rev);
+	if (!revHash) return invalid;
+	let hash = await peelToTree(ctx, revHash);
+	if (!hash) return invalid;
+
+	const rawPath = treeIsh.slice(colon + 1);
+	let path = rawPath;
+	if (path.startsWith("./") || path.startsWith("../")) {
+		path = join(cwdPrefix, path);
+		if (path === ".") path = "";
+		if (path === ".." || path.startsWith("../")) {
+			return { error: `'${rawPath}' is outside repository at '${ctx.workTree ?? ctx.gitDir}'` };
+		}
+	}
+	if (path.endsWith("/")) path = path.slice(0, -1);
+	if (path === "") return hash;
+
+	for (const name of path.split("/")) {
+		if (name === "" || name === "." || name === "..") return invalid;
+		const raw = await readObject(ctx, hash);
+		if (raw.type !== "tree") return invalid;
+		const entry = parseTree(raw.content).entries.find((e) => e.name === name);
+		if (!entry) return invalid;
+		hash = entry.hash;
+	}
+	return hash;
 }
 
 async function peelToTree(ctx: GitRepo, hash: ObjectId): Promise<ObjectId | null> {
