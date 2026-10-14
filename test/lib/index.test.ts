@@ -162,6 +162,9 @@ describe("index stat cache", () => {
 		const git = createGit({ fs: bigFs, cwd: "/repo" });
 		await git.exec("init");
 		await bigFs.writeFile("/repo/file.txt", "hello\n");
+		// Let the clock move past the file's mtime so `add` doesn't treat the
+		// entry as racily clean and zero its stat data.
+		await Bun.sleep(5);
 		expect((await git.exec("add file.txt")).exitCode).toBe(0);
 
 		const ctx = await findRepo(bigFs, "/repo");

@@ -18,7 +18,7 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.INDEX_MUST_NOT_EXIST,
 				state,
-				null,
+				{ hash: null, mode: null },
 			);
 			expect(result).toBeNull();
 		});
@@ -30,7 +30,7 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.INDEX_MUST_NOT_EXIST,
 				state,
-				null,
+				{ hash: null, mode: null },
 			);
 			expect(result).toBe(UnpackError.WOULD_OVERWRITE);
 		});
@@ -43,7 +43,7 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.INDEX_MUST_NOT_EXIST,
 				state,
-				null,
+				{ hash: null, mode: null },
 			);
 			expect(result).toBe(UnpackError.WOULD_LOSE_UNTRACKED_REMOVED);
 		});
@@ -60,7 +60,7 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.INDEX_MUST_MATCH_HEAD,
 				state,
-				HASH_B,
+				{ hash: HASH_B, mode: "100644" },
 			);
 			expect(result).toBeNull();
 		});
@@ -73,7 +73,22 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.INDEX_MUST_MATCH_HEAD,
 				state,
-				HASH_C,
+				{ hash: HASH_C, mode: "100644" },
+			);
+			expect(result).toBe(UnpackError.WOULD_OVERWRITE);
+		});
+
+		test("fails with WOULD_OVERWRITE when index differs from head only by mode", async () => {
+			const state = makeState({
+				headHash: HASH_A,
+				headMode: "100644",
+				indexHash: HASH_A,
+				indexMode: 0o100755,
+			});
+			const result = await checkSingleRequirement(
+				PreconditionRequirement.INDEX_MUST_MATCH_HEAD,
+				state,
+				{ hash: HASH_A, mode: "100755" },
 			);
 			expect(result).toBe(UnpackError.WOULD_OVERWRITE);
 		});
@@ -89,7 +104,7 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.INDEX_MUST_MATCH_HEAD,
 				state,
-				HASH_B,
+				{ hash: HASH_B, mode: "100644" },
 			);
 			expect(result).toBe(UnpackError.WOULD_OVERWRITE);
 		});
@@ -103,7 +118,7 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.INDEX_MUST_MATCH_HEAD,
 				state,
-				HASH_A,
+				{ hash: HASH_A, mode: "100644" },
 			);
 			expect(result).toBeNull();
 		});
@@ -120,7 +135,7 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.INDEX_MUST_MATCH_RESULT,
 				state,
-				HASH_A,
+				{ hash: HASH_A, mode: "100644" },
 			);
 			expect(result).toBeNull();
 		});
@@ -132,9 +147,22 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.INDEX_MUST_MATCH_RESULT,
 				state,
-				HASH_A,
+				{ hash: HASH_A, mode: "100644" },
 			);
 			expect(result).toBeNull();
+		});
+
+		test("fails with WOULD_OVERWRITE when index differs from result only by mode", async () => {
+			const state = makeState({
+				indexHash: HASH_A,
+				indexMode: 0o100755,
+			});
+			const result = await checkSingleRequirement(
+				PreconditionRequirement.INDEX_MUST_MATCH_RESULT,
+				state,
+				{ hash: HASH_A, mode: "100644" },
+			);
+			expect(result).toBe(UnpackError.WOULD_OVERWRITE);
 		});
 
 		test("fails with WOULD_OVERWRITE when index differs from result", async () => {
@@ -144,7 +172,7 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.INDEX_MUST_MATCH_RESULT,
 				state,
-				HASH_B,
+				{ hash: HASH_B, mode: "100644" },
 			);
 			expect(result).toBe(UnpackError.WOULD_OVERWRITE);
 		});
@@ -162,7 +190,7 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.WORKTREE_MUST_BE_UPTODATE,
 				state,
-				HASH_B,
+				{ hash: HASH_B, mode: "100644" },
 			);
 			expect(result).toBeNull();
 		});
@@ -176,7 +204,7 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.WORKTREE_MUST_BE_UPTODATE,
 				state,
-				null,
+				{ hash: null, mode: null },
 			);
 			expect(result).toBeNull();
 		});
@@ -192,7 +220,7 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.WORKTREE_MUST_BE_UPTODATE,
 				state,
-				HASH_B,
+				{ hash: HASH_B, mode: "100644" },
 			);
 			expect(result).toBeNull();
 		});
@@ -206,7 +234,7 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.WORKTREE_MUST_BE_UPTODATE,
 				state,
-				HASH_C,
+				{ hash: HASH_C, mode: "100644" },
 			);
 			expect(result).toBe(UnpackError.NOT_UPTODATE_FILE);
 		});
@@ -221,7 +249,7 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.WORKTREE_MUST_BE_UPTODATE,
 				state,
-				HASH_C,
+				{ hash: HASH_C, mode: "100644" },
 			);
 			expect(result).toBe(UnpackError.NOT_UPTODATE_FILE);
 		});
@@ -236,7 +264,7 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.WORKTREE_MUST_BE_UPTODATE,
 				state,
-				HASH_B,
+				{ hash: HASH_B, mode: "100644" },
 				{ allowContentEscapeHatch: true },
 			);
 			expect(result).toBeNull();
@@ -252,7 +280,23 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.WORKTREE_MUST_BE_UPTODATE,
 				state,
-				HASH_B,
+				{ hash: HASH_B, mode: "100644" },
+			);
+			expect(result).toBe(UnpackError.NOT_UPTODATE_FILE);
+		});
+
+		test("escape hatch: fails when worktree matches result content but not mode", async () => {
+			const state = makeState({
+				indexHash: HASH_A,
+				existsOnDisk: true,
+				worktreeHash: HASH_B,
+				worktreeMode: 0o100755,
+			});
+			const result = await checkSingleRequirement(
+				PreconditionRequirement.WORKTREE_MUST_BE_UPTODATE,
+				state,
+				{ hash: HASH_B, mode: "100644" },
+				{ allowContentEscapeHatch: true },
 			);
 			expect(result).toBe(UnpackError.NOT_UPTODATE_FILE);
 		});
@@ -267,7 +311,7 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.WORKTREE_MUST_BE_UPTODATE,
 				state,
-				null,
+				{ hash: null, mode: null },
 				{ allowContentEscapeHatch: true },
 			);
 			expect(result).toBeNull();
@@ -282,7 +326,7 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.WORKTREE_MUST_BE_UPTODATE,
 				state,
-				null,
+				{ hash: null, mode: null },
 			);
 			expect(result).toBe(UnpackError.NOT_UPTODATE_FILE);
 		});
@@ -296,11 +340,10 @@ describe("checkSingleRequirement", () => {
 				indexHash: null,
 				existsOnDisk: false,
 			});
-			const result = await checkSingleRequirement(
-				PreconditionRequirement.NO_UNTRACKED,
-				state,
-				HASH_A,
-			);
+			const result = await checkSingleRequirement(PreconditionRequirement.NO_UNTRACKED, state, {
+				hash: HASH_A,
+				mode: "100644",
+			});
 			expect(result).toBeNull();
 		});
 
@@ -309,11 +352,10 @@ describe("checkSingleRequirement", () => {
 				indexHash: HASH_A,
 				existsOnDisk: true,
 			});
-			const result = await checkSingleRequirement(
-				PreconditionRequirement.NO_UNTRACKED,
-				state,
-				HASH_B,
-			);
+			const result = await checkSingleRequirement(PreconditionRequirement.NO_UNTRACKED, state, {
+				hash: HASH_B,
+				mode: "100644",
+			});
 			expect(result).toBeNull();
 		});
 
@@ -323,11 +365,10 @@ describe("checkSingleRequirement", () => {
 				existsOnDisk: true, // untracked: exists on disk, not in index
 				worktreeHash: HASH_C,
 			});
-			const result = await checkSingleRequirement(
-				PreconditionRequirement.NO_UNTRACKED,
-				state,
-				HASH_A,
-			);
+			const result = await checkSingleRequirement(PreconditionRequirement.NO_UNTRACKED, state, {
+				hash: HASH_A,
+				mode: "100644",
+			});
 			expect(result).toBe(UnpackError.WOULD_LOSE_UNTRACKED_OVERWRITTEN);
 		});
 
@@ -339,11 +380,10 @@ describe("checkSingleRequirement", () => {
 				existsOnDisk: true,
 				worktreeHash: HASH_A, // untracked, content matches result
 			});
-			const result = await checkSingleRequirement(
-				PreconditionRequirement.NO_UNTRACKED,
-				state,
-				HASH_A,
-			);
+			const result = await checkSingleRequirement(PreconditionRequirement.NO_UNTRACKED, state, {
+				hash: HASH_A,
+				mode: "100644",
+			});
 			expect(result).toBe(UnpackError.WOULD_LOSE_UNTRACKED_OVERWRITTEN);
 		});
 
@@ -354,11 +394,10 @@ describe("checkSingleRequirement", () => {
 				ignoredOnDisk: true,
 				worktreeHash: HASH_A,
 			});
-			const result = await checkSingleRequirement(
-				PreconditionRequirement.NO_UNTRACKED,
-				state,
-				HASH_B,
-			);
+			const result = await checkSingleRequirement(PreconditionRequirement.NO_UNTRACKED, state, {
+				hash: HASH_B,
+				mode: "100644",
+			});
 			expect(result).toBeNull();
 		});
 	});
@@ -374,7 +413,7 @@ describe("checkSingleRequirement", () => {
 			const result = await checkSingleRequirement(
 				PreconditionRequirement.NO_UNTRACKED_REMOVED,
 				state,
-				null,
+				{ hash: null, mode: null },
 			);
 			expect(result).toBeNull();
 		});

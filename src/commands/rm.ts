@@ -14,6 +14,7 @@ import { join, relative, resolve } from "../lib/path.ts";
 import { containsWildcard, matchPathspecs, parsePathspec } from "../lib/pathspec.ts";
 import { resolveHead } from "../lib/refs.ts";
 import { hashCleanedWorktreeEntry } from "../lib/eol.ts";
+import { worktreeMode } from "../lib/index.ts";
 import { lstatSafe } from "../lib/symlink.ts";
 import { flattenTree } from "../lib/tree-ops.ts";
 import type { GitContext, Index, ObjectId } from "../lib/types.ts";
@@ -167,12 +168,12 @@ async function checkSafety(
 ): Promise<{ stdout: string; stderr: string; exitCode: number } | null> {
 	// Build HEAD tree map
 	const headHash = await resolveHead(gitCtx);
-	const headMap = new Map<string, ObjectId>();
+	const headMap = new Map<string, { hash: ObjectId; mode: string }>();
 	if (headHash) {
 		const headCommit = await readCommit(gitCtx, headHash);
 		const treeEntries = await flattenTree(gitCtx, headCommit.tree);
 		for (const e of treeEntries) {
-			headMap.set(e.path, e.hash);
+			headMap.set(e.path, { hash: e.hash, mode: e.mode });
 		}
 	}
 
@@ -185,24 +186,19 @@ async function checkSafety(
 		if (!entry) continue;
 
 		// Check staged: index differs from HEAD
-		const headEntryHash = headMap.get(path);
-		const staged = headEntryHash !== entry.hash; // also true if not in HEAD
+		const headEntry = headMap.get(path);
+		const staged =
+			headEntry?.hash !== entry.hash || Number.parseInt(headEntry.mode, 8) !== entry.mode;
 
 		// Check local: working tree differs from index
 		// Always check this — needed even with --cached for the "both" case
 		let local = false;
 		if (gitCtx.workTree) {
 			const fullPath = join(gitCtx.workTree, path);
-			let filePresent = false;
-			try {
-				await lstatSafe(gitCtx.fs, fullPath);
-				filePresent = true;
-			} catch {
-				filePresent = false;
-			}
-			if (filePresent) {
-				const wtHash = await hashCleanedWorktreeEntry(gitCtx, fullPath, entry.hash);
-				local = wtHash !== entry.hash;
+			const st = await lstatSafe(gitCtx.fs, fullPath).catch(() => null);
+			if (st) {
+				const wtHash = await hashCleanedWorktreeEntry(gitCtx, fullPath, entry.hash, st);
+				local = wtHash !== entry.hash || worktreeMode(gitCtx.fs, entry, st) !== entry.mode;
 			}
 		}
 

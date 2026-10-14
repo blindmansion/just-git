@@ -2185,7 +2185,11 @@ export async function applyMergeResult(
 		const stagedChangeErrors: string[] = [];
 		for (const [path, entry] of indexMap) {
 			const headEntry = headMap.get(path);
-			if (!headEntry || headEntry.hash !== entry.hash) {
+			if (
+				!headEntry ||
+				headEntry.hash !== entry.hash ||
+				Number.parseInt(headEntry.mode, 8) !== entry.mode
+			) {
 				stagedChangeErrors.push(path);
 			}
 		}
@@ -2348,7 +2352,11 @@ export async function applyMergeResult(
 		for (const entry of result.entries) {
 			if (entry.stage === 0) {
 				const headEntry = headMap.get(entry.path);
-				if (headEntry && headEntry.hash === entry.hash) {
+				if (
+					headEntry &&
+					headEntry.hash === entry.hash &&
+					Number.parseInt(headEntry.mode, 8) === entry.mode
+				) {
 					unchangedPaths.add(entry.path);
 					continue;
 				}

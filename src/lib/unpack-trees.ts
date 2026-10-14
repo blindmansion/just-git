@@ -690,23 +690,29 @@ export function twowayMerge(state: PathState, opts: UnpackOptions): MergeDecisio
 // SECTION 10: Precondition Verification
 // =====================================================================
 
+/** Hash and mode of a merge result entry; hash is null when the path is deleted. */
+interface ResultEntry {
+	hash: ObjectId | null;
+	mode: string | number | null;
+}
+
 /**
- * Determine the hash of the merge result for a given decision.
+ * Determine the hash and mode of the merge result for a given decision.
  * Used by escape hatch evaluation.
  */
-function resolveResultHash(decision: MergeDecision, state: PathState): ObjectId | null {
+function resolveResult(decision: MergeDecision, state: PathState): ResultEntry {
 	switch (decision.action) {
 		case MergeAction.TAKE:
-			if (decision.takeFrom === "head") return state.headHash;
-			if (decision.takeFrom === "remote") return state.remoteHash;
-			if (decision.takeFrom === "base") return state.baseHash;
-			return null;
-		case MergeAction.DELETE:
-			return null;
+			if (decision.takeFrom === "head") return { hash: state.headHash, mode: state.headMode };
+			if (decision.takeFrom === "remote") return { hash: state.remoteHash, mode: state.remoteMode };
+			// PathState carries no base mode; base is never taken by the
+			// one-way/two-way merge functions.
+			if (decision.takeFrom === "base") return { hash: state.baseHash, mode: null };
+			return { hash: null, mode: null };
 		case MergeAction.KEEP:
-			return state.indexHash;
+			return { hash: state.indexHash, mode: state.indexMode };
 		default:
-			return null;
+			return { hash: null, mode: null };
 	}
 }
 
@@ -728,12 +734,12 @@ async function checkDecisionPreconditions(
 
 		const state = pathStates.get(path);
 		if (!state) continue;
-		const resultHash = resolveResultHash(decision, state);
+		const result = resolveResult(decision, state);
 
 		for (const req of decision.requirements) {
 			if (opts.allowStagedChanges && req === PreconditionRequirement.INDEX_MUST_MATCH_HEAD)
 				continue;
-			const error = await checkSingleRequirement(req, state, resultHash);
+			const error = await checkSingleRequirement(req, state, result);
 			if (error) {
 				rejected.push({ path, error });
 				break; // One error per path
@@ -757,7 +763,7 @@ async function checkDecisionPreconditions(
 export async function checkSingleRequirement(
 	req: PreconditionRequirement,
 	state: PathState,
-	resultHash: ObjectId | null,
+	result: ResultEntry,
 	options?: { allowContentEscapeHatch?: boolean },
 ): Promise<UnpackError | null> {
 	switch (req) {
@@ -773,14 +779,17 @@ export async function checkSingleRequirement(
 			// is handled at the classification level (empty requirements).
 			// Two-way cases 18/19 (index matches new) are handled by
 			// explicit branches returning KEEP with no requirements.
-			if (state.indexHash !== state.headHash) {
+			if (!same(state.indexHash, state.indexMode, state.headHash, state.headMode)) {
 				return UnpackError.WOULD_OVERWRITE;
 			}
 			return null;
 
 		case PreconditionRequirement.INDEX_MUST_MATCH_RESULT:
 			// If index exists, it must match the merge result.
-			if (state.indexHash !== null && state.indexHash !== resultHash) {
+			if (
+				state.indexHash !== null &&
+				!same(state.indexHash, state.indexMode, result.hash, result.mode)
+			) {
 				return UnpackError.WOULD_OVERWRITE;
 			}
 			return null;
@@ -793,19 +802,19 @@ export async function checkSingleRequirement(
 			if (!state.existsOnDisk) return null;
 			// Need the actual worktree hash — lazy fetch here
 			const wtHash = await state.getWorktreeHash();
-			if (wtHash !== state.indexHash) {
-				if (options?.allowContentEscapeHatch) {
-					// Escape hatch: worktree already matches the result
-					if (resultHash !== null && wtHash === resultHash) return null;
-					// Escape hatch: worktree deleted and result also deletes
-					if (wtHash === null && resultHash === null) return null;
-				}
-				return UnpackError.NOT_UPTODATE_FILE;
+			if (
+				wtHash === state.indexHash &&
+				(wtHash === null || (await state.getWorktreeMode()) === state.indexMode)
+			) {
+				return null;
 			}
-			if (wtHash !== null && (await state.getWorktreeMode()) !== state.indexMode) {
-				return UnpackError.NOT_UPTODATE_FILE;
+			if (options?.allowContentEscapeHatch) {
+				// Escape hatch: worktree already matches the result
+				// (or is deleted and the result also deletes).
+				const wtMode = wtHash === null ? null : await state.getWorktreeMode();
+				if (same(wtHash, wtMode, result.hash, result.mode)) return null;
 			}
-			return null;
+			return UnpackError.NOT_UPTODATE_FILE;
 		}
 
 		case PreconditionRequirement.NO_UNTRACKED:

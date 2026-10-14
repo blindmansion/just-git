@@ -16,6 +16,7 @@ import {
 	defaultStat,
 	readIndex,
 	refreshIndexStatsAfterCheckout,
+	worktreeMode,
 	writeIndex,
 } from "./index.ts";
 import { readCommit } from "./object-db.ts";
@@ -32,7 +33,7 @@ import {
 	updateRef,
 } from "./refs.ts";
 import { formatLongTrackingInfo, getTrackingInfo } from "./status-format.ts";
-import { isSubmoduleMode } from "./symlink.ts";
+import { isSubmoduleMode, lstatSafe } from "./symlink.ts";
 import { flattenTree, flattenTreeToMap } from "./tree-ops.ts";
 import type { GitContext, GitRepo, ObjectId } from "./types.ts";
 import { applyWorktreeOps, checkoutTrees } from "./unpack-trees.ts";
@@ -306,58 +307,63 @@ export async function restoreConflicted(
 export async function formatCheckoutSummary(
 	ctx: GitContext,
 	targetTreeHash: ObjectId,
-	index: { entries: { path: string; hash: string; stage: number }[] },
+	index: { entries: { path: string; hash: string; mode: number; stage: number }[] },
 ): Promise<string> {
 	if (!ctx.workTree) return "";
 
 	const treeEntries = await flattenTree(ctx, targetTreeHash);
-	const treeMap = new Map<string, string>();
+	const treeMap = new Map<string, { hash: string; mode: number }>();
 	for (const e of treeEntries) {
 		if (isSubmoduleMode(e.mode)) continue;
-		treeMap.set(e.path, e.hash);
+		treeMap.set(e.path, { hash: e.hash, mode: Number.parseInt(e.mode, 8) });
 	}
 
-	const indexMap = new Map<string, string>();
+	const indexMap = new Map<string, { hash: string; mode: number }>();
 	for (const e of index.entries) {
 		if (e.stage === 0) {
-			indexMap.set(e.path, e.hash);
+			indexMap.set(e.path, { hash: e.hash, mode: e.mode });
 		}
 	}
 
-	const wtHashMap = new Map<string, string | null>();
-	for (const [path] of indexMap) {
+	// Worktree state per index path: null = missing, undefined = not a
+	// file (e.g. a directory), otherwise the hash and mode git would see.
+	const wtMap = new Map<string, { hash: string; mode: number } | null>();
+	for (const [path, entry] of indexMap) {
 		const fullPath = join(ctx.workTree as string, path);
-		if (await ctx.fs.exists(fullPath)) {
-			const stat = await ctx.fs.stat(fullPath);
-			if (stat.isFile) {
-				wtHashMap.set(path, await hashCleanedWorktreeEntry(ctx, fullPath, indexMap.get(path)));
-			}
-		} else {
-			wtHashMap.set(path, null);
+		const st = await lstatSafe(ctx.fs, fullPath).catch(() => null);
+		if (!st) {
+			wtMap.set(path, null);
+		} else if (st.isFile || st.isSymbolicLink) {
+			wtMap.set(path, {
+				hash: await hashCleanedWorktreeEntry(ctx, fullPath, entry.hash, st),
+				mode: worktreeMode(ctx.fs, entry, st),
+			});
 		}
 	}
+
+	const differs = (a: { hash: string; mode: number }, b: { hash: string; mode: number }) =>
+		a.hash !== b.hash || a.mode !== b.mode;
 
 	const lines: string[] = [];
 
-	for (const [path, treeHash] of treeMap) {
-		const indexHash = indexMap.get(path);
-		if (indexHash === undefined) {
+	for (const [path, treeEntry] of treeMap) {
+		const indexEntry = indexMap.get(path);
+		if (indexEntry === undefined) {
 			lines.push(`D\t${path}`);
 			continue;
 		}
 
-		const wtHash = wtHashMap.get(path);
-		if (wtHash === null) {
+		const wt = wtMap.get(path);
+		if (wt === null) {
 			lines.push(`D\t${path}`);
-		} else if (indexHash !== treeHash || (wtHash !== undefined && wtHash !== treeHash)) {
+		} else if (differs(indexEntry, treeEntry) || (wt !== undefined && differs(wt, treeEntry))) {
 			lines.push(`M\t${path}`);
 		}
 	}
 
 	for (const [path] of indexMap) {
 		if (!treeMap.has(path)) {
-			const wtHash = wtHashMap.get(path);
-			if (wtHash != null) {
+			if (wtMap.get(path) != null) {
 				lines.push(`A\t${path}`);
 			}
 		}
