@@ -687,12 +687,12 @@ async function formatWithGraph(
 		// Diff/stat output gets padding prefixes (columns already settled)
 		if (diffText) {
 			const diffLines = diffText.replace(/\n$/, "").split("\n");
-			if (isOneline || customFormat !== null) {
+			if (isOneline) {
 				for (const dl of diffLines) {
 					output.push(graph.paddingPrefix() + dl);
 				}
 			} else {
-				// Medium/full format: blank separator before diff
+				// Blank separator before the diff, as for non-graph output
 				output.push(graph.paddingPrefix());
 				for (const dl of diffLines) {
 					output.push(graph.paddingPrefix() + dl);

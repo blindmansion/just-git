@@ -20,5 +20,7 @@ export default {
 		"git log --graph --oneline --stat",
 		"git log --graph -p -n2",
 		"git log --graph --stat",
+		"git log --graph --format=%s --stat",
+		'git log --graph --format="%h %s" --name-status',
 	],
 } satisfies GraphScenario;
