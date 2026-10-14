@@ -17,8 +17,14 @@ export interface MaterializeTarget {
 	 * it, every file is written with the target's default mode.
 	 */
 	chmod?(path: string, mode: number): Promise<void>;
-	lstat?(path: string): Promise<{ mode: number; isSymbolicLink: boolean }>;
-	stat?(path: string): Promise<{ mode: number }>;
+	/**
+	 * Read an existing file's mode without following symlinks. Node's
+	 * `fs.promises.lstat` fits: `isSymbolicLink` may be a boolean or a
+	 * method.
+	 */
+	lstat?(path: string): Promise<{ mode?: number; isSymbolicLink?: boolean | (() => boolean) }>;
+	/** Fallback for `lstat` (follows symlinks). Node's `fs.promises.stat` fits. */
+	stat?(path: string): Promise<{ mode?: number }>;
 }
 
 /**
@@ -89,9 +95,12 @@ async function existingFileMode(target: MaterializeTarget, path: string): Promis
 	try {
 		if (target.lstat) {
 			const st = await target.lstat(path);
-			return st.isSymbolicLink ? null : st.mode;
+			const link =
+				typeof st.isSymbolicLink === "function" ? st.isSymbolicLink() : st.isSymbolicLink;
+			if (link || ((st.mode ?? 0) & 0o170000) === 0o120000) return null;
+			return st.mode ?? null;
 		}
-		if (target.stat) return (await target.stat(path)).mode;
+		if (target.stat) return (await target.stat(path))?.mode ?? null;
 	} catch {}
 	return null;
 }

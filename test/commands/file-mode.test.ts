@@ -2,6 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { createGit, MemoryFileSystem } from "../../src";
 import type { FileSystem } from "../../src";
 import { Bash, InMemoryFs } from "just-bash";
+import { chmod, lstat, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { MaterializeTarget } from "../../src/repo";
+import { readCommit, revParse } from "../../src/repo/reading.ts";
+import { createTreeAccessor } from "../../src/repo/tree-accessor.ts";
 import { createSandboxWorktree, createWorktree, extractTree } from "../../src/repo/worktree.ts";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
@@ -351,6 +357,62 @@ describe("createWorktree and extractTree write exec bits", () => {
 		Object.defineProperty(fs, "chmod", { value: undefined });
 		await extractTree(repo, "main", fs, "/out");
 		expect((await fs.stat("/out/run.sh")).mode).toBe(0o100644);
+	});
+});
+
+// A target written against Node's fs: `lstat` returns a `Stats` whose
+// `isSymbolicLink` is a method, and `mkdir` resolves to a path.
+class NodeTarget implements MaterializeTarget {
+	writeFile(p: string, content: string | Uint8Array) {
+		return writeFile(p, content);
+	}
+	async mkdir(p: string, options?: { recursive?: boolean }) {
+		await mkdir(p, options);
+	}
+	chmod(p: string, mode: number) {
+		return chmod(p, mode);
+	}
+	lstat(p: string) {
+		return lstat(p);
+	}
+}
+
+class NodeStatOnlyTarget implements MaterializeTarget {
+	writeFile(p: string, content: string | Uint8Array) {
+		return writeFile(p, content);
+	}
+	async mkdir(p: string, options?: { recursive?: boolean }) {
+		await mkdir(p, options);
+	}
+	chmod(p: string, mode: number) {
+		return chmod(p, mode);
+	}
+	stat(p: string) {
+		return stat(p);
+	}
+}
+
+describe("materialize onto a Node fs target", () => {
+	const targets: [string, () => MaterializeTarget][] = [
+		["lstat with isSymbolicLink()", () => new NodeTarget()],
+		["stat only", () => new NodeStatOnlyTarget()],
+	];
+
+	test.each(targets)("sets and clears exec bits on disk (%s)", async (_, makeTarget) => {
+		const repo = await storedRepoWithExecutable();
+		const commit = await readCommit(repo, (await revParse(repo, "main"))!);
+		const dir = await mkdtemp(join(tmpdir(), "just-git-materialize-"));
+		try {
+			await writeFile(join(dir, "plain.txt"), "old\n");
+			await chmod(join(dir, "plain.txt"), 0o755);
+			const written = await createTreeAccessor(repo, commit.tree).materialize(makeTarget(), dir);
+			expect(written).toBe(2);
+			expect((await stat(join(dir, "run.sh"))).mode & 0o777).toBe(0o755);
+			expect((await stat(join(dir, "plain.txt"))).mode & 0o777).toBe(0o644);
+			expect(await Bun.file(join(dir, "plain.txt")).text()).toBe("a\n");
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
 	});
 });
 
