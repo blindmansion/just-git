@@ -10,7 +10,13 @@ import {
 	requireHead,
 	requireRevision,
 } from "../lib/command-utils.ts";
-import { computeDiffStats, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
+import {
+	computeDiffStats,
+	formatShortstatParts,
+	formatSummaryLines,
+	renderStatLines,
+	withSummary,
+} from "../lib/commit-summary.ts";
 import { formatDate } from "../lib/date.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algorithm.ts";
 import {
@@ -47,6 +53,12 @@ const decoder = new TextDecoder();
 const QUIET_NAME_CONFLICT =
 	"options '--name-only', '--name-status', '--check', and '-s' cannot be used together";
 
+/** The diff a commit is shown with: a main format and/or the --summary lines. */
+interface ShowDiffOutput {
+	format: ShowDiffFormat;
+	summary: boolean;
+}
+
 type ShowDiffFormat =
 	| "patch"
 	| "stat"
@@ -69,6 +81,7 @@ export function registerShowCommand(parent: Command, ext?: GitExtensions) {
 			nameStatus: f().describe("Show names and status of changed files"),
 			shortstat: f().describe("Show only the shortstat summary line"),
 			numstat: f().describe("Machine-readable insertions/deletions per file"),
+			summary: f().describe("Show creations, deletions, renames and mode changes"),
 			format: o.string().describe("Pretty-print format string"),
 			pretty: o.string().describe("Pretty-print format or preset name"),
 		},
@@ -118,11 +131,16 @@ export function registerShowCommand(parent: Command, ext?: GitExtensions) {
 				diffFormat = "shortstat";
 			} else if (args.numstat) {
 				diffFormat = "numstat";
-			} else if (args.quiet && !args.patch) {
+			} else if ((args.quiet || args.summary) && !args.patch) {
 				diffFormat = null;
 			} else {
 				diffFormat = "patch";
 			}
+			// Git drops --summary when a name format or --no-patch is in effect.
+			const summary =
+				args.summary && !args.noPatch && diffFormat !== "name-only" && diffFormat !== "name-status";
+			const diffOutput: ShowDiffOutput | null =
+				diffFormat || summary ? { format: diffFormat, summary } : null;
 
 			// Determine header format
 			const formatRaw = args.format ?? args.pretty;
@@ -142,7 +160,7 @@ export function registerShowCommand(parent: Command, ext?: GitExtensions) {
 						hash,
 						commit,
 						renameState,
-						diffFormat,
+						diffOutput,
 						customFormat,
 						presetName,
 					);
@@ -158,7 +176,7 @@ export function registerShowCommand(parent: Command, ext?: GitExtensions) {
 						gitCtx,
 						tag,
 						renameState,
-						diffFormat,
+						diffOutput,
 						customFormat,
 						presetName,
 					);
@@ -235,7 +253,7 @@ async function formatCommitShow(
 	hash: ObjectId,
 	commit: Commit,
 	renameState: RenameWarningState,
-	diffFormat: ShowDiffFormat = "patch",
+	diffOutput: ShowDiffOutput | null,
 	customFormat: string | null = null,
 	presetName: string | null = null,
 ): Promise<string> {
@@ -265,42 +283,76 @@ async function formatCommitShow(
 		header = lines.join("\n");
 	}
 
-	if (!diffFormat) {
+	if (!diffOutput) {
 		return `${header}\n`;
 	}
 
 	// ── Diff ────────────────────────────────────────────────────
-	let diffOutput = "";
+	let body = "";
+	let hasChanges = false;
 	if (commit.parents.length <= 1) {
 		const parentTree =
 			commit.parents.length === 1
 				? (await readCommit(ctx, commit.parents[0] as ObjectId)).tree
 				: null;
-
-		const rawDiffs = await diffTrees(ctx, parentTree, commit.tree);
-		const {
-			remaining: diffs,
-			renames,
-			neededRenameLimit,
-		} = await detectRenames(ctx, rawDiffs, {
-			limit: renameState.limit,
-		});
-		renameState.needed = Math.max(renameState.needed ?? 0, neededRenameLimit ?? 0) || undefined;
-		diffOutput = await formatShowDiff(ctx, diffs, renames, diffFormat);
+		const { diffs, renames } = await diffWithRenames(ctx, parentTree, commit.tree, renameState);
+		hasChanges = diffs.length > 0 || renames.length > 0;
+		body = await formatShowDiff(ctx, diffs, renames, diffOutput);
 	} else {
-		if (diffFormat === "patch") {
-			diffOutput = (await formatCombinedDiff(ctx, commit)) ?? "";
-		}
-		// For non-patch formats on merge commits, no output (matches real git)
+		body = await formatMergeShowDiff(ctx, commit, renameState, diffOutput);
 	}
 
-	if (diffOutput) {
-		return `${header}\n\n${diffOutput.replace(/\n$/, "")}\n`;
+	if (body) {
+		return `${header}\n\n${body.replace(/\n$/, "")}\n`;
 	}
-	if (commit.parents.length >= 2) {
+	// Git still prints the separator line when a commit has changes but the
+	// requested output is empty, e.g. --summary on a content-only change.
+	if (hasChanges || commit.parents.length >= 2) {
 		return `${header}\n\n`;
 	}
 	return `${header}\n`;
+}
+
+async function diffWithRenames(
+	ctx: GitRepo,
+	parentTree: ObjectId | null,
+	tree: ObjectId,
+	renameState: RenameWarningState,
+): Promise<{ diffs: TreeDiffEntry[]; renames: RenamePair[] }> {
+	const rawDiffs = await diffTrees(ctx, parentTree, tree);
+	const { remaining, renames, neededRenameLimit } = await detectRenames(ctx, rawDiffs, {
+		limit: renameState.limit,
+	});
+	renameState.needed = Math.max(renameState.needed ?? 0, neededRenameLimit ?? 0) || undefined;
+	return { diffs: remaining, renames };
+}
+
+/**
+ * Git shows a merge's patch as a combined diff, but its stat formats and
+ * --summary compare the merge with its first parent. The name formats
+ * print nothing here.
+ */
+async function formatMergeShowDiff(
+	ctx: GitRepo,
+	commit: Commit,
+	renameState: RenameWarningState,
+	output: ShowDiffOutput,
+): Promise<string> {
+	const statFormat =
+		output.format === "stat" || output.format === "shortstat" || output.format === "numstat"
+			? output.format
+			: null;
+	let firstParent = "";
+	if (statFormat || output.summary) {
+		const parentTree = (await readCommit(ctx, commit.parents[0] as ObjectId)).tree;
+		const { diffs, renames } = await diffWithRenames(ctx, parentTree, commit.tree, renameState);
+		firstParent = await formatShowDiff(ctx, diffs, renames, {
+			format: statFormat,
+			summary: output.summary,
+		});
+	}
+	const combined = output.format === "patch" ? await formatCombinedDiff(ctx, commit) : "";
+	return withSummary(combined, firstParent, combined !== "");
 }
 
 // ── Tag display ─────────────────────────────────────────────────────
@@ -309,7 +361,7 @@ async function formatTagShow(
 	ctx: GitRepo,
 	tag: Tag,
 	renameState: RenameWarningState,
-	diffFormat: ShowDiffFormat = "patch",
+	diffOutput: ShowDiffOutput | null,
 	customFormat: string | null = null,
 	presetName: string | null = null,
 ): Promise<string> {
@@ -331,7 +383,7 @@ async function formatTagShow(
 			tag.object,
 			commit,
 			renameState,
-			diffFormat,
+			diffOutput,
 			customFormat,
 			presetName,
 		);
@@ -356,6 +408,17 @@ function formatTreeShow(tree: Tree): string {
 // ── Diff format dispatch ────────────────────────────────────────────
 
 async function formatShowDiff(
+	ctx: GitRepo,
+	diffs: TreeDiffEntry[],
+	renames: RenamePair[],
+	output: ShowDiffOutput,
+): Promise<string> {
+	const main = await formatShowDiffFormat(ctx, diffs, renames, output.format);
+	if (!output.summary) return main;
+	return withSummary(main, formatSummaryLines(diffs, renames), output.format === "patch");
+}
+
+async function formatShowDiffFormat(
 	ctx: GitRepo,
 	diffs: TreeDiffEntry[],
 	renames: RenamePair[],
@@ -406,7 +469,7 @@ async function showStat(
 	diffs: TreeDiffEntry[],
 	renames: RenamePair[],
 ): Promise<string> {
-	const { fileStats } = await computeDiffStats(ctx, diffs, renames);
+	const fileStats = await computeDiffStats(ctx, diffs, renames);
 	fileStats.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
 	return renderStatLines(fileStats);
 }
@@ -416,7 +479,7 @@ async function showShortstat(
 	diffs: TreeDiffEntry[],
 	renames: RenamePair[],
 ): Promise<string> {
-	const { fileStats } = await computeDiffStats(ctx, diffs, renames);
+	const fileStats = await computeDiffStats(ctx, diffs, renames);
 	let totalIns = 0;
 	let totalDel = 0;
 	for (const s of fileStats) {

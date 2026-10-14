@@ -11,7 +11,13 @@ import {
 	requireGitContext,
 	requireWorkTree,
 } from "../lib/command-utils.ts";
-import { type FileStat, formatShortstatParts, renderStatLines } from "../lib/commit-summary.ts";
+import {
+	type FileStat,
+	formatShortstatParts,
+	formatSummaryLines,
+	renderStatLines,
+	type SummaryRename,
+} from "../lib/commit-summary.ts";
 import { formatUnifiedDiff, myersDiff, splitLinesWithNL } from "../lib/diff-algorithm.ts";
 import { getStage0Entries, readIndex } from "../lib/index.ts";
 import { findAllMergeBases } from "../lib/merge.ts";
@@ -119,6 +125,7 @@ export function registerDiffCommand(parent: Command, ext?: GitExtensions) {
 			nameStatus: f().describe("Show names and status of changed files"),
 			shortstat: f().describe("Show only the shortstat summary line"),
 			numstat: f().describe("Machine-readable insertions/deletions per file"),
+			summary: f().describe("Show creations, deletions, renames and mode changes"),
 			unified: o.number().alias("U").describe("Generate diffs with <n> lines of context"),
 			findRenames: f().alias("M").describe("Detect renames (enabled by default)"),
 			findCopies: f().alias("C").describe("Detect copies (accepted for compatibility)"),
@@ -185,7 +192,14 @@ export function registerDiffCommand(parent: Command, ext?: GitExtensions) {
 
 			if (isError(result)) return result;
 			const contextLines = args.unified;
-			const output = await formatOutput(gitCtx, result.items, format, contextLines);
+			// Git drops --summary under the name formats, and --summary on its
+			// own replaces the patch.
+			const summary = args.summary && format !== "name-only" && format !== "name-status";
+			const output =
+				summary && format === "unified"
+					? { stdout: "", stderr: "", exitCode: 0 }
+					: await formatOutput(gitCtx, result.items, format, contextLines);
+			if (summary) output.stdout += formatAsSummary(result.items);
 			if (result.stderr) output.stderr = result.stderr;
 			return output;
 		},
@@ -860,6 +874,20 @@ async function formatAsNumstat(gitCtx: GitContext, items: DiffFileResult[]): Pro
 		}
 	}
 	return output;
+}
+
+function formatAsSummary(items: DiffFileResult[]): string {
+	const diffs: TreeDiffEntry[] = [];
+	const renames: SummaryRename[] = [];
+	for (const { path, status, oldPath, oldMode, newMode, similarity } of items) {
+		if (status === "R" && oldPath) {
+			renames.push({ oldPath, newPath: path, similarity: similarity ?? 100, oldMode, newMode });
+		} else if (status === "A" || status === "D" || status === "M") {
+			const treeStatus = status === "A" ? "added" : status === "D" ? "deleted" : "modified";
+			diffs.push({ path, status: treeStatus, oldMode, newMode });
+		}
+	}
+	return formatSummaryLines(diffs, renames);
 }
 
 async function formatAsStat(gitCtx: GitContext, items: DiffFileResult[]): Promise<string> {

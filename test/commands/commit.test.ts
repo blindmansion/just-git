@@ -176,6 +176,39 @@ describe("git commit", () => {
 		});
 	});
 
+	describe("summary lines", () => {
+		test("print mode changes and renames that change mode like git", async () => {
+			const lines = (n: number) => Array.from({ length: n }, (_, i) => `${i + 1}\n`).join("");
+			const bash = createTestBash({
+				files: { "/repo/a": "a\n", "/repo/big": lines(20) },
+				env: TEST_ENV,
+			});
+			await bash.exec("git init");
+			await bash.exec("git add .");
+			await bash.exec('git commit -m "first"');
+			await bash.fs.writeFile("/repo/big", lines(15));
+			await bash.exec("git mv big big2");
+			await bash.exec("chmod +x a big2");
+			await bash.fs.writeFile('/repo/q"d', "q\n");
+			await bash.exec("git add -A");
+
+			const result = await bash.exec('git commit -m "modes"');
+			const short = (await bash.exec("git rev-parse --short HEAD")).stdout.trim();
+			expect(result).toMatchObject({
+				stdout:
+					`[main ${short}] modes\n` +
+					" Author: Test Author <author@test.com>\n" +
+					" 3 files changed, 1 insertion(+), 5 deletions(-)\n" +
+					" mode change 100644 => 100755 a\n" +
+					" rename big => big2 (70%)\n" +
+					" mode change 100644 => 100755\n" +
+					' create mode 100644 "q\\"d"\n',
+				stderr: "",
+				exitCode: 0,
+			});
+		});
+	});
+
 	describe("--allow-empty", () => {
 		test("creates a commit with no staged changes", async () => {
 			const { results } = await runScenario(
