@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.10.0
+
+### Added
+
+- Add `git ls-tree` with `-r`, `-d`, `-t`, `--name-only`, `--name-status`, `--full-tree`, `-z`, `--abbrev[=<n>]` and path filters, matching git's output, C-quoting and errors ([#12](https://github.com/blindmansion/just-git/issues/12)). The tree-ish can be `<rev>:<path>` (including `./` and `../` relative to the cwd) or an index form (`:<path>`, `:<n>:<path>`). Contributed by [Harry Nguyen (@Hazzng)](https://github.com/Hazzng) in [#14](https://github.com/blindmansion/just-git/pull/14).
+- Support `--summary` in `git show`, `git log` and `git diff` ([#17](https://github.com/blindmansion/just-git/issues/17), [#19](https://github.com/blindmansion/just-git/issues/19)). It prints git's create, delete, rename and mode-change lines after `--stat`, `--shortstat` or `--numstat` output and before a `-p` or `-U<n>` patch; on its own it replaces the patch. The summary that `commit` and `merge` print uses the same lines, so a mode change prints `mode change 100644 => 100755 <path>` instead of a delete and a create, and unusual paths are C-quoted. Contributed by [Harry Nguyen (@Hazzng)](https://github.com/Hazzng) in [#21](https://github.com/blindmansion/just-git/pull/21).
+
+### Changed
+
+- **A custom `FileSystem` without `chmod` now behaves like `core.fileMode=false`**: mode-only differences are ignored, tracked files keep their index mode, and new executables are staged as `100644`. `init` and `clone` write `filemode = false` on such filesystems. Add `chmod` to track executable bits. **Custom `FileSystem` implementations should keep a file's mode when `writeFile` overwrites it**, as a real disk does; otherwise rewriting an executable stages `100644`.
+- `git log` and `git show` pathspecs are relative to the current directory, as in git. Before, `cd d && git log -- .` listed every commit.
+
+### Fixed
+
+- Checkout sets the executable bit of `100755` entries through the new optional `FileSystem.chmod`, and `status`, `diff`, `diff --cached`, `show` and `commit -a` report mode-only changes (`old mode 100755` / `new mode 100644`) instead of silently committing them ([#10](https://github.com/blindmansion/just-git/issues/10), [#16](https://github.com/blindmansion/just-git/issues/16)). `git mv` keeps the bit. Contributed by [Harry Nguyen (@Hazzng)](https://github.com/Hazzng) in [#15](https://github.com/blindmansion/just-git/pull/15).
+- `merge`, `cherry-pick`, `rebase`, `revert` and `stash apply` keep a file mode change made on either side; before, a branch that only ran `chmod +x` merged cleanly and kept the old mode ([#18](https://github.com/blindmansion/just-git/issues/18)). Two sides adding the same path with different modes now conflict, as in git. Contributed by [Harry Nguyen (@Hazzng)](https://github.com/Hazzng) in [#20](https://github.com/blindmansion/just-git/pull/20).
+- `git show` on a merge commit prints `--stat`, `--shortstat`, `--numstat` and `--summary` against the first parent, as git does, instead of nothing. `git log --graph --format=<fmt>` prints the blank line between each commit and its diff output. Contributed by [Harry Nguyen (@Hazzng)](https://github.com/Hazzng) in [#21](https://github.com/blindmansion/just-git/pull/21).
+- Mode-only local changes count as local changes everywhere git checks for them: `switch`, `checkout` and `merge` refuse to overwrite a staged or unstaged `chmod`, `rm` refuses to remove one, `cherry-pick -n` of a chmod-only commit stages the new mode, and `switch`/`checkout` list such paths as `M`.
+- Honor `core.fileMode` from config, `-c` and operator overrides. With `false`, a `chmod` is invisible to `status`, `diff`, `describe --dirty` and `commit -a`, and new executables are staged as `100644`. Checkout still writes the executable bit, like git.
+- `createWorktree`, `extractTree` and `TreeAccessor.materialize` write the executable bit (and clear it on an existing file), so `git status` is clean right after creating a worktree from a repo with executables.
+- `MemoryFileSystem` and `TreeBackedFs` keep a file's mode when it is overwritten, so editing an executable and running `commit -a` keeps `100755`. `TreeBackedFs.chmod` throws `ELOOP` on a symlink loop instead of hanging.
+- `git stash` saves and restores modes: unstaged `chmod` with or without a content change, `chmod -x`, and new executables under `-u`. A chmod-only change is stashed instead of "No local changes to save", and `apply`/`pop` refuse over a local `chmod`. Symlinks are stashed as links: a retargeted tracked symlink no longer comes back as a link to its old target's content, and `stash -u` no longer saves an untracked symlink as a regular file. `stash show` no longer appends `create mode`/`delete mode`/`mode change` lines to the stat.
+- Pathspecs limit the diff output of `git log` and `git show`, not only which commits are listed: `--stat`, `--shortstat`, `--numstat`, `--name-only`, `--name-status`, `--summary` and `-p` show only matching paths, and `show` prints nothing for a commit with no changes in the paths. `diff`, `log` and `show` apply pathspecs before rename detection, so a file renamed from outside the pathspec shows as a creation, as in git.
+- `status` prints `T` (`typechange:` in long format) when a file becomes a symlink or back, staged and unstaged, and `diff`, `show`, `log -p` and `stash show -p` print git's deletion + creation pair instead of `old mode`/`new mode` lines. `--name-status`, `reset` and `switch`/`checkout` listings print `T` too.
+- `FileStat.dev` and `FileStat.ino` accept `bigint`, so just-bash 3.2+ filesystems type-check as a `FileSystem` without a cast, and a bigint value no longer turns off the index stat cache.
+
+### Known issues
+
+- With just-bash's `InMemoryFs` and `OverlayFs`, overwriting a file (`>`, `sed -i`, `writeFile`) still drops its executable bit, so the next `commit -a` records `100644`. This is an upstream bug, [vercel-labs/just-bash#560](https://github.com/vercel-labs/just-bash/issues/560) (fixes in progress: [#565](https://github.com/vercel-labs/just-bash/pull/565), [#578](https://github.com/vercel-labs/just-bash/pull/578)).
+
 ## 1.9.1
 
 ### Fixed
