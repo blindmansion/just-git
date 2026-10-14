@@ -526,6 +526,24 @@ export async function getConfigValue(
 }
 
 /**
+ * Parse a config value as a boolean, following git's `git_config_bool`:
+ * `true`/`yes`/`on` and `false`/`no`/`off` (any case), the empty string
+ * (false), and integers (non-zero is true, with an optional k/m/g suffix).
+ * A key written without `=` reads as "true". Returns `undefined` for an unset
+ * key or a value git rejects ("bad boolean config value"), so the caller
+ * can fall back to its default.
+ */
+export function parseConfigBool(value: string | undefined): boolean | undefined {
+	if (value === undefined) return undefined;
+	const lower = value.toLowerCase();
+	if (lower === "true" || lower === "yes" || lower === "on") return true;
+	if (lower === "false" || lower === "no" || lower === "off" || lower === "") return false;
+	const int = /^\s*([+-]?\d+)[kmg]?$/i.exec(value);
+	if (int) return Number(int[1]) !== 0;
+	return undefined;
+}
+
+/**
  * Lowercase the section and variable name of a dotted key, leaving any
  * subsection as typed, the way git compares config keys.
  */

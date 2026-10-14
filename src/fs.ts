@@ -44,7 +44,9 @@ export interface FileStat {
  * symlink support. When omitted, symlinks degrade to plain files containing
  * the target path as content (`core.symlinks=false` behavior). The optional
  * `chmod` lets checkout apply the executable bit of `100755` entries; when
- * omitted, exec bits are not tracked (`core.fileMode=false` behavior).
+ * omitted, exec bits are not tracked (`core.fileMode=false` behavior, and
+ * `git init` records `core.filemode = false`). Setting `core.fileMode=false`
+ * in config has the same effect on a FileSystem that does have `chmod`.
  *
  * See {@link MemoryFileSystem} for a ready-made in-memory implementation.
  */

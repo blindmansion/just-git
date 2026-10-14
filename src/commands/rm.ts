@@ -14,7 +14,7 @@ import { join, relative, resolve } from "../lib/path.ts";
 import { containsWildcard, matchPathspecs, parsePathspec } from "../lib/pathspec.ts";
 import { resolveHead } from "../lib/refs.ts";
 import { hashCleanedWorktreeEntry } from "../lib/eol.ts";
-import { worktreeMode } from "../lib/index.ts";
+import { getWorktreeModePolicy, worktreeMode } from "../lib/index.ts";
 import { lstatSafe } from "../lib/symlink.ts";
 import { flattenTree } from "../lib/tree-ops.ts";
 import type { GitContext, Index, ObjectId } from "../lib/types.ts";
@@ -180,6 +180,7 @@ async function checkSafety(
 	const bothChanged: string[] = [];
 	const stagedOnly: string[] = [];
 	const localOnly: string[] = [];
+	const modePolicy = await getWorktreeModePolicy(gitCtx);
 
 	for (const path of paths) {
 		const entry = index.entries.find((e) => e.path === path && e.stage === 0);
@@ -198,7 +199,7 @@ async function checkSafety(
 			const st = await lstatSafe(gitCtx.fs, fullPath).catch(() => null);
 			if (st) {
 				const wtHash = await hashCleanedWorktreeEntry(gitCtx, fullPath, entry.hash, st);
-				local = wtHash !== entry.hash || worktreeMode(gitCtx.fs, entry, st) !== entry.mode;
+				local = wtHash !== entry.hash || worktreeMode(modePolicy, entry, st) !== entry.mode;
 			}
 		}
 

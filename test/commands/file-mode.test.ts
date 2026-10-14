@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createGit, MemoryFileSystem } from "../../src";
 import type { FileSystem } from "../../src";
-import { InMemoryFs, type Bash } from "just-bash";
+import { Bash, InMemoryFs } from "just-bash";
 import { createSandboxWorktree, createWorktree, extractTree } from "../../src/repo/worktree.ts";
 import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
 import { MemoryStorage } from "../../src/server/memory-storage.ts";
@@ -608,5 +608,195 @@ describe("stash keeps modes like git", () => {
 			exitCode: 1,
 		});
 		expect(await sh(bash, "git stash list")).toBe("stash@{0}: WIP on main: 487ea53 init\n");
+	});
+});
+
+describe("core.fileMode=false in config ignores the exec bit like git", () => {
+	const ENV = {
+		GIT_AUTHOR_NAME: "T",
+		GIT_AUTHOR_EMAIL: "t@t",
+		GIT_COMMITTER_NAME: "T",
+		GIT_COMMITTER_EMAIL: "t@t",
+		GIT_AUTHOR_DATE: "1000000000 +0000",
+		GIT_COMMITTER_DATE: "1000000000 +0000",
+	};
+	const aEntry = "100644 78981922613b2afb6025042ff6bd878ac1994e85 0\ta\n";
+	const bEntry = "100755 61780798228d17af2d34fce4cfbdf35556832472 0\tb\n";
+	const clean = "On branch main\nnothing to commit, working tree clean\n";
+
+	/** a is 100644 and b is 100755 in HEAD; then a gains and b loses the exec bit. */
+	async function setup(
+		options: { fileMode?: string | null; git?: ReturnType<typeof createGit> } = {},
+	): Promise<Bash> {
+		// fileMode: a value to set, null to unset it, undefined to keep init's.
+		const { git } = options;
+		const fileMode = "fileMode" in options ? options.fileMode : "false";
+		const bash = new Bash({
+			cwd: "/repo",
+			files: { "/repo/a": "a\n", "/repo/b": "b\n" },
+			env: ENV,
+			customCommands: [git ?? createGit()],
+		});
+		const cmds = ["chmod +x b", "git init -q -b main", "git add .", "git commit -q -m init"];
+		if (fileMode === null) cmds.push("git config --unset core.filemode");
+		else if (fileMode !== undefined) cmds.push(`git config core.fileMode ${fileMode}`);
+		cmds.push("chmod +x a", "chmod -x b");
+		for (const cmd of cmds) await sh(bash, cmd);
+		return bash;
+	}
+
+	async function sh(bash: Bash, cmd: string) {
+		const r = await bash.exec(cmd);
+		if (r.exitCode !== 0) throw new Error(`${cmd}: ${r.stderr}`);
+		return r.stdout;
+	}
+
+	async function perm(bash: Bash, path: string) {
+		return (await bash.fs.stat(`/repo/${path}`)).mode & 0o777;
+	}
+
+	test("status, diff, describe --dirty and commit -a ignore chmod", async () => {
+		const bash = await setup();
+		expect(await sh(bash, "git status --porcelain")).toBe("");
+		expect(await sh(bash, "git status")).toBe(clean);
+		expect(await sh(bash, "git diff")).toBe("");
+		expect(await sh(bash, "git diff --stat")).toBe("");
+		expect(await sh(bash, "git describe --dirty --always")).toBe("e631504\n");
+		expect(await bash.exec("git commit -am x")).toMatchObject({
+			stdout: clean,
+			exitCode: 1,
+		});
+	});
+
+	test("add keeps tracked modes and stages a new executable as 100644", async () => {
+		const bash = await setup();
+		await sh(bash, "echo n > n && chmod +x n");
+		await sh(bash, "git add a b n");
+		expect(await sh(bash, "git ls-files -s")).toBe(
+			aEntry + bEntry + "100644 8ba3a16384aacc37d01564b28401755ce8053f51 0\tn\n",
+		);
+		await sh(bash, "git add -A");
+		expect(await sh(bash, "git ls-files -s a b")).toBe(aEntry + bEntry);
+	});
+
+	test("a content edit keeps the index mode in diff and commit -a", async () => {
+		const bash = await setup();
+		await sh(bash, "echo b2 > b");
+		expect(await sh(bash, "git diff")).toBe(
+			"diff --git a/b b/b\n" +
+				"index 6178079..e6bfff5 100755\n" +
+				"--- a/b\n" +
+				"+++ b/b\n" +
+				"@@ -1 +1 @@\n" +
+				"-b\n" +
+				"+b2\n",
+		);
+		await sh(bash, "git commit -q -am edit");
+		expect(await sh(bash, "git ls-files -s b")).toBe(
+			"100755 e6bfff5c1d0f0ecd501552b43a1e13d8008abc31 0\tb\n",
+		);
+		expect(await sh(bash, "git log --oneline -1")).toBe("4eb3fce edit\n");
+	});
+
+	test.each(["false", "no", "OFF", "0", '""'])(
+		"-c core.fileMode=%s applies to one command",
+		async (value) => {
+			const bash = await setup({ fileMode: undefined });
+			expect(await sh(bash, `git -c core.fileMode=${value} status --porcelain`)).toBe("");
+			expect(await sh(bash, "git status --porcelain")).toBe(" M a\n M b\n");
+		},
+	);
+
+	test.each(["true", "yes", "On", "1", "2"])("core.fileMode=%s tracks chmod", async (value) => {
+		const bash = await setup({ fileMode: value });
+		expect(await sh(bash, "git status --porcelain")).toBe(" M a\n M b\n");
+	});
+
+	test("-c core.filemode=true overrides the file's false", async () => {
+		const bash = await setup();
+		expect(await sh(bash, "git -c core.filemode=true status --porcelain")).toBe(" M a\n M b\n");
+	});
+
+	test("an unset core.fileMode defaults to true", async () => {
+		const bash = await setup({ fileMode: null });
+		expect(await sh(bash, "git status --porcelain")).toBe(" M a\n M b\n");
+	});
+
+	test("operator config: locked and defaults", async () => {
+		const locked = await setup({
+			fileMode: undefined,
+			git: createGit({ config: { locked: { "core.fileMode": "false" } } }),
+		});
+		expect(await sh(locked, "git status --porcelain")).toBe("");
+
+		const defaults = await setup({
+			fileMode: null,
+			git: createGit({ config: { defaults: { "core.filemode": "false" } } }),
+		});
+		expect(await sh(defaults, "git status --porcelain")).toBe("");
+		await sh(defaults, "git config core.filemode true");
+		expect(await sh(defaults, "git status --porcelain")).toBe(" M a\n M b\n");
+	});
+
+	test("stash finds no local changes", async () => {
+		const bash = await setup();
+		expect(await bash.exec("git stash")).toMatchObject({
+			stdout: "No local changes to save\n",
+			exitCode: 0,
+		});
+	});
+
+	test("rm accepts a file with only a chmod", async () => {
+		const bash = await setup();
+		expect(await bash.exec("git rm -q a")).toMatchObject({ stderr: "", exitCode: 0 });
+	});
+
+	test("switch neither lists nor refuses over a chmod", async () => {
+		const bash = await setup();
+		await sh(bash, "git branch side");
+		await sh(bash, "git switch -q -c other");
+		await sh(bash, "echo a2 > a && git commit -q -am a2");
+		await sh(bash, "git switch -q main");
+		await sh(bash, "chmod +x a && chmod -x b");
+
+		expect(await bash.exec("git switch side")).toMatchObject({
+			stdout: "",
+			stderr: "Switched to branch 'side'\n",
+			exitCode: 0,
+		});
+		expect(await bash.exec("git switch other")).toMatchObject({
+			stdout: "",
+			stderr: "Switched to branch 'other'\n",
+			exitCode: 0,
+		});
+		expect(await sh(bash, "cat a")).toBe("a2\n");
+		expect(await perm(bash, "a")).toBe(0o644);
+		expect(await perm(bash, "b")).toBe(0o644);
+		expect(await sh(bash, "git status --porcelain")).toBe("");
+	});
+
+	test("checkout still writes the exec bit of a 100755 entry", async () => {
+		const bash = await setup();
+		await sh(bash, "rm a b");
+		await sh(bash, "git checkout -- a b");
+		expect([await perm(bash, "a"), await perm(bash, "b")]).toEqual([0o644, 0o755]);
+	});
+});
+
+describe("init records whether the FileSystem tracks the exec bit", () => {
+	test("filemode = true with chmod, false without", async () => {
+		const fs = new MemoryFileSystem();
+		const git = createGit({ fs });
+		const run = (cmd: string, cwd: string) => git.exec(cmd, { cwd, env: TEST_ENV });
+		await run("init /with", "/");
+		expect((await run("config core.filemode", "/with")).stdout).toBe("true\n");
+
+		Object.defineProperty(fs, "chmod", { value: undefined });
+		await run("init /without", "/");
+		expect((await run("config core.filemode", "/without")).stdout).toBe("false\n");
+		await run("init --bare /bare", "/");
+		expect((await run("config core.filemode", "/bare")).stdout).toBe("false\n");
+		await run("clone /with /clone", "/");
+		expect((await run("config core.filemode", "/clone")).stdout).toBe("false\n");
 	});
 });

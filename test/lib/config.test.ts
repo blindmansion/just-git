@@ -3,6 +3,7 @@ import {
 	addConfigValueRaw,
 	formatConfigValue,
 	parseConfig,
+	parseConfigBool,
 	parseConfigMulti,
 	serializeConfig,
 	setConfigValueRaw,
@@ -689,5 +690,23 @@ describe("addConfigValueRaw", () => {
 		const result = addConfigValueRaw(base, 'remote "origin"', "push", "value # hash");
 		const cfg = parseConfigMulti(result);
 		expect(cfg['remote "origin"']?.push).toEqual(["value # hash"]);
+	});
+});
+
+describe("parseConfigBool", () => {
+	test.each(["true", "TRUE", "yes", "Yes", "on", "ON", "1", "2", "-1", "1k"])("%s is true", (v) => {
+		expect(parseConfigBool(v)).toBe(true);
+	});
+
+	test.each(["false", "False", "no", "NO", "off", "Off", "0", "", "0m"])("'%s' is false", (v) => {
+		expect(parseConfigBool(v)).toBe(false);
+	});
+
+	test.each(["maybe", "tru", "1x"])("%s is not a boolean", (v) => {
+		expect(parseConfigBool(v)).toBeUndefined();
+	});
+
+	test("unset is undefined", () => {
+		expect(parseConfigBool(undefined)).toBeUndefined();
 	});
 });

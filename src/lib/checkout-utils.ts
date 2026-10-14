@@ -16,6 +16,7 @@ import {
 	defaultStat,
 	readIndex,
 	refreshIndexStatsAfterCheckout,
+	getWorktreeModePolicy,
 	worktreeMode,
 	writeIndex,
 } from "./index.ts";
@@ -328,6 +329,7 @@ export async function formatCheckoutSummary(
 	// Worktree state per index path: null = missing, undefined = not a
 	// file (e.g. a directory), otherwise the hash and mode git would see.
 	const wtMap = new Map<string, { hash: string; mode: number } | null>();
+	const modePolicy = await getWorktreeModePolicy(ctx);
 	for (const [path, entry] of indexMap) {
 		const fullPath = join(ctx.workTree as string, path);
 		const st = await lstatSafe(ctx.fs, fullPath).catch(() => null);
@@ -336,7 +338,7 @@ export async function formatCheckoutSummary(
 		} else if (st.isFile || st.isSymbolicLink) {
 			wtMap.set(path, {
 				hash: await hashCleanedWorktreeEntry(ctx, fullPath, entry.hash, st),
-				mode: worktreeMode(ctx.fs, entry, st),
+				mode: worktreeMode(modePolicy, entry, st),
 			});
 		}
 	}

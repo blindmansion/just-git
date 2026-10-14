@@ -7,12 +7,14 @@ import {
 	indexStatFromFileStat,
 	indexStatMatchesFile,
 	readIndex,
+	worktreeMode,
+	worktreeModePolicy,
 } from "../../src/lib/index";
 import { findRepo } from "../../src/lib/repo";
 import type { IndexEntry } from "../../src/lib/types";
 import { MemoryFileSystem } from "../../src/memory-fs";
 
-const fs = new MemoryFileSystem();
+const policy = worktreeModePolicy(new MemoryFileSystem());
 
 function regularStat(overrides: Partial<FileStat> = {}): FileStat {
 	return {
@@ -41,14 +43,25 @@ describe("index stat cache", () => {
 		const stat = regularStat();
 		const entry = entryFor(stat);
 
-		expect(indexStatMatchesFile(fs, entry, stat, new Date("2026-09-04T12:00:01Z"))).toBe(true);
+		expect(indexStatMatchesFile(policy, entry, stat, new Date("2026-09-04T12:00:01Z"))).toBe(true);
+	});
+
+	test("an exec-bit change misses the cache unless core.fileMode is false", () => {
+		const stat = regularStat();
+		const entry = entryFor(stat);
+		const chmodded = { ...stat, mode: 0o100755 };
+		const timestamp = new Date("2026-09-04T12:00:01Z");
+
+		expect(indexStatMatchesFile(policy, entry, chmodded, timestamp)).toBe(false);
+		const noFileMode = worktreeModePolicy(new MemoryFileSystem(), false);
+		expect(indexStatMatchesFile(noFileMode, entry, chmodded, timestamp)).toBe(true);
 	});
 
 	test("rejects zero/default stat data", () => {
 		const stat = regularStat();
 		const entry = { ...entryFor(stat), stat: defaultStat() };
 
-		expect(indexStatMatchesFile(fs, entry, stat, new Date("2026-09-04T12:00:01Z"))).toBe(false);
+		expect(indexStatMatchesFile(policy, entry, stat, new Date("2026-09-04T12:00:01Z"))).toBe(false);
 	});
 
 	test("missing runtime timestamps degrade to hashing", () => {
@@ -57,9 +70,9 @@ describe("index stat cache", () => {
 		const withoutMtime = { ...stat, mtime: undefined } as unknown as FileStat;
 
 		expect(indexStatFromFileStat(withoutMtime).mtimeSeconds).toBe(0);
-		expect(indexStatMatchesFile(fs, entry, withoutMtime, new Date("2026-09-04T12:00:01Z"))).toBe(
-			false,
-		);
+		expect(
+			indexStatMatchesFile(policy, entry, withoutMtime, new Date("2026-09-04T12:00:01Z")),
+		).toBe(false);
 	});
 
 	test("rejects size and mode changes", () => {
@@ -68,7 +81,7 @@ describe("index stat cache", () => {
 
 		expect(
 			indexStatMatchesFile(
-				fs,
+				policy,
 				entry,
 				{ ...stat, size: stat.size + 1 },
 				new Date("2026-09-04T12:00:01Z"),
@@ -76,7 +89,7 @@ describe("index stat cache", () => {
 		).toBe(false);
 		expect(
 			indexStatMatchesFile(
-				fs,
+				policy,
 				entry,
 				{ ...stat, mode: 0o100755 },
 				new Date("2026-09-04T12:00:01Z"),
@@ -88,7 +101,7 @@ describe("index stat cache", () => {
 		const stat = regularStat();
 		const entry = entryFor(stat);
 
-		expect(indexStatMatchesFile(fs, entry, stat, stat.mtime)).toBe(false);
+		expect(indexStatMatchesFile(policy, entry, stat, stat.mtime)).toBe(false);
 	});
 
 	test("rejects symlinks even when their metadata matches", () => {
@@ -99,7 +112,7 @@ describe("index stat cache", () => {
 		});
 		const entry = entryFor(stat);
 
-		expect(indexStatMatchesFile(fs, entry, stat, new Date("2026-09-04T12:00:01Z"))).toBe(false);
+		expect(indexStatMatchesFile(policy, entry, stat, new Date("2026-09-04T12:00:01Z"))).toBe(false);
 	});
 
 	test("uses optional ctime and identity fields when available", () => {
@@ -113,11 +126,11 @@ describe("index stat cache", () => {
 		const entry = entryFor(stat);
 		const indexTimestamp = new Date("2026-09-04T12:00:01Z");
 
-		expect(indexStatMatchesFile(fs, entry, stat, indexTimestamp)).toBe(true);
-		expect(indexStatMatchesFile(fs, entry, { ...stat, ino: 12 }, indexTimestamp)).toBe(false);
+		expect(indexStatMatchesFile(policy, entry, stat, indexTimestamp)).toBe(true);
+		expect(indexStatMatchesFile(policy, entry, { ...stat, ino: 12 }, indexTimestamp)).toBe(false);
 		expect(
 			indexStatMatchesFile(
-				fs,
+				policy,
 				entry,
 				{ ...stat, ctime: new Date("2026-09-04T11:59:58Z") },
 				indexTimestamp,
@@ -132,13 +145,13 @@ describe("index stat cache", () => {
 
 		expect(entry.stat.dev).toBe(7);
 		expect(entry.stat.ino).toBe(11);
-		expect(indexStatMatchesFile(fs, entry, stat, indexTimestamp)).toBe(true);
+		expect(indexStatMatchesFile(policy, entry, stat, indexTimestamp)).toBe(true);
 		// Same truncated value given as a number still matches.
-		expect(indexStatMatchesFile(fs, entry, { ...stat, dev: 7, ino: 11 }, indexTimestamp)).toBe(
+		expect(indexStatMatchesFile(policy, entry, { ...stat, dev: 7, ino: 11 }, indexTimestamp)).toBe(
 			true,
 		);
-		expect(indexStatMatchesFile(fs, entry, { ...stat, ino: 12n }, indexTimestamp)).toBe(false);
-		expect(indexStatMatchesFile(fs, entry, { ...stat, dev: 8n }, indexTimestamp)).toBe(false);
+		expect(indexStatMatchesFile(policy, entry, { ...stat, ino: 12n }, indexTimestamp)).toBe(false);
+		expect(indexStatMatchesFile(policy, entry, { ...stat, dev: 8n }, indexTimestamp)).toBe(false);
 	});
 
 	test("negative bigint dev/ino are stored as zero and disable the shortcut", () => {
@@ -146,7 +159,7 @@ describe("index stat cache", () => {
 		const entry = entryFor(stat);
 
 		expect(entry.stat.dev).toBe(0);
-		expect(indexStatMatchesFile(fs, entry, stat, new Date("2026-09-04T12:00:01Z"))).toBe(false);
+		expect(indexStatMatchesFile(policy, entry, stat, new Date("2026-09-04T12:00:01Z"))).toBe(false);
 	});
 
 	test("bigint dev/ino round-trip through the on-disk index", async () => {
@@ -173,6 +186,36 @@ describe("index stat cache", () => {
 		expect(entry.stat.dev).toBe(3);
 		expect(entry.stat.ino).toBe(0xffff_ffff);
 		const current = await bigFs.lstat("/repo/file.txt");
-		expect(indexStatMatchesFile(bigFs, entry, current, new Date(Date.now() + 60_000))).toBe(true);
+		expect(
+			indexStatMatchesFile(
+				worktreeModePolicy(bigFs),
+				entry,
+				current,
+				new Date(Date.now() + 60_000),
+			),
+		).toBe(true);
+	});
+});
+
+describe("worktreeMode", () => {
+	const fileModeFalse = worktreeModePolicy(new MemoryFileSystem(), false);
+	const exec = { ...regularStat(), mode: 0o100755 };
+	const plain = regularStat();
+
+	test("core.fileMode=false keeps a tracked file's index mode", () => {
+		expect(worktreeMode(fileModeFalse, { mode: 0o100644 }, exec)).toBe(0o100644);
+		expect(worktreeMode(fileModeFalse, { mode: 0o100755 }, plain)).toBe(0o100755);
+		expect(worktreeMode(policy, { mode: 0o100644 }, exec)).toBe(0o100755);
+	});
+
+	test("core.fileMode=false records a new file as 100644", () => {
+		expect(worktreeMode(fileModeFalse, undefined, exec)).toBe(0o100644);
+		expect(worktreeMode(policy, undefined, exec)).toBe(0o100755);
+	});
+
+	test("a FileSystem without chmod never trusts the exec bit", () => {
+		const fs = new MemoryFileSystem();
+		Object.defineProperty(fs, "chmod", { value: undefined });
+		expect(worktreeModePolicy(fs, true).fileMode).toBe(false);
 	});
 });

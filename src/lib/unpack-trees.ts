@@ -18,7 +18,7 @@
  */
 
 import { comparePaths, err } from "./command-utils.ts";
-import { defaultStat, getStage0Entries, worktreeMode } from "./index.ts";
+import { defaultStat, getStage0Entries, getWorktreeModePolicy, worktreeMode } from "./index.ts";
 import { isInsideWorkTree, verifyPath } from "./path-safety.ts";
 import { dirname, join } from "./path.ts";
 import { hashCleanedWorktreeEntry } from "./eol.ts";
@@ -287,6 +287,7 @@ async function buildPathStates(
 	currentIndex: Index,
 ): Promise<PathState[]> {
 	const treeMaps = await Promise.all(trees.map((t) => flattenTreeToMap(ctx, t.treeHash)));
+	const modePolicy = await getWorktreeModePolicy(ctx);
 
 	const stage0Map = new Map<string, IndexEntry>();
 	const conflictPaths = new Set<string>();
@@ -415,7 +416,7 @@ async function buildPathStates(
 
 		const getWorktreeMode = async (): Promise<number | null> => {
 			const st = await getWorktreeStat();
-			return st ? worktreeMode(ctx.fs, indexEntry, st) : null;
+			return st ? worktreeMode(modePolicy, indexEntry, st) : null;
 		};
 
 		states.push({

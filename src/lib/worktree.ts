@@ -7,6 +7,7 @@ import {
 	getIndexTimestamp,
 	indexStatFromFileStat,
 	indexStatMatchesFile,
+	getWorktreeModePolicy,
 	worktreeMode,
 } from "./index.ts";
 import { readObject, writeObject } from "./object-db.ts";
@@ -47,6 +48,7 @@ export async function diffIndexToWorkTree(
 	const stopAfterFirst = opts?.stopAfterFirst ?? false;
 	const pathFilter = opts?.pathFilter;
 	const indexTimestamp = getIndexTimestamp(index);
+	const modePolicy = await getWorktreeModePolicy(ctx);
 	const results: WorkTreeDiff[] = [];
 
 	// Check each index entry against the working tree
@@ -86,9 +88,9 @@ export async function diffIndexToWorkTree(
 			continue;
 		}
 
-		if (indexStatMatchesFile(ctx.fs, entry, st, indexTimestamp)) continue;
+		if (indexStatMatchesFile(modePolicy, entry, st, indexTimestamp)) continue;
 
-		const workTreeMode = worktreeMode(ctx.fs, entry, st);
+		const workTreeMode = worktreeMode(modePolicy, entry, st);
 		const workTreeHash = await hashCleanedWorktreeEntry(ctx, fullPath, entry.hash, st);
 
 		if (workTreeHash !== entry.hash || workTreeMode !== entry.mode) {
@@ -270,7 +272,7 @@ export async function stageFile(
 
 	const entry: IndexEntry = {
 		path,
-		mode: worktreeMode(ctx.fs, existing, st),
+		mode: worktreeMode(await getWorktreeModePolicy(ctx), existing, st),
 		hash,
 		stage: 0,
 		// Index stat data describes the worktree file, not the cleaned blob.

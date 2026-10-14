@@ -6,6 +6,7 @@ import {
 	getConflictedPaths,
 	getStage0Entries,
 	readIndex,
+	getWorktreeModePolicy,
 	worktreeMode,
 	writeIndex,
 } from "./index.ts";
@@ -97,7 +98,7 @@ async function snapshotWorktreeFile(
 	referenceHash?: ObjectId,
 ): Promise<{ hash: ObjectId; mode: number }> {
 	const st = await lstatSafe(ctx.fs, fullPath);
-	const mode = worktreeMode(ctx.fs, tracked, st);
+	const mode = worktreeMode(await getWorktreeModePolicy(ctx), tracked, st);
 	const content = st.isSymbolicLink
 		? await readWorktreeContent(ctx.fs, fullPath)
 		: await cleanForCheckin(ctx, await ctx.fs.readFileBuffer(fullPath), referenceHash);
@@ -145,6 +146,7 @@ export async function saveStash(
 		skipIgnore: true,
 	});
 	let hasWorkTreeChanges = false;
+	const modePolicy = await getWorktreeModePolicy(ctx);
 
 	for (const filePath of workTreeFiles) {
 		const indexEntry = indexMap.get(filePath);
@@ -153,7 +155,10 @@ export async function saveStash(
 		const fullPath = join(workTree, filePath);
 		const st = await lstatSafe(ctx.fs, fullPath);
 		const blobHash = await hashCleanedWorktreeEntry(ctx, fullPath, indexEntry.hash, st);
-		if (blobHash !== indexEntry.hash || worktreeMode(ctx.fs, indexEntry, st) !== indexEntry.mode) {
+		if (
+			blobHash !== indexEntry.hash ||
+			worktreeMode(modePolicy, indexEntry, st) !== indexEntry.mode
+		) {
 			hasWorkTreeChanges = true;
 			break;
 		}
@@ -555,6 +560,7 @@ export async function applyStash(
 	const indexStage0 = new Map(stage0Entries.map((e) => [e.path, e]));
 	const dirtyOverwritten: string[] = [];
 	const untrackedOverwritten: string[] = [];
+	const modePolicy = await getWorktreeModePolicy(ctx);
 	for (const op of ops) {
 		const ie = indexStage0.get(op.path);
 		const fullPath = join(ctx.workTree, op.path);
@@ -564,7 +570,7 @@ export async function applyStash(
 			const st = await lstatSafe(ctx.fs, fullPath).catch(() => null);
 			if (!st) continue;
 			const blobHash = await hashCleanedWorktreeEntry(ctx, fullPath, ie.hash, st);
-			if (blobHash !== ie.hash || worktreeMode(ctx.fs, ie, st) !== ie.mode) {
+			if (blobHash !== ie.hash || worktreeMode(modePolicy, ie, st) !== ie.mode) {
 				dirtyOverwritten.push(op.path);
 			}
 		} else if (op.type === "checkout") {

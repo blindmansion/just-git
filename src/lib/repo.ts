@@ -195,7 +195,9 @@ export async function initRepository(
 		const config: GitConfig = {
 			core: {
 				repositoryformatversion: "0",
-				filemode: "true",
+				// git probes the filesystem at init; a FileSystem without chmod
+				// can't keep exec bits, so record that like git would.
+				filemode: fs.chmod ? "true" : "false",
 				bare: bare ? "true" : "false",
 				...(bare ? {} : { logallrefupdates: "true" }),
 			},

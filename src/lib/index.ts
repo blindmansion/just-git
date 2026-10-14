@@ -1,4 +1,5 @@
 import type { FileStat, FileSystem } from "../fs.ts";
+import { getConfigValue, parseConfigBool } from "./config.ts";
 import { bytesToHex, hexToBytes } from "./hex.ts";
 import { verifyPath } from "./path-safety.ts";
 import { join } from "./path.ts";
@@ -192,14 +193,15 @@ export function indexStatFromFileStat(stat: FileStat, size: number = stat.size):
  * and must still be hashed.
  */
 export function indexStatMatchesFile(
-	fs: FileSystem,
+	policy: WorktreeModePolicy,
 	entry: IndexEntry,
 	stat: FileStat,
 	indexTimestamp: Date | undefined,
 ): boolean {
 	if (!indexTimestamp || !stat.isFile || stat.isSymbolicLink) return false;
 	if (entry.stat.mtimeSeconds === 0 || stat.size < 0 || stat.size > 0xffffffff) return false;
-	if (worktreeMode(fs, entry, stat) !== entry.mode || stat.size !== entry.stat.size) return false;
+	if (worktreeMode(policy, entry, stat) !== entry.mode || stat.size !== entry.stat.size)
+		return false;
 
 	const fileMtimeMs = timestampMilliseconds(stat.mtime);
 	const indexMtimeMs = timestampMilliseconds(indexTimestamp);
@@ -232,25 +234,66 @@ export function gitModeFromFileStat(stat: FileStat): number {
 	return stat.mode & 0o111 ? 0o100755 : 0o100644;
 }
 
-function fileStandsInForSymlink(
-	fs: FileSystem,
-	entry: Pick<IndexEntry, "mode">,
-	stat: FileStat,
-): boolean {
-	return stat.isFile && isSymlinkMode(entry.mode) && !fs.symlink;
+/**
+ * What `worktreeMode()` may trust about the worktree. Fixed for one command,
+ * so callers resolve it once ({@link getWorktreeModePolicy}) rather than per
+ * file.
+ */
+export interface WorktreeModePolicy {
+	/**
+	 * The worktree can hold symlinks (`fs.symlink` exists). Without them, a
+	 * plain file stands in for a 120000 entry (`core.symlinks=false`).
+	 */
+	symlinks: boolean;
+	/**
+	 * Trust the executable bit that stat reports: `core.fileMode` is true
+	 * and the FileSystem has `chmod`.
+	 */
+	fileMode: boolean;
 }
 
-function fsTracksExecutableBit(fs: FileSystem): boolean {
-	return fs.chmod !== undefined;
+/** Build a policy from a FileSystem's capabilities and a `core.fileMode` value. */
+export function worktreeModePolicy(fs: FileSystem, fileMode = true): WorktreeModePolicy {
+	return { symlinks: fs.symlink !== undefined, fileMode: fileMode && fs.chmod !== undefined };
 }
 
+const policyCache = new WeakMap<GitContext, Promise<WorktreeModePolicy>>();
+
+/**
+ * Resolve the {@link WorktreeModePolicy} for a context, reading
+ * `core.fileMode` (with operator and `-c` overrides) at most once per
+ * context. A GitContext lives for one command invocation; long-lived
+ * contexts from the repo-level helpers keep the value they first read
+ * (same caveat as `getEolPolicy`).
+ */
+export function getWorktreeModePolicy(ctx: GitContext): Promise<WorktreeModePolicy> {
+	let policy = policyCache.get(ctx);
+	if (!policy) {
+		policy = resolveWorktreeModePolicy(ctx);
+		policyCache.set(ctx, policy);
+	}
+	return policy;
+}
+
+async function resolveWorktreeModePolicy(ctx: GitContext): Promise<WorktreeModePolicy> {
+	if (!ctx.fs.chmod) return worktreeModePolicy(ctx.fs, false);
+	const fileMode = parseConfigBool(await getConfigValue(ctx, "core.fileMode")) ?? true;
+	return worktreeModePolicy(ctx.fs, fileMode);
+}
+
+/**
+ * The git mode of a worktree file as git would record it, mirroring
+ * `ce_mode_from_stat`. When the exec bit can't be trusted, a tracked regular
+ * file keeps its index mode and a new file is 100644; when symlinks aren't
+ * supported, a plain file standing in for a symlink keeps 120000.
+ */
 export function worktreeMode(
-	fs: FileSystem,
+	policy: WorktreeModePolicy,
 	entry: Pick<IndexEntry, "mode"> | undefined,
 	stat: FileStat,
 ): number {
-	if (entry && fileStandsInForSymlink(fs, entry, stat)) return entry.mode;
-	if (stat.isFile && !fsTracksExecutableBit(fs)) {
+	if (entry && stat.isFile && isSymlinkMode(entry.mode) && !policy.symlinks) return entry.mode;
+	if (stat.isFile && !policy.fileMode) {
 		return entry && isRegularFileMode(entry.mode) ? entry.mode : 0o100644;
 	}
 	return gitModeFromFileStat(stat);
@@ -268,6 +311,7 @@ export async function refreshIndexStatsAfterCheckout(
 ): Promise<Index> {
 	if (!ctx.workTree) return index;
 	const selected = paths ? new Set(paths) : null;
+	const policy = await getWorktreeModePolicy(ctx);
 	const entries: IndexEntry[] = [];
 
 	for (const entry of index.entries) {
@@ -281,7 +325,7 @@ export async function refreshIndexStatsAfterCheckout(
 		}
 
 		const stat = await lstatSafe(ctx.fs, join(ctx.workTree, entry.path)).catch(() => null);
-		if (!stat || worktreeMode(ctx.fs, entry, stat) !== entry.mode) {
+		if (!stat || worktreeMode(policy, entry, stat) !== entry.mode) {
 			entries.push(entry);
 			continue;
 		}
