@@ -836,4 +836,28 @@ describe("git cherry-pick", () => {
 			expect(result.stderr).toContain("no cherry-pick or revert in progress");
 		});
 	});
+
+	describe("file modes", () => {
+		test("applies a mode-only commit", async () => {
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			const setup = await bash.exec(`
+c() { git add -A && git commit -qm "$1"; }
+git init -q -b main
+printf "a\\n" > f; chmod 644 f; echo x > x; c base
+git checkout -q -b theirs; chmod 755 f; c theirs
+git checkout -q main; chmod 644 f; echo y > x; c ours`);
+			expect(setup.exitCode).toBe(0);
+
+			const result = await bash.exec("git cherry-pick theirs");
+			expect(result.exitCode).toBe(0);
+			expect(result.stderr).toBe("");
+			expect(result.stdout).toMatch(/^\[main [0-9a-f]{7}\] theirs\n/);
+			expect(result.stdout).toEndWith(
+				" 1 file changed, 0 insertions(+), 0 deletions(-)\n" + " mode change 100644 => 100755 f\n",
+			);
+			expect((await bash.exec("git ls-files -s f")).stdout).toBe(
+				"100755 78981922613b2afb6025042ff6bd878ac1994e85 0\tf\n",
+			);
+		});
+	});
 });

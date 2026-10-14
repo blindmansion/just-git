@@ -814,4 +814,203 @@ describe("git merge", () => {
 			expect(unresolved.stdout).toBe("U\tmain.txt\n");
 		});
 	});
+
+	// ── File modes ──────────────────────────────────────────────────
+
+	describe("file modes", () => {
+		// Each commit sets its own modes: checkout does not rewrite permission
+		// bits here, so a branch switch can leave the previous branch's mode behind.
+		async function modeRepo(script: string) {
+			const bash = createTestBash({ files: EMPTY_REPO, env: envAt("100") });
+			const setup = await bash.exec(
+				`c() { git add -A && git commit -qm "$1"; }\ngit init -q -b main\n${script}`,
+			);
+			expect(setup.exitCode).toBe(0);
+			return bash;
+		}
+
+		test("takes theirs' mode-only change", async () => {
+			const bash = await modeRepo(`
+printf "a\\n" > f; chmod 644 f; c base
+git checkout -q -b theirs; chmod 755 f; c theirs
+git checkout -q main; chmod 644 f; echo o > o; c ours`);
+
+			const result = await bash.exec("git merge -m merge theirs");
+			expect(result).toMatchObject({
+				exitCode: 0,
+				stderr: "",
+				stdout:
+					"Merge made by the 'ort' strategy.\n" +
+					" f | 0\n" +
+					" 1 file changed, 0 insertions(+), 0 deletions(-)\n" +
+					" mode change 100644 => 100755 f\n",
+			});
+			expect((await bash.exec("git ls-files -s f")).stdout).toBe(
+				"100755 78981922613b2afb6025042ff6bd878ac1994e85 0\tf\n",
+			);
+		});
+
+		test("keeps ours' mode change when theirs changes the content", async () => {
+			const bash = await modeRepo(`
+printf "1\\n2\\n" > f; chmod 644 f; c base
+git checkout -q -b theirs; printf "1\\nT\\n" > f; c theirs
+git checkout -q main; chmod 755 f; c ours`);
+
+			const result = await bash.exec("git merge -m merge theirs");
+			expect(result).toMatchObject({
+				exitCode: 0,
+				stderr: "",
+				stdout:
+					"Merge made by the 'ort' strategy.\n" +
+					" f | 2 +-\n" +
+					" 1 file changed, 1 insertion(+), 1 deletion(-)\n",
+			});
+			expect((await bash.exec("git ls-files -s f")).stdout).toBe(
+				"100755 3f5a8cf24dd26339d0bd4f5873c9a8766e5660bd 0\tf\n",
+			);
+		});
+
+		test("keeps theirs' mode change in a clean content merge", async () => {
+			const bash = await modeRepo(`
+printf "1\\n2\\n3\\n4\\n5\\n" > f; chmod 644 f; c base
+git checkout -q -b theirs; printf "1\\n2\\n3\\n4\\nT\\n" > f; chmod 755 f; c theirs
+git checkout -q main; printf "O\\n2\\n3\\n4\\n5\\n" > f; chmod 644 f; c ours`);
+
+			const result = await bash.exec("git merge -m merge theirs");
+			expect(result).toMatchObject({
+				exitCode: 0,
+				stderr: "",
+				stdout:
+					"Auto-merging f\n" +
+					"Merge made by the 'ort' strategy.\n" +
+					" f | 2 +-\n" +
+					" 1 file changed, 1 insertion(+), 1 deletion(-)\n" +
+					" mode change 100644 => 100755 f\n",
+			});
+			expect((await bash.exec("git ls-files -s f")).stdout).toBe(
+				"100755 9d8d2f23dd74ac4621ad6af8f309ae779b7d4323 0\tf\n",
+			);
+		});
+
+		test("conflicted merge keeps each side's mode in its stage and applies theirs' mode-only change", async () => {
+			const bash = await modeRepo(`
+printf "1\\n2\\n" > f; echo k > m; chmod 644 f m; c base
+git checkout -q -b theirs; printf "T\\n2\\n" > f; chmod 755 f m; c theirs
+git checkout -q main; printf "O\\n2\\n" > f; chmod 644 f m; c ours`);
+
+			const result = await bash.exec("git merge -m merge theirs");
+			expect(result).toMatchObject({
+				exitCode: 1,
+				stderr: "",
+				stdout:
+					"Auto-merging f\n" +
+					"CONFLICT (content): Merge conflict in f\n" +
+					"Automatic merge failed; fix conflicts and then commit the result.\n",
+			});
+			expect((await bash.exec("git ls-files -s f m")).stdout).toBe(
+				"100644 1191247b6d9a206f6ba3d8ac79e26d041dd86941 1\tf\n" +
+					"100644 7fae8bc2659a610af0b10ee31e213f52278a63ac 2\tf\n" +
+					"100755 14fcbf669fee1a6e95015dd492056cc9bb527afa 3\tf\n" +
+					"100755 b68fde2a051d9af2fe3ff4c96c0898e5a3212e4d 0\tm\n",
+			);
+		});
+
+		test("both sides making the same mode change keep it", async () => {
+			const bash = await modeRepo(`
+printf "a\\n" > f; chmod 644 f; c base
+git checkout -q -b theirs; chmod 755 f; echo t > t; c theirs
+git checkout -q main; chmod 755 f; echo o > o; c ours`);
+
+			const result = await bash.exec("git merge -m merge theirs");
+			expect(result).toMatchObject({
+				exitCode: 0,
+				stderr: "",
+				stdout:
+					"Merge made by the 'ort' strategy.\n" +
+					" t | 1 +\n" +
+					" 1 file changed, 1 insertion(+)\n" +
+					" create mode 100644 t\n",
+			});
+			expect((await bash.exec("git ls-files -s f")).stdout).toBe(
+				"100755 78981922613b2afb6025042ff6bd878ac1994e85 0\tf\n",
+			);
+		});
+
+		test("add/add with different modes conflicts even when the content matches", async () => {
+			const bash = await modeRepo(`
+echo x > x; c base
+git checkout -q -b theirs; echo a > f; chmod 755 f; c theirs
+git checkout -q main; rm -f f; echo a > f; chmod 644 f; c ours`);
+
+			const result = await bash.exec("git merge -m merge theirs");
+			expect(result).toMatchObject({
+				exitCode: 1,
+				stderr: "",
+				stdout:
+					"CONFLICT (add/add): Merge conflict in f\n" +
+					"Automatic merge failed; fix conflicts and then commit the result.\n",
+			});
+			expect((await bash.exec("git ls-files -s f")).stdout).toBe(
+				"100644 78981922613b2afb6025042ff6bd878ac1994e85 2\tf\n" +
+					"100755 78981922613b2afb6025042ff6bd878ac1994e85 3\tf\n",
+			);
+			expect(await readFile(bash.fs, "/repo/f")).toBe("a\n");
+		});
+
+		test("takes theirs' mode change to a file ours renamed", async () => {
+			const bash = await modeRepo(`
+printf "1\\n2\\n3\\n4\\n5\\n6\\n7\\n8\\n" > f; chmod 644 f; c base
+git checkout -q -b theirs; chmod 755 f; c theirs
+git checkout -q main; chmod 644 f; git mv f g; c ours`);
+
+			const result = await bash.exec("git merge -m merge theirs");
+			expect(result).toMatchObject({
+				exitCode: 0,
+				stderr: "",
+				stdout:
+					"Merge made by the 'ort' strategy.\n" +
+					" g | 0\n" +
+					" 1 file changed, 0 insertions(+), 0 deletions(-)\n" +
+					" mode change 100644 => 100755 g\n",
+			});
+			expect((await bash.exec("git ls-files -s f g")).stdout).toBe(
+				"100755 535d2b01d3397c2228490875defc92370602ca46 0\tg\n",
+			);
+		});
+
+		test("rename/rename gives both new paths the merged mode", async () => {
+			const bash = await modeRepo(`
+printf "1\\n2\\n3\\n4\\n5\\n6\\n7\\n8\\n" > f; chmod 644 f; c base
+git checkout -q -b theirs; git mv f h; chmod 755 h; c theirs
+git checkout -q main; rm -f h; git checkout -q -- f; chmod 644 f; git mv f g; c ours`);
+
+			const result = await bash.exec("git merge -m merge theirs");
+			expect(result.exitCode).toBe(1);
+			expect(result.stdout).toBe(
+				"CONFLICT (rename/rename): f renamed to g in HEAD and to h in theirs.\n" +
+					"Automatic merge failed; fix conflicts and then commit the result.\n",
+			);
+			expect((await bash.exec("git ls-files -s f g h")).stdout).toBe(
+				"100644 535d2b01d3397c2228490875defc92370602ca46 1\tf\n" +
+					"100755 535d2b01d3397c2228490875defc92370602ca46 2\tg\n" +
+					"100755 535d2b01d3397c2228490875defc92370602ca46 3\th\n",
+			);
+		});
+
+		test("fast-forward summary prints a mode change line", async () => {
+			const bash = await modeRepo(`
+printf "a\\n" > f; chmod 644 f; c base
+git checkout -q -b theirs; chmod 755 f; c theirs
+git checkout -q main`);
+
+			const result = await bash.exec("git merge theirs");
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toEndWith(
+				"Fast-forward\n" +
+					" f | 0\n" +
+					" 1 file changed, 0 insertions(+), 0 deletions(-)\n" +
+					" mode change 100644 => 100755 f\n",
+			);
+		});
+	});
 });
