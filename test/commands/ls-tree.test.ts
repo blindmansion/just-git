@@ -291,4 +291,61 @@ describe("git ls-tree", () => {
 		expect(r.stderr).toBe("fatal: ../../x: '../../x' is outside repository at '/repo'\n");
 		expect(r.exitCode).toBe(128);
 	});
+
+	describe("<rev>:<path> tree-ish", () => {
+		test("lists the subtree at the path", async () => {
+			const r = await lsTree("git ls-tree HEAD:src");
+			expect(r).toMatchObject({
+				stdout: lines(`040000 tree ${SRC_LIB}\tlib`, `100644 blob ${MAIN}\tmain.ts`),
+				stderr: "",
+				exitCode: 0,
+			});
+		});
+
+		test("recurses from the subtree, with paths relative to it", async () => {
+			const r = await lsTree("git ls-tree -r HEAD:src/");
+			expect(r.stdout).toBe(
+				lines(`100644 blob ${MATH}\tlib/math.ts`, `100644 blob ${MAIN}\tmain.ts`),
+			);
+		});
+
+		test("an empty path is the root tree", async () => {
+			const r = await lsTree("git ls-tree --name-only HEAD:");
+			expect(r.stdout).toBe(lines("README.md", "link", "run.sh", "src"));
+		});
+
+		test("./ and ../ are relative to the cwd", async () => {
+			expect((await lsTree("git ls-tree --full-tree HEAD:./lib", "/repo/src")).stdout).toBe(
+				lines(`100644 blob ${MATH}\tmath.ts`),
+			);
+			expect((await lsTree("git ls-tree --full-tree HEAD:../src/lib", "/repo/src")).stdout).toBe(
+				lines(`100644 blob ${MATH}\tmath.ts`),
+			);
+		});
+
+		test("a missing or non-canonical path is not a valid object name", async () => {
+			for (const spec of ["HEAD:nope", "HEAD:/src", "HEAD:src//lib", "HEAD:src/./lib", ":src"]) {
+				const r = await lsTree(`git ls-tree ${spec}`);
+				expect(r).toMatchObject({
+					stdout: "",
+					stderr: `fatal: Not a valid object name ${spec}\n`,
+					exitCode: 128,
+				});
+			}
+		});
+
+		test("a path to a blob is not a tree object", async () => {
+			const r = await lsTree("git ls-tree HEAD:README.md");
+			expect(r).toMatchObject({ stdout: "", stderr: "fatal: not a tree object\n", exitCode: 128 });
+		});
+
+		test("a ../ path that leaves the repository is fatal", async () => {
+			const r = await lsTree("git ls-tree HEAD:../src");
+			expect(r).toMatchObject({
+				stdout: "",
+				stderr: "fatal: '../src' is outside repository at '/repo'\n",
+				exitCode: 128,
+			});
+		});
+	});
 });
