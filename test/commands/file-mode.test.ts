@@ -399,3 +399,214 @@ describe("overwriting an executable keeps its mode", () => {
 		await overwriteAndCommit(ctx.fs, gitFor(ctx, ctx.fs));
 	});
 });
+
+// Expected output (including stash hashes) taken from real git 2.53 with the
+// same identity and dates.
+describe("stash keeps modes like git", () => {
+	const STASH_ENV = {
+		GIT_AUTHOR_NAME: "T",
+		GIT_AUTHOR_EMAIL: "t@t",
+		GIT_COMMITTER_NAME: "T",
+		GIT_COMMITTER_EMAIL: "t@t",
+		GIT_AUTHOR_DATE: "1000000000 +0000",
+		GIT_COMMITTER_DATE: "1000000000 +0000",
+	};
+	const fOld = "100644 45b983be36b73c0788dc9cbcb76cbb80fc7bb057 0\tf\n";
+	const gOld = "100644 e45c9c2666d44e0327c1f9c239a74c508336053e 0\tg\n";
+	const saved = "Saved working directory and index state WIP on main: 487ea53 init\n";
+	const modifiedF =
+		"On branch main\n" +
+		"Changes not staged for commit:\n" +
+		'  (use "git add <file>..." to update what will be committed)\n' +
+		'  (use "git restore <file>..." to discard changes in working directory)\n' +
+		"\tmodified:   f\n" +
+		"\n" +
+		'no changes added to commit (use "git add" and/or "git commit -a")\n';
+	const overwriteError =
+		"error: Your local changes to the following files would be overwritten by merge:\n" +
+		"\tf\n" +
+		"Please commit your changes or stash them before you merge.\n" +
+		"Aborting\n";
+
+	async function setup(): Promise<Bash> {
+		const bash = createTestBash({
+			files: { "/repo/f": "hi\n", "/repo/g": "other\n" },
+			env: STASH_ENV,
+		});
+		for (const cmd of ["git init -q -b main", "git add .", "git commit -q -m init"]) {
+			const r = await bash.exec(cmd);
+			if (r.exitCode !== 0) throw new Error(`${cmd}: ${r.stderr}`);
+		}
+		return bash;
+	}
+
+	async function sh(bash: Bash, cmd: string) {
+		const r = await bash.exec(cmd);
+		if (r.exitCode !== 0) throw new Error(`${cmd}: ${r.stderr}`);
+		return r.stdout;
+	}
+
+	async function perm(bash: Bash, path = "f") {
+		return (await bash.fs.stat(`/repo/${path}`)).mode & 0o777;
+	}
+
+	async function expectStash(bash: Bash) {
+		expect(await bash.exec("git stash")).toMatchObject({ stdout: saved, stderr: "", exitCode: 0 });
+	}
+
+	test("unstaged chmod: stash saves it, show reports it, pop restores it", async () => {
+		const bash = await setup();
+		await sh(bash, "chmod +x f");
+		await expectStash(bash);
+		expect(await perm(bash)).toBe(0o644);
+		expect(await sh(bash, "git status --porcelain")).toBe("");
+		expect(await sh(bash, "git stash show")).toBe(
+			" f | 0\n 1 file changed, 0 insertions(+), 0 deletions(-)\n",
+		);
+		expect(await sh(bash, "git stash show -p")).toBe(
+			"diff --git a/f b/f\nold mode 100644\nnew mode 100755\n",
+		);
+		expect(await bash.exec("git stash pop")).toMatchObject({
+			stdout: `${modifiedF}Dropped refs/stash@{0} (649cc46b0379e66a1bca67ed0a340b4837917a44)\n`,
+			stderr: "",
+			exitCode: 0,
+		});
+		expect(await perm(bash)).toBe(0o755);
+		expect(await sh(bash, "git status --porcelain")).toBe(" M f\n");
+		expect(await sh(bash, "git ls-files -s")).toBe(fOld + gOld);
+	});
+
+	test("unstaged chmod -x of an executable", async () => {
+		const bash = await setup();
+		await sh(bash, "chmod +x f && git commit -q -am x && chmod -x f");
+		expect((await bash.exec("git stash")).stdout).toBe(
+			"Saved working directory and index state WIP on main: 634d417 x\n",
+		);
+		expect(await perm(bash)).toBe(0o755);
+		expect((await bash.exec("git stash pop")).stdout).toBe(
+			`${modifiedF}Dropped refs/stash@{0} (2cc270a6ce9e4600d2914bc3cdd7c757d8d7dff9)\n`,
+		);
+		expect(await perm(bash)).toBe(0o644);
+		expect(await sh(bash, "git status --porcelain")).toBe(" M f\n");
+	});
+
+	test("staged chmod: pop without --index leaves it unstaged", async () => {
+		const bash = await setup();
+		await sh(bash, "chmod +x f && git add f");
+		await expectStash(bash);
+		expect(await perm(bash)).toBe(0o644);
+		expect(await bash.exec("git stash pop")).toMatchObject({
+			stdout: `${modifiedF}Dropped refs/stash@{0} (1c11897413804313659e5f65cd021bbe217b0565)\n`,
+			stderr: "",
+			exitCode: 0,
+		});
+		expect(await perm(bash)).toBe(0o755);
+		expect(await sh(bash, "git status --porcelain")).toBe(" M f\n");
+		expect(await sh(bash, "git ls-files -s")).toBe(fOld + gOld);
+	});
+
+	test("staged chmod with the worktree changed back saves the worktree mode", async () => {
+		const bash = await setup();
+		await sh(bash, "chmod +x f && git add f && chmod -x f");
+		await expectStash(bash);
+		expect(await bash.exec("git stash pop")).toMatchObject({
+			stdout:
+				"Already up to date.\nOn branch main\nnothing to commit, working tree clean\n" +
+				"Dropped refs/stash@{0} (497975c30268863a783d752f3fa3246a34c5ae96)\n",
+			exitCode: 0,
+		});
+		expect(await perm(bash)).toBe(0o644);
+		expect(await sh(bash, "git ls-files -s f")).toBe(fOld);
+	});
+
+	test("chmod plus a content edit", async () => {
+		const bash = await setup();
+		await sh(bash, "echo more >> f && chmod +x f");
+		await expectStash(bash);
+		expect(await perm(bash)).toBe(0o644);
+		expect((await bash.exec("git stash pop")).stdout).toBe(
+			`${modifiedF}Dropped refs/stash@{0} (8ce0216980293d5d5dcfb129e5044104e0d2a19b)\n`,
+		);
+		expect(await perm(bash)).toBe(0o755);
+		expect(await sh(bash, "git diff")).toBe(
+			"diff --git a/f b/f\nold mode 100644\nnew mode 100755\nindex 45b983b..65ef226\n" +
+				"--- a/f\n+++ b/f\n@@ -1 +1,2 @@\n hi\n+more\n",
+		);
+	});
+
+	test("stash -u keeps a new executable's mode", async () => {
+		const bash = await setup();
+		await sh(bash, "echo '#!' > n && chmod +x n");
+		expect((await bash.exec("git stash -u")).stdout).toBe(saved);
+		expect(await sh(bash, "ls")).toBe("f\ng\n");
+		expect((await bash.exec("git stash pop")).stdout).toBe(
+			"Already up to date.\nOn branch main\nUntracked files:\n" +
+				'  (use "git add <file>..." to include in what will be committed)\n' +
+				"\tn\n\n" +
+				'nothing added to commit but untracked files present (use "git add" to track)\n' +
+				"Dropped refs/stash@{0} (89a515ff5c40fef74e2530987d42f68a72c63125)\n",
+		);
+		expect(await perm(bash, "n")).toBe(0o755);
+		await sh(bash, "git add n");
+		expect(await sh(bash, "git ls-files -s n")).toBe(
+			"100755 7218afe77e9bf34f86390549f3008309e31dd9a6 0\tn\n",
+		);
+	});
+
+	test("stash -u saves symlinks as links (tracked retarget and new link)", async () => {
+		const bash = await setup();
+		await sh(bash, "ln -s f l && git add l && git commit -q -m link");
+		await sh(bash, "rm l && ln -s g l && ln -s f u");
+		expect((await bash.exec("git stash -u")).stdout).toBe(
+			"Saved working directory and index state WIP on main: d3becd9 link\n",
+		);
+		expect((await bash.exec("git stash pop")).stdout).toEndWith(
+			"Dropped refs/stash@{0} (203030c426b3e0a071c5265311d89b168b32d953)\n",
+		);
+		expect(await sh(bash, "readlink l")).toBe("g\n");
+		expect(await sh(bash, "readlink u")).toBe("f\n");
+	});
+
+	test("pop onto an upstream content change keeps the stashed mode", async () => {
+		const bash = await setup();
+		await sh(bash, "chmod +x f");
+		await expectStash(bash);
+		await sh(bash, "echo up >> f && git commit -q -am up");
+		expect(await bash.exec("git stash pop")).toMatchObject({
+			stdout: `${modifiedF}Dropped refs/stash@{0} (649cc46b0379e66a1bca67ed0a340b4837917a44)\n`,
+			stderr: "",
+			exitCode: 0,
+		});
+		expect(await perm(bash)).toBe(0o755);
+		expect(await sh(bash, "cat f")).toBe("hi\nup\n");
+		expect(await sh(bash, "git status --porcelain")).toBe(" M f\n");
+		expect(await sh(bash, "git ls-files -s f")).toBe(
+			"100644 9b9ff945069a9f6113d21efdb8d43d0f296d0ce6 0\tf\n",
+		);
+	});
+
+	test.each([
+		["a content stash", "echo x >> f"],
+		["a content and mode stash", "echo x >> f && chmod +x f"],
+	])("apply of %s refuses over a local chmod", async (_name, change) => {
+		const bash = await setup();
+		await sh(bash, change);
+		await sh(bash, "git stash -q");
+		await sh(bash, "chmod +x f");
+		expect(await bash.exec("git stash apply")).toMatchObject({
+			stdout: modifiedF,
+			stderr: overwriteError,
+			exitCode: 1,
+		});
+		expect(await perm(bash)).toBe(0o755);
+		expect(await sh(bash, "cat f")).toBe("hi\n");
+		expect(await sh(bash, "git status --porcelain")).toBe(" M f\n");
+
+		expect(await bash.exec("git stash pop")).toMatchObject({
+			stdout: `${modifiedF}The stash entry is kept in case you need it again.\n`,
+			stderr: overwriteError,
+			exitCode: 1,
+		});
+		expect(await sh(bash, "git stash list")).toBe("stash@{0}: WIP on main: 487ea53 init\n");
+	});
+});

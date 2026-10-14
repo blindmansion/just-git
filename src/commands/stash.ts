@@ -410,7 +410,9 @@ async function handleShow(
 		return { stdout: output, stderr: "", exitCode: 0 };
 	}
 
-	const output = await formatDiffStat(gitCtx, parent.tree, stashCommit.tree);
+	const output = await formatDiffStat(gitCtx, parent.tree, stashCommit.tree, {
+		summary: false,
+	});
 	return { stdout: output, stderr: "", exitCode: 0 };
 }
 

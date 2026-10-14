@@ -310,6 +310,22 @@ describe("git stash", () => {
 			expect(result.stdout).not.toContain("diff --git");
 		});
 
+		test("show prints no create/delete summary lines (real git 2.53)", async () => {
+			const bash = createTestBash({ files: { "/repo/f": "hi\n" }, env: TEST_ENV });
+			for (const cmd of ["git init -q", "git add .", "git commit -q -m init"]) {
+				await bash.exec(cmd);
+			}
+			await bash.exec("echo n > n && git add n && git rm -q f");
+			await bash.exec("git stash -q");
+
+			const result = await bash.exec("git stash show");
+			expect(result).toMatchObject({
+				stdout: " f | 1 -\n n | 1 +\n 2 files changed, 1 insertion(+), 1 deletion(-)\n",
+				stderr: "",
+				exitCode: 0,
+			});
+		});
+
 		test("show -p shows full diff", async () => {
 			const bash = createTestBash({ files: EMPTY_REPO, env: TEST_ENV });
 			await bash.exec("git init");

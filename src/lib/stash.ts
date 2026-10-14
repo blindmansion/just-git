@@ -6,6 +6,7 @@ import {
 	getConflictedPaths,
 	getStage0Entries,
 	readIndex,
+	worktreeMode,
 	writeIndex,
 } from "./index.ts";
 import { mergeOrtNonRecursive } from "./merge-ort.ts";
@@ -21,7 +22,7 @@ import {
 	ZERO_HASH,
 } from "./reflog.ts";
 import { branchNameFromRef, deleteRef, readHead, resolveHead, updateRef } from "./refs.ts";
-import { isSubmoduleMode } from "./symlink.ts";
+import { isSubmoduleMode, lstatSafe, readWorktreeContent } from "./symlink.ts";
 import { buildTreeFromIndex, diffTrees, flattenTree, flattenTreeToMap } from "./tree-ops.ts";
 import type { GitContext, IndexEntry, ObjectId } from "./types.ts";
 import { applyWorktreeOps, resetHard, type WorktreeOp } from "./unpack-trees.ts";
@@ -84,6 +85,25 @@ export async function readStashRef(ctx: GitContext, index: number): Promise<Obje
 	return entries[reflogIdx]?.newHash ?? null;
 }
 
+/**
+ * Write a worktree file's current content as a blob and return it with the
+ * mode git would record for it: the file's own mode (exec bit, symlink), not
+ * the index's, so unstaged chmods and new executables are kept.
+ */
+async function snapshotWorktreeFile(
+	ctx: GitContext,
+	fullPath: string,
+	tracked: Pick<IndexEntry, "mode"> | undefined,
+	referenceHash?: ObjectId,
+): Promise<{ hash: ObjectId; mode: number }> {
+	const st = await lstatSafe(ctx.fs, fullPath);
+	const mode = worktreeMode(ctx.fs, tracked, st);
+	const content = st.isSymbolicLink
+		? await readWorktreeContent(ctx.fs, fullPath)
+		: await cleanForCheckin(ctx, await ctx.fs.readFileBuffer(fullPath), referenceHash);
+	return { hash: await writeObject(ctx, "blob", content), mode };
+}
+
 // ── Core stash operations ───────────────────────────────────────────
 
 /**
@@ -131,8 +151,9 @@ export async function saveStash(
 		if (!indexEntry) continue; // skip untracked
 
 		const fullPath = join(workTree, filePath);
-		const blobHash = await hashCleanedWorktreeEntry(ctx, fullPath, indexEntry.hash);
-		if (blobHash !== indexEntry.hash) {
+		const st = await lstatSafe(ctx.fs, fullPath);
+		const blobHash = await hashCleanedWorktreeEntry(ctx, fullPath, indexEntry.hash, st);
+		if (blobHash !== indexEntry.hash || worktreeMode(ctx.fs, indexEntry, st) !== indexEntry.mode) {
 			hasWorkTreeChanges = true;
 			break;
 		}
@@ -202,11 +223,13 @@ export async function saveStash(
 		if (!indexEntry && !headEntry) continue; // truly untracked
 
 		const fullPath = join(workTree, filePath);
-		const raw = await ctx.fs.readFileBuffer(fullPath);
-		const content = await cleanForCheckin(ctx, raw, indexEntry?.hash ?? headEntry?.hash);
-		const blobHash = await writeObject(ctx, "blob", content);
-
-		const mode = indexEntry ? indexEntry.mode : parseInt(headEntry?.mode ?? "100644", 8);
+		const tracked = indexEntry ?? (headEntry ? { mode: parseInt(headEntry.mode, 8) } : undefined);
+		const { hash: blobHash, mode } = await snapshotWorktreeFile(
+			ctx,
+			fullPath,
+			tracked,
+			indexEntry?.hash ?? headEntry?.hash,
+		);
 		wtEntries.push({
 			path: filePath,
 			mode,
@@ -254,12 +277,10 @@ export async function saveStash(
 		const uEntries: IndexEntry[] = [];
 		for (const filePath of untrackedPaths) {
 			const fullPath = join(workTree, filePath);
-			const raw = await ctx.fs.readFileBuffer(fullPath);
-			const content = await cleanForCheckin(ctx, raw);
-			const blobHash = await writeObject(ctx, "blob", content);
+			const { hash: blobHash, mode } = await snapshotWorktreeFile(ctx, fullPath, undefined);
 			uEntries.push({
 				path: filePath,
-				mode: 0o100644,
+				mode,
 				hash: blobHash,
 				stage: 0,
 				stat: defaultStat(),
@@ -513,7 +534,7 @@ export async function applyStash(
 	const ops: WorktreeOp[] = [];
 	for (const [path, re] of resultMap) {
 		const oe = oursMap.get(path);
-		if (!oe || oe.hash !== re.hash) {
+		if (!oe || oe.hash !== re.hash || oe.mode !== re.mode) {
 			ops.push({
 				path,
 				type: "checkout",
@@ -540,9 +561,10 @@ export async function applyStash(
 
 		if (ie) {
 			if (isSubmoduleMode(ie.mode)) continue;
-			if (!(await ctx.fs.exists(fullPath))) continue;
-			const blobHash = await hashCleanedWorktreeEntry(ctx, fullPath, ie.hash);
-			if (blobHash !== ie.hash) {
+			const st = await lstatSafe(ctx.fs, fullPath).catch(() => null);
+			if (!st) continue;
+			const blobHash = await hashCleanedWorktreeEntry(ctx, fullPath, ie.hash, st);
+			if (blobHash !== ie.hash || worktreeMode(ctx.fs, ie, st) !== ie.mode) {
 				dirtyOverwritten.push(op.path);
 			}
 		} else if (op.type === "checkout") {

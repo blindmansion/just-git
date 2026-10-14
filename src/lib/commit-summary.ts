@@ -462,11 +462,15 @@ export function renderStatLines(fileStats: FileStat[], statWidth = STAT_WIDTH): 
  *   <path>  | <count> <bar>
  *   N files changed, N insertions(+), N deletions(-)
  *   create mode 100644 <path>
+ *
+ * Pass `summary: false` to omit the create/delete/mode lines (plain
+ * `--stat`, as `git stash show` prints).
  */
 export async function formatDiffStat(
 	ctx: GitRepo,
 	oldTree: ObjectId | null,
 	newTree: ObjectId,
+	options?: { summary?: boolean },
 ): Promise<string> {
 	const rawDiffs = await diffTrees(ctx, oldTree, newTree);
 	const renameLimit = await resolveRenameLimit(ctx, "diff");
@@ -479,5 +483,6 @@ export async function formatDiffStat(
 
 	fileStats.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
 
-	return renderStatLines(fileStats) + formatSummaryLines(diffs, renames);
+	const stat = renderStatLines(fileStats);
+	return options?.summary === false ? stat : stat + formatSummaryLines(diffs, renames);
 }
