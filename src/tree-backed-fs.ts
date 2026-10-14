@@ -21,6 +21,7 @@ const DIR_MODE = 0o040755;
 const FILE_MODE = 0o100644;
 const EXEC_MODE = 0o100755;
 const SYMLINK_MODE = 0o120000;
+const MAX_SYMLINK_DEPTH = 40;
 
 type OverlayEntry =
 	| { type: "file"; content: Uint8Array; mode: number; mtime: Date }
@@ -235,14 +236,30 @@ export class TreeBackedFs implements FileSystem {
 
 	async writeFile(path: string, content: string | Uint8Array): Promise<void> {
 		const norm = normalize(path);
+		const mode = await this.existingFileMode(norm);
 		this.removals.delete(norm);
 		this.ensureOverlayParents(norm);
 		this.overlay.set(norm, {
 			type: "file",
 			content: typeof content === "string" ? encoder.encode(content) : new Uint8Array(content),
-			mode: FILE_MODE,
+			mode,
 			mtime: new Date(),
 		});
+	}
+
+	/**
+	 * Mode for a write to `norm`: like a real disk, overwriting keeps an
+	 * existing regular file's mode (from the overlay, or the tree entry if
+	 * not yet overlaid); anything else gets the default file mode.
+	 */
+	private async existingFileMode(norm: string): Promise<number> {
+		if (this.removals.has(norm)) return FILE_MODE;
+		const overlayEntry = this.overlay.get(norm);
+		if (overlayEntry) return overlayEntry.type === "file" ? overlayEntry.mode : FILE_MODE;
+		const rel = this.toRelative(norm);
+		if (rel === null || rel === "") return FILE_MODE;
+		const result = await this.lookupTreeEntry(rel);
+		return result?.entry.mode === FM.EXECUTABLE ? EXEC_MODE : FILE_MODE;
 	}
 
 	async exists(path: string): Promise<boolean> {
@@ -521,10 +538,22 @@ export class TreeBackedFs implements FileSystem {
 	}
 
 	async chmod(path: string, mode: number): Promise<void> {
+		return this.chmodAt(path, mode, path, 0);
+	}
+
+	private async chmodAt(
+		path: string,
+		mode: number,
+		original: string,
+		depth: number,
+	): Promise<void> {
+		if (depth >= MAX_SYMLINK_DEPTH) {
+			throw new Error(`ELOOP: too many levels of symbolic links, '${original}'`);
+		}
 		const norm = normalize(path);
 		const overlayEntry = this.overlay.get(norm);
 		if (overlayEntry?.type === "symlink") {
-			return this.chmod(resolveLinkTarget(norm, overlayEntry.target), mode);
+			return this.chmodAt(resolveLinkTarget(norm, overlayEntry.target), mode, original, depth + 1);
 		}
 		if (overlayEntry) {
 			overlayEntry.mode = withPermissionBits(overlayEntry.mode, mode);
@@ -535,7 +564,8 @@ export class TreeBackedFs implements FileSystem {
 		}
 		const st = await this.lstat(norm);
 		if (st.isSymbolicLink) {
-			return this.chmod(resolveLinkTarget(norm, await this.readlink(norm)), mode);
+			const target = resolveLinkTarget(norm, await this.readlink(norm));
+			return this.chmodAt(target, mode, original, depth + 1);
 		}
 		this.ensureOverlayParents(norm);
 		this.overlay.set(

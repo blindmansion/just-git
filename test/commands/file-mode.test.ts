@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { createGit, MemoryFileSystem } from "../../src";
-import type { Bash } from "just-bash";
+import type { FileSystem } from "../../src";
+import { InMemoryFs, type Bash } from "just-bash";
+import { createSandboxWorktree, createWorktree, extractTree } from "../../src/repo/worktree.ts";
+import { createCommit, writeBlob, writeTree } from "../../src/repo/writing.ts";
+import { MemoryStorage } from "../../src/server/memory-storage.ts";
+import { createStorageAdapter } from "../../src/server/storage.ts";
+import type { GitRepo } from "../../src/lib/types.ts";
 import { TEST_ENV } from "../fixtures";
 import { createTestBash } from "../util";
 
@@ -279,5 +285,117 @@ describe("mode-only local changes block operations like git", () => {
 		const cached = await bash.exec("git rm --cached run.sh");
 		expect(cached.exitCode).toBe(0);
 		expect(cached.stdout).toBe("rm 'run.sh'\n");
+	});
+});
+
+async function storedRepoWithExecutable(): Promise<GitRepo> {
+	const repo = await createStorageAdapter(new MemoryStorage()).createRepo("exec");
+	const script = await writeBlob(repo, "#!/bin/sh\necho hi\n");
+	const plain = await writeBlob(repo, "a\n");
+	const tree = await writeTree(repo, [
+		{ name: "run.sh", hash: script, mode: "100755" },
+		{ name: "plain.txt", hash: plain, mode: "100644" },
+	]);
+	await createCommit(repo, {
+		tree,
+		parents: [],
+		author: { name: "T", email: "t@t", date: new Date(1_000_000_000_000) },
+		message: "exec\n",
+		branch: "main",
+	});
+	return repo;
+}
+
+function gitFor(repo: GitRepo, fs: FileSystem) {
+	const git = createGit({ objectStore: repo.objectStore, refStore: repo.refStore });
+	return (cmd: string) => git.exec(cmd, { fs, cwd: "/repo", env: TEST_ENV });
+}
+
+describe("createWorktree and extractTree write exec bits", () => {
+	const filesystems: [string, () => FileSystem][] = [
+		["MemoryFileSystem", () => new MemoryFileSystem()],
+		["just-bash InMemoryFs", () => new InMemoryFs() as unknown as FileSystem],
+	];
+
+	test.each(filesystems)("status is clean right after createWorktree (%s)", async (_, makeFs) => {
+		const repo = await storedRepoWithExecutable();
+		const fs = makeFs();
+		await createWorktree(repo, fs, { workTree: "/repo" });
+		expect((await fs.stat("/repo/run.sh")).mode & 0o777).toBe(0o755);
+		expect((await fs.stat("/repo/plain.txt")).mode & 0o777).toBe(0o644);
+		const status = await gitFor(repo, fs)("status --short");
+		expect(status.stderr).toBe("");
+		expect(status.stdout).toBe("");
+	});
+
+	test.each(filesystems)("extractTree applies the exec bit (%s)", async (_, makeFs) => {
+		const repo = await storedRepoWithExecutable();
+		const fs = makeFs();
+		await extractTree(repo, "main", fs, "/out");
+		expect((await fs.stat("/out/run.sh")).mode & 0o777).toBe(0o755);
+		expect((await fs.stat("/out/plain.txt")).mode & 0o777).toBe(0o644);
+	});
+
+	test("extractTree clears the exec bit of an existing file for a 100644 entry", async () => {
+		const repo = await storedRepoWithExecutable();
+		const fs = new MemoryFileSystem({ "/out/plain.txt": "old\n" });
+		await fs.chmod("/out/plain.txt", 0o755);
+		await extractTree(repo, "main", fs, "/out");
+		expect((await fs.stat("/out/plain.txt")).mode).toBe(0o100644);
+		expect(await fs.readFile("/out/plain.txt")).toBe("a\n");
+	});
+
+	test("a target without chmod still materializes (exec bit dropped)", async () => {
+		const repo = await storedRepoWithExecutable();
+		const fs = new MemoryFileSystem();
+		Object.defineProperty(fs, "chmod", { value: undefined });
+		await extractTree(repo, "main", fs, "/out");
+		expect((await fs.stat("/out/run.sh")).mode).toBe(0o100644);
+	});
+});
+
+describe("overwriting an executable keeps its mode", () => {
+	const script2 = "#!/bin/sh\necho bye\n";
+	const expectedDiff =
+		"diff --git a/run.sh b/run.sh\n" +
+		"index 4163036..ac23810 100755\n" +
+		"--- a/run.sh\n" +
+		"+++ b/run.sh\n" +
+		"@@ -1,2 +1,2 @@\n" +
+		" #!/bin/sh\n" +
+		"-echo hi\n" +
+		"+echo bye\n";
+
+	async function overwriteAndCommit(
+		fs: FileSystem,
+		run: (cmd: string) => Promise<{ stdout: string; stderr: string; exitCode: number }>,
+	) {
+		await fs.writeFile("/repo/run.sh", script2);
+		expect((await fs.stat("/repo/run.sh")).mode & 0o777).toBe(0o755);
+		expect((await run("diff")).stdout).toBe(expectedDiff);
+		expect((await run("status --short")).stdout).toBe(" M run.sh\n");
+		expect((await run("commit -q -am edit")).exitCode).toBe(0);
+		expect((await run("ls-tree HEAD run.sh")).stdout).toBe(
+			"100755 blob ac238105ba996fbbc6410e8b63ac6efc29786f1d\trun.sh\n",
+		);
+		expect((await run("status --short")).stdout).toBe("");
+	}
+
+	test("MemoryFileSystem", async () => {
+		const { fs, run } = await repoWithExecutable();
+		await overwriteAndCommit(fs, (cmd) => run(cmd, "/repo"));
+	});
+
+	test("TreeBackedFs (sandbox worktree), tree-backed file", async () => {
+		const repo = await storedRepoWithExecutable();
+		const { ctx } = await createSandboxWorktree(repo, { ref: "main", workTree: "/repo" });
+		await overwriteAndCommit(ctx.fs, gitFor(ctx, ctx.fs));
+	});
+
+	test("TreeBackedFs (sandbox worktree), file already in the overlay", async () => {
+		const repo = await storedRepoWithExecutable();
+		const { ctx } = await createSandboxWorktree(repo, { ref: "main", workTree: "/repo" });
+		await ctx.fs.writeFile("/repo/run.sh", "tmp\n");
+		await overwriteAndCommit(ctx.fs, gitFor(ctx, ctx.fs));
 	});
 });

@@ -44,7 +44,7 @@ export interface FileStat {
  * symlink support. When omitted, symlinks degrade to plain files containing
  * the target path as content (`core.symlinks=false` behavior). The optional
  * `chmod` lets checkout apply the executable bit of `100755` entries; when
- * omitted, every file is checked out non-executable.
+ * omitted, exec bits are not tracked (`core.fileMode=false` behavior).
  *
  * See {@link MemoryFileSystem} for a ready-made in-memory implementation.
  */
@@ -62,6 +62,8 @@ export interface FileSystem {
 	/**
 	 * Write content to a file, creating it if it doesn't exist and
 	 * overwriting if it does. Parent directories must already exist.
+	 * Overwriting should keep the file's existing mode, as a real disk
+	 * does; otherwise rewriting an executable shows up as a mode change.
 	 */
 	writeFile(path: string, content: string | Uint8Array): Promise<void>;
 	/** Check whether a path exists (file, directory, or symlink). */

@@ -134,10 +134,12 @@ export class MemoryFileSystem implements FileSystem {
 	async writeFile(path: string, content: string | Uint8Array): Promise<void> {
 		const norm = this.resolve(path);
 		this.ensureParents(norm);
+		// Like a real disk, overwriting keeps an existing file's mode.
+		const existing = this.data.get(norm);
 		this.data.set(norm, {
 			type: "file",
 			content: typeof content === "string" ? encoder.encode(content) : content,
-			mode: FILE_MODE,
+			mode: existing?.type === "file" ? existing.mode : FILE_MODE,
 			mtime: new Date(),
 		});
 	}

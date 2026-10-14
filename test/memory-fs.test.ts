@@ -382,3 +382,28 @@ describe("MemoryFileSystem chmod", () => {
 		await expect(fs.chmod("/missing", 0o755)).rejects.toThrow("ENOENT");
 	});
 });
+
+describe("MemoryFileSystem writeFile modes", () => {
+	test("overwriting a file keeps its permission bits", async () => {
+		const fs = new MemoryFileSystem({ "/run.sh": "a" });
+		await fs.chmod("/run.sh", 0o755);
+		await fs.writeFile("/run.sh", "b");
+		expect((await fs.stat("/run.sh")).mode).toBe(0o100755);
+		expect(await fs.readFile("/run.sh")).toBe("b");
+	});
+
+	test("overwriting through a symlink keeps the target's mode", async () => {
+		const fs = new MemoryFileSystem({ "/run.sh": "a" });
+		await fs.chmod("/run.sh", 0o755);
+		await fs.symlink("run.sh", "/link");
+		await fs.writeFile("/link", "b");
+		expect((await fs.stat("/run.sh")).mode).toBe(0o100755);
+		expect(await fs.readFile("/run.sh")).toBe("b");
+	});
+
+	test("a new file gets the default mode", async () => {
+		const fs = new MemoryFileSystem();
+		await fs.writeFile("/new", "x");
+		expect((await fs.stat("/new")).mode).toBe(0o100644);
+	});
+});

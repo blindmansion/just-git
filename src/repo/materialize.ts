@@ -1,7 +1,7 @@
 import { readBlobBytes, readBlobContent } from "../lib/object-db.ts";
 import { dirname, join } from "../lib/path.ts";
 import { isInsideWorkTree, verifyPath, verifySymlinkTarget } from "../lib/path-safety.ts";
-import { isSubmoduleMode, isSymlinkMode } from "../lib/symlink.ts";
+import { isExecutableMode, isSubmoduleMode, isSymlinkMode } from "../lib/symlink.ts";
 import type { FlatTreeEntry } from "../lib/tree-ops.ts";
 import type { GitRepo } from "../lib/types.ts";
 
@@ -10,6 +10,15 @@ export interface MaterializeTarget {
 	writeFile(path: string, content: string | Uint8Array): Promise<void>;
 	mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
 	symlink?(target: string, path: string): Promise<void>;
+	/**
+	 * Set permission bits. When present, `100755` entries are made
+	 * executable (and an existing executable file is reset to `0o644` for
+	 * a `100644` entry, which needs `lstat` or `stat` to detect). Without
+	 * it, every file is written with the target's default mode.
+	 */
+	chmod?(path: string, mode: number): Promise<void>;
+	lstat?(path: string): Promise<{ mode: number; isSymbolicLink: boolean }>;
+	stat?(path: string): Promise<{ mode: number }>;
 }
 
 /**
@@ -56,10 +65,33 @@ export async function materializeEntries(
 			}
 		} else {
 			const content = await readBlobBytes(repo, entry.hash);
+			const executable = isExecutableMode(entry.mode);
+			// writeFile keeps an existing file's mode (as on a real disk), so
+			// a non-executable entry over an executable file must clear it.
+			const existingMode =
+				target.chmod && !executable ? await existingFileMode(target, fullPath) : null;
 			await target.writeFile(fullPath, content);
+			if (target.chmod) {
+				if (executable) {
+					await target.chmod(fullPath, 0o755);
+				} else if (existingMode !== null && existingMode & 0o111) {
+					await target.chmod(fullPath, 0o644);
+				}
+			}
 		}
 		filesWritten++;
 	}
 
 	return filesWritten;
+}
+
+async function existingFileMode(target: MaterializeTarget, path: string): Promise<number | null> {
+	try {
+		if (target.lstat) {
+			const st = await target.lstat(path);
+			return st.isSymbolicLink ? null : st.mode;
+		}
+		if (target.stat) return (await target.stat(path)).mode;
+	} catch {}
+	return null;
 }

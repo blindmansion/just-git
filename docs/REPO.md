@@ -352,7 +352,7 @@ const fs = accessor.fs();
 await fs.readFile("package.json");
 ```
 
-`MaterializeTarget` is the minimal filesystem interface needed by `materialize`: just `writeFile`, `mkdir`, and optionally `symlink`.
+`MaterializeTarget` is the minimal filesystem interface needed by `materialize`: just `writeFile`, `mkdir`, and optionally `symlink` and `chmod` (to apply the exec bit of `100755` entries; with `lstat`/`stat` it also clears the bit on an existing file for a `100644` entry).
 
 ### Safety
 
