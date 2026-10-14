@@ -1,7 +1,9 @@
 import type { GitExtensions } from "../git.ts";
 import { formatCombinedDiffEntry } from "../lib/combined-diff.ts";
 import {
+	ambiguousArgError,
 	buildAbbrevResolver,
+	type CommandResult,
 	fatal,
 	getCwdPrefix,
 	isCommandError,
@@ -9,7 +11,6 @@ import {
 	requireCommit,
 	requireGitContext,
 	requireHead,
-	requireRevision,
 } from "../lib/command-utils.ts";
 import {
 	computeDiffStats,
@@ -34,20 +35,21 @@ import {
 	type RenamePair,
 	resolveRenameLimit,
 } from "../lib/rename-detection.ts";
-import { parseRevPath } from "../lib/rev-parse.ts";
+import { parseRevPath, resolveRevision, resolveRevPath } from "../lib/rev-parse.ts";
 import { parseTree } from "../lib/objects/tree.ts";
 import { join } from "../lib/path.ts";
 import { matchPathspecs, type Pathspec, parsePathspec } from "../lib/pathspec.ts";
 import { isTypeChange } from "../lib/symlink.ts";
 import { diffTrees, flattenTreeToMap } from "../lib/tree-ops.ts";
-import type {
-	Commit,
-	GitContext,
-	GitRepo,
-	ObjectId,
-	Tag,
-	Tree,
-	TreeDiffEntry,
+import {
+	type Commit,
+	FileMode,
+	type GitContext,
+	type GitRepo,
+	type ObjectId,
+	type Tag,
+	type Tree,
+	type TreeDiffEntry,
 } from "../lib/types.ts";
 import { a, type Command, f, o } from "../parse/index.ts";
 
@@ -93,40 +95,48 @@ export function registerShowCommand(parent: Command, ext?: GitExtensions) {
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
 			const gitCtx = gitCtxOrError;
 
-			// Paths after `--` limit the diff, and a commit that doesn't touch
-			// them is not shown at all.
 			const cwdPrefix = getCwdPrefix(gitCtx, ctx.cwd);
-			const pathSpecs =
-				meta.passthrough.length > 0
-					? meta.passthrough.map((p) => parsePathspec(p, cwdPrefix))
-					: null;
+			const dashDash = meta.passthrough.length > 0;
 
+			// Like git, every name is resolved before anything is shown, so a
+			// bad one fails the whole command. Without `--`, the first name
+			// that isn't an object starts the paths, which must all exist.
 			const objectArgs = args.object;
-			const rev = objectArgs[0] ?? "HEAD";
-
-			// -q adds git's NO_OUTPUT diff format, which conflicts with these.
-			const quietConflict = args.quiet && (args.nameOnly || args.nameStatus);
-
-			// ── Handle <rev>:<path> syntax ─────────────────────────
-			const revPath = parseRevPath(rev);
-			if (revPath) {
-				return handleRevPath(gitCtx, revPath.rev, revPath.path, quietConflict);
+			const targets: ShowTarget[] = [];
+			const pathArgs = [...meta.passthrough];
+			for (let i = 0; i < objectArgs.length; i++) {
+				const name = objectArgs[i]!;
+				const resolved = await resolveShowObject(gitCtx, name, cwdPrefix);
+				if (resolved === null) {
+					if (dashDash) return fatal(`bad revision '${name}'`);
+					if (!(await existsInWorkTree(gitCtx, ctx.cwd, name))) return ambiguousArgError(name);
+					for (const path of objectArgs.slice(i + 1)) {
+						if (!(await existsInWorkTree(gitCtx, ctx.cwd, path))) {
+							return fatal(
+								`${path}: no such path in the working tree.\n` +
+									"Use 'git <command> -- <path>...' to specify paths that do not exist locally.",
+							);
+						}
+					}
+					pathArgs.push(...objectArgs.slice(i));
+					break;
+				}
+				if (isCommandError(resolved)) return resolved;
+				targets.push({ name, hash: resolved });
 			}
-
-			// For HEAD default, check if there are commits
-			if (rev === "HEAD") {
+			if (targets.length === 0) {
 				const headHash = await requireHead(gitCtx);
 				if (isCommandError(headHash)) return headHash;
+				targets.push({ name: "HEAD", hash: headHash });
 			}
 
-			const hash = await requireRevision(gitCtx, rev, `bad object '${rev}'`);
-			if (isCommandError(hash)) return hash;
-			if (quietConflict) return fatal(QUIET_NAME_CONFLICT);
+			// -q adds git's NO_OUTPUT diff format, which conflicts with these.
+			if (args.quiet && (args.nameOnly || args.nameStatus)) return fatal(QUIET_NAME_CONFLICT);
 
-			const raw = await readObject(gitCtx, hash);
-			const renameState: RenameWarningState = {
-				limit: await resolveRenameLimit(gitCtx, "diff"),
-			};
+			// Paths limit the diff. Since git 2.55 a commit that doesn't touch
+			// them is still shown, with just its header.
+			const pathSpecs =
+				pathArgs.length > 0 ? pathArgs.map((p) => parsePathspec(p, cwdPrefix)) : null;
 
 			// Determine diff output format
 			let diffFormat: ShowDiffFormat;
@@ -163,95 +173,138 @@ export function registerShowCommand(parent: Command, ext?: GitExtensions) {
 				presetName = parsed.preset;
 			}
 
-			switch (raw.type) {
-				case "commit": {
-					const commit = await readCommit(gitCtx, hash);
-					const output = await formatCommitShow(
-						gitCtx,
-						hash,
-						commit,
-						renameState,
-						diffOutput,
-						customFormat,
-						presetName,
-						pathSpecs,
-					);
-					return {
-						stdout: output,
-						stderr: formatRenameLimitWarning("diff", renameState.needed),
-						exitCode: 0,
-					};
-				}
-				case "tag": {
-					const tag = await readTag(gitCtx, hash);
-					const output = await formatTagShow(
-						gitCtx,
-						tag,
-						renameState,
-						diffOutput,
-						customFormat,
-						presetName,
-						pathSpecs,
-					);
-					return {
-						stdout: output,
-						stderr: formatRenameLimitWarning("diff", renameState.needed),
-						exitCode: 0,
-					};
-				}
-				case "tree": {
-					const tree: Tree = parseTree(raw.content);
-					const output = formatTreeShow(tree);
-					return { stdout: output, stderr: "", exitCode: 0 };
-				}
-				case "blob": {
-					const content = decoder.decode(raw.content);
-					return { stdout: content, stderr: "", exitCode: 0 };
-				}
+			const state: ShowState = {
+				renameState: { limit: await resolveRenameLimit(gitCtx, "diff") },
+				diffOutput,
+				customFormat,
+				presetName,
+				// `format:` separates commits instead of terminating each one.
+				useTerminator:
+					presetName === "oneline" || (customFormat !== null && !formatRaw?.startsWith("format:")),
+				pathSpecs,
+				shownOne: false,
+				shownCommits: new Set(),
+			};
+			let stdout = "";
+			for (const target of targets) {
+				stdout += await showObject(gitCtx, target.name, target.hash, state);
 			}
+			return {
+				stdout,
+				stderr: formatRenameLimitWarning("diff", state.renameState.needed),
+				exitCode: 0,
+			};
 		},
 	});
 }
 
-// ── rev:path handling ───────────────────────────────────────────────
+// ── Object resolution ───────────────────────────────────────────────
 
-async function handleRevPath(
+interface ShowTarget {
+	/** The name as given, which git prints for trees and tags. */
+	name: string;
+	hash: ObjectId;
+}
+
+/**
+ * Resolve one `git show` argument to an object. Returns null when the name
+ * isn't an object at all (so it may be a path), or an error for a name git
+ * rejects outright.
+ */
+async function resolveShowObject(
 	ctx: GitContext,
-	rev: string,
-	path: string,
-	quietConflict: boolean,
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+	name: string,
+	cwdPrefix: string,
+): Promise<ObjectId | CommandResult | null> {
+	const revPath = parseRevPath(name);
+	if (revPath) {
+		const target = await resolveRevPath(ctx, name, cwdPrefix);
+		if (target && "hash" in target) return target.hash;
+		return revPathError(ctx, revPath.rev, revPath.path);
+	}
+	if (name === "HEAD") {
+		const headHash = await requireHead(ctx);
+		if (isCommandError(headHash)) return headHash;
+	}
+	const hash = await resolveRevision(ctx, name);
+	if (hash) return hash;
+	if (/^[0-9a-f]{40}$/.test(name)) return fatal(`bad object ${name}`);
+	return null;
+}
+
+async function revPathError(ctx: GitContext, rev: string, path: string): Promise<CommandResult> {
 	const result = await requireCommit(ctx, rev);
 	if (isCommandError(result)) return result;
-	const treeHash = result.commit.tree;
+	// git checks the path as given, so `HEAD:/x` is never on disk.
+	if (ctx.workTree && !path.startsWith("/") && (await ctx.fs.exists(join(ctx.workTree, path)))) {
+		return fatal(`path '${path}' exists on disk, but not in '${rev}'`);
+	}
+	return fatal(`path '${path}' does not exist in '${rev}'`);
+}
 
-	const normalizedPath = path.replace(/^\//, "");
+async function existsInWorkTree(ctx: GitContext, cwd: string, path: string): Promise<boolean> {
+	if (!ctx.workTree) return false;
+	return ctx.fs.exists(join(cwd, path));
+}
 
-	const treeMap = await flattenTreeToMap(ctx, treeHash);
-	const entry = treeMap.get(normalizedPath);
-	if (!entry) {
-		let msg = `path '${normalizedPath}' does not exist in '${rev}'`;
-		if (ctx.workTree) {
-			const diskPath = join(ctx.workTree, normalizedPath);
-			if (await ctx.fs.exists(diskPath)) {
-				msg = `path '${normalizedPath}' exists on disk, but not in '${rev}'`;
-			}
+// ── Object display ──────────────────────────────────────────────────
+
+interface ShowState {
+	renameState: RenameWarningState;
+	diffOutput: ShowDiffOutput | null;
+	customFormat: string | null;
+	presetName: string | null;
+	/** Whether each commit's header ends its own line (oneline, tformat). */
+	useTerminator: boolean;
+	pathSpecs: Pathspec[] | null;
+	/** Whether a tree, tag or commit has been shown, so the next needs a separator. */
+	shownOne: boolean;
+	/** Commits already shown, which git skips if named again. */
+	shownCommits: Set<ObjectId>;
+}
+
+/**
+ * Show one object as git's cmd_show does. Trees and tags are preceded by a
+ * blank line once something has been shown, and commits too unless their
+ * format terminates each one; blobs are written as-is. A commit is shown
+ * only once.
+ */
+async function showObject(
+	ctx: GitRepo,
+	name: string,
+	hash: ObjectId,
+	state: ShowState,
+): Promise<string> {
+	const raw = await readObject(ctx, hash);
+	switch (raw.type) {
+		case "blob":
+			return decoder.decode(raw.content);
+		case "tree": {
+			const sep = state.shownOne ? "\n" : "";
+			state.shownOne = true;
+			return `${sep}tree ${name}\n\n${formatTreeShow(parseTree(raw.content))}`;
 		}
-		return fatal(msg);
+		case "tag": {
+			const sep = state.shownOne ? "\n" : "";
+			state.shownOne = true;
+			const tag = await readTag(ctx, hash);
+			// The tagged object follows under the same name.
+			const header = formatTagHeader(
+				tag,
+				state.customFormat === null ? state.presetName : "format",
+			);
+			return `${sep}${header}${await showObject(ctx, name, tag.object, state)}`;
+		}
+		case "commit": {
+			if (state.shownCommits.has(hash)) return "";
+			const commit = await readCommit(ctx, hash);
+			const output = await formatCommitShow(ctx, hash, commit, state);
+			const sep = state.shownOne && !state.useTerminator ? "\n" : "";
+			state.shownOne = true;
+			state.shownCommits.add(hash);
+			return `${sep}${output}`;
+		}
 	}
-	if (quietConflict) return fatal(QUIET_NAME_CONFLICT);
-
-	const raw = await readObject(ctx, entry.hash);
-	if (raw.type === "blob") {
-		return { stdout: decoder.decode(raw.content), stderr: "", exitCode: 0 };
-	}
-	if (raw.type === "tree") {
-		const tree: Tree = parseTree(raw.content);
-		const output = formatTreeShow(tree);
-		return { stdout: output, stderr: "", exitCode: 0 };
-	}
-
-	return { stdout: decoder.decode(raw.content), stderr: "", exitCode: 0 };
 }
 
 // ── Commit display ──────────────────────────────────────────────────
@@ -265,13 +318,9 @@ async function formatCommitShow(
 	ctx: GitRepo,
 	hash: ObjectId,
 	commit: Commit,
-	renameState: RenameWarningState,
-	diffOutput: ShowDiffOutput | null,
-	customFormat: string | null = null,
-	presetName: string | null = null,
-	pathSpecs: Pathspec[] | null = null,
+	state: ShowState,
 ): Promise<string> {
-	if (pathSpecs && !(await commitTouchesPaths(ctx, commit, pathSpecs))) return "";
+	const { renameState, diffOutput, customFormat, presetName, pathSpecs } = state;
 
 	// ── Header ──────────────────────────────────────────────────
 	const abbrev = await buildAbbrevResolver(ctx, [hash, commit.tree, ...commit.parents]);
@@ -299,8 +348,19 @@ async function formatCommitShow(
 		header = lines.join("\n");
 	}
 
+	// A user format ends its line only as a terminator (tformat), and an
+	// empty one prints nothing at all. The diff follows a blank line, except
+	// after oneline or an empty format.
+	const headerLine =
+		customFormat === null
+			? `${header}\n`
+			: state.useTerminator && customFormat
+				? `${header}\n`
+				: header;
+	const blank = presetName === "oneline" || customFormat === "" ? "" : "\n";
+
 	if (!diffOutput) {
-		return `${header}\n`;
+		return headerLine;
 	}
 
 	// ── Diff ────────────────────────────────────────────────────
@@ -325,34 +385,14 @@ async function formatCommitShow(
 	}
 
 	if (body) {
-		return `${header}\n\n${body.replace(/\n$/, "")}\n`;
+		return `${headerLine}${blank}${body.replace(/\n$/, "")}\n`;
 	}
 	// Git still prints the separator line when a commit has changes but the
 	// requested output is empty, e.g. --summary on a content-only change.
 	if (hasChanges || commit.parents.length >= 2) {
-		return `${header}\n\n`;
+		return `${headerLine}${blank}`;
 	}
-	return `${header}\n`;
-}
-
-/**
- * Whether a commit is shown for a pathspec: git prunes a commit that is
- * TREESAME to any parent (or, for a root commit, adds nothing) in those paths.
- */
-async function commitTouchesPaths(
-	ctx: GitRepo,
-	commit: Commit,
-	pathSpecs: Pathspec[],
-): Promise<boolean> {
-	const parentTrees =
-		commit.parents.length === 0
-			? [null]
-			: await Promise.all(commit.parents.map(async (p) => (await readCommit(ctx, p)).tree));
-	for (const parentTree of parentTrees) {
-		const diffs = await diffTrees(ctx, parentTree, commit.tree);
-		if (!diffs.some((d) => matchPathspecs(pathSpecs, d.path))) return false;
-	}
-	return true;
+	return headerLine;
 }
 
 async function diffWithRenames(
@@ -410,56 +450,31 @@ async function formatMergeShowDiff(
 
 // ── Tag display ─────────────────────────────────────────────────────
 
-async function formatTagShow(
-	ctx: GitRepo,
-	tag: Tag,
-	renameState: RenameWarningState,
-	diffOutput: ShowDiffOutput | null,
-	customFormat: string | null = null,
-	presetName: string | null = null,
-	pathSpecs: Pathspec[] | null = null,
-): Promise<string> {
-	const lines: string[] = [];
-
-	lines.push(`tag ${tag.name}`);
-	lines.push(`Tagger: ${tag.tagger.name} <${tag.tagger.email}>`);
-	lines.push(`Date:   ${formatDate(tag.tagger.timestamp, tag.tagger.timezone)}`);
-	lines.push("");
-	const msg = tag.message.replace(/\n$/, "");
-	for (const msgLine of msg.split("\n")) {
-		lines.push(`    ${msgLine}`);
+/**
+ * git prints a tag's tagger lines in the commit preset's style (none for
+ * oneline, a date only for medium and fuller), then its message verbatim.
+ */
+function formatTagHeader(tag: Tag, presetName: string | null): string {
+	const { name, email, timestamp, timezone } = tag.tagger;
+	let tagger: string;
+	if (presetName === "oneline") {
+		tagger = "";
+	} else if (presetName === "fuller") {
+		tagger = `Tagger:     ${name} <${email}>\nTaggerDate: ${formatDate(timestamp, timezone)}\n`;
+	} else if (presetName === null || presetName === "medium") {
+		tagger = `Tagger: ${name} <${email}>\nDate:   ${formatDate(timestamp, timezone)}\n`;
+	} else {
+		tagger = `Tagger: ${name} <${email}>\n`;
 	}
-
-	if (tag.objectType === "commit") {
-		const commit = await readCommit(ctx, tag.object);
-		const commitOutput = await formatCommitShow(
-			ctx,
-			tag.object,
-			commit,
-			renameState,
-			diffOutput,
-			customFormat,
-			presetName,
-			pathSpecs,
-		);
-		if (commitOutput) {
-			lines.push("");
-			lines.push(commitOutput.replace(/\n$/, ""));
-		}
-	}
-
-	return `${lines.join("\n")}\n`;
+	return `tag ${tag.name}\n${tagger}\n${tag.message}`;
 }
 
 // ── Tree display ────────────────────────────────────────────────────
 
 function formatTreeShow(tree: Tree): string {
-	const lines: string[] = [];
-	for (const entry of tree.entries) {
-		const type = entry.mode === "040000" ? "tree" : "blob";
-		lines.push(`${entry.mode} ${type} ${entry.hash}\t${entry.name}`);
-	}
-	return lines.length > 0 ? `${lines.join("\n")}\n` : "";
+	return tree.entries
+		.map((entry) => `${entry.name}${entry.mode === FileMode.DIRECTORY ? "/" : ""}\n`)
+		.join("");
 }
 
 // ── Diff format dispatch ────────────────────────────────────────────

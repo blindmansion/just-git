@@ -79,6 +79,12 @@ const CASES = [
 	"show --stat merged -- s",
 	"show --summary merged -- keep",
 	"show merged -- keep",
+	"show HEAD HEAD~1 -- keep",
+	"show --name-only HEAD~1 HEAD -- n",
+	"show --stat HEAD~5 HEAD~3 HEAD -- dir",
+	"show --summary --format=%s HEAD~6 merged -- s keep",
+	"show tagged -- nothere",
+	"show --stat tagged -- dir",
 ];
 
 describe("interop: --summary matches real git", () => {
@@ -144,6 +150,7 @@ describe("interop: --summary matches real git", () => {
 		await git("checkout -q -b merged");
 		await git("merge -q --no-ff -m merge side");
 		await git("checkout -q -");
+		await git("tag -a -m tagged tagged HEAD~1");
 	});
 	afterAll(() => removeSandbox(sandbox));
 

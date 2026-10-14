@@ -28,7 +28,7 @@ describe("git show", () => {
 				{ files: EMPTY_REPO, env: TEST_ENV },
 			);
 			expect(results[3].exitCode).toBe(128);
-			expect(results[3].stderr).toContain("bad object");
+			expect(results[3].stderr).toContain("ambiguous argument 'nonexistent'");
 		});
 	});
 
@@ -151,7 +151,7 @@ describe("git show", () => {
 			expect(show.exitCode).toBe(0);
 			expect(show.stdout).toContain("tag v1.0");
 			expect(show.stdout).toContain("Tagger: Test Committer <committer@test.com>");
-			expect(show.stdout).toContain("    release 1.0");
+			expect(show.stdout).toContain("\n\nrelease 1.0\n\ncommit ");
 			// Should also show the commit
 			expect(show.stdout).toMatch(/commit [a-f0-9]{40}/);
 			expect(show.stdout).toContain("    initial");
@@ -196,10 +196,7 @@ describe("git show", () => {
 
 			const treeShow = await bash.exec(`git show ${treeHash}`);
 			expect(treeShow.exitCode).toBe(0);
-			expect(treeShow.stdout).toContain("100644 blob");
-			expect(treeShow.stdout).toContain("README.md");
-			expect(treeShow.stdout).toContain("040000 tree");
-			expect(treeShow.stdout).toContain("src");
+			expect(treeShow.stdout).toBe(`tree ${treeHash}\n\nREADME.md\nsrc/\n`);
 		});
 	});
 
@@ -220,9 +217,9 @@ describe("git show", () => {
 			if (!treeHash) throw new Error("Could not get tree hash");
 
 			// Read tree to find README.md blob hash
-			const treeShow = await bash.exec(`git show ${treeHash}`);
+			const lsTree = await bash.exec(`git ls-tree ${treeHash}`);
 			// Parse "100644 blob <hash>\tREADME.md"
-			const match = treeShow.stdout.match(/100644 blob ([a-f0-9]{40})\tREADME\.md/);
+			const match = lsTree.stdout.match(/100644 blob ([a-f0-9]{40})\tREADME\.md/);
 			expect(match).toBeTruthy();
 			const blobHash = match?.[1] as string;
 
@@ -620,7 +617,7 @@ describe("git show", () => {
 			);
 		});
 
-		test("respects pathspecs, and a commit that doesn't touch them prints nothing", async () => {
+		test("respects pathspecs, and a commit that doesn't touch them shows only its header", async () => {
 			const bash = await setupSummaryHistory();
 			expect(await bash.exec("git show --summary --format=%s HEAD~2 -- dir")).toMatchObject(
 				ok("typechange\n\n delete mode 100644 dir/sub/b\n"),
@@ -631,22 +628,29 @@ describe("git show", () => {
 			expect(
 				await bash.exec("mkdir dir && cd dir && git show --summary --format=%s HEAD~2 -- ."),
 			).toMatchObject(ok("typechange\n\n delete mode 100644 dir/sub/b\n"));
+			// Since git 2.55, show keeps the commits it is given even when the
+			// pathspec filters out all of their changes.
+			const header = (await bash.exec("git show --no-patch HEAD~1")).stdout;
 			for (const opts of ["--summary", "--stat", "-p", "--no-patch"]) {
-				expect(await bash.exec(`git show ${opts} HEAD~1 -- dir`)).toMatchObject(ok(""));
+				expect(await bash.exec(`git show ${opts} HEAD~1 -- dir`)).toMatchObject(ok(header));
 			}
-			// A merge that matches one of its parents in the paths is not shown either.
-			expect(await bash.exec("git show --stat HEAD -- s")).toMatchObject(ok(""));
-			expect(await bash.exec("git show HEAD -- keep")).toMatchObject(ok(""));
+			// Likewise a merge that matches one of its parents in the paths; its
+			// stat still compares against the first parent.
+			const mergeHeader = (await bash.exec("git show --no-patch HEAD")).stdout;
+			expect(await bash.exec("git show --stat HEAD -- s")).toMatchObject(
+				ok(`${mergeHeader}\n s | 1 +\n 1 file changed, 1 insertion(+)\n`),
+			);
+			expect(await bash.exec("git show HEAD -- keep")).toMatchObject(ok(`${mergeHeader}\n`));
 		});
 
-		test("a tag whose commit doesn't touch the pathspec shows only the tag", async () => {
+		test("a tag whose commit doesn't touch the pathspec shows the tag and commit header", async () => {
 			const bash = await setupSummaryHistory();
 			await bash.exec("git tag -a v1 -m release HEAD~1");
-			const result = await bash.exec("git show --summary v1 -- dir");
-			expect(result.exitCode).toBe(0);
-			expect(result.stdout).toStartWith("tag v1\n");
-			expect(result.stdout).toEndWith("release\n");
-			expect(result.stdout).not.toContain("commit ");
+			const header = (await bash.exec("git show --no-patch HEAD~1")).stdout;
+			expect(await bash.exec("git show --summary v1 -- dir")).toMatchObject(
+				ok(expect.stringMatching(/^tag v1\n[^]*\n\nrelease\n\n/)),
+			);
+			expect((await bash.exec("git show --summary v1 -- dir")).stdout).toEndWith(`\n${header}`);
 		});
 	});
 });
