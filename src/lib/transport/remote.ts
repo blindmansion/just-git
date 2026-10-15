@@ -49,6 +49,8 @@ export function stripAndCacheCredentials(
 }
 
 interface RemoteConfig {
+	partialCloneFilter?: string;
+	noTags?: boolean;
 	name: string;
 	url: string;
 	fetchRefspec: string;
@@ -71,6 +73,8 @@ async function getRemoteConfig(ctx: GitContext, remoteName: string): Promise<Rem
 
 	return {
 		name: remoteName,
+		partialCloneFilter: section.partialclonefilter,
+		noTags: section.tagopt === "--no-tags",
 		url: section.url,
 		fetchRefspec: section.fetch ?? "+refs/heads/*:refs/remotes/origin/*",
 	};

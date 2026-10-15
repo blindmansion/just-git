@@ -71,11 +71,13 @@ export async function collectFetchHaves(gitCtx: GitContext): Promise<ObjectId[]>
 export async function prepareShallowFetch(
 	gitCtx: GitContext,
 	depth?: number,
+	filter?: "blob:none",
 ): Promise<PreparedShallowFetch> {
-	const existingShallows = depth !== undefined ? await readShallowCommits(gitCtx) : undefined;
+	const existingShallows =
+		depth !== undefined || filter ? await readShallowCommits(gitCtx) : undefined;
 	return {
 		existingShallows,
-		shallowOpts: depth !== undefined ? { depth, existingShallows } : undefined,
+		shallowOpts: depth !== undefined || filter ? { depth, existingShallows, filter } : undefined,
 	};
 }
 
@@ -85,6 +87,7 @@ export async function autoFollowReachableTags(options: {
 	remoteRefs: RemoteRef[];
 	ident: ReflogWriteIdentity;
 	reflogAction: "fetch" | "pull";
+	filter?: "blob:none";
 }): Promise<TransferRefLine[]> {
 	const { gitCtx, transport, remoteRefs, ident, reflogAction } = options;
 
@@ -106,7 +109,11 @@ export async function autoFollowReachableTags(options: {
 		}
 	}
 	if (tagObjectWants.length > 0) {
-		await transport.fetch(tagObjectWants, await collectFetchHaves(gitCtx));
+		await transport.fetch(
+			tagObjectWants,
+			await collectFetchHaves(gitCtx),
+			options.filter ? { filter: options.filter } : undefined,
+		);
 	}
 
 	const refLines: TransferRefLine[] = [];

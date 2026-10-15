@@ -194,6 +194,8 @@ export interface PreCheckoutEvent {
 
 /** Fired before a fetch begins. Return a {@link Rejection} to block. */
 export interface PreFetchEvent {
+	/** Explicit object hydration requests; refspecs is empty for these calls. */
+	readonly objectIds?: readonly ObjectId[];
 	readonly repo: GitRepo;
 	readonly remote: string;
 	readonly url: string;

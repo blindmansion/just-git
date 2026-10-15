@@ -35,6 +35,31 @@ const git = createGit({
 
 ## Repository access
 
+### Partial clone
+
+Use `fetch --filter=blob:none` or `clone --filter=blob:none --no-checkout` (or `--bare`) to transfer commits and trees without blobs. The remote must advertise the `filter` capability. The filter and promisor remote are saved in repository configuration and reused by later fetches. `fetch --no-tags` and the remote's saved `tagOpt` suppress automatic tag downloads.
+
+Use `fetchObjects(repo, objectIds, { remote: "origin", batchSize: 128 })` from `just-git/repo` to retrieve selected missing objects. Requests use the configured transport, credentials, network policy and fetch hooks without updating refs, `FETCH_HEAD` or shallow boundaries. The server must allow requests for reachable object IDs. Existing objects and duplicates are skipped. Request blob IDs from trees to avoid downloading the graph reachable from a commit.
+
+Object reads never download implicitly; retrieve required blobs before reading them. Partial repositories support filtered fetch and the repository API, but not general checkout, diff or merge operations. Pull, GC and repack reject partial repositories before modifying them. The local/cross-VFS transport filters its outgoing pack but still reads source blobs during enumeration; Smart HTTP avoids transferring them.
+
+```ts
+import { fetchObjects, flattenTree, readCommit, resolveRef } from "just-git/repo";
+
+await git.exec("fetch --depth=1 --filter=blob:none --no-tags origin");
+const repo = await git.findRepo();
+if (repo) {
+  const revision = await resolveRef(repo, "refs/remotes/origin/main");
+  if (!revision) throw new Error("Remote main branch not found");
+  const entries = await flattenTree(repo, (await readCommit(repo, revision)).tree);
+  const selected = entries.filter(({ path }) => path.startsWith("src/"));
+  await fetchObjects(
+    repo,
+    selected.map(({ hash }) => hash),
+  );
+}
+```
+
 `git.findRepo()` returns a `GitContext` for the current working directory, the bridge between command execution via `exec` and programmatic access via the [repo module](REPO.md). Like `exec`, it uses the instance's default `fs` and `cwd`, with optional per-call overrides. The returned context carries all operator-level extensions (hooks, identity, credentials, config overrides) configured on the instance.
 
 ```ts

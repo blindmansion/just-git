@@ -1,4 +1,5 @@
 import type { GitExtensions } from "../git.ts";
+import { requireCompleteRepository } from "../lib/partial-clone.ts";
 import { isRejection } from "../hooks.ts";
 import {
 	buildAbbrevResolver,
@@ -87,6 +88,7 @@ export function registerPullCommand(parent: Command, ext?: GitExtensions) {
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
 			const gitCtx = gitCtxOrError;
+			await requireCompleteRepository(gitCtx, "Pull; use filtered fetch and the repo SDK instead");
 
 			const depthResult = await normalizeFetchDepth(gitCtx, args);
 			if (isCommandError(depthResult)) return depthResult;

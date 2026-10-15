@@ -11,6 +11,7 @@ import {
 	type TransferRefLine,
 } from "../lib/command-utils.ts";
 import { readConfig } from "../lib/config.ts";
+import { configurePartialClone, validateObjectFilter } from "../lib/partial-clone.ts";
 import {
 	autoFollowReachableTags,
 	collectFetchHaves,
@@ -47,11 +48,14 @@ export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 			all: f().describe("Fetch from all remotes"),
 			prune: f().alias("p").describe("Remove stale remote-tracking refs"),
 			tags: f().describe("Also fetch tags"),
+			noTags: f().describe("Do not fetch tags"),
+			filter: o.string().describe("Omit blob contents (blob:none)"),
 			depth: o.number().describe("Limit fetching to the specified number of commits"),
 			unshallow: f().describe("Convert a shallow repository to a complete one"),
 			quiet: quietFlag("be more quiet"),
 		},
 		handler: async (args, ctx) => {
+			if (args.tags && args.noTags) return fatal("--tags and --no-tags cannot be used together");
 			const gitCtxOrError = await requireGitContext(ctx.fs, ctx.cwd, ext);
 			if (isCommandError(gitCtxOrError)) return gitCtxOrError;
 			const gitCtx = gitCtxOrError;
@@ -86,6 +90,8 @@ export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 						ext,
 						depth,
 						args.quiet,
+						args.filter,
+						args.noTags,
 					);
 					if (result.stderr) allStderr.push(result.stderr);
 					if (result.exitCode !== 0) lastExit = result.exitCode;
@@ -104,6 +110,8 @@ export function registerFetchCommand(parent: Command, ext?: GitExtensions) {
 				ext,
 				depth,
 				args.quiet,
+				args.filter,
+				args.noTags,
 			);
 		},
 	});
@@ -282,10 +290,16 @@ async function fetchOneRemote(
 	ext?: GitExtensions,
 	depth?: number,
 	quiet = false,
+	requestedFilter?: string,
+	noTags = false,
 ): Promise<ExecResult> {
 	const resolved = await resolveRemoteTransportOrError(gitCtx, remoteName, env);
 	if (isCommandError(resolved)) return resolved;
 	const { transport, config } = resolved;
+	const selectedFilter = requestedFilter ?? config.partialCloneFilter;
+	const filter = selectedFilter === undefined ? undefined : validateObjectFilter(selectedFilter);
+	if (filter && config.anonymous) return fatal("Filtered fetch requires a configured remote");
+	const suppressTags = noTags || config.noTags;
 
 	const hasExplicitRefspecs = !!rawRefspecs && rawRefspecs.length > 0;
 	// A raw-URL (anonymous) remote has no remote-tracking namespace. Like git,
@@ -316,6 +330,7 @@ async function fetchOneRemote(
 				}
 			}
 		}
+		if (filter) await configurePartialClone(gitCtx, remoteName, filter);
 		return { stdout: "", stderr: "", exitCode: 0 };
 	}
 
@@ -354,11 +369,16 @@ async function fetchOneRemote(
 	const haveSet = new Set(haves);
 	const filteredWants = wants.filter((w) => !haveSet.has(w));
 
-	const { existingShallows, shallowOpts } = await prepareShallowFetch(gitCtx, depth);
+	const { existingShallows, shallowOpts } = await prepareShallowFetch(gitCtx, depth, filter);
 
 	// When depth/unshallow is requested, we must call fetch even with no
 	// new wants so the shallow boundary negotiation can happen.
-	const effectiveWants = filteredWants.length > 0 ? filteredWants : shallowOpts ? wants : [];
+	const effectiveWants =
+		filteredWants.length > 0
+			? filteredWants
+			: depth !== undefined || (filter && !config.partialCloneFilter)
+				? wants
+				: [];
 
 	if (effectiveWants.length > 0) {
 		const fetchResult = await transport.fetch(effectiveWants, haves, shallowOpts);
@@ -367,6 +387,7 @@ async function fetchOneRemote(
 			await applyShallowUpdates(gitCtx, fetchResult.shallowUpdates, existingShallows);
 		}
 	}
+	if (filter) await configurePartialClone(gitCtx, remoteName, filter);
 
 	const ident = await getReflogIdentity(gitCtx, env);
 	const { refLines, hadTagRejection, appliedUpdates } = await applyFetchRefUpdates(
@@ -381,13 +402,14 @@ async function fetchOneRemote(
 		refLines.push({ prefix: " * branch", from: "HEAD", to: "FETCH_HEAD" });
 	}
 
-	if (!tags) {
+	if (!tags && !suppressTags) {
 		const tagLines = await autoFollowReachableTags({
 			gitCtx,
 			transport,
 			remoteRefs,
 			ident,
 			reflogAction: "fetch",
+			filter,
 		});
 		if (!quiet) refLines.push(...tagLines);
 	}

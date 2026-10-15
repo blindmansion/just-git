@@ -1,5 +1,7 @@
 // Repo operations SDK — high-level functions for working with GitRepo
 
+export { fetchObjects, type FetchObjectsOptions } from "./fetching.ts";
+
 // Reading
 export {
 	branchNameFromRef,
